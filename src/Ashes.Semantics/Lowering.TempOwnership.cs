@@ -106,7 +106,8 @@ internal readonly record struct LoweredValueRequest(
     bool RuntimeListTailShared,
     int? RuntimeTcoListTailSlot,
     TypeRef.TNamedType? RuntimeReuseAdtType,
-    IReadOnlyDictionary<string, bool>? RuntimeAdtChildBindings)
+    IReadOnlyDictionary<string, bool>? RuntimeAdtChildBindings,
+    TypeRef? ExpectedType)
 {
     public static LoweredValueRequest None => default;
 
@@ -119,7 +120,8 @@ internal readonly record struct LoweredValueRequest(
             RuntimeListTailShared: false,
             RuntimeTcoListTailSlot: null,
             RuntimeReuseAdtType: null,
-            RuntimeAdtChildBindings: null);
+            RuntimeAdtChildBindings: null,
+            ExpectedType: null);
 
     public bool EmitsRuntime(LoweredValueRuntimeRepresentation representation) =>
         ConsumerCanOwn
@@ -136,6 +138,12 @@ internal readonly record struct LoweredValueRequest(
                 RuntimeRepresentation = RuntimeRepresentation | representation,
             }
             : this;
+
+    public LoweredValueRequest WithExpectedType(TypeRef expectedType) =>
+        this with { ExpectedType = expectedType };
+
+    public LoweredValueRequest WithoutExpectedType() =>
+        this with { ExpectedType = null };
 
     public LoweredValueRequest WithRuntimeListContext(
         string? tailBinding,
@@ -448,6 +456,25 @@ public sealed partial class Lowering
             LoweredTempProducerKind.Instruction,
             location,
             reason);
+    }
+
+    private void RecordUnknownBorrowedTemp(
+        int temp,
+        SourceLocation? location,
+        TypeRef? type = null)
+    {
+        RecordTempOwnership(
+            temp,
+            LoweredTempRepresentation.Unknown,
+            ownerTemp: null,
+            sourceTemp: null,
+            type,
+            LayoutForType(type),
+            LoweredTempDropKind.Unknown,
+            LoweredTempOwnershipKind.Borrowed,
+            LoweredTempProducerKind.Borrow,
+            location,
+            LoweredTempOwnershipReason.BorrowForward);
     }
 
     private void RecordFrameRestoreTemp(int target, int source, TypeRef type)

@@ -1,4 +1,6 @@
-// expect-compile-error: used at a generic type here
+// A non-recursive generic wrapper is monomorphized at its concrete call site even when the
+// capability operation occurs inside a closure passed to a higher-order helper.
+// expect: 1
 import Ashes.Collection.List
 capability Ord(a) =
     | compare : a -> a -> Int

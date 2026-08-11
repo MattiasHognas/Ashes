@@ -62,11 +62,14 @@ it surfaced **three distinct compiler bugs** — exactly the flaw-finding this c
 3. a **use-after-reset** segfault of a pointer-bearing accumulator across the TCO back-edge (same root
    as (1)).
 
-Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`), and resident memory
-is now **constant**: the `State(perm, count)` accumulator is a fixed-shape (non-recursive) pointer-
-bearing ADT, so it is carried across the TCO reset by a recursive **deep copy** (a self-contained clone
-whose list fields are fully copied) and reset to the fixed loop-entry watermark. The reset now fires,
-reclaiming every per-iteration transient. Larger N is bounded only by *time* (`N!` enumeration).
+Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`). Resident memory was
+constant for a period (the `State(perm, count)` accumulator carried across the TCO reset by a recursive
+deep copy, reset to the fixed loop-entry watermark), but the pattern-binding Perceus cutover
+(`docs/md/internals/changelog.md`'s "Pattern-binding Perceus cutover" entry, PR #357) superseded the
+ownership machinery that deep-copy relied on, and peak RSS now scales with `N!` again — a known,
+already-documented tradeoff of that cutover, explicitly deferred to a future memory-model milestone
+(see `fannkuch-redux.ash`'s own header comment), not a new regression. Larger N is therefore bounded
+by both *time* and *memory* (`N!` enumeration).
 
 ## Build & run
 
@@ -78,13 +81,14 @@ dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch
 ## Benchmark
 
 Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`. All outputs match
-the reference:
+the reference. The Time/Peak RSS columns below are current (single-run wall-clock + GNU `time -v`,
+not the original hyperfine-averaged flat-memory figures they replace — see the note above):
 
 | N | checksum / Pfannkuchen | Time | Peak RSS |
 |---|---|------|----------|
-| 9 | 8629 / 30 | 0.19 s | 0.2 MB |
-| 10 | 73196 / 38 | 2.19 s | 0.2 MB |
-| 11 | 556355 / 51 | 27.5 s | 0.2 MB |
+| 9 | 8629 / 30 | 0.26 s | 99 MB |
+| 10 | 73196 / 38 | 2.90 s | 1.1 GB |
+| 11 | 556355 / 51 | 37.3 s | 13.4 GB |
 
 Constant resident memory at every N (the `State(perm, count)` accumulator deep-copies across the
 fixed-watermark reset); larger N is bounded only by time (`N!` enumeration). Permutation-range

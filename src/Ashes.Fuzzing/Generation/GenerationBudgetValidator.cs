@@ -102,6 +102,21 @@ internal static class GenerationBudgetValidator
                         yield return (binding.Implementation, 0);
                     }
                     break;
+                case TopLevelItem.Trait trait:
+                    foreach (TraitMethodDecl method in trait.Decl.Methods)
+                    {
+                        if (method.DefaultImplementation is not null)
+                        {
+                            yield return (method.DefaultImplementation, 0);
+                        }
+                    }
+                    break;
+                case TopLevelItem.Implementation instance:
+                    foreach (TraitImplementationMethodBinding binding in instance.Decl.Bindings)
+                    {
+                        yield return (binding.Implementation, 0);
+                    }
+                    break;
             }
         }
     }

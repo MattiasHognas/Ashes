@@ -31,9 +31,9 @@ let recursive countInto bytes i hi map =
                     if bump
                     then
                         let map2 =
-                            match Ashes.Collection.Map.get(Ashes.Text.compare)(key)(map) with
-                                | None -> Ashes.Collection.Map.set(Ashes.Text.compare)(key)(1)(map)
-                                | Some(c) -> Ashes.Collection.Map.set(Ashes.Text.compare)(key)(c + 1)(map)
+                            match Ashes.Collection.Map.getWith(Ashes.Text.compare)(key)(map) with
+                                | None -> Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(1)(map)
+                                | Some(c) -> Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(c + 1)(map)
                         in countInto(bytes)(i + 1)(hi)(map2)
                     else countInto(bytes)(i + 1)(hi)(map)
 
@@ -42,9 +42,9 @@ let foldChunk triple =
         | (bytes, lo, hi) -> countInto(bytes)(lo)(hi)(Ashes.Collection.Map.empty)
 
 let mergeOne acc key value =
-    match Ashes.Collection.Map.get(Ashes.Text.compare)(key)(acc) with
-        | None -> Ashes.Collection.Map.set(Ashes.Text.compare)(key)(value)(acc)
-        | Some(e) -> Ashes.Collection.Map.set(Ashes.Text.compare)(key)(e + value)(acc)
+    match Ashes.Collection.Map.getWith(Ashes.Text.compare)(key)(acc) with
+        | None -> Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(value)(acc)
+        | Some(e) -> Ashes.Collection.Map.setWith(Ashes.Text.compare)(key)(e + value)(acc)
 
 let merge a b = Ashes.Collection.Map.foldLeft(mergeOne)(a)(b)
 
@@ -55,12 +55,12 @@ let chunks = (bytes, 0, 8) :: (bytes, 8, 16) :: (bytes, 16, 24) :: (bytes, 24, 3
 let total = Ashes.Task.Parallel.reduce(merge)(Ashes.Collection.Map.empty)(foldChunk)(chunks)
 
 let semi =
-    match Ashes.Collection.Map.get(Ashes.Text.compare)("semi")(total) with
+    match Ashes.Collection.Map.getWith(Ashes.Text.compare)("semi")(total) with
         | Some(v) -> v
         | None -> 0
 
 let acount =
-    match Ashes.Collection.Map.get(Ashes.Text.compare)("a")(total) with
+    match Ashes.Collection.Map.getWith(Ashes.Text.compare)("a")(total) with
         | Some(v) -> v
         | None -> 0
 in Ashes.IO.print(Ashes.Text.fromInt(semi) + "|" + Ashes.Text.fromInt(acount))

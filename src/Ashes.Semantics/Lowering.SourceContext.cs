@@ -16,6 +16,7 @@ public sealed partial class Lowering
         _moduleOffsets = null;
         _moduleLineStarts = null;
         _functionSourceNames = null;
+        _moduleProvenanceByPath = null;
     }
 
     /// <summary>
@@ -28,6 +29,7 @@ public sealed partial class Lowering
         _sourceLength = layout.Source.Length;
         _moduleOffsets = layout.ModuleOffsets;
         _functionSourceNames = layout.FunctionSourceNames;
+        _moduleProvenanceByPath = layout.ModuleProvenanceByPath;
 
         // Pre-compute line starts per region (not per file) so disjoint regions
         // for the same file each get correct line/column mappings.
@@ -44,6 +46,17 @@ public sealed partial class Lowering
         {
             _currentFilePath = layout.ModuleOffsets[^1].FilePath;
         }
+    }
+
+    private void CopySourceContextTo(Lowering target)
+    {
+        target._currentFilePath = _currentFilePath;
+        target._lineStarts = _lineStarts;
+        target._sourceLength = _sourceLength;
+        target._moduleOffsets = _moduleOffsets;
+        target._moduleLineStarts = _moduleLineStarts;
+        target._functionSourceNames = _functionSourceNames;
+        target._moduleProvenanceByPath = _moduleProvenanceByPath;
     }
 
     /// <summary>

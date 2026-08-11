@@ -35,6 +35,14 @@ internal enum GeneratedFeature
     FreshResultAllowsReuse,
     RecursionWithSharing,
     LogicalNot,
+    TraitDeclaration,
+    TraitImplementation,
+    TraitConstraint,
+    TraitMethodCall,
+    TraitResolution,
+    TraitOperator,
+    DerivedImplementation,
+    MultiParameterTrait,
 }
 
 internal enum OwnershipInterest
@@ -78,6 +86,13 @@ internal sealed record GeneratedAdt(
 internal sealed record GeneratedRecord(string Name, IReadOnlyList<(string Name, AshesType Type)> Fields);
 internal sealed record GeneratedCapabilityOperation(string Name, AshesType Parameter, AshesType Result);
 internal sealed record GeneratedCapability(string Name, IReadOnlyList<GeneratedCapabilityOperation> Operations);
+internal sealed record GeneratedTrait(
+    string Name,
+    string Method,
+    string ConstrainedFunction,
+    IReadOnlyList<AshesType> ImplementedTypes,
+    string? DerivedBoxType = null,
+    string? DerivedBoxConstructor = null);
 
 internal sealed record GenerationContext(
     IReadOnlyList<GeneratedBinding> Bindings,
@@ -85,6 +100,7 @@ internal sealed record GenerationContext(
     IReadOnlyList<GeneratedRecord> Records,
     IReadOnlyList<AshesType.Resource> ResourceTypes,
     IReadOnlyList<GeneratedCapability> Capabilities,
+    IReadOnlyList<GeneratedTrait> Traits,
     IReadOnlySet<string> ActiveHandlers,
     GenerationFlags Flags,
     IReadOnlySet<OwnershipInterest> OwnershipInterests,
@@ -96,6 +112,7 @@ internal sealed record GenerationContext(
         [],
         [],
         AshesType.SupportedResources,
+        [],
         [],
         new SortedSet<string>(StringComparer.Ordinal),
         GenerationFlags.RecursionAllowed | GenerationFlags.SuspensionAllowed | GenerationFlags.ResourcesAllowed,
@@ -112,6 +129,10 @@ internal sealed record GenerationContext(
     internal GenerationContext WithCapability(GeneratedCapability capability) => this with
     {
         Capabilities = [.. Capabilities.Where(candidate => !string.Equals(candidate.Name, capability.Name, StringComparison.Ordinal)), capability],
+    };
+    internal GenerationContext WithTrait(GeneratedTrait trait) => this with
+    {
+        Traits = [.. Traits.Where(candidate => !string.Equals(candidate.Name, trait.Name, StringComparison.Ordinal)), trait],
     };
     internal GenerationContext WithActiveHandler(string capability) => this with
     {
@@ -164,4 +185,8 @@ internal sealed record GeneratedFuzzCase(
     GeneratedFeatureSet Features,
     GenerationTrace Trace,
     int NodeCount,
-    GenerationBudget Budget);
+    GenerationBudget Budget)
+{
+    internal IReadOnlySet<string> ExpectedDiagnosticCodes { get; init; } =
+        new SortedSet<string>(StringComparer.Ordinal);
+}

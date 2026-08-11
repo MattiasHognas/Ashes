@@ -92,7 +92,7 @@ public sealed class ProjectSupportTests
             var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
             var plan = ProjectSupport.BuildCompilationPlan(project);
 
-            plan.OrderedModules.Select(x => x.ModuleName).ShouldBe(["Foo", "Foo.Bar", "Main"]);
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldBe(["Ashes.Trait", "Foo", "Foo.Bar", "Main"]);
         }
         finally
         {
@@ -698,6 +698,91 @@ public sealed class ProjectSupportTests
         diag.StructuredErrors.ShouldBeEmpty();
         ir.ExternalFunctions.Select(f => f.Name).ShouldBe(["getpid"]);
         ir.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single().SymbolName.ShouldBe("getpid");
+    }
+
+    [Test]
+    public void StandaloneCompilationLayout_should_preserve_trait_and_instance_declarations()
+    {
+        const string source = """
+            trait Identity(a) =
+                | identity : a -> a
+
+            implement Identity(Int) =
+                | identity = given (value) -> value
+
+            1
+            """;
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+        program.Items.OfType<TopLevelItem.Trait>()
+            .Single(item => string.Equals(item.Decl.Name, "Identity", StringComparison.Ordinal))
+            .Decl.Name.ShouldBe("Identity");
+        program.Items.OfType<TopLevelItem.Implementation>()
+            .Single(item => string.Equals(item.Decl.TraitName, "Identity", StringComparison.Ordinal))
+            .Decl.TraitName.ShouldBe("Identity");
+    }
+
+    [Test]
+    public void StandaloneCompilationLayout_should_keep_mutual_recursive_entry_group_flat_after_standard_traits()
+    {
+        const string source = """
+            let recursive fuzzEven =
+                given (remaining: Int) ->
+                    if remaining == 0
+                    then true
+                    else fuzzOdd(remaining - 1)
+            and fuzzOdd =
+                given (remaining: Int) ->
+                    if remaining == 0
+                    then false
+                    else fuzzEven(remaining - 1)
+
+            fuzzEven(2)
+            """;
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        _ = new Lowering(diagnostics, new HashSet<string>(["Ashes.Trait"], StringComparer.Ordinal)).Lower(program);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void StandaloneCompilationLayout_should_not_alias_an_import_over_a_local_entry_binding()
+    {
+        const string source = """
+            import Ashes.Collection.Map
+            let empty = 42
+            empty
+            """;
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        _ = new Lowering(
+            diagnostics,
+            parsed.ImportNames.Where(ProjectSupport.IsStdModule).ToHashSet(StringComparer.Ordinal),
+            parsed.ImportAliases,
+            layout.ConstructorModules).Lower(program);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
     }
 
     [Test]

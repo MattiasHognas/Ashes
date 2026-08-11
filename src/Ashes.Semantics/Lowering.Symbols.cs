@@ -215,6 +215,7 @@ public sealed partial class Lowering
         // names something outside this set is an implicit type parameter.
         var knownTypeNames = new HashSet<string>(_typeSymbols.Keys, StringComparer.Ordinal);
         knownTypeNames.UnionWith(typeDecls.Select(d => d.Name));
+        knownTypeNames.UnionWith(_externalOpaqueTypes);
         knownTypeNames.UnionWith(PrimitivePayloadTypeNames);
         knownTypeNames.Add("Unit");
 
@@ -267,6 +268,7 @@ public sealed partial class Lowering
         // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
         // constructor list is filled in place below.
         _typeSymbols[decl.Name] = typeSymbol;
+        _typeProvenanceBySymbol[typeSymbol] = ResolveDeclarationProvenance(GetSpan(decl));
         _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
             typeSymbol,
             typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
@@ -447,6 +449,11 @@ public sealed partial class Lowering
                 IsBuiltin: true);
 
             _typeSymbols[builtinType.Name] = typeSymbol;
+            _typeProvenanceBySymbol[typeSymbol] = new TraitDeclarationProvenance(
+                "ashes-core",
+                "Ashes.Core",
+                $"<builtin:{builtinType.Name}>",
+                new TextSpan(0, 0));
             if (string.Equals(builtinType.Name, "List", StringComparison.Ordinal))
             {
                 _resolvedTypes[builtinType.Name] = new TypeRef.TNamedType(typeSymbol, [new TypeRef.TTypeParam(typeSymbol.TypeParameters[0])]);
@@ -464,8 +471,23 @@ public sealed partial class Lowering
             foreach (var constructor in constructors)
             {
                 _constructorSymbols[constructor.Name] = constructor;
+                _builtinConstructorSymbols[constructor.Name] = constructor;
             }
         }
+    }
+
+    private bool TryResolveConstructorSymbol(
+        string name,
+        TextSpan contextSpan,
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ConstructorSymbol? constructor)
+    {
+        TraitDeclarationProvenance context = ResolveDeclarationProvenance(contextSpan);
+        if (string.Equals(context.PackageId, "ashes-core", StringComparison.Ordinal)
+            && _builtinConstructorSymbols.TryGetValue(name, out constructor))
+        {
+            return true;
+        }
+        return _constructorSymbols.TryGetValue(name, out constructor);
     }
 
     /// <summary>
@@ -586,6 +608,16 @@ public sealed partial class Lowering
             }
 
             return new TypeRef.TList(typeArgs[0]);
+        }
+
+        if (_externalOpaqueTypes.Contains(name))
+        {
+            if (typeArgs.Count != 0)
+            {
+                ReportDiagnostic(0, $"Opaque external type '{name}' expects 0 type argument(s) but got {typeArgs.Count}.");
+                return new TypeRef.TNever();
+            }
+            return new TypeRef.TOpaque(name);
         }
 
         if (!_typeSymbols.TryGetValue(name, out var sym))

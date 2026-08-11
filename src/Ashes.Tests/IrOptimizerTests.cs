@@ -88,6 +88,28 @@ public sealed class IrOptimizerTests
             .ShouldBeFalse("CmpIntEq should be eliminated by constant folding.");
     }
 
+    [Test]
+    public void DeadCodeEliminationRetainsUnsignedComparisonOperands()
+    {
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 7),
+            new IrInst.LoadConstInt(1, 8),
+            new IrInst.CmpUIntLt(2, 0, 1),
+            new IrInst.Return(2),
+        ];
+        IrFunction function = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.LoadConstInt { Target: 0, Value: 7 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.Any(instruction =>
+            instruction is IrInst.LoadConstInt { Target: 1, Value: 8 }).ShouldBeTrue();
+        optimized.EntryFunction.Instructions.ShouldContain(instruction => instruction is IrInst.CmpUIntLt);
+    }
+
     // Bitwise and shift constant-folding tests
 
     [Test]

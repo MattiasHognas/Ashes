@@ -10,10 +10,21 @@ public sealed partial class Lowering
     /// <param name="Span">The source range this type covers.</param>
     /// <param name="Name">The bound name at the span, when the span is a named binding or reference; otherwise null.</param>
     /// <param name="Type">The inferred type of the expression occupying the span.</param>
-    public readonly record struct HoverTypeInfo(TextSpan Span, string? Name, TypeRef Type);
+    /// <param name="Constraints"></param>
+    public readonly record struct HoverTypeInfo(
+        TextSpan Span,
+        string? Name,
+        TypeRef Type,
+        IReadOnlyList<TraitConstraint>? Constraints = null);
 
     private readonly Diagnostics _diag;
     private readonly LoweringConfiguration _configuration;
+    private readonly IReadOnlySet<string> _importedStdModules;
+    private readonly bool _enableInferredTraitElaboration;
+    private readonly bool _collectInferredTraitElaboration;
+    private readonly bool _enableTraitValidationPass;
+    private readonly bool _emitTraitDictionaries;
+    private readonly bool _isTraitValidationSubpass;
     private int _nextTempSlot;
     private int _nextLocalSlot;
     private int _nextTypeVar;
@@ -24,71 +35,7 @@ public sealed partial class Lowering
     private readonly List<IrFunction> _funcs = new();
     private readonly HashSet<IrInst.CallClosure> _borrowedArgumentCalls = new(ReferenceEqualityComparer.Instance);
 
-    // '+' overload resolution. '+' is Int+Int / Float+Float / Str+Str, but the IR op (AddInt vs
-    // ConcatStr) must be chosen at lowering time. When both operands are still type variables we
-    // can't choose yet, so we emit a provisional AddInt, record it here keyed by object identity,
-    // and patch it to ConcatStr/AddFloat once inference resolves the operand type
-    // (ResolveDeferredAdds). The shared operand var is added to _addConstrainedTvars so it stays
-    // monomorphic (not generalized) — that is what lets a later use resolve it.
-    private bool _hasDeferredAdds;
     private bool _hasDeferredTupleMaterializations;
-    private readonly List<TypeRef.TVar> _addConstrainedVars = new();
-
-    // Current representative ids of the '+'-constrained type vars (a var may have been unified since
-    // it was recorded, so resolve through the union-find each time).
-    private HashSet<int> ConstrainedAddVarRepIds()
-    {
-        var ids = new HashSet<int>();
-        foreach (var v in _addConstrainedVars)
-        {
-            if (Prune(v) is TypeRef.TVar rep)
-            {
-                ids.Add(rep.Id);
-            }
-        }
-
-        return ids;
-    }
-
-    // Same mechanism as the '+'-constrained vars above, but for '==' / '!=' operand types (Int /
-    // Float / Str, no type classes). See ResolveDeferredEqs.
-    private bool _hasDeferredEqs;
-    private readonly List<TypeRef.TVar> _eqConstrainedVars = new();
-
-    private HashSet<int> ConstrainedEqVarRepIds()
-    {
-        var ids = new HashSet<int>();
-        foreach (var v in _eqConstrainedVars)
-        {
-            if (Prune(v) is TypeRef.TVar rep)
-            {
-                ids.Add(rep.Id);
-            }
-        }
-
-        return ids;
-    }
-
-    // Same mechanism as the '+'-constrained vars above, but for '*' operand types (Int / Float /
-    // BigInt / UInt, no type classes). When both operands are still type variables we emit a
-    // provisional MulInt and keep the shared var monomorphic so a later use resolves it. See
-    // ResolveDeferredMuls.
-    private bool _hasDeferredMuls;
-    private readonly List<TypeRef.TVar> _mulConstrainedVars = new();
-
-    private HashSet<int> ConstrainedMulVarRepIds()
-    {
-        var ids = new HashSet<int>();
-        foreach (var v in _mulConstrainedVars)
-        {
-            if (Prune(v) is TypeRef.TVar rep)
-            {
-                ids.Add(rep.Id);
-            }
-        }
-
-        return ids;
-    }
     private readonly List<IrStringLiteral> _strings = new();
     private readonly Dictionary<string, string> _stringIntern = new(StringComparer.Ordinal);
     private readonly Dictionary<int, string> _localNames = new();
@@ -119,6 +66,7 @@ public sealed partial class Lowering
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
     private int[][]? _moduleLineStarts;
     private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
+    private IReadOnlyDictionary<string, ModuleProvenance>? _moduleProvenanceByPath;
 
     private readonly bool _hasAshesIO;
     private readonly IReadOnlyDictionary<string, string> _moduleAliases;
@@ -327,23 +275,6 @@ public sealed partial class Lowering
     // function called at `Ord(Int)` gets a copy where `Ord.compare` resolves statically).
     private readonly HashSet<string> _capabilityGenericInline = new(StringComparer.Ordinal);
 
-    // Non-recursive let-bound functions whose body compares (`==`/`!=`) or adds (`+`) two of their
-    // own parameters directly, so the operand type is a generalizable type variable rather than a
-    // concrete one. `==`/`+` pick a type-specific IR op (CmpIntEq vs CmpStrEq, AddInt vs ConcatStr)
-    // that a single shared function can't be polymorphic over, so — exactly like the capability-
-    // generic functions above — each concrete call site inlines a fresh copy of the body that
-    // resolves the operator at that call's type. This is what lets `assertEqual` (and similar
-    // helpers) be used at Str, Int, Bool, and Float within one program. Must be called saturated
-    // (a first-class/partial use has no concrete type to specialize at and keeps the shared,
-    // Int-defaulted body).
-    private readonly HashSet<string> _overloadGenericInline = new(StringComparer.Ordinal);
-
-    // Unqualified alias → stitched canonical name for overload-generic stdlib functions, so a call
-    // to `assertEqual` resolves the registration under `Ashes_Test_assertEqual`. Ambiguous short
-    // names (two modules exporting the same overload-generic name) are dropped (mapped to null),
-    // falling back to today's monomorphic behavior rather than inlining the wrong body.
-    private readonly Dictionary<string, string?> _overloadGenericAlias = new(StringComparer.Ordinal);
-
     // Top-level functions specializable for in-place reuse, by name. Two shapes:
     //   • single-parameter recursion: let rec f = given p -> body (LinearParam = p, ArgCount = 1);
     //   • nested-rec-returning: let f = given a -> ... -> (let rec go = given m -> _ in go) — f isn't
@@ -362,6 +293,8 @@ public sealed partial class Lowering
 
     // Cache of generated reuse specializations: original name → f$reuse function label.
     private readonly Dictionary<string, string> _reuseSpecializations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<string>> _reuseSpecializationCaptures =
+        new(StringComparer.Ordinal);
     private readonly List<ReuseDecision> _reuseDecisions = [];
 
     /// <summary>
@@ -426,6 +359,13 @@ public sealed partial class Lowering
 
     // Cache of generated parallel specializations: name|concrete-param-types → specialized function label.
     private readonly Dictionary<string, string> _parallelSpecializations = new(StringComparer.Ordinal);
+
+    // Concrete recursive functions whose abstract trait operators can be lowered back to the
+    // primitive IR selected at a concrete call site. This retains optimizations that depend on the
+    // operator living in the caller's loop body, notably affine string-accumulator growth.
+    private readonly Dictionary<string, string> _traitOperatorSpecializations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IReadOnlyList<string>> _traitOperatorSpecializationCaptures =
+        new(StringComparer.Ordinal);
 
     // True while generating a parallel specialization body, so a self-recursive call to the combinator
     // resolves to the specialization's own label (Binding.Self) instead of re-triggering specialization.
@@ -548,6 +488,7 @@ public sealed partial class Lowering
     // and limited to the definition's curried-lambda count so body lambdas never consume a leftover.
     private IReadOnlyList<TypeRef>? _annotationParamTypes;
     private int _annotationParamCursor;
+    private Expr.Lambda? _annotationTargetLambda;
     // Outer (non-accumulator) parameter names of the reuse specialization currently being lowered — e.g.
     // compare/newKey/newValue for Map.set. A constructor field whose argument is one of these is a FRESH
     // heap input (materialize it into the persistent blob so it survives the per-iteration reset); a field
@@ -594,7 +535,14 @@ public sealed partial class Lowering
 
     // Registered type and constructor symbols
     private readonly Dictionary<string, TypeSymbol> _typeSymbols = new(StringComparer.Ordinal);
+    // Keyed by TypeSymbol reference identity, not name: two packages may each declare a type with
+    // the same simple name (e.g. both a "Point"), and the orphan rule (ValidateOrphanRule) must not
+    // confuse one package's outer-type ownership for the other's just because the unqualified name
+    // collides.
+    private readonly Dictionary<TypeSymbol, TraitDeclarationProvenance> _typeProvenanceBySymbol =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, ConstructorSymbol> _constructorSymbols = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ConstructorSymbol> _builtinConstructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeRef.TNamedType> _resolvedTypes = new(StringComparer.Ordinal);
     private readonly HashSet<string> _externalOpaqueTypes = new(StringComparer.Ordinal);
     private readonly List<IrExternalFunction> _externalFunctions = new();
@@ -639,6 +587,23 @@ public sealed partial class Lowering
         return Pretty(type);
     }
 
+    /// <summary>Renders a constrained scheme with a canonical <c>requires</c> suffix.</summary>
+    public string FormatTypeScheme(TypeScheme scheme)
+    {
+        Dictionary<int, string> typeVariableNames = [];
+        string body = Pretty(scheme.Body, typeVariableNames, parentPrecedence: 0);
+        if (scheme.Constraints.Count == 0)
+        {
+            return body;
+        }
+
+        string constraints = string.Join(
+            ", ",
+            TraitConstraint.Canonicalize(scheme.Constraints).Select(constraint =>
+                $"{constraint.Trait.QualifiedName}({string.Join(", ", constraint.TypeArgs.Select(argument => Pretty(argument, typeVariableNames, parentPrecedence: 0)))})"));
+        return $"{body} requires {{{constraints}}}";
+    }
+
     /// <summary>
     /// Creates a lowering pass. <paramref name="diag"/> collects diagnostics;
     /// <paramref name="importedStdModules"/> names the standard-library modules in scope (gating, for
@@ -651,10 +616,43 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, string>? moduleAliases = null,
         IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null,
         LoweringConfiguration? configuration = null)
+        : this(
+            diag,
+            importedStdModules,
+            moduleAliases,
+            constructorModulesByName,
+            configuration,
+            enableInferredTraitElaboration: true,
+            collectInferredTraitElaboration: false,
+            enableTraitValidationPass: true,
+            emitTraitDictionaries: true,
+            isTraitValidationSubpass: false)
+    {
+    }
+
+    private Lowering(
+        Diagnostics diag,
+        IReadOnlySet<string>? importedStdModules,
+        IReadOnlyDictionary<string, string>? moduleAliases,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName,
+        LoweringConfiguration? configuration,
+        bool enableInferredTraitElaboration,
+        bool collectInferredTraitElaboration,
+        bool enableTraitValidationPass,
+        bool emitTraitDictionaries,
+        bool isTraitValidationSubpass)
     {
         _diag = diag;
         _configuration = configuration ?? LoweringConfiguration.Default;
-        _hasAshesIO = importedStdModules?.Contains("Ashes.IO") == true;
+        _importedStdModules = importedStdModules is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(importedStdModules, StringComparer.Ordinal);
+        _enableInferredTraitElaboration = enableInferredTraitElaboration;
+        _collectInferredTraitElaboration = collectInferredTraitElaboration;
+        _enableTraitValidationPass = enableTraitValidationPass;
+        _emitTraitDictionaries = emitTraitDictionaries;
+        _isTraitValidationSubpass = isTraitValidationSubpass;
+        _hasAshesIO = _importedStdModules.Contains("Ashes.IO");
         _moduleAliases = moduleAliases ?? new Dictionary<string, string>(StringComparer.Ordinal);
         _constructorModulesByName = constructorModulesByName ?? new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
         RegisterBuiltinSymbols();
@@ -688,17 +686,32 @@ public sealed partial class Lowering
     /// </summary>
     public IrProgram Lower(Program program)
     {
-        // Type, external, and capability declarations are registered upfront; their relative order among
-        // value bindings does not affect visibility under Model-A scoping.
-        RegisterTypeDeclarations(program.TypeDecls);
+        if (_enableInferredTraitElaboration)
+        {
+            program = ElaborateInferredTraitBindings(program);
+        }
+
+        // External opaque names must be known before constructor fields are resolved, so an ADT field
+        // naming an external handle remains concrete instead of being inferred as a type parameter.
         RegisterExternalDeclarations(program.ExternalDecls);
+        RegisterTypeDeclarations(program.TypeDecls);
         RegisterCapabilityDeclarations(program.Items);
         RegisterProviderDeclarations(program.Items);
-
-        // Compile generic (parameterized-`needs`) functions to dictionary-passing form: each needed
-        // operation becomes a hidden parameter. Runs after capability/provider registration and
-        // before value collection so the rest of the pipeline sees ordinary functions.
+        program = ExpandDerivedImplementations(program);
+        RegisterTraitAndImplementationDeclarations(program.Items);
+        if (RunTraitValidationPass(program) is { } failedValidation)
+        {
+            return failedValidation;
+        }
+        // Capability dictionary passing is an independent source elaboration and must run in trait
+        // discovery/validation passes too; otherwise a same-named capability operation can be
+        // mistaken for a trait method before its hidden operation parameter is introduced.
         program = RegisterAndTransformDictionaryFunctions(program);
+        if (_emitTraitDictionaries)
+        {
+            RegisterTraitDictionaryFunctions(program);
+
+        }
 
         var valueItems = program.Items
             .Where(item => item is TopLevelItem.LetDecl or TopLevelItem.RecursiveGroup)
@@ -864,24 +877,14 @@ public sealed partial class Lowering
             || ContainsAsyncSpawn(expr)
             || FreeVars(expr, []).Contains("async");
         // Entry function lowering (no env/arg params)
+        PushTraitConstraintScope();
         var (resultTemp, resultType) = LowerExpr(expr);
+        LastTraitConstraints = SimplifyAndResolveTraitConstraints(
+            PopTraitConstraintScope(),
+            GetSpan(expr));
         Emit(new IrInst.Return(resultTemp));
 
-        ResolveDeferredAdds();
-        ResolveDeferredMuls();
-        ResolveDeferredEqs();
-        // After the operator resolutions: argument types the back-edge copy-out decision was
-        // waiting on are now as concrete as they will ever be.
-        ResolveDeferredTcoResets();
-        ResolveDeferredTupleMaterializations();
-
-        // Any concrete capability left in the entry expression's row after inference has no handler
-        // discharging it — a compile-time error, not a runtime failure.
-        CheckUnhandledCapabilities();
-
-        // After ResolveDeferredAdds, an unresolved '+' operand var has been defaulted to Int, so the
-        // reported result type (e.g. the REPL's `add : Int -> Int -> Int`) is concrete.
-        LastLoweredType = Prune(resultType);
+        FinishEntryInference(resultType);
 
         var entry = new IrFunction(
             Label: "_start_main",
@@ -912,9 +915,18 @@ public sealed partial class Lowering
         {
             // Per-capability evidence slots plus the pending-post register and the live-posts counter.
             CapabilityHandlerGlobals = CapabilityGlobalCount == 0 ? 0 : CapabilityGlobalCount + 2,
+            TraitEvidence = BuildTraitEvidenceAnnotations(),
         };
 
         return PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
+    }
+
+    private void FinishEntryInference(TypeRef resultType)
+    {
+        ResolveDeferredTcoResets();
+        ResolveDeferredTupleMaterializations();
+        CheckUnhandledCapabilities();
+        LastLoweredType = Prune(resultType);
     }
 
     /// <summary>
@@ -2144,8 +2156,8 @@ public sealed partial class Lowering
     /// <summary>
     /// Replaces every <see cref="IrInst.TcoResetPending"/> placeholder with the real arena block (or
     /// with nothing, when the resolved types do not qualify).
-    /// Runs at the end of lowering, after the deferred operator resolutions, so the pruned types
-    /// are as concrete as they will ever be. Splices in place per function, temporarily pointing
+    /// Runs at the end of lowering, after inference, so the pruned types are as concrete as they
+    /// will ever be. Splices in place per function, temporarily pointing
     /// <c>_inst</c> and the temp/local counters at the target function.
     /// </summary>
     private void ResolveDeferredTcoResets()
@@ -2241,82 +2253,6 @@ public sealed partial class Lowering
     }
 
 
-    // Patches the provisional AddInts emitted for '+' with two unconstrained operands, now that
-    // inference is complete. Any operand var still unbound (e.g. an unused generic '+') defaults to
-    // Int. Then each provisional add becomes ConcatStr (Str), AddFloat (Float), or stays AddInt.
-    private void ResolveDeferredAdds()
-    {
-        if (!_hasDeferredAdds)
-        {
-            return;
-        }
-
-        ResolveDeferredAddsIn(_inst);
-        foreach (var func in _funcs)
-        {
-            ResolveDeferredAddsIn(func.Instructions);
-        }
-    }
-
-    private void ResolveDeferredAddsIn(List<IrInst> instructions)
-    {
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            if (instructions[i] is not IrInst.AddInt { DeferredType: { } operandType } add)
-            {
-                continue;
-            }
-
-            // An operand var still unbound (e.g. an unused generic '+') defaults to Int.
-            if (Prune(operandType) is TypeRef.TVar)
-            {
-                Unify(operandType, new TypeRef.TInt());
-            }
-
-            IrInst replacement = Prune(operandType) switch
-            {
-                TypeRef.TStr when add.AffineResvStartSlot >= 0 => SetUsesConcatStr(new IrInst.ConcatStrTip(
-                    add.Target,
-                    add.Left,
-                    add.Right,
-                    add.AffineResvStartSlot,
-                    add.AffineResvEndSlot,
-                    IsRuntimeManagedResultTemp(add.Left))
-                { Location = add.Location }),
-                TypeRef.TStr => SetUsesConcatStr(new IrInst.ConcatStr(
-                    add.Target,
-                    add.Left,
-                    add.Right,
-                    (add.RequestedRuntimeRepresentation
-                        & LoweredValueRuntimeRepresentation.String)
-                        != LoweredValueRuntimeRepresentation.None)
-                { Location = add.Location }),
-                TypeRef.TBigInt => new IrInst.BigIntBinary(
-                    add.Target,
-                    add.Left,
-                    add.Right,
-                    "add",
-                    (add.RequestedRuntimeRepresentation
-                        & LoweredValueRuntimeRepresentation.BigInt)
-                        != LoweredValueRuntimeRepresentation.None)
-                { Location = add.Location },
-                TypeRef.TFloat => new IrInst.AddFloat(add.Target, add.Left, add.Right) { Location = add.Location },
-                _ => new IrInst.AddInt(add.Target, add.Left, add.Right) { Location = add.Location },
-            };
-            instructions[i] = replacement;
-            if (ReferenceEquals(instructions, _inst))
-            {
-                ReplaceEmittedTempOwnership(add, replacement);
-            }
-        }
-    }
-
-    private IrInst SetUsesConcatStr(IrInst inst)
-    {
-        _usesConcatStr = true;
-        return inst;
-    }
-
     // Patches the provisional string copy-outs emitted by MaterializeEscapingStringTupleElement for
     // tuple fields whose element type was an unresolved var at lowering time. Now that inference is
     // complete: a field that resolved to Str really is a runtime-managed string that would dangle
@@ -2366,105 +2302,6 @@ public sealed partial class Lowering
         }
     }
 
-    // Patches the provisional MulInts emitted for '*' with two unconstrained operands, now that
-    // inference is complete. Any operand var still unbound defaults to Int. Then each provisional
-    // multiply becomes MulFloat (Float), BigIntBinary "mul" (BigInt), or stays MulInt.
-    private void ResolveDeferredMuls()
-    {
-        if (!_hasDeferredMuls)
-        {
-            return;
-        }
-
-        ResolveDeferredMulsIn(_inst);
-        foreach (var func in _funcs)
-        {
-            ResolveDeferredMulsIn(func.Instructions);
-        }
-    }
-
-    private void ResolveDeferredMulsIn(List<IrInst> instructions)
-    {
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            if (instructions[i] is not IrInst.MulInt { DeferredType: { } operandType } mul)
-            {
-                continue;
-            }
-
-            if (Prune(operandType) is TypeRef.TVar)
-            {
-                Unify(operandType, new TypeRef.TInt());
-            }
-
-            IrInst replacement = Prune(operandType) switch
-            {
-                TypeRef.TFloat => new IrInst.MulFloat(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
-                TypeRef.TBigInt => new IrInst.BigIntBinary(mul.Target, mul.Left, mul.Right, "mul") { Location = mul.Location },
-                _ => new IrInst.MulInt(mul.Target, mul.Left, mul.Right) { Location = mul.Location },
-            };
-            instructions[i] = replacement;
-            if (ReferenceEquals(instructions, _inst))
-            {
-                ReplaceEmittedTempOwnership(mul, replacement);
-            }
-        }
-    }
-
-    // Patches the provisional CmpIntEq/CmpIntNe emitted for '==' / '!=' with two unconstrained
-    // operands, now that inference is complete. Any operand var still unbound (e.g. an unused
-    // generic '==') defaults to Int, matching ResolveDeferredAdds.
-    private void ResolveDeferredEqs()
-    {
-        if (!_hasDeferredEqs)
-        {
-            return;
-        }
-
-        ResolveDeferredEqsIn(_inst);
-        foreach (var func in _funcs)
-        {
-            ResolveDeferredEqsIn(func.Instructions);
-        }
-    }
-
-    private void ResolveDeferredEqsIn(List<IrInst> instructions)
-    {
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            switch (instructions[i])
-            {
-                case IrInst.CmpIntEq { DeferredType: { } operandType } eq:
-                    if (Prune(operandType) is TypeRef.TVar)
-                    {
-                        Unify(operandType, new TypeRef.TInt());
-                    }
-
-                    instructions[i] = Prune(operandType) switch
-                    {
-                        TypeRef.TStr => new IrInst.CmpStrEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
-                        TypeRef.TFloat => new IrInst.CmpFloatEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
-                        _ => new IrInst.CmpIntEq(eq.Target, eq.Left, eq.Right) { Location = eq.Location },
-                    };
-                    break;
-
-                case IrInst.CmpIntNe { DeferredType: { } operandType } ne:
-                    if (Prune(operandType) is TypeRef.TVar)
-                    {
-                        Unify(operandType, new TypeRef.TInt());
-                    }
-
-                    instructions[i] = Prune(operandType) switch
-                    {
-                        TypeRef.TStr => new IrInst.CmpStrNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
-                        TypeRef.TFloat => new IrInst.CmpFloatNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
-                        _ => new IrInst.CmpIntNe(ne.Target, ne.Left, ne.Right) { Location = ne.Location },
-                    };
-                    break;
-            }
-        }
-    }
-
     private LoweredValue LowerExpr(
         Expr e,
         LoweredValueRequest request = default)
@@ -2484,7 +2321,23 @@ public sealed partial class Lowering
             return helperValue;
         }
 
-        var lowered = LowerExprDispatch(e, request);
+        // A bare trait-method reference eta-expands to a lambda (LowerBareTraitMethodReference) and
+        // needs the same early expected-type unification an ordinary Expr.Lambda argument gets
+        // below, so its parameter type is pinned before its body's constraint is resolved instead of
+        // staying an unconstrained variable that can never be discharged.
+        bool forwardsExpectedType = e is Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.Lambda
+            or RecursiveGroupExpr or Expr.If or Expr.Match or Expr.Handle or Expr.Call
+            or Expr.ListLit or Expr.Cons
+            || e is Expr.QualifiedVar qualifiedTraitMethod && TryGetTraitMethod(qualifiedTraitMethod, out _, out _);
+        TypeRef? expectedType = request.ExpectedType;
+        var lowered = LowerExprDispatch(
+            e,
+            forwardsExpectedType ? request : request.WithoutExpectedType());
+        if (expectedType is not null && !forwardsExpectedType)
+        {
+            Unify(expectedType, lowered.Type);
+            lowered = (lowered.Temp, Prune(lowered.Type));
+        }
 
         RecordExprHoverType(e, lowered.Type);
         LoweredValue value = CreateLoweredValue(lowered.Temp, lowered.Type);
@@ -2682,7 +2535,7 @@ public sealed partial class Lowering
             return (closTemp, Instantiate(topRef.Scheme));
         }
 
-        if (_constructorSymbols.TryGetValue(v.Name, out var ctorSym))
+        if (TryResolveConstructorSymbol(v.Name, GetSpan(v), out var ctorSym))
         {
             return LowerConstructorReference(
                 ctorSym,
@@ -2732,32 +2585,33 @@ public sealed partial class Lowering
 
     private (int Temp, TypeRef Type) LowerVarBound(Expr.Var v, Binding b)
     {
+        if (TryLowerActiveTraitDictionaryReference(v, b) is { } traitReference)
+        {
+            return traitReference;
+        }
         int temp = NewTemp();
         (int Temp, TypeRef Type) result;
-
         switch (b)
         {
             case Binding.Local loc:
                 LoadLocalWithBytesProvenance(temp, loc, v);
                 result = (temp, loc.Type);
                 break;
-
             case Binding.Env env:
                 Emit(new IrInst.LoadEnv(temp, env.Index));
                 result = (temp, env.Type);
                 break;
-
             case Binding.EnvScheme envSch:
                 Emit(new IrInst.LoadEnv(temp, envSch.Index));
                 result = (temp, Instantiate(envSch.S));
                 break;
-
             case Binding.Self self:
                 int envTemp = NewTemp();
                 Emit(new IrInst.LoadLocal(envTemp, 0));
                 Emit(new IrInst.MakeClosure(temp, self.FuncLabel, envTemp, self.EnvSizeBytes,
                     ReturnsRuntimeManaged: AllowsAsyncIndependentRcPlacement && AllowsOrdinaryRcPlacement
                         && _bodyRuntimeManagedByLabel.GetValueOrDefault(self.FuncLabel)));
+                RequireTraitConstraints(self.Requirements ?? []);
                 result = (temp, self.Type);
                 break;
 
@@ -2794,9 +2648,8 @@ public sealed partial class Lowering
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
     {
         Emit(new IrInst.LoadLocal(temp, local.Slot));
-        RecordUnknownProducedTemp(
+        RecordUnknownBorrowedTemp(
             temp,
-            LoweredTempOwnershipReason.BorrowForward,
             ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
             local.Type);
         if (_localBytesProvenance.TryGetValue(
@@ -2922,6 +2775,31 @@ public sealed partial class Lowering
         return args;
     }
 
+    private (int Temp, TypeRef Type) LowerTraitValidationAwareLetValue(
+        Expr.Let let,
+        LoweredValueRequest request,
+        out IReadOnlyList<TraitConstraint> writtenRequirements)
+    {
+        bool validatesTraitImplementation = let.Name.StartsWith(
+            "__trait_validate_implementation_",
+            StringComparison.Ordinal);
+        if (validatesTraitImplementation)
+        {
+            _traitImplementationValidationDepth++;
+        }
+        try
+        {
+            return LowerLetAnnotatedValue(let, request, out writtenRequirements);
+        }
+        finally
+        {
+            if (validatesTraitImplementation)
+            {
+                _traitImplementationValidationDepth--;
+            }
+        }
+    }
+
     private (int, TypeRef) LowerLet(
         Expr.Let let,
         LoweredValueRequest request)
@@ -2935,23 +2813,33 @@ public sealed partial class Lowering
 
         int depth0Before = _depth0LambdaCount;
 
-        var (valueTemp, valueType) = LowerLetAnnotatedValue(let, request);
+        PushTraitConstraintScope();
+        (int valueTemp, TypeRef valueType) value = LowerTraitValidationAwareLetValue(
+            let,
+            request.WithoutExpectedType(),
+            out IReadOnlyList<TraitConstraint> writtenRequirements);
+        IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
+            out bool needsLateTraitTypeHint);
 
         int slot = NewLocal();
-        Emit(new IrInst.StoreLocal(slot, valueTemp));
-        RecordLocalBytesProvenance(slot, valueTemp);
-        RecordLocalDebugInfo(slot, let.Name, valueType);
+        Emit(new IrInst.StoreLocal(slot, value.valueTemp));
+        RecordLocalBytesProvenance(slot, value.valueTemp);
+        RecordLocalDebugInfo(slot, let.Name, value.valueType);
         // Record the binding value so a later tail call `loop(<this name>)` can prove the accumulator
         // address-stable by tracing it back through this let into the value's match/if leaves.
         _letBindingValues[slot] = let.Value;
-        var scheme = Generalize(Prune(valueType));
-        RecordHoverType(AstSpans.GetLetNameOrDefault(let), let.Name, scheme.Body);
+        TypeScheme scheme = FinalizeLetTraitScheme(
+            let,
+            value.valueType,
+            inferredRequirements,
+            writtenRequirements,
+            needsLateTraitTypeHint);
 
         LowerLetRegisterKnownFunctionIdentity(let, slot, scheme, depth0Before);
 
         PushLetScope(let, slot, scheme);
         PushOwnershipScope();
-        TrackLetOwnership(let, slot, valueTemp, valueType);
+        TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
@@ -2967,6 +2855,37 @@ public sealed partial class Lowering
         if (shadowed) PopInlinableShadow(let.Name);
 
         return PopLetScope(bodyTemp, bodyType);
+    }
+
+    private TypeScheme FinalizeLetTraitScheme(
+        Expr.Let binding,
+        TypeRef valueType,
+        IReadOnlyList<TraitConstraint> inferredRequirements,
+        IReadOnlyList<TraitConstraint> writtenRequirements,
+        bool needsLateTraitTypeHint)
+    {
+        bool hasInferredElaboration = _inferredTraitBindingElaborations.ContainsKey(
+            TraitBindingKey(binding));
+        IReadOnlyList<TraitConstraint> schemeRequirements = SelectBindingConstraints(
+            hasInferredElaboration ? writtenRequirements : inferredRequirements,
+            writtenRequirements,
+            valueType,
+            GetSpan(binding),
+            binding.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal),
+            SuppressSourceConstraintDiagnostics(binding.Name));
+        TypeScheme scheme = GeneralizeBindingType(Prune(valueType), schemeRequirements);
+        RegisterTraitDictionarySchemeForLet(binding, scheme);
+        RecordInferredTraitBindingElaboration(
+            binding,
+            scheme,
+            writtenRequirements,
+            inferredRequirements,
+            needsLateTraitTypeHint);
+        ValidateBindingConstraintBoundary(
+            scheme,
+            GetSpan(binding));
+        RecordHoverScheme(AstSpans.GetLetNameOrDefault(binding), binding.Name, scheme);
+        return scheme;
     }
 
     // Registers a top-level, empty-env function so reuse specializations can call it by label. The
@@ -3103,7 +3022,7 @@ public sealed partial class Lowering
         bool sawFreshTuple = false;
         foreach (Expr terminal in terminals)
         {
-            if (IsSelfRecursiveTailFunnelArm(terminal))
+            if (IsProvenFreshCallFunnelArm(terminal))
             {
                 continue;
             }
@@ -3183,7 +3102,7 @@ public sealed partial class Lowering
             terminals,
             IsFreshRuntimeManageableAdtExpression,
             AdtConstructorGroupKey,
-            IsSelfRecursiveTailFunnelArm);
+            IsProvenFreshCallFunnelArm);
     }
 
     // The reconciliation group key for an ADT terminal arm: the parent type name of the constructor it
@@ -3264,20 +3183,46 @@ public sealed partial class Lowering
     // annotated parameters resolve with the annotated numeric type instead of defaulting to Int.
     private (int Temp, TypeRef Type) LowerLetAnnotatedValue(
         Expr.Let let,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        out IReadOnlyList<TraitConstraint> writtenRequirements)
     {
-        var annotatedLetType = let.TypeAnnotation is { } letAnnotation ? ResolveAnnotationType(letAnnotation) : null;
-        var savedAnnotParams = _annotationParamTypes;
-        var savedAnnotCursor = _annotationParamCursor;
-        if (annotatedLetType is not null && let.Value is Expr.Lambda letLambda)
-        {
-            _annotationParamTypes = PeelAnnotationParamTypes(annotatedLetType, CountLambdaChain(letLambda));
-            _annotationParamCursor = 0;
-        }
+        ResolvedBindingSignature signature = ResolveBindingSignature(
+            let.TypeAnnotation,
+            let.Requires,
+            GetSpan(let));
+        TypeRef? annotatedLetType = signature.Type;
+        TypeRef? inferenceSeedType = ResolveLetInferenceSeedType(let, annotatedLetType);
+        writtenRequirements = signature.Requirements;
+        var savedAnnotationSeed = (_annotationParamTypes, _annotationParamCursor, _annotationTargetLambda);
+        (bool usesTraitDictionary, _, TraitDictionaryFunctionInfo? traitDictionaryInfo) =
+            GetLetTraitEvidence(let);
+        Expr loweredValue = usesTraitDictionary
+            ? TransformTraitDictionaryLetValue(
+                let,
+                traitDictionaryInfo!)
+            : let.Value;
+        SeedLetAnnotationParameterTypes(
+            inferenceSeedType,
+            loweredValue,
+            CountSourceLambdaParameters(let.Value),
+            usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
+        LoweredValueRequest valueRequest = usesTraitDictionary
+            ? request
+            : ApplyInferenceSeedType(request, inferenceSeedType);
+        (int valueTemp, TypeRef runtimeValueType) = usesTraitDictionary
+            ? LowerExpr(loweredValue, valueRequest).AsPair()
+            : LowerLetValue(let, valueRequest);
+        RestoreLetRecursiveAnnotationSeed(savedAnnotationSeed);
 
-        var (valueTemp, valueType) = LowerLetValue(let, request);
-        _annotationParamTypes = savedAnnotParams;
-        _annotationParamCursor = savedAnnotCursor;
+        TypeRef valueType = runtimeValueType;
+        if (usesTraitDictionary)
+        {
+            (valueType, annotatedLetType, writtenRequirements) = FinalizeTraitDictionaryLetValue(
+                let,
+                runtimeValueType,
+                traitDictionaryInfo!,
+                signature);
+        }
 
         // If the user wrote a type annotation, verify it matches the inferred type.
         if (annotatedLetType is not null)
@@ -3288,6 +3233,77 @@ public sealed partial class Lowering
 
         return (valueTemp, valueType);
     }
+
+    private (TypeRef ValueType, TypeRef? AnnotatedType, IReadOnlyList<TraitConstraint> Requirements)
+        FinalizeTraitDictionaryLetValue(
+            Expr.Let binding,
+            TypeRef runtimeValueType,
+            TraitDictionaryFunctionInfo info,
+            ResolvedBindingSignature stableSignature)
+    {
+        TypeRef cursor = runtimeValueType;
+        foreach (TraitDictionaryShape _ in info.Dictionaries)
+        {
+            cursor = Prune(cursor);
+            if (cursor is not TypeRef.TFun hiddenParameter)
+            {
+                ReportDiagnostic(
+                    GetSpan(binding.Value),
+                    $"Internal trait evidence elaboration for '{binding.Name}' did not produce a hidden dictionary parameter.",
+                    InvalidTraitDeclarationCode);
+                cursor = new TypeRef.TNever();
+                break;
+            }
+            cursor = hiddenParameter.Ret;
+        }
+        if (stableSignature.Type is not null)
+        {
+            Unify(stableSignature.Type, cursor);
+        }
+        return (
+            stableSignature.Type ?? Prune(cursor),
+            stableSignature.Type,
+            stableSignature.Requirements);
+    }
+
+    private TypeRef? ResolveLetInferenceSeedType(Expr.Let binding, TypeRef? annotatedType) =>
+        annotatedType ?? ResolveInferredTraitBindingTypeHint(binding.Name, binding.Value);
+
+    private static LoweredValueRequest ApplyInferenceSeedType(
+        LoweredValueRequest request,
+        TypeRef? inferenceSeedType) =>
+        inferenceSeedType is null ? request : request.WithExpectedType(inferenceSeedType);
+
+    private void SeedLetAnnotationParameterTypes(
+        TypeRef? annotatedType,
+        Expr value,
+        int sourceParameterCount,
+        int hiddenParameterCount)
+    {
+        Expr.Lambda? lambda = FindInnermostLambdaUnderLets(value);
+        if (annotatedType is null || lambda is null)
+        {
+            return;
+        }
+
+        _annotationParamTypes = Enumerable.Range(0, hiddenParameterCount)
+            .Select(_ => NewTypeVar())
+            .Concat(PeelAnnotationParamTypes(annotatedType, sourceParameterCount))
+            .ToArray();
+        _annotationParamCursor = 0;
+        _annotationTargetLambda = lambda;
+    }
+
+    private Expr TransformTraitDictionaryLetValue(
+        Expr.Let let,
+        TraitDictionaryFunctionInfo info) =>
+        TransformTraitDictionaryValue(
+            let.Value,
+            info,
+            threadDictionaryFunctions: true,
+            rewriteMethodReferences: !let.Name.StartsWith(
+                "__trait_validate_implementation_",
+                StringComparison.Ordinal));
 
     private (int Temp, TypeRef Type) LowerLetValue(
         Expr.Let let,
@@ -4746,6 +4762,10 @@ public sealed partial class Lowering
 
     private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
+        if (_borrowedTraitDictionaryBindings.Contains(let.Name))
+        {
+            return;
+        }
         var prunedValueType = Prune(valueType);
         RefineTempOwnershipType(valueTemp, prunedValueType);
         var ownedTypeName = GetOwnedTypeName(prunedValueType);
@@ -4845,7 +4865,9 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (valueTemp, valueType) = LowerExpr(letResult.Value, request);
+        var (valueTemp, valueType) = LowerExpr(
+            letResult.Value,
+            request.WithoutExpectedType());
         if (!TryRequireResultType(valueType, resultSymbol, letResult.Value, "let? requires a Result(E, A) expression.", out var errorType, out var successType))
         {
             if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
@@ -4915,54 +4937,54 @@ public sealed partial class Lowering
         Expr.LetRecursive letRecursive,
         LoweredValueRequest request)
     {
+        RecursiveTraitEvidenceElaboration evidence = PrepareRecursiveTraitEvidence(letRecursive);
+        ResolvedBindingSignature signature = ResolveRecursiveTraitSignature(letRecursive, evidence);
+        bool usesTraitDictionary = evidence.UsesDictionary;
+        TraitDictionaryFunctionInfo? traitDictionaryInfo = evidence.DictionaryInfo;
+        Expr.LetRecursive runtimeBinding = evidence.RuntimeBinding;
         int slot = NewLocal();
         // The module system may wrap a lambda in alias lets: let alias = mangled in given (x) -> ...
         // Unwrap let-chains to find the innermost lambda for type and TCO purposes.
-        var innerLambda = FindInnermostLambdaUnderLets(letRecursive.Value);
-        var recursiveType = LowerLetRecursiveBindSelf(letRecursive, innerLambda, slot);
+        var innerLambda = FindInnermostLambdaUnderLets(runtimeBinding.Value);
+        var recursiveType = LowerLetRecursiveBindSelf(runtimeBinding, innerLambda, slot);
 
-        var (savedAnnotationParamTypes, savedAnnotationParamCursor) = LowerLetRecursiveSeedAnnotation(letRecursive, innerLambda, recursiveType);
+        TypeRef? inferenceSeedType = SeedRecursiveTraitInferenceType(
+            letRecursive,
+            signature,
+            usesTraitDictionary,
+            recursiveType);
 
-        (int valTemp, TypeRef valType) valueAndType;
-        bool helperMarkerAdded = false;
-        if (letRecursive.Value is Expr.Lambda lam
-            && _inCoroutineBody
-            && !IsAsyncIntrinsicCall(GetInnermostBody(lam))
-            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(lam)))
-        {
-            valueAndType = LowerLetRecursiveCoroutineHelperValue(
-                letRecursive,
-                lam,
-                recursiveType,
-                request,
-                out helperMarkerAdded);
-        }
-        else if (letRecursive.Value is Expr.Lambda lam2)
-        {
-            valueAndType = LowerLetRecursiveLambdaValue(
-                letRecursive,
-                lam2,
-                recursiveType,
-                request);
-        }
-        else if (innerLambda is not null)
-        {
-            valueAndType = LowerLetRecursiveAliasChainValue(
-                letRecursive,
-                innerLambda,
-                recursiveType,
-                request);
-        }
-        else
-        {
-            ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
-            valueAndType = LowerExpr(letRecursive.Value, request).AsPair();
-        }
+        var savedAnnotationSeed = LowerLetRecursiveSeedAnnotation(innerLambda, inferenceSeedType,
+            CountSourceLambdaParameters(letRecursive.Value),
+            usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0);
 
-        _annotationParamTypes = savedAnnotationParamTypes;
-        _annotationParamCursor = savedAnnotationParamCursor;
+        PushTraitConstraintScope();
+        (int valTemp, TypeRef valType) valueAndType = LowerLetRecursiveValue(
+            runtimeBinding,
+            innerLambda,
+            recursiveType,
+            request.WithoutExpectedType(),
+            out bool helperMarkerAdded);
+        IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
+            out bool needsLateTraitTypeHint);
+        (inferredRequirements, needsLateTraitTypeHint) = NormalizeRecursiveTraitRequirements(
+            signature,
+            usesTraitDictionary,
+            inferredRequirements,
+            needsLateTraitTypeHint);
 
-        LowerLetRecursiveFinalizeValue(letRecursive, slot, recursiveType, valueAndType);
+        RestoreLetRecursiveAnnotationSeed(savedAnnotationSeed);
+
+        LowerLetRecursiveFinalizeValue(
+            letRecursive,
+            slot,
+            recursiveType,
+            valueAndType,
+            inferredRequirements,
+            signature.Requirements,
+            usesTraitDictionary ? signature.Type : null,
+            usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0,
+            needsLateTraitTypeHint);
 
         var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body, request);
         if (helperMarkerAdded)
@@ -4972,6 +4994,98 @@ public sealed partial class Lowering
 
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private ResolvedBindingSignature ResolveRecursiveTraitSignature(
+        Expr.LetRecursive binding,
+        RecursiveTraitEvidenceElaboration evidence) =>
+        _generatedTraitRecursiveTypes.TryGetValue(binding.Name, out TypeRef? generatedTraitType)
+            ? new ResolvedBindingSignature(generatedTraitType, [])
+            : evidence.Signature;
+
+    private static (IReadOnlyList<TraitConstraint> Requirements, bool NeedsLateTypeHint)
+        NormalizeRecursiveTraitRequirements(
+            ResolvedBindingSignature signature,
+            bool usesTraitDictionary,
+            IReadOnlyList<TraitConstraint> inferredRequirements,
+            bool needsLateTraitTypeHint) =>
+        usesTraitDictionary
+            ? (signature.Requirements, false)
+            : (inferredRequirements, needsLateTraitTypeHint);
+
+    private TypeRef? SeedRecursiveTraitInferenceType(
+        Expr.LetRecursive binding,
+        ResolvedBindingSignature signature,
+        bool usesTraitDictionary,
+        TypeRef recursiveType)
+    {
+        TypeRef? seedType = signature.Type
+            ?? ResolveInferredTraitBindingTypeHint(binding.Name, binding.Value);
+        if (seedType is not null && !usesTraitDictionary)
+        {
+            Unify(recursiveType, seedType);
+        }
+        return seedType;
+    }
+
+    private sealed record RecursiveTraitEvidenceElaboration(
+        Expr.LetRecursive RuntimeBinding,
+        ResolvedBindingSignature Signature,
+        TraitDictionaryFunctionInfo? DictionaryInfo,
+        bool UsesDictionary);
+
+    private RecursiveTraitEvidenceElaboration PrepareRecursiveTraitEvidence(Expr.LetRecursive binding)
+    {
+        ResolvedBindingSignature signature = ResolveBindingSignature(
+            binding.TypeAnnotation,
+            binding.Requires,
+            GetSpan(binding));
+        bool hasDictionary = _traitDictionaryFunctionsByRecursiveBinding.TryGetValue(
+            TraitBindingKey(binding),
+            out TraitDictionaryFunctionInfo? info);
+        bool usesDictionary = hasDictionary;
+        Expr.LetRecursive runtimeBinding = usesDictionary
+            ? CopyLetRecursiveSpans(
+                binding,
+                new Expr.LetRecursive(
+                    binding.Name,
+                    TransformTraitDictionaryValue(binding.Value, info!, threadRecursiveSelf: true),
+                    binding.Body))
+            : binding;
+        return new RecursiveTraitEvidenceElaboration(runtimeBinding, signature, info, usesDictionary);
+    }
+
+    private (int, TypeRef) LowerLetRecursiveValue(
+        Expr.LetRecursive letRecursive,
+        Expr.Lambda? innerLambda,
+        TypeRef recursiveType,
+        LoweredValueRequest request,
+        out bool helperMarkerAdded)
+    {
+        helperMarkerAdded = false;
+        if (letRecursive.Value is Expr.Lambda coroutineLambda
+            && _inCoroutineBody
+            && !IsAsyncIntrinsicCall(GetInnermostBody(coroutineLambda))
+            && ContainsAwaitOutsideNestedLambda(GetInnermostBody(coroutineLambda)))
+        {
+            return LowerLetRecursiveCoroutineHelperValue(
+                letRecursive,
+                coroutineLambda,
+                recursiveType,
+                request,
+                out helperMarkerAdded);
+        }
+        if (letRecursive.Value is Expr.Lambda lambda)
+        {
+            return LowerLetRecursiveLambdaValue(letRecursive, lambda, recursiveType, request);
+        }
+        if (innerLambda is not null)
+        {
+            return LowerLetRecursiveAliasChainValue(letRecursive, innerLambda, recursiveType, request);
+        }
+
+        ReportDiagnostic(GetSpan(letRecursive.Value), "let recursive currently requires a function value.");
+        return LowerExpr(letRecursive.Value, request).AsPair();
     }
 
     // Binds the recursive name to its slot in a child scope (popped by the caller after the body).
@@ -5003,21 +5117,86 @@ public sealed partial class Lowering
     // Resolving the annotation against recursiveType up front also makes self-calls type-check
     // against the declared arrow. Restored after the value branches so nested lets don't inherit it.
     // Returns the previous seed state for the caller to restore.
-    private (IReadOnlyList<TypeRef>? SavedTypes, int SavedCursor) LowerLetRecursiveSeedAnnotation(Expr.LetRecursive letRecursive, Expr.Lambda? innerLambda, TypeRef recursiveType)
+    private (IReadOnlyList<TypeRef>? SavedTypes, int SavedCursor, Expr.Lambda? SavedTarget)
+        LowerLetRecursiveSeedAnnotation(
+        Expr.Lambda? innerLambda,
+        TypeRef? annotationType,
+        int sourceParameterCount,
+        int hiddenParameterCount)
     {
         var savedAnnotationParamTypes = _annotationParamTypes;
         var savedAnnotationParamCursor = _annotationParamCursor;
+        Expr.Lambda? savedAnnotationTarget = _annotationTargetLambda;
         _annotationParamTypes = null;
         _annotationParamCursor = 0;
-        if (letRecursive.TypeAnnotation is { } seedAnnotation && innerLambda is not null)
+        _annotationTargetLambda = innerLambda;
+        if (annotationType is not null && innerLambda is not null)
         {
-            var seedAnnotationType = ResolveAnnotationType(seedAnnotation);
-            Unify(recursiveType, seedAnnotationType);
-            _annotationParamTypes = PeelAnnotationParamTypes(seedAnnotationType, CountLambdaChain(innerLambda));
+            _annotationParamTypes = Enumerable.Range(0, hiddenParameterCount)
+                .Select(_ => NewTypeVar())
+                .Concat(PeelAnnotationParamTypes(annotationType, sourceParameterCount))
+                .ToArray();
             _annotationParamCursor = 0;
         }
 
-        return (savedAnnotationParamTypes, savedAnnotationParamCursor);
+        return (savedAnnotationParamTypes, savedAnnotationParamCursor, savedAnnotationTarget);
+    }
+
+    private static int CountSourceLambdaParameters(Expr value) =>
+        FindInnermostLambdaUnderLets(value) is { } lambda ? CountLambdaChain(lambda) : 0;
+
+    private bool TryGetTcoLambdaContinuation(Expr body, out Expr.Lambda continuation)
+    {
+        Expr current = body;
+        while (true)
+        {
+            if (current is Expr.Lambda lambda)
+            {
+                continuation = lambda;
+                return true;
+            }
+            if (current is Expr.Match
+                {
+                    Value: Expr.Var { Name: var dictionaryName },
+                    Cases.Count: 1,
+                } match
+                && _traitDictionaryParameterMetadata.ContainsKey(dictionaryName))
+            {
+                current = match.Cases[0].Body;
+                continue;
+            }
+            if (current is Expr.Let binding
+                && _borrowedTraitDictionaryBindings.Contains(binding.Name))
+            {
+                current = binding.Body;
+                continue;
+            }
+            continuation = null!;
+            return false;
+        }
+    }
+
+    private (List<string> Parameters, Expr Body) DescribeTcoLambdaChain(Expr.Lambda first)
+    {
+        List<string> parameters = [];
+        Expr.Lambda current = first;
+        while (true)
+        {
+            parameters.Add(current.ParamName);
+            if (!TryGetTcoLambdaContinuation(current.Body, out Expr.Lambda continuation))
+            {
+                return (parameters, current.Body);
+            }
+            current = continuation;
+        }
+    }
+
+    private void RestoreLetRecursiveAnnotationSeed(
+        (IReadOnlyList<TypeRef>? SavedTypes, int SavedCursor, Expr.Lambda? SavedTarget) saved)
+    {
+        _annotationParamTypes = saved.SavedTypes;
+        _annotationParamCursor = saved.SavedCursor;
+        _annotationTargetLambda = saved.SavedTarget;
     }
 
     // Async tail-recursive loop: the helper's body awaits and it is defined inside a coroutine
@@ -5031,7 +5210,7 @@ public sealed partial class Lowering
         LoweredValueRequest request,
         out bool helperMarkerAdded)
     {
-        var loopParamCount = CountLambdaChain(lam);
+        var loopParamCount = DescribeTcoLambdaChain(lam).Parameters.Count;
         var savedPending = _pendingHelperCoroutine;
         var savedHelperTco = _tcoCtx;
         _tcoCtx = null;
@@ -5059,34 +5238,14 @@ public sealed partial class Lowering
         LoweredValueRequest request)
     {
         // Detect lambda chain for TCO: given (x) -> given (y) -> body
-        var paramCount = CountLambdaChain(lam2);
-        var innermostBody = GetInnermostBody(lam2);
+        (List<string> tcoParamNames, Expr innermostBody) = DescribeTcoLambdaChain(lam2);
+        var paramCount = tcoParamNames.Count;
         var hasTailSelfCalls = HasTailSelfCalls(innermostBody, letRecursive.Name, paramCount);
 
         var savedTcoCtx = _tcoCtx;
         if (hasTailSelfCalls)
         {
-            var tcoParamNames = CollectLambdaParams(lam2);
-            FuncKey? ownershipFunction = GetRegisteredFunctionKey(letRecursive);
-            var tcoParamOrdinalFacts = GetTcoParameterOrdinalFacts(ownershipFunction);
-            _tcoCtx = new TcoContext(
-                selfName: letRecursive.Name,
-                paramCount: paramCount,
-                paramNames: tcoParamNames,
-                loopInvariantParamOrdinals: tcoParamOrdinalFacts.LoopInvariant,
-                freshRebuiltListParamOrdinals: tcoParamOrdinalFacts.ArenaSelfContainedListRebuild,
-                freshClosureRebuildParamOrdinals: tcoParamOrdinalFacts.FreshClosureRebuild,
-                bytesProvenanceSafeListRebuildParamOrdinals:
-                    tcoParamOrdinalFacts.BytesProvenanceSafeListRebuild,
-                affineConsListParamOrdinals: tcoParamOrdinalFacts.AffineConsList,
-                consumedListTailParamOrdinals: tcoParamOrdinalFacts.ConsumedListTail,
-                borrowInspectOnlyParamOrdinals: tcoParamOrdinalFacts.BorrowInspectOnly,
-                affineSelfAppendOnlyParamOrdinals: tcoParamOrdinalFacts.AffineSelfAppendOnly,
-                patternBindingOwnership: GetPatternBindingOwnershipFacts(ownershipFunction))
-            {
-                InTailPosition = false,
-                OwnershipFunction = ownershipFunction,
-            };
+            _tcoCtx = CreateRecursiveTcoContext(letRecursive, tcoParamNames, paramCount);
         }
         else
         {
@@ -5101,6 +5260,43 @@ public sealed partial class Lowering
 
         _tcoCtx = savedTcoCtx;
         return valueAndType;
+    }
+
+    private TcoContext CreateRecursiveTcoContext(
+        Expr.LetRecursive binding,
+        List<string> parameterNames,
+        int parameterCount)
+    {
+        FuncKey? ownershipFunction = GetRegisteredFunctionKey(binding);
+        var facts = GetTcoParameterOrdinalFacts(ownershipFunction);
+        int evidenceCount = parameterNames.TakeWhile(parameter =>
+            _traitDictionaryParameterMetadata.ContainsKey(parameter)
+            || _opParamMeta.ContainsKey(parameter)).Count();
+        IReadOnlySet<int> Shift(IReadOnlySet<int> ordinals) => ordinals
+            .Select(ordinal => ordinal + evidenceCount)
+            .ToHashSet();
+        HashSet<int> loopInvariant = Enumerable.Range(0, evidenceCount)
+            .Concat(Shift(facts.LoopInvariant))
+            .ToHashSet();
+        PatternBindingOwnershipFact[] patternBindings = GetPatternBindingOwnershipFacts(ownershipFunction)
+            .Select(fact => fact.RootParameterOrdinal < 0
+                ? fact
+                : fact with { RootParameterOrdinal = fact.RootParameterOrdinal + evidenceCount })
+            .ToArray();
+        return new TcoContext(
+            binding.Name, parameterCount, parameterNames, loopInvariant,
+            Shift(facts.ArenaSelfContainedListRebuild),
+            Shift(facts.FreshClosureRebuild),
+            Shift(facts.BytesProvenanceSafeListRebuild),
+            Shift(facts.AffineConsList),
+            Shift(facts.ConsumedListTail),
+            Shift(facts.BorrowInspectOnly),
+            Shift(facts.AffineSelfAppendOnly),
+            patternBindings)
+        {
+            InTailPosition = false,
+            OwnershipFunction = ownershipFunction,
+        };
     }
 
     // Value is a let-chain of alias bindings (injected by the module system) wrapping a lambda.
@@ -5140,7 +5336,7 @@ public sealed partial class Lowering
                 Emit(new IrInst.StoreLocal(aliasSlot, aliasValueTemp));
                 RecordLocalDebugInfo(aliasSlot, aliasLet.Name, aliasValueType);
                 var aliasScheme = Generalize(Prune(aliasValueType));
-                RecordHoverType(AstSpans.GetLetNameOrDefault(aliasLet), aliasLet.Name, aliasScheme.Body);
+                RecordHoverScheme(AstSpans.GetLetNameOrDefault(aliasLet), aliasLet.Name, aliasScheme);
                 PushLetScope(aliasLet, aliasSlot, aliasScheme);
                 aliasCount++;
             }
@@ -5166,21 +5362,71 @@ public sealed partial class Lowering
 
     // Unifies the lowered value with the self-type (and the declared annotation, if any), records
     // hover info, and stores the closure into the recursive slot.
-    private void LowerLetRecursiveFinalizeValue(Expr.LetRecursive letRecursive, int slot, TypeRef recursiveType, (int valTemp, TypeRef valType) valueAndType)
+    private void LowerLetRecursiveFinalizeValue(
+        Expr.LetRecursive letRecursive,
+        int slot,
+        TypeRef recursiveType,
+        (int valTemp, TypeRef valType) valueAndType,
+        IReadOnlyList<TraitConstraint> inferredRequirements,
+        IReadOnlyList<TraitConstraint> writtenRequirements,
+        TypeRef? exposedType,
+        int hiddenDictionaryCount,
+        bool needsLateTraitTypeHint)
     {
         Unify(recursiveType, valueAndType.valType);
-
-        // If the user wrote a type annotation, verify it matches the inferred type.
-        if (letRecursive.TypeAnnotation is { } recursiveAnnotation)
+        TypeRef schemeType = recursiveType;
+        if (exposedType is not null)
         {
-            using var annotationSpan = PushDiagnosticSpan(GetSpan(letRecursive.Value));
-            var annotatedRecursiveType = ResolveAnnotationType(recursiveAnnotation);
-            Unify(annotatedRecursiveType, recursiveType);
+            TypeRef cursor = PeelRecursiveTraitDictionaryParameters(
+                letRecursive,
+                recursiveType,
+                hiddenDictionaryCount);
+            Unify(exposedType, cursor);
+            schemeType = exposedType;
         }
-
-        RecordHoverType(AstSpans.GetLetRecursiveNameOrDefault(letRecursive), letRecursive.Name, recursiveType);
+        IReadOnlyList<TraitConstraint> requirements = SelectBindingConstraints(
+            IsInferredTraitBinding(letRecursive) ? writtenRequirements : inferredRequirements,
+            writtenRequirements,
+            schemeType,
+            GetSpan(letRecursive),
+            letRecursive.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal)
+                || letRecursive.Name.StartsWith("__trait_impl_", StringComparison.Ordinal),
+            SuppressSourceConstraintDiagnostics(letRecursive.Name));
+        Dictionary<string, Binding> selfScope = _scopes.Pop();
+        TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
+        RecordInferredTraitBindingElaboration(
+            letRecursive,
+            recursiveScheme,
+            writtenRequirements,
+            inferredRequirements,
+            needsLateTraitTypeHint);
+        if (hiddenDictionaryCount > 0)
+        {
+            TraitDictionaryFunctionInfo? dictionaryInfo =
+                _traitDictionaryFunctionsByRecursiveBinding.GetValueOrDefault(TraitBindingKey(letRecursive));
+            RegisterTraitDictionaryScheme(recursiveScheme, dictionaryInfo);
+        }
+        _scopes.Push(selfScope);
+        selfScope[letRecursive.Name] = new Binding.Scheme(
+            slot,
+            recursiveScheme,
+            AstSpans.GetLetRecursiveNameOrDefault(letRecursive));
+        ValidateBindingConstraintBoundary(
+            recursiveScheme,
+            GetSpan(letRecursive));
+        RecordHoverScheme(
+            AstSpans.GetLetRecursiveNameOrDefault(letRecursive),
+            letRecursive.Name,
+            recursiveScheme);
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
+        RegisterLoweredRecursiveFunctionIdentity(letRecursive, slot, recursiveScheme);
+    }
 
+    private void RegisterLoweredRecursiveFunctionIdentity(
+        Expr.LetRecursive letRecursive,
+        int slot,
+        TypeScheme recursiveScheme)
+    {
         // Register an empty-env recursive top-level function so a specialization generated later (in an
         // isolated scope) can reference it by-label — as static code with a null env — rather than
         // capturing it. Its self-recursion already goes through Binding.Self, so it captures nothing.
@@ -5192,9 +5438,8 @@ public sealed partial class Lowering
         // specializations at different element types would share (and conflict on) one monotype.
         if (_lambdaDepth == 0 && _lastLoweredLambdaEmptyEnv && letRecursive.Value is Expr.Lambda)
         {
-            var selfScope = _scopes.Pop();
-            var helperScheme = FreshenScheme(Generalize(Prune(recursiveType)));
-            _scopes.Push(selfScope);
+            var helperScheme = FreshenScheme(recursiveScheme);
+            CopyTraitDictionarySchemeRegistration(recursiveScheme, helperScheme);
             _topLevelFunctionRefs[letRecursive.Name] = (_lastLoweredLambdaLabel, helperScheme);
             _knownFunctionLabelsBySlot[slot] = _lastLoweredLambdaLabel;
             _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
@@ -5215,6 +5460,29 @@ public sealed partial class Lowering
             _functionNameByLabel[_lastLoweredLambdaLabel] = letRecursive.Name;
             RegisterOwnershipFunctionLabel(_lastLoweredLambdaLabel, letRecursive);
         }
+    }
+
+    private TypeRef PeelRecursiveTraitDictionaryParameters(
+        Expr.LetRecursive binding,
+        TypeRef runtimeType,
+        int dictionaryCount)
+    {
+        TypeRef cursor = runtimeType;
+        for (int index = 0; index < dictionaryCount; index++)
+        {
+            cursor = Prune(cursor);
+            if (cursor is TypeRef.TFun function)
+            {
+                cursor = function.Ret;
+                continue;
+            }
+            ReportDiagnostic(
+                GetSpan(binding.Value),
+                $"Internal trait evidence elaboration for recursive binding '{binding.Name}' lost a dictionary parameter.",
+                InvalidTraitDeclarationCode);
+            break;
+        }
+        return cursor;
     }
 
 
@@ -5292,16 +5560,10 @@ public sealed partial class Lowering
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
         var elseCredits = BeginExclusiveBranch([iff.Then]);
-        var (eTemp, eType) = LowerExpr(iff.Else, request);
+        var (eTemp, eType) = LowerIfElseBranch(iff.Else, request, thenType);
         EndExclusiveBranch(elseCredits);
         var elseType = Prune(eType);
         Emit(new IrInst.StoreLocal(slot, eTemp));
-
-        // unify branch types
-        using (PushDiagnosticContext("in if branches"))
-        {
-            Unify(thenType, elseType);
-        }
 
         // if expression result: put into a temp (phi) by storing chosen into target
         int target = NewTemp();
@@ -5313,6 +5575,15 @@ public sealed partial class Lowering
         var resultType = thenType is TypeRef.TNever ? elseType : thenType;
         MarkUniformRuntimeManagedResult(target, tTemp, eTemp, Prune(resultType));
         return (target, Prune(resultType));
+    }
+
+    private LoweredValue LowerIfElseBranch(
+        Expr expression,
+        LoweredValueRequest request,
+        TypeRef expectedType)
+    {
+        using var diagnosticContext = PushDiagnosticContext("in if branches");
+        return LowerExpr(expression, request.WithExpectedType(expectedType));
     }
 
     private void MarkUniformRuntimeManagedResult(
@@ -5374,6 +5645,7 @@ public sealed partial class Lowering
         // lowering the body inserts its capabilities there, so the arrow ends up carrying exactly the
         // capabilities the body performs (open, generalized at the enclosing let).
         var (paramTy, retTy, rowTy, funTy) = CreateLambdaTypes();
+        LowerLambdaCoreApplyExpectedType(request, funTy);
         LowerLambdaCoreSeedParamType(lam, paramTy);
 
         // Compute free variables for capture, then allocate and fill the env at the creation site.
@@ -5466,6 +5738,16 @@ public sealed partial class Lowering
         return (param, ret, row, new TypeRef.TFun(param, ret) { Row = row });
     }
 
+    private void LowerLambdaCoreApplyExpectedType(
+        LoweredValueRequest request,
+        TypeRef.TFun functionType)
+    {
+        if (request.ExpectedType is not null)
+        {
+            Unify(request.ExpectedType, functionType);
+        }
+    }
+
     // TCO: for the innermost lambda in a recursive chain, create local copies of captured params and
     // emit a loop start label so tail self-calls can jump back (see LowerLambdaCoreEnterTcoLoop).
     private (bool IsChainLambda, bool IsInnermostTco,
@@ -5483,7 +5765,8 @@ public sealed partial class Lowering
             _tcoCtx.SelfLabel = label;
         }
 
-        var isInnermostTco = isChainLambda && lam.Body is not Expr.Lambda;
+        bool continuesChain = TryGetTcoLambdaContinuation(lam.Body, out _);
+        var isInnermostTco = isChainLambda && !continuesChain;
         var reuseEntryCopies = new List<ReuseEntryCopyCandidate>();
         var specElidedAccs = new HashSet<string>(StringComparer.Ordinal);
         int reuseInsertIndex = -1;
@@ -5881,7 +6164,7 @@ public sealed partial class Lowering
             return;
         }
 
-        int ordinal = tco.ParamCount - CountLambdaChain(lambda);
+        int ordinal = tco.ParamCount - DescribeTcoLambdaChain(lambda).Parameters.Count;
         if (ordinal < 0
             || ordinal >= tco.ParamNames.Count
             || !string.Equals(tco.ParamNames[ordinal], lambda.ParamName, StringComparison.Ordinal))
@@ -5942,7 +6225,10 @@ public sealed partial class Lowering
         // Seed this parameter from the enclosing let's type annotation before lowering the body, so an
         // operator on an annotated-Float parameter resolves against Float instead of defaulting to Int.
         if (_annotationParamTypes is { } annotationParamTypes
-            && _annotationParamCursor < annotationParamTypes.Count)
+            && _annotationParamCursor < annotationParamTypes.Count
+            && (_annotationTargetLambda is null
+                || ReferenceEquals(_annotationTargetLambda, lam)
+                || _annotationParamCursor > 0))
         {
             Unify(paramTy, annotationParamTypes[_annotationParamCursor]);
             _annotationParamCursor++;
@@ -5998,6 +6284,20 @@ public sealed partial class Lowering
         }
 
         var free = FreeVars(lam.Body, bound);
+        if (selfName is null)
+        {
+            free.UnionWith(CollectActiveTraitMethodCaptures(lam.Body));
+        }
+        free.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(lam.Body));
+        foreach (string parameter in _activeTraitDictionaryParameters
+                     .OrderBy(item => item.Key, StringComparer.Ordinal)
+                     .SelectMany(item => item.Value))
+        {
+            if (!bound.Contains(parameter))
+            {
+                free.Add(parameter);
+            }
+        }
         ExpandFreshInlinableCaptures(free, bound);
         return free;
     }
@@ -6038,9 +6338,21 @@ public sealed partial class Lowering
 
             for (int i = 0; i < captures.Count; i++)
             {
-                var (capTemp, capTy) = LowerVar(new Expr.Var(captures[i]));
+                bool wasSuppressingTraitConstraints = _suppressTraitConstraintCollection;
+                _suppressTraitConstraintCollection = true;
+                _suppressActiveTraitDictionaryReferenceDepth++;
+                (int capTemp, TypeRef capTy) capture;
+                try
+                {
+                    capture = LowerVar(new Expr.Var(captures[i]));
+                }
+                finally
+                {
+                    _suppressActiveTraitDictionaryReferenceDepth--;
+                    _suppressTraitConstraintCollection = wasSuppressingTraitConstraints;
+                }
                 // store capTemp into [envPtr + i*8]
-                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capTemp));
+                Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capture.capTemp));
                 // Constrain types: the captured binding type should match capTy; already does.
             }
         }
@@ -6225,14 +6537,7 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (capBinding is Binding.Scheme capScheme)
-            {
-                scope[captures[i]] = new Binding.EnvScheme(i, capScheme.S, capScheme.DefinitionSpan);
-            }
-            else
-            {
-                scope[captures[i]] = new Binding.Env(i, capBinding.Type, capBinding.DefinitionSpan);
-            }
+            scope[captures[i]] = CreateCapturedBinding(capBinding, i);
 
             if (knownCaptureLabels.TryGetValue(i, out string? knownLabel))
             {
@@ -6246,7 +6551,12 @@ public sealed partial class Lowering
             // is correct precisely because the whole group shares one identical environment layout.
             foreach (var member in recursiveGroup.Members)
             {
-                scope[member.Name] = new Binding.Self(member.Label, member.Type, captures.Count * 8, member.Span);
+                scope[member.Name] = new Binding.Self(
+                    member.Label,
+                    member.Type,
+                    captures.Count * 8,
+                    member.Span,
+                    member.Requirements);
             }
         }
         else if (selfName is not null && selfType is not null)
@@ -6265,6 +6575,25 @@ public sealed partial class Lowering
 
         _scopes.Clear();
         _scopes.Push(scope);
+    }
+
+    private static Binding CreateCapturedBinding(Binding binding, int environmentIndex)
+    {
+        // A constrained polymorphic binding can cross more than one nested closure boundary.
+        // Preserve its complete scheme rather than degrading a later capture to the body type,
+        // otherwise applying it in the innermost closure silently loses its evidence.
+        return binding switch
+        {
+            Binding.Scheme scheme => new Binding.EnvScheme(
+                environmentIndex,
+                scheme.S,
+                scheme.DefinitionSpan),
+            Binding.EnvScheme scheme => new Binding.EnvScheme(
+                environmentIndex,
+                scheme.S,
+                scheme.DefinitionSpan),
+            _ => new Binding.Env(environmentIndex, binding.Type, binding.DefinitionSpan),
+        };
     }
 
     private void LowerLambdaCoreSeedScopeBindings(Dictionary<string, Binding> scope, Expr.Lambda lam, string label, TypeRef paramTy, int argSlot)
@@ -6753,7 +7082,7 @@ public sealed partial class Lowering
         var outerTcoCtx = _tcoCtx;
         if (isChainLambda)
         {
-            _tcoCtx!.DescendingChain = lam.Body is Expr.Lambda;
+            _tcoCtx!.DescendingChain = TryGetTcoLambdaContinuation(lam.Body, out _);
         }
         else if (_tcoCtx is not null)
         {
@@ -6769,6 +7098,7 @@ public sealed partial class Lowering
         // If this lambda parameter is a capability op-parameter, mark it active so a call at a
         // still-abstract instance inside the body threads it.
         var opParamScope = EnterOpParamScope(lam.ParamName);
+        IReadOnlyList<string>? traitDictionaryScope = EnterTraitDictionaryParameterScope(lam.ParamName);
         bool pushedDictShadow = PushDictFnShadow(lam.ParamName, selfName);
         var savedAmbientRow = _ambientRow;
         _ambientRow = rowTy;
@@ -6777,6 +7107,7 @@ public sealed partial class Lowering
             : LowerExpr(lam.Body).AsPair();
         _ambientRow = savedAmbientRow;
         PopDictFnShadow(lam.ParamName, pushedDictShadow);
+        ExitTraitDictionaryParameterScope(traitDictionaryScope);
         ExitOpParamScope(opParamScope);
         if (paramShadowsInlinable) PopInlinableShadow(lam.ParamName);
         return (bodyTemp, bodyType);
@@ -7390,10 +7721,12 @@ public sealed partial class Lowering
 
         if (current is TypeRef.TVar resultVar)
         {
-            // A '+'- or '*'-constrained var is a numeric scalar (never a function), so the arity is
-            // exact even though it is not yet a concrete type. This keeps oversaturated-call
-            // detection working for functions like `add a b = a + b` / `mul a b = a * b`.
-            if (ConstrainedAddVarRepIds().Contains(resultVar.Id) || ConstrainedMulVarRepIds().Contains(resultVar.Id))
+            // A trait-constrained result is a value selected by static evidence, not another
+            // function arrow. This keeps oversaturated-call diagnostics exact for generic operator
+            // helpers without relying on the removed overload-specific type-variable registries.
+            if (_traitConstraintScopes.SelectMany(scope => scope.Constraints).Any(constraint =>
+                    TraitTypeOperations.FreeVariables(
+                        new TypeScheme([], new TypeRef.TTuple(constraint.TypeArgs))).Contains(resultVar.Id)))
             {
                 return true;
             }
@@ -7447,6 +7780,16 @@ public sealed partial class Lowering
             return directResult;
         }
 
+        // A proven tail self-call is already on its most specialized path: update the loop
+        // parameters and jump to the current function's body. The general reuse router must not
+        // interpret a unique back-edge argument as a request to clone the recursive function.
+        // Such a clone reconstructs and calls its own closure recursively, losing the stack bound
+        // that TCO guarantees and relying on a later LLVM optimization to recover it.
+        if (TryLowerTcoSelfCall(rootExpr, collectedArgs) is { } tailCallResult)
+        {
+            return tailCallResult;
+        }
+
         if (LowerCallTryParallelAndReuseForms(call, rootExpr, collectedArgs) is { } routedResult)
         {
             return routedResult;
@@ -7460,13 +7803,6 @@ public sealed partial class Lowering
         if (LowerCallTryReuseInlineForm(rootExpr, collectedArgs, request) is { } reuseInlineResult)
         {
             return reuseInlineResult;
-        }
-
-        if (_tcoCtx is { InTailPosition: true } tco
-            && IsTcoSelfCallRoot(rootExpr, tco)
-            && collectedArgs.Count == tco.ParamCount)
-        {
-            return LowerCallTcoSelfCall(tco, collectedArgs);
         }
 
         if (LowerCallTryCoroutineHelperForm(call, rootExpr, collectedArgs) is { } helperResult)
@@ -7491,7 +7827,18 @@ public sealed partial class Lowering
             return builtinResult;
         }
 
-        return LowerCallGeneral(call, rootExpr, collectedArgs);
+        return LowerCallGeneral(call, rootExpr, collectedArgs, request);
+    }
+
+    private (int Temp, TypeRef Type)? TryLowerTcoSelfCall(
+        Expr rootExpression,
+        List<Expr> arguments)
+    {
+        return _tcoCtx is { InTailPosition: true } tco
+            && IsTcoSelfCallRoot(rootExpression, tco)
+            && arguments.Count == tco.ParamCount
+                ? LowerCallTcoSelfCall(tco, arguments)
+                : null;
     }
 
     // Ordinary curried recursion must resolve back to the outermost generated label. A synthesized
@@ -7526,13 +7873,10 @@ public sealed partial class Lowering
         List<Expr> collectedArgs,
         LoweredValueRequest request)
     {
-        if (rootExpr is Expr.Var varCtor && _constructorSymbols.TryGetValue(varCtor.Name, out var ctorSym))
+        if (rootExpr is Expr.Var varCtor
+            && TryResolveConstructorSymbol(varCtor.Name, GetSpan(varCtor), out var ctorSym))
         {
-            return LowerConstructorApplication(
-                ctorSym,
-                collectedArgs,
-                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)),
-                request: request);
+            return LowerConstructorCallWithExpectedType(call, ctorSym, collectedArgs, request);
         }
 
         // Constructor application through a module alias: json.JsonInt(42) where `json` is
@@ -7542,11 +7886,11 @@ public sealed partial class Lowering
             && !_capabilitySymbols.ContainsKey(ctorQv.Module)
             && TryResolveQualifiedConstructor(ctorQv.Name, ResolveModuleAlias(ctorQv.Module), out var qualifiedCtorSym))
         {
-            return LowerConstructorApplication(
+            return LowerConstructorCallWithExpectedType(
+                call,
                 qualifiedCtorSym,
                 collectedArgs,
-                location: ResolveSourceLocation(AstSpans.GetOrDefault(call)),
-                request: request);
+                request);
         }
 
         // Capability operation call: Clock.now(x) — the implicit form of `perform Clock.now(x)`.
@@ -7558,9 +7902,15 @@ public sealed partial class Lowering
             return LowerBuiltinStopCall(collectedArgs, GetSpan(stopQv));
         }
 
-        if (rootExpr is Expr.QualifiedVar capabilityQv && _capabilitySymbols.TryGetValue(capabilityQv.Module, out var capabilitySym))
+        if (rootExpr is Expr.QualifiedVar capabilityQv && TryGetCapabilityOperationReference(capabilityQv, out CapabilitySymbol capabilitySym))
         {
             return LowerCapabilityOperationCall(capabilitySym, capabilityQv, collectedArgs);
+        }
+
+        (int Temp, TypeRef Type)? traitCall = TryLowerTraitDirectCall(call, rootExpr, collectedArgs, request);
+        if (traitCall is not null)
+        {
+            return traitCall;
         }
 
         // Call to a generic function compiled to dictionary-passing form: supply its leading operation
@@ -7579,6 +7929,52 @@ public sealed partial class Lowering
         }
 
         return null;
+    }
+
+    private (int Temp, TypeRef Type) LowerConstructorCallWithExpectedType(
+        Expr.Call call,
+        ConstructorSymbol constructor,
+        List<Expr> arguments,
+        LoweredValueRequest request)
+    {
+        (int Temp, TypeRef Type) result = LowerConstructorApplication(
+            constructor,
+            arguments,
+            location: ResolveSourceLocation(AstSpans.GetOrDefault(call)),
+            request: request.WithoutExpectedType());
+        if (request.ExpectedType is not null)
+        {
+            Unify(result.Type, request.ExpectedType);
+        }
+        return result;
+    }
+
+    private (int Temp, TypeRef Type)? TryLowerTraitDirectCall(
+        Expr.Call call,
+        Expr rootExpression,
+        List<Expr> arguments,
+        LoweredValueRequest request)
+    {
+        if (rootExpression is Expr.QualifiedVar traitMethod
+            && TryGetTraitMethod(traitMethod, out TraitSymbol trait, out TraitMethodSymbol method))
+        {
+            return LowerTraitMethodCall(trait, method, arguments, GetSpan(call), request);
+        }
+        if (rootExpression is Expr.QualifiedVar missingCapabilityOperation
+            && TryGetReferencedCapability(
+                missingCapabilityOperation.Module,
+                out CapabilitySymbol declaredCapability))
+        {
+            return LowerCapabilityOperationCall(
+                declaredCapability,
+                missingCapabilityOperation,
+                arguments);
+        }
+        if (TryLowerTraitDictionaryReuseSpecialization(call, rootExpression, arguments) is { } reuse)
+        {
+            return reuse;
+        }
+        return TryLowerTraitDictionaryFunctionCall(rootExpression, arguments, GetSpan(call));
     }
 
     private (int, TypeRef)? LowerCallTryParallelAndReuseForms(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
@@ -7609,6 +8005,11 @@ public sealed partial class Lowering
             return parResult;
         }
 
+        if (!_configuration.EnableReuse)
+        {
+            return null;
+        }
+
         ReuseSpecializationQualification? qualification =
             QualifyReuseSpecializationCall(rootExpr, collectedArgs);
         if (qualification is null)
@@ -7616,7 +8017,7 @@ public sealed partial class Lowering
             return null;
         }
 
-        if (qualification.Accepted)
+        if (qualification.Accepted && !CannotAttemptHigherOrderReuse(collectedArgs))
         {
             return LowerReuseSpecializedCall(
                 qualification.TargetFunction,
@@ -7637,11 +8038,7 @@ public sealed partial class Lowering
 
     // Capability monomorphization: a saturated call to a capability-generic function is inlined so
     // the body lowers with the call's concrete argument types, letting a parameterized capability
-    // operation (`Ord.compare` at `Ord(Int)`) resolve to its provider. Guarded against recursion
-    // (the function is non-recursive) and re-entrancy (a call to the same function while inlining).
-    // Capability-generic and overload-generic (==/+ on two params) functions inline a fresh,
-    // type-resolved copy of their body at each concrete call site. For an overload-generic stdlib
-    // function called by its imported short name, resolve the alias to the stitched name first.
+    // operation resolve to its provider. Guarded against recursion and re-entrancy.
     private (int, TypeRef)? LowerCallTryGenericInlineForm(
         Expr rootExpr,
         List<Expr> collectedArgs,
@@ -7657,13 +8054,7 @@ public sealed partial class Lowering
         if (rootExpr is Expr.Var capGenVar)
         {
             string capGenName = capGenVar.Name;
-            if (!_capabilityGenericInline.Contains(capGenName) && !_overloadGenericInline.Contains(capGenName)
-                && _overloadGenericAlias.TryGetValue(capGenName, out var aliasTarget) && aliasTarget is not null)
-            {
-                capGenName = aliasTarget;
-            }
-
-            if ((_capabilityGenericInline.Contains(capGenName) || _overloadGenericInline.Contains(capGenName))
+            if (_capabilityGenericInline.Contains(capGenName)
                 && !_shadowedInlinables.ContainsKey(capGenVar.Name)
                 && !_inliningInProgress.Contains(capGenName)
                 && Lookup(capGenVar.Name) is not (Binding.Local or Binding.Env or Binding.EnvScheme)
@@ -7757,9 +8148,9 @@ public sealed partial class Lowering
         var savedTail = tco.InTailPosition;
         tco.InTailPosition = false;
 
-        LowerCallTcoTransferPatternBindings(tco, collectedArgs);
         (int[] newArgTemps, TypeRef[] newArgTypes) = LowerCallTcoEvalBackEdgeArgs(tco, collectedArgs);
         LowerCallTcoPromoteResolvedRuntimeParams(tco, newArgTypes);
+        LowerCallTcoTransferPatternBindings(tco, collectedArgs, newArgTemps);
         int[] oldRuntimeParamTemps = LowerCallTcoLoadOldRuntimeParams(tco);
 
         // Store new values into TCO param slots
@@ -7814,12 +8205,13 @@ public sealed partial class Lowering
     /// </summary>
     private void LowerCallTcoTransferPatternBindings(
         TcoContext tco,
-        IReadOnlyList<Expr> collectedArgs)
+        IReadOnlyList<Expr> collectedArgs,
+        int[] newArgTemps)
     {
         HashSet<int> transferredRoots = [];
-        HashSet<int> transferredBindings = [];
-        foreach (Expr argument in collectedArgs)
+        for (int argumentIndex = 0; argumentIndex < collectedArgs.Count; argumentIndex++)
         {
+            Expr argument = collectedArgs[argumentIndex];
             if (argument is not Expr.Var variable
                 || Lookup(variable.Name) is not Binding.Local local
                 || !tco.TryGetPatternBindingOwnership(
@@ -7838,13 +8230,11 @@ public sealed partial class Lowering
                 continue;
             }
 
-            if (transferredBindings.Add(local.Slot))
-            {
-                int valueTemp = NewTemp();
-                Emit(new IrInst.LoadLocal(valueTemp, local.Slot));
-                int duplicatedTemp = EmitRuntimeManagedNullableDup(valueTemp);
-                Emit(new IrInst.StoreLocal(local.Slot, duplicatedTemp));
-            }
+            // Argument evaluation returns a borrow of the pattern child. Retain that exact
+            // successor only after resolved back-edge types have established that its root
+            // parameter is runtime-managed. The old root may then be released without leaving the
+            // next iteration's parameter pointing into a reclaimed graph.
+            newArgTemps[argumentIndex] = EmitRuntimeManagedNullableDup(newArgTemps[argumentIndex]);
 
             transferredRoots.Add(rootSlot);
         }
@@ -8030,7 +8420,14 @@ public sealed partial class Lowering
         var curType = selfBinding is not null ? Prune(selfBinding.Type) : null;
         for (int i = 0; i < collectedArgs.Count; i++)
         {
-            var (argTemp, argType) = LowerCallTcoEvalArg(tco, collectedArgs[i], i);
+            TypeRef? expectedType = curType is TypeRef.TFun expectedFunction
+                ? expectedFunction.Arg
+                : null;
+            var (argTemp, argType) = LowerCallTcoEvalArg(
+                tco,
+                collectedArgs[i],
+                i,
+                expectedType);
             newArgTemps[i] = argTemp;
             newArgTypes[i] = argType;
             if (curType is TypeRef.TFun funType)
@@ -8043,7 +8440,11 @@ public sealed partial class Lowering
         return (newArgTemps, newArgTypes);
     }
 
-    private (int Temp, TypeRef Type) LowerCallTcoEvalArg(TcoContext tco, Expr argument, int index)
+    private (int Temp, TypeRef Type) LowerCallTcoEvalArg(
+        TcoContext tco,
+        Expr argument,
+        int index,
+        TypeRef? expectedType)
     {
         (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
         bool affineConsList = index < tco.ParamNames.Count
@@ -8080,6 +8481,10 @@ public sealed partial class Lowering
                     freshAdt
                         ? LowerCallTcoAdtChildBindings(constructorArguments!)
                         : null);
+            if (expectedType is not null)
+            {
+                request = request.WithExpectedType(expectedType);
+            }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
             return lowered;
@@ -8609,7 +9014,11 @@ public sealed partial class Lowering
         _ => null,
     };
 
-    private (int, TypeRef) LowerCallGeneral(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs)
+    private (int, TypeRef) LowerCallGeneral(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request)
     {
         // Keep call-chain intermediates in an independent reclaimable arena window.
         int callWmCursorSlot = NewLocal();
@@ -8620,9 +9029,7 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var (currentTemp, currentType) = rootExpr is Expr.Lambda lam
-            ? LowerLambda(lam, stackAllocateClosure: true)
-            : LowerExpr(rootExpr).AsPair();
+        (int currentTemp, TypeRef currentType) = LowerCallRoot(rootExpr, collectedArgs);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
 
@@ -8640,6 +9047,8 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArgs, collectedArgs.Count);
         }
 
+        PreconstrainCallResultType(currentType, collectedArgs.Count, request.ExpectedType);
+
         List<(int Temp, TypeRef Type)> consumedRuntimeArguments = [];
         if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
                 consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
@@ -8647,6 +9056,7 @@ public sealed partial class Lowering
             return earlyResult;
         }
 
+        UnifyExpectedType(currentType, request.ExpectedType);
         var callResultType = Prune(currentType);
         LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
@@ -8668,6 +9078,30 @@ public sealed partial class Lowering
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
         return (currentTemp, currentType);
+    }
+
+    private (int Temp, TypeRef Type) LowerCallRoot(Expr rootExpr, IReadOnlyList<Expr> arguments)
+    {
+        bool hasExplicitTraitEvidence = arguments.Count > 0
+            && arguments[0] is Expr.Var evidence
+            && evidence.Name.StartsWith("__trait_evidence_", StringComparison.Ordinal);
+        if (hasExplicitTraitEvidence)
+        {
+            _suppressActiveTraitDictionaryReferenceDepth++;
+        }
+        try
+        {
+            return rootExpr is Expr.Lambda lambda
+                ? LowerLambda(lambda, stackAllocateClosure: true)
+                : LowerExpr(rootExpr).AsPair();
+        }
+        finally
+        {
+            if (hasExplicitTraitEvidence)
+            {
+                _suppressActiveTraitDictionaryReferenceDepth--;
+            }
+        }
     }
 
     /// <summary>
@@ -8750,12 +9184,23 @@ public sealed partial class Lowering
 
     private bool IsDirectRuntimeManagedFunctionCall(Expr rootExpr, int argumentCount, TypeRef callResultType)
     {
-        return TryResolveKnownFunctionResultOwnership(
+        if (TryResolveKnownFunctionResultOwnership(
                 rootExpr,
                 argumentCount,
                 callResultType,
                 out bool runtimeManaged)
-            && runtimeManaged;
+            && runtimeManaged)
+        {
+            return true;
+        }
+
+        return IsConcretelyRuntimeManageableResultType(callResultType)
+            && TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
+            && TryGetCompiledFunctionResultRuntimeManaged(
+                resultLabel,
+                argumentCount,
+                out bool compiledRuntimeManaged)
+            && compiledRuntimeManaged;
     }
 
     private BuiltinRegistry.BytesOwnershipProvenance GetKnownFunctionBytesProvenance(
@@ -8774,17 +9219,13 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Whether this caller may trust the callee's ownership summary about its result. Without async
-    /// in the program every function shares one placement context, so the summary and the compiled
-    /// body always agree. With async they can disagree: a body lowered inside a coroutine, or inline
-    /// for a block that completes without suspending, produces a region value while the AST-level
-    /// summary still reports an RC-eligible result. Trusting it there skips the copy-out, so the
-    /// result points into a reclaimed region and is released as if it carried a reference count. The
-    /// compiled body's own recorded representation is the only fact that settles it.
+    /// Whether this caller may trust the callee's ownership summary about its result. The summary
+    /// proves that a result shape is RC-eligible; it does not prove that this particular compiled body
+    /// selected RC storage. That can differ even without async when the function's lowering request
+    /// keeps a fresh aggregate in its arena. Trusting shape alone skips copy-out, reclaims the arena,
+    /// and later releases a stale pointer as though it carried an RC header. The compiled body's own
+    /// recorded representation is therefore the necessary final gate in every placement context.
     /// </summary>
-    private bool CalleeCompiledResultIsRuntimeManaged(string label)
-        => !_usesAsync || _bodyRuntimeManagedByLabel.GetValueOrDefault(label);
-
     /// <summary>
     /// Resolves the callee whose result this caller may take ownership of. Beyond the placement
     /// context, the callee's ACTUAL compiled result must be runtime-managed: the ownership summary is
@@ -8793,23 +9234,60 @@ public sealed partial class Lowering
     /// the copy-out, then reclaim the region the result still points into and release it as if it
     /// carried a reference count.
     /// </summary>
-    private bool TryResolveCalleeWithRuntimeManagedResult(
+    private bool TryResolveCalleeOwnershipSummary(
         Expr rootExpr,
         int argumentCount,
-        out FunctionOwnershipSummary? summary)
+        out FunctionOwnershipSummary? summary,
+        out string? resultLabel)
     {
         summary = null;
+        resultLabel = null;
         if (!AllowsAsyncIndependentRcPlacement
             || !AllowsOrdinaryRcPlacement
             || argumentCount == 0
-            || !TryResolveKnownFunctionLabel(rootExpr, out string resultLabel)
-            || !CalleeCompiledResultIsRuntimeManaged(resultLabel))
+            || !TryResolveKnownFunctionLabel(rootExpr, out string? resolvedLabel))
         {
             return false;
         }
 
+        resultLabel = resolvedLabel;
         summary = GetOwnershipSummaryForLabel(resultLabel);
         return summary is not null && argumentCount == summary.Parameters.Count;
+    }
+
+    private bool CalleeCanProvideRuntimeManagedResult(
+        string resultLabel,
+        int argumentCount,
+        FunctionOwnershipSummary summary)
+    {
+        if (TryGetCompiledFunctionResultRuntimeManaged(
+                resultLabel,
+                argumentCount,
+                out bool compiledRuntimeManaged))
+        {
+            return compiledRuntimeManaged;
+        }
+        // A mutual-recursion sibling can be referenced before its body is lowered. Only bootstrap
+        // that exact forward edge when the whole-program fixpoint proves a fresh, RC-eligible result;
+        // the concrete result-type gate in the caller still has to succeed before this fact is used.
+        return summary.ResultFresh && summary.ResultProvenance.RcEligible;
+    }
+
+    private bool TryGetCompiledFunctionResultRuntimeManaged(
+        string resultLabel,
+        int argumentCount,
+        out bool runtimeManaged)
+    {
+        for (int index = 1; index < argumentCount; index++)
+        {
+            if (!_functionReturnedClosureLabels.TryGetValue(resultLabel, out string? nextLabel))
+            {
+                runtimeManaged = false;
+                return false;
+            }
+            resultLabel = nextLabel;
+        }
+        return _bodyRuntimeManagedByLabel.TryGetValue(resultLabel, out runtimeManaged);
     }
 
     /// <summary>
@@ -8877,8 +9355,13 @@ public sealed partial class Lowering
         // its ACTUAL compiled result is always arena, letting the caller's arena-reclaim-without-copy
         // path silently invalidate the result — caught empirically by readme_showcase.ash (an async
         // order-pricing pipeline), which printed empty strings instead of "Price: 12.50, Count: 6".
-        if (!TryResolveCalleeWithRuntimeManagedResult(rootExpr, argumentCount, out FunctionOwnershipSummary? resolved)
-            || resolved is not { } summary)
+        if (!TryResolveCalleeOwnershipSummary(
+                rootExpr,
+                argumentCount,
+                out FunctionOwnershipSummary? resolved,
+                out string? resultLabel)
+            || resolved is not { } summary
+            || resultLabel is null)
         {
             return false;
         }
@@ -8899,7 +9382,9 @@ public sealed partial class Lowering
             }
         }
 
-        bool useRuntimeManagement = provenanceEligible && runtimeManageableResultType;
+        bool useRuntimeManagement = provenanceEligible
+            && runtimeManageableResultType
+            && CalleeCanProvideRuntimeManagedResult(resultLabel, argumentCount, summary);
         RecordOwnershipFactConsumption(
             summary,
             OwnershipDecisionKind.RuntimeManagedCallResult,
@@ -8988,9 +9473,9 @@ public sealed partial class Lowering
         out int runtimeManagedResultFlagTemp)
     {
         runtimeManagedResultFlagTemp = -1;
+        PreconstrainKnownCallArgumentTypes(rootExpr, collectedArgs, currentType);
         for (int i = 0; i < collectedArgs.Count; i++)
         {
-            var (argTemp, argType) = LowerExpr(collectedArgs[i]);
             currentType = Prune(currentType);
 
             if (currentType is TypeRef.TNever)
@@ -9012,6 +9497,12 @@ public sealed partial class Lowering
             {
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
+
+            (int argTemp, TypeRef argType) =
+                TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
+                ?? LowerExpr(
+                    collectedArgs[i],
+                    LoweredValueRequest.None.WithExpectedType(funType.Arg)).AsPair();
 
             var calleeName = TryGetCalleeDisplayName(rootExpr);
             var callContext = calleeName is not null
@@ -9724,14 +10215,19 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        var elemType = NewTypeVar();
+        TypeRef elemType = request.ExpectedType is not null
+            && Prune(request.ExpectedType) is TypeRef.TList expectedList
+                ? expectedList.Element
+                : NewTypeVar();
         var (tailTemp, tailType) = LowerEmptyList();
+        Unify(tailType, new TypeRef.TList(elemType));
 
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
             LoweredValue head = LowerRuntimeManagedListElement(
                 list.Elements[i],
-                request);
+                request,
+                elemType);
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
                 Unify(head.Type, elemType);
@@ -9752,11 +10248,13 @@ public sealed partial class Lowering
 
     private LoweredValue LowerRuntimeManagedListElement(
         Expr element,
-        LoweredValueRequest listRequest)
+        LoweredValueRequest listRequest,
+        TypeRef? expectedElementType = null)
     {
         bool runtimeManagedList = listRequest.EmitsRuntime(
             LoweredValueRuntimeRepresentation.List);
         LoweredValueRequest elementRequest = listRequest
+            .WithoutExpectedType()
             .AddRuntime(
                 runtimeManagedList
                     && IsRuntimeRcStringProducer(element)
@@ -9775,6 +10273,10 @@ public sealed partial class Lowering
             .AddRuntime(
                 runtimeManagedList && element is Expr.TupleLit,
                 LoweredValueRuntimeRepresentation.Tuple);
+        if (expectedElementType is not null)
+        {
+            elementRequest = elementRequest.WithExpectedType(expectedElementType);
+        }
         LoweredValue lowered = LowerExpr(element, elementRequest);
         if (runtimeManagedList)
         {
@@ -10012,8 +10514,17 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
-        LoweredValue head = LowerRuntimeManagedListElement(cons.Head, request);
-        var (tailTemp, tailType) = LowerExpr(cons.Tail);
+        TypeRef? expectedElementType = request.ExpectedType is not null
+            && Prune(request.ExpectedType) is TypeRef.TList expectedList
+                ? expectedList.Element
+                : null;
+        LoweredValue head = LowerRuntimeManagedListElement(
+            cons.Head,
+            request,
+            expectedElementType);
+        TypeRef listType = new TypeRef.TList(head.Type);
+        LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
+        var (tailTemp, tailType) = LowerExpr(cons.Tail, tailRequest);
         head = CreateLoweredValue(
             DuplicatePerceusPatternOwnerForAggregate(cons.Head, head.Temp),
             head.Type);
@@ -10263,6 +10774,7 @@ public sealed partial class Lowering
                 {
                     res.Add(v.Name);
                 }
+                FreeVarsAddTraitEvidence(v, bnd, res);
 
                 return true;
             case Expr.QualifiedVar qv:
@@ -10403,6 +10915,7 @@ public sealed partial class Lowering
                 FreeVarsVisit(pipe.Right, bnd, res);
                 return true;
             case Expr.Call c:
+                FreeVarsAddTraitEvidence(c.Func, bnd, res);
                 FreeVarsVisit(c.Func, bnd, res);
                 FreeVarsVisit(c.Arg, bnd, res);
                 return true;
@@ -10433,6 +10946,31 @@ public sealed partial class Lowering
                 return true;
             default:
                 return false;
+        }
+    }
+
+    private void FreeVarsAddTraitEvidence(Expr function, HashSet<string> bound, HashSet<string> result)
+    {
+        if (ResolveSpecializableCalleeName(function) is not { } functionName
+            || !TryGetTraitDictionaryInfo(functionName, Lookup(functionName), out TraitDictionaryFunctionInfo? traitFunction))
+        {
+            return;
+        }
+        foreach (TraitDictionaryShape needed in traitFunction!.Dictionaries)
+        {
+            if (!_activeTraitDictionaryParameters.TryGetValue(
+                    needed.Trait.QualifiedName,
+                    out List<string>? activeParameters))
+            {
+                continue;
+            }
+            foreach (string parameterName in activeParameters)
+            {
+                if (!bound.Contains(parameterName))
+                {
+                    result.Add(parameterName);
+                }
+            }
         }
     }
 

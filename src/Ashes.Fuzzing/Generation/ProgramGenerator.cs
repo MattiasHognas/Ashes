@@ -21,8 +21,22 @@ internal sealed class ProgramGenerator
 
     internal GeneratedFuzzCase Generate(ulong masterSeed, int caseIndex, FuzzProfile profile, int maximumNodes)
     {
+        if (profile.GenerateInvalidSemantics)
+        {
+            return TraitInvalidCaseGenerator.Generate(masterSeed, caseIndex, profile, maximumNodes);
+        }
+
         ulong caseSeed = FuzzRandom.DeriveCaseSeed(masterSeed, caseIndex);
         GenerationBudget budget = GenerationBudget.Create(maximumNodes);
+        if (profile.GenerateTraits)
+        {
+            budget = budget with
+            {
+                RemainingDeclarations = Math.Max(budget.RemainingDeclarations, 24),
+                RemainingFunctions = Math.Max(budget.RemainingFunctions, 16),
+                RemainingAdts = Math.Max(budget.RemainingAdts, 6),
+            };
+        }
         string[] enabledRuleIds = profile.EnabledRules.Order(StringComparer.Ordinal).ToArray();
         string preferredRule = enabledRuleIds[caseIndex % enabledRuleIds.Length];
         string[] enabledCombinationIds = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
@@ -40,7 +54,7 @@ internal sealed class ProgramGenerator
             preferredRule,
             forcePreferredCombination);
         FuzzRandom random = new(caseSeed);
-        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex, profile.GenerateTraits);
         GenerationContext context = prelude.Context
             .WithFlags(profile.ContextFlags | GenerationFlags.TailPosition)
             .WithResourceTypes(profile.EffectiveResourceTypes)

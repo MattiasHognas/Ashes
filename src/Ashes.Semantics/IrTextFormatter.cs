@@ -101,6 +101,7 @@ internal static class IrTextFormatter
         lines.Add(title);
         lines.Add(new string('=', title.Length));
         lines.Add(string.Empty);
+        AppendTraitEvidence(lines, program.TraitEvidence);
 
         var matched = 0;
         foreach (IrFunction function in program.Functions.Concat([program.EntryFunction]))
@@ -120,6 +121,24 @@ internal static class IrTextFormatter
         }
 
         return lines;
+    }
+
+    private static void AppendTraitEvidence(List<string> lines, TraitEvidenceAnnotations evidence)
+    {
+        if (evidence.DictionaryParameters.Count == 0 && evidence.ResolvedImplementations.Count == 0)
+        {
+            return;
+        }
+        lines.Add("trait evidence");
+        foreach (TraitDictionaryAbiAnnotation parameter in evidence.DictionaryParameters)
+        {
+            lines.Add($"  dictionary-parameter function={parameter.Function} source={parameter.FunctionSource}:{parameter.FunctionOffset.ToString(CultureInfo.InvariantCulture)} index={parameter.ParameterIndex.ToString(CultureInfo.InvariantCulture)} trait={parameter.Trait} methods=[{string.Join(",", parameter.Methods)}] supertraits=[{string.Join(",", parameter.Supertraits)}]");
+        }
+        foreach (TraitResolutionAnnotation resolution in evidence.ResolvedImplementations)
+        {
+            lines.Add($"  resolved requirement={resolution.Requirement} implementation={resolution.ImplementationModule} ({resolution.ImplementationSource}:{resolution.ImplementationOffset.ToString(CultureInfo.InvariantCulture)})");
+        }
+        lines.Add(string.Empty);
     }
 
     private static void AppendFunction(List<string> lines, IrFunction function)

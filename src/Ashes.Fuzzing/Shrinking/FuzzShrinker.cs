@@ -523,12 +523,16 @@ internal sealed class FuzzShrinker
         TopLevelItem.LetDecl binding => [binding.Value],
         TopLevelItem.RecursiveGroup group => group.Bindings.Select(binding => binding.Value),
         TopLevelItem.Provide provide => provide.Decl.Bindings.Select(binding => binding.Implementation),
+        TopLevelItem.Trait trait => trait.Decl.Methods
+            .Where(method => method.DefaultImplementation is not null)
+            .Select(method => method.DefaultImplementation!),
+        TopLevelItem.Implementation instance => instance.Decl.Bindings.Select(binding => binding.Implementation),
         _ => [],
     };
 
     private static bool TryExpressionType(Expr expression, TypeExpr? annotation, out AshesType type)
     {
-        AshesType? inferred = annotation is null ? null : FromSyntax(annotation);
+        AshesType? inferred = annotation is null ? null : FromSyntax((TypeExpr)annotation);
         inferred ??= expression switch
         {
             Expr.IntLit => AshesType.Int,

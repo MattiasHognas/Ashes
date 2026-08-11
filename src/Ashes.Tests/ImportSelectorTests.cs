@@ -66,7 +66,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double : a -> a requires {Add(a)} = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -75,7 +75,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double as d\nAshes.IO.print(d(21))\n",
-            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double : a -> a requires {Add(a)} = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -219,7 +219,7 @@ public sealed class ImportSelectorTests
     {
         var stdout = await RunAsync(
             "import Util.double\nimport Util.double\nAshes.IO.print(double(21))\n",
-            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }).ConfigureAwait(false);
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double : a -> a requires {Add(a)} = given (x) -> x + x\n" }).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe("42");
     }
 
@@ -243,7 +243,7 @@ public sealed class ImportSelectorTests
         {
             var plan = ProjectSupport.BuildCompilationPlan(WriteProject(
                 "import Util.missing\nAshes.IO.print(0)\n",
-                new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double = given (x) -> x + x\n" }));
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["Util"] = "let double : a -> a requires {Add(a)} = given (x) -> x + x\n" }));
             ProjectSupport.BuildCompilationSource(plan);
         });
         ex.Message.ShouldContain("does not export 'missing'");

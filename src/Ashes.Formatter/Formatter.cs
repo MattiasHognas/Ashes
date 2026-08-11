@@ -185,6 +185,7 @@ public static class Formatter
                 WriteTypeExpr(sb, ctor.Parameters[i]);
                 sb.Append('\n');
             }
+            WriteDerivingClause(sb, decl, options);
             return;
         }
 
@@ -210,6 +211,20 @@ public static class Formatter
             }
             sb.Append('\n');
         }
+        WriteDerivingClause(sb, decl, options);
+    }
+
+    private static void WriteDerivingClause(StringBuilder sb, TypeDecl decl, FormattingOptions options)
+    {
+        if (decl.Deriving.Count == 0)
+        {
+            return;
+        }
+
+        WriteIndent(sb, options.IndentSize, options);
+        sb.Append("deriving {");
+        sb.Append(string.Join(", ", decl.Deriving));
+        sb.Append("}\n");
     }
 
     private static void WriteCapabilityDecl(StringBuilder sb, CapabilityDecl decl, FormattingOptions options)
@@ -284,6 +299,69 @@ public static class Formatter
         }
     }
 
+    private static void WriteTraitDecl(StringBuilder sb, TraitDecl declaration, bool preferPipelines, FormattingOptions options)
+    {
+        sb.Append("trait ");
+        sb.Append(declaration.Name);
+        WriteTypeParameters(sb, declaration.TypeParameters);
+        WriteRequiresClause(sb, declaration.Supertraits);
+        sb.Append(" =\n");
+        foreach (TraitMethodDecl method in declaration.Methods)
+        {
+            WriteIndent(sb, options.IndentSize, options);
+            sb.Append("| ");
+            sb.Append(method.Name);
+            sb.Append(" : ");
+            WriteTypeExpr(sb, method.Signature);
+            if (method.DefaultImplementation is null)
+            {
+                sb.Append('\n');
+                continue;
+            }
+
+            WriteDeclarationImplementation(sb, method.DefaultImplementation, preferPipelines, options);
+        }
+    }
+
+    private static void WriteTraitImplementationDecl(StringBuilder sb, TraitImplementationDecl declaration, bool preferPipelines, FormattingOptions options)
+    {
+        sb.Append("implement ");
+        sb.Append(declaration.TraitName);
+        WriteTypeArguments(sb, declaration.TypeArgs);
+        WriteRequiresClause(sb, declaration.Requirements);
+        sb.Append(" =\n");
+        foreach (TraitImplementationMethodBinding binding in declaration.Bindings)
+        {
+            WriteIndent(sb, options.IndentSize, options);
+            sb.Append("| ");
+            sb.Append(binding.MethodName);
+            WriteDeclarationImplementation(sb, binding.Implementation, preferPipelines, options);
+        }
+    }
+
+    private static void WriteDeclarationImplementation(
+        StringBuilder sb,
+        Expr implementation,
+        bool preferPipelines,
+        FormattingOptions options)
+    {
+        sb.Append(" = ");
+        if (IsSingleLine(implementation, preferPipelines))
+        {
+            WriteExprInline(sb, implementation, options.IndentSize, 0, preferPipelines, options);
+            sb.Append('\n');
+            return;
+        }
+
+        sb.Append('\n');
+        WriteIndent(sb, options.IndentSize * 2, options);
+        WriteExpr(sb, implementation, options.IndentSize * 2, 0, preferPipelines, options);
+        if (!EndsWithNewLine(sb, "\n"))
+        {
+            sb.Append('\n');
+        }
+    }
+
     private static void WriteTopLevelItem(StringBuilder sb, TopLevelItem item, bool preferPipelines, FormattingOptions options)
     {
         switch (item)
@@ -299,6 +377,12 @@ public static class Formatter
                 return;
             case TopLevelItem.Provide prov:
                 WriteProvideDecl(sb, prov.Decl, preferPipelines, options);
+                return;
+            case TopLevelItem.Trait trait:
+                WriteTraitDecl(sb, trait.Decl, preferPipelines, options);
+                return;
+            case TopLevelItem.Implementation implementation:
+                WriteTraitImplementationDecl(sb, implementation.Decl, preferPipelines, options);
                 return;
             case TopLevelItem.LetDecl let:
                 WriteLetDecl(sb, let, preferPipelines, options);
@@ -323,6 +407,7 @@ public static class Formatter
         {
             sb.Append(" : ");
             WriteTypeExpr(sb, typeAnnotation);
+            WriteRequiresClause(sb, decl.Requires);
         }
 
         // ML-style sugar: let f x y = <value>, unwrapping one lambda layer per parameter.
@@ -375,6 +460,16 @@ public static class Formatter
         {
             sb.Append(i == 0 ? "let recursive " : "and ");
             sb.Append(group.Bindings[i].Name);
+
+            if (i < group.TypeAnnotations.Count && group.TypeAnnotations[i] is { } annotation)
+            {
+                sb.Append(" : ");
+                WriteTypeExpr(sb, annotation);
+                if (i < group.Requires.Count)
+                {
+                    WriteRequiresClause(sb, group.Requires[i]);
+                }
+            }
 
             // ML-style sugar: let rec f x y = <value>, unwrapping one lambda layer per parameter.
             var value = group.Bindings[i].Value;
@@ -463,6 +558,71 @@ public static class Formatter
                 sb.Append(')');
                 return;
         }
+    }
+
+    private static void WriteTypeParameters(StringBuilder sb, IReadOnlyList<TypeParameter> parameters)
+    {
+        sb.Append('(');
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append(parameters[i].Name);
+        }
+
+        sb.Append(')');
+    }
+
+    private static void WriteTypeArguments(StringBuilder sb, IReadOnlyList<TypeExpr> arguments)
+    {
+        sb.Append('(');
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            WriteTypeExpr(sb, arguments[i]);
+        }
+
+        sb.Append(')');
+    }
+
+    private static void WriteRequiresClause(StringBuilder sb, IReadOnlyList<TraitConstraintSyntax> constraints)
+    {
+        if (constraints.Count == 0)
+        {
+            return;
+        }
+
+        TraitConstraintSyntax[] ordered = constraints
+            .OrderBy(ConstraintSortKey, StringComparer.Ordinal)
+            .ToArray();
+        sb.Append(" requires {");
+        for (int i = 0; i < ordered.Length; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(", ");
+            }
+
+            sb.Append(ordered[i].TraitName);
+            WriteTypeArguments(sb, ordered[i].TypeArgs);
+        }
+
+        sb.Append('}');
+    }
+
+    private static string ConstraintSortKey(TraitConstraintSyntax constraint)
+    {
+        StringBuilder key = new();
+        key.Append(constraint.TraitName);
+        WriteTypeArguments(key, constraint.TypeArgs);
+        return key.ToString();
     }
 
     private static void WriteArrowTypeExpr(StringBuilder sb, TypeExpr.Arrow arr)
@@ -718,6 +878,7 @@ public static class Formatter
         {
             sb.Append(" : ");
             WriteTypeExpr(sb, letTypeAnnotation);
+            WriteRequiresClause(sb, l.Requires);
         }
 
         // ML-style sugar: let f x y = <value>
@@ -792,6 +953,7 @@ public static class Formatter
         {
             sb.Append(" : ");
             WriteTypeExpr(sb, letRecursiveTypeAnnotation);
+            WriteRequiresClause(sb, l.Requires);
         }
 
         // ML-style sugar: let rec f x y = <value>

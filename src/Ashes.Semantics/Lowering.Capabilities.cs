@@ -923,14 +923,10 @@ public sealed partial class Lowering
     /// </summary>
     private int EmitStaticProviderCall(ProviderInfo provider, string opName, List<int> argTemps, TextSpan span)
     {
-        var impl = provider.Operations[opName];
-        var (implTemp, implType) = LowerExpr(impl);
-
-        // Type-check: the implementation must have the operation's signature at this concrete instance.
-        var operation = provider.Capability.Operations[opName];
-        if (operation.DeclaredSignature is not null)
+        (int implTemp, TypeRef implType, TypeRef? expected) =
+            LowerProviderOperationImplementation(provider, opName);
+        if (expected is not null)
         {
-            var expected = InstantiateCapabilitySignature(operation.DeclaredSignature, provider.Capability.TypeParameters, provider.TypeArgs);
             using (PushDiagnosticContext($"in provider '{BuildProviderKey(provider.Capability.Name, provider.TypeArgs)}' operation '{opName}'"))
             {
                 Unify(implType, expected);
@@ -946,6 +942,37 @@ public sealed partial class Lowering
         }
 
         return current;
+    }
+
+    private (int Temp, TypeRef Type, TypeRef? Expected) LowerProviderOperationImplementation(
+        ProviderInfo provider,
+        string opName)
+    {
+        Expr implementation = provider.Operations[opName];
+        CapabilityOperationSymbol operation = provider.Capability.Operations[opName];
+        TypeRef? expected = operation.DeclaredSignature is null
+            ? null
+            : InstantiateCapabilitySignature(
+                operation.DeclaredSignature,
+                provider.Capability.TypeParameters,
+                provider.TypeArgs);
+        IReadOnlyList<TypeRef>? savedTypes = _annotationParamTypes;
+        int savedCursor = _annotationParamCursor;
+        if (expected is not null && implementation is Expr.Lambda lambda)
+        {
+            _annotationParamTypes = PeelAnnotationParamTypes(expected, CountLambdaChain(lambda));
+            _annotationParamCursor = 0;
+        }
+        try
+        {
+            (int temp, TypeRef type) = LowerExpr(implementation).AsPair();
+            return (temp, type, expected);
+        }
+        finally
+        {
+            _annotationParamTypes = savedTypes;
+            _annotationParamCursor = savedCursor;
+        }
     }
 
     /// <summary>
@@ -1256,7 +1283,13 @@ public sealed partial class Lowering
                 return null;
             }
 
-            var (closureTemp, closureType) = LowerExpr(armLambda);
+            TypeRef expectedArmType = DetachRows(HandlerOperationType(
+                capability,
+                opName,
+                capabilityInstances[capability.Name]));
+            var (closureTemp, closureType) = LowerExpr(
+                armLambda,
+                LoweredValueRequest.None.WithExpectedType(expectedArmType));
             UnifyArmWithOperation(capability, opName, capabilityInstances[capability.Name], closureType, arm.Parameters.Count);
             SubsumeCalleeRow(InnermostArrowRow(closureType, arm.Parameters.Count), GetSpan(handle));
             armClosures.Add((capability, OperationDeclIndex(capability, opName), closureTemp));
@@ -1692,14 +1725,26 @@ public sealed partial class Lowering
             return;
         }
 
-        var opType = operation.DeclaredSignature is not null
-            ? InstantiateCapabilitySignature(operation.DeclaredSignature, capability.TypeParameters, capabilityArgs)
-            : operation.InferredType!;
+        TypeRef opType = HandlerOperationType(capability, opName, capabilityArgs);
 
         using (PushDiagnosticContext($"in handler arm '{capability.Name}.{opName}'"))
         {
             Unify(DetachRows(armClosureType), opType);
         }
+    }
+
+    private TypeRef HandlerOperationType(
+        CapabilitySymbol capability,
+        string operationName,
+        IReadOnlyList<TypeRef> capabilityArguments)
+    {
+        CapabilityOperationSymbol operation = capability.Operations[operationName];
+        return operation.DeclaredSignature is not null
+            ? InstantiateCapabilitySignature(
+                operation.DeclaredSignature,
+                capability.TypeParameters,
+                capabilityArguments)
+            : operation.InferredType!;
     }
 
     private int CountArrows(TypeRef type)

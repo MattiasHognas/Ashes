@@ -40,6 +40,19 @@ public sealed class IrDumpTests
         Ashes.IO.print(loop(3)(0))
         """;
 
+    private const string TraitProgram = """
+        trait Render(a) =
+            | render : a -> Str
+
+        implement Render(Int) =
+            | render = given (value) -> Ashes.Text.fromInt(value)
+
+        let show : a -> Str requires {Render(a)} =
+            given (value) -> Render.render(value)
+
+        show(42)
+        """;
+
     [Test]
     public void A_known_stage_parses_and_an_unknown_one_is_rejected()
     {
@@ -119,6 +132,19 @@ public sealed class IrDumpTests
         string text = string.Join('\n', Dump(IrDumpStage.Final, "no_such_function"));
 
         text.ShouldContain("(no functions matched)");
+    }
+
+    [Test]
+    public void Trait_evidence_identifies_hidden_dictionary_parameters_and_resolved_implementations()
+    {
+        string text = string.Join('\n', Dump(TraitProgram, IrDumpStage.Lowered, filter: null));
+
+        text.ShouldContain("trait evidence");
+        text.ShouldContain("dictionary-parameter function=show source=explain.ash:");
+        text.ShouldContain("index=0 trait=Render methods=[render]");
+        text.ShouldContain("resolved requirement=Render(Int)");
+        text.ShouldContain("implementation=Main");
+        text.ShouldNotContain("0x");
     }
 
     [Test]
@@ -205,12 +231,15 @@ public sealed class IrDumpTests
     }
 
     private static IReadOnlyList<string> Dump(IrDumpStage stage, string? filter)
+        => Dump(UnitProgram, stage, filter);
+
+    private static IReadOnlyList<string> Dump(string source, IrDumpStage stage, string? filter)
     {
         Diagnostics diagnostics = new();
-        Ashes.Frontend.Program program = new Parser(UnitProgram, diagnostics).ParseProgram();
+        Ashes.Frontend.Program program = new Parser(source, diagnostics).ParseProgram();
         diagnostics.ThrowIfAny();
         Lowering lowering = new(diagnostics);
-        lowering.SetSourceContext("explain.ash", UnitProgram);
+        lowering.SetSourceContext("explain.ash", source);
         IrProgram ir = lowering.Lower(program);
         diagnostics.ThrowIfAny();
 

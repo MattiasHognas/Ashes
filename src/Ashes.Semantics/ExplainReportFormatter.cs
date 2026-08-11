@@ -34,12 +34,41 @@ internal static class ExplainReportFormatter
             AppendReuse(lines, report.Reuse);
         }
 
+        if (request.Includes(ExplainKind.Traits))
+        {
+            AppendTraits(lines, report.TraitEvidence);
+        }
+
         if (request.Includes(ExplainKind.Memory))
         {
             AppendMemory(lines, report);
         }
 
         return lines;
+    }
+
+    private static void AppendTraits(List<string> lines, TraitEvidenceAnnotations evidence)
+    {
+        Heading(lines, "Trait evidence report");
+        if (evidence.DictionaryParameters.Count == 0 && evidence.ResolvedImplementations.Count == 0)
+        {
+            lines.Add("  (no trait evidence)");
+            return;
+        }
+
+        foreach (TraitDictionaryAbiAnnotation parameter in evidence.DictionaryParameters)
+        {
+            lines.Add($"Function: {parameter.Function} ({parameter.FunctionSource}:{parameter.FunctionOffset.ToString(CultureInfo.InvariantCulture)})");
+            lines.Add($"  dictionary parameter {parameter.ParameterIndex.ToString(CultureInfo.InvariantCulture)}: {parameter.Trait}");
+            lines.Add($"    methods: {string.Join(", ", parameter.Methods)}");
+            lines.Add($"    supertraits: {(parameter.Supertraits.Count == 0 ? "(none)" : string.Join(", ", parameter.Supertraits))}");
+        }
+        foreach (TraitResolutionAnnotation resolution in evidence.ResolvedImplementations)
+        {
+            lines.Add($"Resolved: {resolution.Requirement}");
+            lines.Add($"  implementation: {resolution.ImplementationModule} ({resolution.ImplementationSource}:{resolution.ImplementationOffset.ToString(CultureInfo.InvariantCulture)})");
+        }
+        lines.Add(string.Empty);
     }
 
     private static void AppendOwnership(List<string> lines, IReadOnlyList<OwnershipFunctionReport> reports)
@@ -205,6 +234,12 @@ internal static class ExplainReportFormatter
             }
 
             lines.Add(string.Empty);
+        }
+
+        if (report.TraitEvidence.DictionaryParameters.Count > 0
+            || report.TraitEvidence.ResolvedImplementations.Count > 0)
+        {
+            AppendTraits(lines, report.TraitEvidence);
         }
     }
 

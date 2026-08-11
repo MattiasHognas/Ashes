@@ -15,4 +15,12 @@ internal static class TestFixture
         profiles.ValidateOracles(oracles);
         return (rules, combinations, profiles, new ProgramGenerator(rules, combinations));
     }
+
+    internal static GenerationContext ContextFor(ICombinationTemplate template)
+    {
+        GenerationContext context = GenerationContext.Empty;
+        return template.Id.StartsWith("trait.", StringComparison.Ordinal)
+            ? TraitPreludeGenerator.Generate(0, context).Context
+            : context;
+    }
 }

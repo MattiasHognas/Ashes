@@ -3892,7 +3892,7 @@ public sealed class LinuxBackendCoverageTests
         import Ashes.Net.Http.Server
         import Ashes.Task
         import Ashes.Text
-        let recursive repeat s n =
+        let recursive repeat : Str -> Int -> Str = given (s) -> given (n) ->
             if n == 0
             then s
             else repeat(s + s)(n - 1)
@@ -5389,28 +5389,42 @@ public sealed class LinuxBackendCoverageTests
     /// </summary>
     private static async Task<MemoryExecutionResult> RunLinuxExecutableLowFloorPeakRssAsync(string exePath)
     {
-        ProcessStartInfo startInfo = new("/usr/bin/time")
+        const int maxAttempts = 5;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
-        startInfo.ArgumentList.Add("-f");
-        startInfo.ArgumentList.Add("__ASHES_RSS__=%M");
-        startInfo.ArgumentList.Add(exePath);
+            ProcessStartInfo startInfo = new("/usr/bin/time")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            startInfo.ArgumentList.Add("-f");
+            startInfo.ArgumentList.Add("__ASHES_RSS__=%M");
+            startInfo.ArgumentList.Add(exePath);
 
-        using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
-        string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-        string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
-        await process.WaitForExitAsync().ConfigureAwait(false);
-        process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+            using Process process = await TestProcessHelper.StartProcessAsync(startInfo).ConfigureAwait(false);
+            string stdout = await process.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+            string stderr = await process.StandardError.ReadToEndAsync().ConfigureAwait(false);
+            await process.WaitForExitAsync().ConfigureAwait(false);
+            bool transientTextFileBusy = process.ExitCode == 126
+                && stderr.Contains("Text file busy", StringComparison.Ordinal);
+            if (transientTextFileBusy && attempt < maxAttempts - 1)
+            {
+                await Task.Delay(20 * (attempt + 1)).ConfigureAwait(false);
+                continue;
+            }
 
-        const string marker = "__ASHES_RSS__=";
-        string? usage = stderr
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(line => line.StartsWith(marker, StringComparison.Ordinal));
-        usage.ShouldNotBeNull($"time wrapper did not report peak RSS. stderr: {stderr}");
-        return new MemoryExecutionResult(stdout, long.Parse(usage[marker.Length..].Trim(), CultureInfo.InvariantCulture));
+            process.ExitCode.ShouldBe(0, $"stderr: {stderr}");
+
+            const string marker = "__ASHES_RSS__=";
+            string? usage = stderr
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.StartsWith(marker, StringComparison.Ordinal));
+            usage.ShouldNotBeNull($"time wrapper did not report peak RSS. stderr: {stderr}");
+            return new MemoryExecutionResult(stdout, long.Parse(usage[marker.Length..].Trim(), CultureInfo.InvariantCulture));
+        }
+
+        throw new InvalidOperationException("Unreachable process retry state.");
     }
 
     /// <summary>
@@ -7867,18 +7881,18 @@ public sealed class LinuxBackendCoverageTests
         => $$"""
             import Ashes.Collection.Map
 
-            let compareInt left right =
+            let compareInt : Int -> Int -> Int = given (left) -> given (right) ->
                 if left == right then 0
                 else if left < right then -1
                 else 1
 
             let recursive loop i limit map =
                 if i > limit then map
-                else loop(i + 1)(limit)(Ashes.Collection.Map.set(compareInt)(0)(Ashes.Text.fromInt(i))(map))
+                else loop(i + 1)(limit)(Ashes.Collection.Map.setWith(compareInt)(0)(Ashes.Text.fromInt(i))(map))
 
-            let seeded = Ashes.Collection.Map.set(compareInt)(0)("seed")(Ashes.Collection.Map.empty)
+            let seeded = Ashes.Collection.Map.setWith(compareInt)(0)("seed")(Ashes.Collection.Map.empty)
             let final = loop(1)({{iterations}})(seeded)
-            in match Ashes.Collection.Map.get(compareInt)(0)(final) with
+            in match Ashes.Collection.Map.getWith(compareInt)(0)(final) with
                 | None -> Ashes.IO.print(0)
                 | Some(value) -> Ashes.IO.print(value)
             """;

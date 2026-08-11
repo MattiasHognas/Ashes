@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Shouldly;
 
 namespace Ashes.Lsp.Tests;
@@ -55,6 +56,46 @@ public sealed class LspDefinitionTests
                 range.GetProperty("start").GetProperty("character").GetInt32().ShouldBe(4);
                 range.GetProperty("end").GetProperty("line").GetInt32().ShouldBe(0);
                 range.GetProperty("end").GetProperty("character").GetInt32().ShouldBe(7);
+            }
+        }
+    }
+
+    [Test]
+    public async Task Trait_and_method_definitions_should_resolve_through_a_trait_selector_import()
+    {
+        const string source = """
+            import Traits.Render
+
+            implement Render(Int) =
+                | render = given (_) -> "int"
+
+            Render.render(1)
+            """;
+        const string traits = """
+            trait Render(a) =
+                | render : a -> Str
+            """;
+        var document = TempProjectDocument.Create(
+            "DefinitionImportedTrait",
+            ("Main.ash", source),
+            ("Traits.ash", traits));
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.MainUri, source);
+                JsonElement? traitDefinition = await harness.DefinitionAsync(document.MainUri, 2, "implement ".Length);
+                JsonElement? methodDefinition = await harness.DefinitionAsync(document.MainUri, 5, "Render.".Length);
+
+                traitDefinition.ShouldNotBeNull();
+                traitDefinition.Value.GetProperty("uri").GetString().ShouldBe(document.GetUri("Traits.ash"));
+                traitDefinition.Value.GetProperty("range").GetProperty("start").GetProperty("line")
+                    .GetInt32().ShouldBe(0);
+                methodDefinition.ShouldNotBeNull();
+                methodDefinition.Value.GetProperty("uri").GetString().ShouldBe(document.GetUri("Traits.ash"));
+                methodDefinition.Value.GetProperty("range").GetProperty("start").GetProperty("line")
+                    .GetInt32().ShouldBe(1);
             }
         }
     }

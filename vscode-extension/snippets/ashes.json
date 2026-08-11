@@ -1,0 +1,29 @@
+{
+  "Declare trait": {
+    "prefix": "trait",
+    "description": "Declare an Ashes trait",
+    "body": [
+      "trait ${1:Trait}(${2:a}) =",
+      "    | ${3:method} : ${2:a} -> ${4:Result}"
+    ]
+  },
+  "Implement trait": {
+    "prefix": "implement",
+    "description": "Implement an Ashes trait for a type",
+    "body": [
+      "implement ${1:Trait}(${2:Type}) =",
+      "    | ${3:method} =",
+      "        ${4:given (value) -> value}"
+    ]
+  },
+  "Requires traits": {
+    "prefix": "requires",
+    "description": "Add trait requirements to an annotated binding",
+    "body": "requires {${1:Trait}(${2:a})}"
+  },
+  "Derive traits": {
+    "prefix": "deriving",
+    "description": "Derive standard traits for a nominal type",
+    "body": "deriving {${1|Eq,Ord,Show,Hash|}}"
+  }
+}

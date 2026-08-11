@@ -234,4 +234,33 @@ public sealed partial class Lowering
             _ => false,
         };
     }
+
+    /// <summary>
+    /// A non-constructing call arm can participate in a uniformly fresh escaping result when the
+    /// whole-program ownership fixpoint proves that its saturated callee returns a fresh, RC-eligible
+    /// value. This generalizes the self-recursive structural-induction case to exact mutual-recursion
+    /// cycles and other statically known fresh forwarding functions. The caller's representation
+    /// request will normalize an arena-backed callee result when that callee has not selected RC.
+    /// </summary>
+    private bool IsProvenFreshCallFunnelArm(Expr arm)
+    {
+        if (IsSelfRecursiveTailFunnelArm(arm))
+        {
+            return true;
+        }
+        if (arm is not Expr.Call call)
+        {
+            return false;
+        }
+
+        List<Expr> arguments = [];
+        Expr root = CollectCallArgs(call, arguments);
+        FunctionOwnershipSummary? summary = GetOwnershipSummaryForCallRoot(root);
+        return summary is
+        {
+            ResultFresh: true,
+            ResultProvenance.RcEligible: true,
+        }
+            && arguments.Count == summary.Parameters.Count;
+    }
 }

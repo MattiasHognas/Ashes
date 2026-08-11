@@ -82,29 +82,12 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability or TokenKind.Provide)
+        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability
+            or TokenKind.Provide or TokenKind.Trait or TokenKind.Implement)
         {
-            if (_current.Kind == TokenKind.Provide)
+            if (_current.Kind != TokenKind.Let)
             {
-                items.Add(new TopLevelItem.Provide(ParseProvideDecl()));
-                continue;
-            }
-
-            if (_current.Kind == TokenKind.Type)
-            {
-                items.Add(new TopLevelItem.Type(ParseTypeDecl()));
-                continue;
-            }
-
-            if (_current.Kind == TokenKind.External)
-            {
-                items.Add(new TopLevelItem.External(ParseExternalDecl()));
-                continue;
-            }
-
-            if (_current.Kind == TokenKind.Capability)
-            {
-                items.Add(new TopLevelItem.Capability(ParseCapabilityDecl()));
+                items.Add(ParseNonLetTopLevelItem());
                 continue;
             }
 
@@ -133,6 +116,17 @@ public sealed class Parser
         EnsureEndOfInput();
         return new Program(items, body);
     }
+
+    private TopLevelItem ParseNonLetTopLevelItem() => _current.Kind switch
+    {
+        TokenKind.Type => new TopLevelItem.Type(ParseTypeDecl()),
+        TokenKind.External => new TopLevelItem.External(ParseExternalDecl()),
+        TokenKind.Capability => new TopLevelItem.Capability(ParseCapabilityDecl()),
+        TokenKind.Provide => new TopLevelItem.Provide(ParseProvideDecl()),
+        TokenKind.Trait => new TopLevelItem.Trait(ParseTraitDecl()),
+        TokenKind.Implement => new TopLevelItem.Implementation(ParseTraitImplementationDecl()),
+        _ => throw new InvalidOperationException($"Unexpected top-level token {_current.Kind}."),
+    };
 
     /// <summary>
     /// Parses one top-level <c>let</c> construct. A flat declaration or a recursive group is added
@@ -177,7 +171,8 @@ public sealed class Parser
         var declaration = new TopLevelItem.LetDecl(header.Name, header.Value, header.IsRecursive)
         {
             SugarParams = header.SugarParams,
-            TypeAnnotation = header.TypeAnnotation
+            TypeAnnotation = header.TypeAnnotation,
+            Requires = header.Requires
         };
         AstSpans.Set(declaration, header.NameToken.Span);
         items.Add(declaration);
@@ -199,19 +194,25 @@ public sealed class Parser
         var bindings = new List<(string Name, Expr Value)> { (header.Name, header.Value) };
         var bindingNameSpans = new List<TextSpan> { header.NameToken.Span };
         var sugarParams = new List<IReadOnlyList<string>> { header.SugarParams };
+        var typeAnnotations = new List<TypeExpr?> { header.TypeAnnotation };
+        var requirements = new List<IReadOnlyList<TraitConstraintSyntax>> { header.Requires };
         while (_current.Kind == TokenKind.And)
         {
             var andStart = _current.Position;
             Consume(TokenKind.And);
-            var (nameToken, name, value, andSugarParams, _, _) = ParseLetBinding(andStart, topLevel: true);
+            var (nameToken, name, value, andSugarParams, typeAnnotation, requires, _) = ParseLetBinding(andStart, topLevel: true);
             bindings.Add((name, value));
             bindingNameSpans.Add(nameToken.Span);
             sugarParams.Add(andSugarParams);
+            typeAnnotations.Add(typeAnnotation);
+            requirements.Add(requires);
         }
 
         var group = new TopLevelItem.RecursiveGroup(bindings)
         {
-            SugarParams = sugarParams
+            SugarParams = sugarParams,
+            TypeAnnotations = typeAnnotations,
+            Requires = requirements
         };
         AstSpans.Set(group, header.NameToken.Span);
         AstSpans.SetRecursiveGroupBindingNames(group, bindingNameSpans);
@@ -306,8 +307,13 @@ public sealed class Parser
             var recordCtor = RegisterTypeConstructor(
                 new TypeConstructor(name, branches.FieldTypeExprs) { FieldNames = branches.FieldNames },
                 start, LastConsumedEnd);
+            IReadOnlyList<string> deriving = ParseDerivingClause();
             return RegisterTypeDecl(
-                new TypeDecl(name, typeParameters, [recordCtor]) { IsRecord = true },
+                new TypeDecl(name, typeParameters, [recordCtor])
+                {
+                    IsRecord = true,
+                    Deriving = deriving,
+                },
                 start, LastConsumedEnd);
         }
 
@@ -316,7 +322,44 @@ public sealed class Parser
             _diag.Error(CurrentErrorSpan(), $"Type '{name}' must have at least one constructor.");
         }
 
-        return RegisterTypeDecl(new TypeDecl(name, typeParameters, branches.Constructors), start, LastConsumedEnd);
+        return RegisterTypeDecl(
+            new TypeDecl(name, typeParameters, branches.Constructors)
+            {
+                Deriving = ParseDerivingClause(),
+            },
+            start,
+            LastConsumedEnd);
+    }
+
+    private IReadOnlyList<string> ParseDerivingClause()
+    {
+        if (_current.Kind != TokenKind.Deriving)
+        {
+            return [];
+        }
+
+        Consume(TokenKind.Deriving);
+        Consume(TokenKind.LBrace);
+        List<string> traits = [];
+        if (_current.Kind == TokenKind.RBrace)
+        {
+            _diag.Error(
+                CurrentErrorSpan(),
+                "A 'deriving' clause must contain at least one trait.",
+                DiagnosticCodes.ParseError);
+        }
+        else
+        {
+            traits.Add(ParseQualifiedIdentifier());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                traits.Add(ParseQualifiedIdentifier());
+            }
+        }
+
+        Consume(TokenKind.RBrace);
+        return traits;
     }
 
     private List<TypeParameter> ParseTypeParameters()
@@ -536,6 +579,181 @@ public sealed class Parser
         var decl = new ProvideDecl(name, typeArgs, bindings);
         AstSpans.Set(decl, TextSpan.FromBounds(start, LastConsumedEnd));
         return decl;
+    }
+
+    private TraitDecl ParseTraitDecl()
+    {
+        int start = _current.Position;
+        Consume(TokenKind.Trait);
+        string name = Consume(TokenKind.Ident).Text;
+        List<TypeParameter> typeParameters = ParseTypeParameters();
+        if (typeParameters.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Trait '{name}' must declare at least one type parameter.", DiagnosticCodes.ParseError);
+        }
+
+        IReadOnlyList<TraitConstraintSyntax> supertraits = _current.Kind == TokenKind.Requires
+            ? ParseRequiresClause()
+            : [];
+        Consume(TokenKind.Equals);
+        List<TraitMethodDecl> methods = ParseTraitMethods(start);
+        if (methods.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Trait '{name}' must declare at least one method.", DiagnosticCodes.ParseError);
+        }
+
+        TraitDecl declaration = new(name, typeParameters, supertraits, methods);
+        AstSpans.Set(declaration, TextSpan.FromBounds(start, LastConsumedEnd));
+        return declaration;
+    }
+
+    private List<TraitMethodDecl> ParseTraitMethods(int declarationStart)
+    {
+        List<TraitMethodDecl> methods = [];
+        WithTopLevelExpressionBoundary(declarationStart, () =>
+        {
+            while (_current.Kind == TokenKind.Pipe)
+            {
+                int methodStart = Consume(TokenKind.Pipe).Position;
+                string methodName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Colon);
+                TypeExpr signature = ParseTypeExpr();
+                Expr? defaultImplementation = null;
+                if (_current.Kind == TokenKind.Equals)
+                {
+                    Consume(TokenKind.Equals);
+                    defaultImplementation = ParseMatchCaseBody();
+                }
+
+                TraitMethodDecl method = new(methodName, signature, defaultImplementation);
+                AstSpans.Set(method, TextSpan.FromBounds(methodStart, LastConsumedEnd));
+                methods.Add(method);
+            }
+        });
+        return methods;
+    }
+
+    private TraitImplementationDecl ParseTraitImplementationDecl()
+    {
+        int start = _current.Position;
+        Consume(TokenKind.Implement);
+        (string traitName, IReadOnlyList<TypeExpr> typeArgs) = ParseTraitApplication();
+        IReadOnlyList<TraitConstraintSyntax> requirements = _current.Kind == TokenKind.Requires
+            ? ParseRequiresClause()
+            : [];
+        Consume(TokenKind.Equals);
+        List<TraitImplementationMethodBinding> bindings = ParseTraitImplementationBindings(start);
+        if (bindings.Count == 0)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Implementation of '{traitName}' must supply at least one method.", DiagnosticCodes.ParseError);
+        }
+
+        TraitImplementationDecl declaration = new(traitName, typeArgs, requirements, bindings);
+        AstSpans.Set(declaration, TextSpan.FromBounds(start, LastConsumedEnd));
+        return declaration;
+    }
+
+    private List<TraitImplementationMethodBinding> ParseTraitImplementationBindings(int declarationStart)
+    {
+        List<TraitImplementationMethodBinding> bindings = [];
+        WithTopLevelExpressionBoundary(declarationStart, () =>
+        {
+            while (_current.Kind == TokenKind.Pipe)
+            {
+                int bindingStart = Consume(TokenKind.Pipe).Position;
+                string methodName = Consume(TokenKind.Ident).Text;
+                Consume(TokenKind.Equals);
+                Expr implementation = ParseMatchCaseBody();
+                TraitImplementationMethodBinding binding = new(methodName, implementation);
+                AstSpans.Set(binding, TextSpan.FromBounds(bindingStart, LastConsumedEnd));
+                bindings.Add(binding);
+            }
+        });
+        return bindings;
+    }
+
+    private void WithTopLevelExpressionBoundary(int declarationStart, Action action)
+    {
+        bool previousSuppression = _suppressLetWhitespaceArgument;
+        int previousDeclColumn = _topLevelDeclColumn;
+        _suppressLetWhitespaceArgument = true;
+        _topLevelDeclColumn = GetColumn(declarationStart);
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressLetWhitespaceArgument = previousSuppression;
+            _topLevelDeclColumn = previousDeclColumn;
+        }
+    }
+
+    private IReadOnlyList<TraitConstraintSyntax> ParseRequiresClause()
+    {
+        Consume(TokenKind.Requires);
+        Consume(TokenKind.LBrace);
+        List<TraitConstraintSyntax> constraints = [];
+        if (_current.Kind == TokenKind.RBrace)
+        {
+            _diag.Error(CurrentErrorSpan(), "A 'requires' clause must contain at least one trait constraint.", DiagnosticCodes.ParseError);
+        }
+        else
+        {
+            constraints.Add(ParseTraitConstraint());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                constraints.Add(ParseTraitConstraint());
+            }
+        }
+
+        Consume(TokenKind.RBrace);
+        return constraints;
+    }
+
+    private TraitConstraintSyntax ParseTraitConstraint()
+    {
+        int start = _current.Position;
+        (string traitName, IReadOnlyList<TypeExpr> typeArgs) = ParseTraitApplication();
+        TraitConstraintSyntax constraint = new(traitName, typeArgs);
+        AstSpans.Set(constraint, TextSpan.FromBounds(start, LastConsumedEnd));
+        return constraint;
+    }
+
+    private (string TraitName, IReadOnlyList<TypeExpr> TypeArgs) ParseTraitApplication()
+    {
+        string traitName = ParseQualifiedIdentifier();
+        Consume(TokenKind.LParen);
+        List<TypeExpr> typeArgs = [];
+        if (_current.Kind == TokenKind.RParen)
+        {
+            _diag.Error(CurrentErrorSpan(), $"Trait application '{traitName}' must contain at least one type argument.", DiagnosticCodes.ParseError);
+        }
+        else
+        {
+            typeArgs.Add(ParseTypeExpr());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                typeArgs.Add(ParseTypeExpr());
+            }
+        }
+
+        Consume(TokenKind.RParen);
+        return (traitName, typeArgs);
+    }
+
+    private string ParseQualifiedIdentifier()
+    {
+        List<string> parts = [Consume(TokenKind.Ident).Text];
+        while (_current.Kind == TokenKind.Dot)
+        {
+            Consume(TokenKind.Dot);
+            parts.Add(Consume(TokenKind.Ident).Text);
+        }
+
+        return string.Join('.', parts);
     }
 
     /// <summary>
@@ -913,6 +1131,7 @@ public sealed class Parser
         Expr Value,
         List<string> SugarParams,
         TypeExpr? TypeAnnotation,
+        IReadOnlyList<TraitConstraintSyntax> Requires,
         bool ValueLeadsWithLet);
 
     /// <summary>
@@ -930,25 +1149,30 @@ public sealed class Parser
             Consume(TokenKind.Recursive);
         }
 
-        var (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet) = ParseLetBinding(start, topLevel);
-        return new LetHeader(start, nameToken, name, isRecursive, value, sugarParams, typeAnnotation, valueLeadsWithLet);
+        var (nameToken, name, value, sugarParams, typeAnnotation, requires, valueLeadsWithLet) = ParseLetBinding(start, topLevel);
+        return new LetHeader(start, nameToken, name, isRecursive, value, sugarParams, typeAnnotation, requires, valueLeadsWithLet);
     }
 
     /// <summary>
     /// Parses the <c>name [params] [: type] = value</c> portion of a binding (the part after
     /// <c>let [rec]</c> or after <c>and</c>), desugaring ML-style parameters into nested lambdas.
     /// </summary>
-    private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation, bool ValueLeadsWithLet) ParseLetBinding(int start, bool topLevel)
+    private (Token NameToken, string Name, Expr Value, List<string> SugarParams, TypeExpr? TypeAnnotation, IReadOnlyList<TraitConstraintSyntax> Requires, bool ValueLeadsWithLet) ParseLetBinding(int start, bool topLevel)
     {
         var nameToken = Consume(TokenKind.Ident);
         var name = nameToken.Text;
 
         // Optional type annotation: let name : TypeExpr = value
         TypeExpr? typeAnnotation = null;
+        IReadOnlyList<TraitConstraintSyntax> requires = [];
         if (_current.Kind == TokenKind.Colon)
         {
             Consume(TokenKind.Colon);
             typeAnnotation = ParseTypeExpr();
+            if (_current.Kind == TokenKind.Requires)
+            {
+                requires = ParseRequiresClause();
+            }
         }
 
         // ML-style function sugar is only collected when no annotation is present, since annotated
@@ -991,7 +1215,7 @@ public sealed class Parser
             value = lambda;
         }
 
-        return (nameToken, name, value, sugarParams, typeAnnotation, valueLeadsWithLet);
+        return (nameToken, name, value, sugarParams, typeAnnotation, requires, valueLeadsWithLet);
     }
 
     /// <summary>
@@ -1036,12 +1260,22 @@ public sealed class Parser
         var body = ParseExpressionCore();
         if (header.IsRecursive)
         {
-            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body)
+            {
+                SugarParams = header.SugarParams,
+                TypeAnnotation = header.TypeAnnotation,
+                Requires = header.Requires
+            }, header.Start, LastConsumedEnd);
             AstSpans.SetLetRecursiveName(letRecursive, header.NameToken.Span);
             return letRecursive;
         }
 
-        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body)
+        {
+            SugarParams = header.SugarParams,
+            TypeAnnotation = header.TypeAnnotation,
+            Requires = header.Requires
+        }, header.Start, LastConsumedEnd);
         AstSpans.SetLetName(letExpr, header.NameToken.Span);
         return letExpr;
     }
@@ -1315,7 +1549,8 @@ public sealed class Parser
     {
         var left = ParseBitwiseXor();
 
-        while (_current.Kind == TokenKind.Pipe && _matchCasePipeSuppressionDepth == 0)
+        while (_current.Kind == TokenKind.Pipe
+            && (_matchCasePipeSuppressionDepth == 0 || !IsSuppressedPipeDelimiter()))
         {
             var start = AstSpans.GetOrDefault(left).Start;
             Consume(TokenKind.Pipe);
@@ -1324,6 +1559,87 @@ public sealed class Parser
         }
 
         return left;
+    }
+
+    // A bare pipe is both the bitwise-or operator and the separator for match/handler arms and
+    // named implementation bindings. Layout makes formatter output unambiguous, but the language
+    // also accepts compact declarations such as `| equal = left | equal = right`. While parsing a
+    // delimited body, retain an inline pipe as an operator unless the following tokens form another
+    // binding/arm head. Looking ahead through the head is necessary for constructor patterns and
+    // handler arms, whose arrow can follow parenthesised arguments.
+    private bool IsSuppressedPipeDelimiter()
+    {
+        if (StartsSourceLine(_current.Position))
+        {
+            return true;
+        }
+
+        int lexerPosition = _lexer.SavePosition();
+        try
+        {
+            Token token = _lexer.Next();
+            if (!CanStartDelimitedPipeHead(token.Kind))
+            {
+                return false;
+            }
+
+            Token next = _lexer.Next();
+            if (token.Kind == TokenKind.Ident && next.Kind == TokenKind.Equals)
+            {
+                return true;
+            }
+
+            int parenthesisDepth = token.Kind == TokenKind.LParen ? 1 : 0;
+            int bracketDepth = token.Kind == TokenKind.LBracket ? 1 : 0;
+            for (int inspected = 0; inspected < 128; inspected++)
+            {
+                switch (next.Kind)
+                {
+                    case TokenKind.LParen:
+                        parenthesisDepth++;
+                        break;
+                    case TokenKind.RParen:
+                        parenthesisDepth--;
+                        break;
+                    case TokenKind.LBracket:
+                        bracketDepth++;
+                        break;
+                    case TokenKind.RBracket:
+                        bracketDepth--;
+                        break;
+                    case TokenKind.Arrow when parenthesisDepth == 0 && bracketDepth == 0:
+                        return true;
+                    case TokenKind.Pipe when parenthesisDepth == 0 && bracketDepth == 0:
+                    case TokenKind.EOF:
+                        return false;
+                }
+
+                if (parenthesisDepth < 0 || bracketDepth < 0)
+                {
+                    return false;
+                }
+
+                next = _lexer.Next();
+            }
+
+            return false;
+        }
+        finally
+        {
+            _lexer.RestorePosition(lexerPosition);
+        }
+    }
+
+    private static bool CanStartDelimitedPipeHead(TokenKind kind)
+    {
+        return kind is TokenKind.Ident
+            or TokenKind.LBracket
+            or TokenKind.LParen
+            or TokenKind.Int
+            or TokenKind.String
+            or TokenKind.True
+            or TokenKind.False
+            or TokenKind.Minus;
     }
 
     private Expr ParseBitwiseXor()
@@ -1511,7 +1827,7 @@ public sealed class Parser
 
         while (true)
         {
-            if (_current.Kind == TokenKind.LParen)
+            if (_current.Kind == TokenKind.LParen && !StartsNextTopLevelItem())
             {
                 var start = AstSpans.GetOrDefault(expr).Start;
                 Consume(TokenKind.LParen);
@@ -1891,12 +2207,22 @@ public sealed class Parser
         var body = ParseParenthesizedBody();
         if (header.IsRecursive)
         {
-            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+            var letRecursive = RegisterExpr(new Expr.LetRecursive(header.Name, header.Value, body)
+            {
+                SugarParams = header.SugarParams,
+                TypeAnnotation = header.TypeAnnotation,
+                Requires = header.Requires
+            }, header.Start, LastConsumedEnd);
             AstSpans.SetLetRecursiveName(letRecursive, header.NameToken.Span);
             return letRecursive;
         }
 
-        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body) { SugarParams = header.SugarParams, TypeAnnotation = header.TypeAnnotation }, header.Start, LastConsumedEnd);
+        var letExpr = RegisterExpr(new Expr.Let(header.Name, header.Value, body)
+        {
+            SugarParams = header.SugarParams,
+            TypeAnnotation = header.TypeAnnotation,
+            Requires = header.Requires
+        }, header.Start, LastConsumedEnd);
         AstSpans.SetLetName(letExpr, header.NameToken.Span);
         return letExpr;
     }

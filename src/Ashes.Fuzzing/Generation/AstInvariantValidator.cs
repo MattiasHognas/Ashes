@@ -8,6 +8,13 @@ internal sealed class AstInvariantValidator
     {
         List<string> errors = [];
         HashSet<string> topLevel = new(StringComparer.Ordinal) { "Ok", "Error", "Unit", "resume", "async" };
+        foreach (TopLevelItem.Trait trait in program.Items.OfType<TopLevelItem.Trait>())
+        {
+            foreach (TraitMethodDecl method in trait.Decl.Methods)
+            {
+                topLevel.Add($"{trait.Decl.Name}.{method.Name}");
+            }
+        }
         foreach (TopLevelItem item in program.Items)
         {
             if (item is TopLevelItem.Type type)
@@ -40,6 +47,23 @@ internal sealed class AstInvariantValidator
                 foreach (ProvideBinding provideBinding in provide.Decl.Bindings)
                 {
                     Validate(provideBinding.Implementation, topLevel, errors);
+                }
+            }
+            if (item is TopLevelItem.Trait trait)
+            {
+                foreach (TraitMethodDecl method in trait.Decl.Methods)
+                {
+                    if (method.DefaultImplementation is not null)
+                    {
+                        Validate(method.DefaultImplementation, topLevel, errors);
+                    }
+                }
+            }
+            if (item is TopLevelItem.Implementation instance)
+            {
+                foreach (TraitImplementationMethodBinding methodBinding in instance.Decl.Bindings)
+                {
+                    Validate(methodBinding.Implementation, topLevel, errors);
                 }
             }
         }

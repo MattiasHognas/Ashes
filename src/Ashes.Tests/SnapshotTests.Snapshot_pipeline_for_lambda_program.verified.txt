@@ -343,9 +343,7 @@
           },
           {
             Target: 2,
-            Right: 1,
-            AffineResvStartSlot: -1,
-            AffineResvEndSlot: -1
+            Right: 1
           },
           {
             Source: 2
@@ -358,9 +356,7 @@
           1: y
         },
         LocalTypes: {
-          1: {
-            Id: 5
-          }
+          1: {}
         },
         Origin: {
           GeneratedLabel: lambda_1,
@@ -371,6 +367,43 @@
           },
           ParentGeneratedLabel: lambda_0,
           StableDiscriminator: lambda:23:18:y
+        },
+        LifetimesPlaced: true
+      },
+      {
+        Label: lambda_1$env_normalize,
+        Instructions: [
+          {},
+          {
+            Target: 1,
+            Slot: 1
+          },
+          {
+            Target: 2
+          },
+          {
+            BasePtr: 1,
+            Source: 2
+          },
+          {
+            Target: 3
+          },
+          {
+            Source: 3
+          }
+        ],
+        LocalCount: 2,
+        TempCount: 4,
+        HasEnvAndArgParams: true,
+        Origin: {
+          GeneratedLabel: lambda_1$env_normalize,
+          Kind: ClosureEnvironmentNormalizer,
+          Source: {
+            SourceName: add,
+            DeclarationOffset: 4
+          },
+          ParentGeneratedLabel: lambda_1,
+          StableDiscriminator: 0:Int
         },
         LifetimesPlaced: true
       },
@@ -407,9 +440,7 @@
           1: x
         },
         LocalTypes: {
-          1: {
-            Id: 5
-          }
+          1: {}
         },
         Origin: {
           GeneratedLabel: lambda_0,
@@ -427,7 +458,8 @@
     UsesPrintBool: false,
     UsesConcatStr: false,
     UsesClosures: true,
-    UsesAsync: false
+    UsesAsync: false,
+    TraitEvidence: {}
   },
-  ElfSha256: D8A15F90DF6C3EC73AE3675CA80D5745A58B447844C4AF06036859E12530F34D
+  ElfSha256: 8BEDDD62948F928F9F5EB02AA2EEE83404DE2865B7D0F1813C833A557DA1212F
 }

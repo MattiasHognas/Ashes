@@ -84,3 +84,7 @@ let recursive sortBy before xs =
         | _ :: _ ->
             match splitAlt(xs) with
                 | (left, right) -> merge(before)(sortBy(before)(left))(sortBy(before)(right))
+
+let sort values =
+    sortBy(given (left) ->
+        given (right) -> left <= right)(values)

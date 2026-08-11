@@ -23,7 +23,9 @@ internal sealed record FuzzProfile(
     Generation.GenerationFlags ContextFlags = Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.SuspensionAllowed,
     IReadOnlySet<Generation.OwnershipInterest>? OwnershipInterests = null,
     FuzzProfileDefaults? Defaults = null,
-    IReadOnlyList<Generation.AshesType.Resource>? ResourceTypes = null)
+    IReadOnlyList<Generation.AshesType.Resource>? ResourceTypes = null,
+    bool GenerateTraits = false,
+    bool GenerateInvalidSemantics = false)
 {
     internal FuzzProfileDefaults EffectiveDefaults => Defaults ?? FuzzProfileDefaults.Standard;
     internal IReadOnlyList<Generation.AshesType.Resource> EffectiveResourceTypes => ResourceTypes ?? [];
@@ -51,7 +53,11 @@ internal sealed class FuzzProfileRegistry
     {
         string[] allRules = rules.Rules.Select(rule => rule.Id).ToArray();
         string[] allCombinations = combinations.Templates.Select(template => template.Id).ToArray();
-        string[] defaultCombinations = allCombinations.Where(id => !id.StartsWith("resource.", StringComparison.Ordinal)).ToArray();
+        string[] defaultCombinations = allCombinations.Where(id =>
+            !id.StartsWith("resource.", StringComparison.Ordinal)
+            && !id.StartsWith("trait.", StringComparison.Ordinal)).ToArray();
+        string[] traitCombinations = allCombinations.Where(id =>
+            !id.StartsWith("resource.", StringComparison.Ordinal)).ToArray();
         Generation.AshesType[] scalarTypes = [Generation.AshesType.Int, Generation.AshesType.Bool, Generation.AshesType.Str, Generation.AshesType.Float, Generation.AshesType.BigInt, new Generation.AshesType.UInt(8), new Generation.AshesType.UInt(16), new Generation.AshesType.UInt(32), new Generation.AshesType.UInt(64)];
         Generation.AshesType[] aggregateTypes =
         [
@@ -95,9 +101,49 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true, OwnershipInterests: ownershipInterests, Defaults: Defaults(5, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true, Defaults: Defaults(10, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true, Defaults: Defaults(250, 80)));
+        registry.Register(new FuzzProfile(
+            "invalid-semantics",
+            allRules.ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            ["invalid-semantic"],
+            scalarTypes,
+            0,
+            Defaults: Defaults(60, 80),
+            GenerateInvalidSemantics: true));
+        registry.Register(new FuzzProfile(
+            "traits",
+            allRules.ToHashSet(StringComparer.Ordinal),
+            traitCombinations.ToHashSet(StringComparer.Ordinal),
+            ["parse", "format", "semantic", "ir"],
+            allTypes,
+            3,
+            OwnershipInterests: ownershipInterests,
+            Defaults: Defaults(100, 140),
+            GenerateTraits: true));
+        registry.Register(new FuzzProfile(
+            "traits-differential",
+            allRules.ToHashSet(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal)
+            {
+                "trait.constrained-closure",
+                "trait.derived-operator-sharing",
+            },
+            ["parse", "format", "semantic", "differential-trait-evidence"],
+            scalarTypes,
+            3,
+            Native: true,
+            Differential: true,
+            OwnershipInterests: ownershipInterests,
+            Defaults: Defaults(5, 120, compilerTimeout: 30),
+            GenerateTraits: true));
         registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await", "async.closure-match-across-await", "async.spawn-shared-value", "async.task-result-reuse" }, ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match", "capability.result-operation", "capability.recursive-list" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80), ResourceTypes: [Generation.AshesType.FileHandle]));
+        // GenerateTraits is deliberately off here: smoke backs ci_quick (`just ci-quick`), the fast
+        // pre-commit inner loop, budgeted for a fixed-seed pass on every commit. Trait declarations and
+        // coherent implementations add real generation and validation cost (see the "traits" profile's
+        // larger Defaults(100, 140) below); that cost belongs in the traits/traits-differential/
+        // invalid-semantics profiles wired into ci/jobs.sh's fuzz() job instead, not on every commit.
         registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0, OwnershipInterests: ownershipInterests, Defaults: Defaults(40, 40)));
         registry.Register(new FuzzProfile(
             "all",
@@ -111,7 +157,8 @@ internal sealed class FuzzProfileRegistry
                 Generation.GenerationFlags.ResourcesAllowed,
             OwnershipInterests: ownershipInterests,
             Defaults: Defaults(100, 80),
-            ResourceTypes: [Generation.AshesType.FileHandle]));
+            ResourceTypes: [Generation.AshesType.FileHandle],
+            GenerateTraits: true));
         registry.Validate(rules, combinations);
         return registry;
     }
@@ -176,6 +223,10 @@ internal sealed class FuzzProfileRegistry
                 .WithOwnershipInterests(profile.OwnershipInterests is null
                     ? Enum.GetValues<Generation.OwnershipInterest>()
                     : profile.OwnershipInterests);
+            if (profile.GenerateTraits)
+            {
+                context = Generation.TraitPreludeGenerator.Generate(0, context).Context;
+            }
             if (profile.EffectiveResourceTypes.Any(type => string.IsNullOrWhiteSpace(type.Name)) ||
                 profile.EffectiveResourceTypes.Distinct().Count() != profile.EffectiveResourceTypes.Count)
             {

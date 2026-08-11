@@ -117,21 +117,23 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
   );
 
-  // Lazy-start LSP when an Ashes document is opened (if auto-start enabled)
+  // Read the setting for every newly opened document so configuration changes
+  // made after activation take effect without reloading the extension.
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument((doc) => {
+      const autoStart = vscode.workspace
+        .getConfiguration("ashes")
+        .get<boolean>("autoStartLanguageServer", true);
+      if (autoStart && doc.languageId === "ashes") {
+        void ensureLanguageClientStarted(context);
+      }
+    }),
+  );
+
   const autoStart = vscode.workspace
     .getConfiguration("ashes")
     .get<boolean>("autoStartLanguageServer", true);
-
   if (autoStart) {
-    context.subscriptions.push(
-      vscode.workspace.onDidOpenTextDocument((doc) => {
-        if (doc.languageId === "ashes") {
-          void ensureLanguageClientStarted(context);
-        }
-      }),
-    );
-
-    // Check already-open documents
     for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId === "ashes") {
         void ensureLanguageClientStarted(context);

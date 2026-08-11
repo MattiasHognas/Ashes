@@ -12,6 +12,9 @@ public enum ExplainKind
     /// <summary>In-place-reuse specialization decisions.</summary>
     Reuse,
 
+    /// <summary>Hidden trait dictionary ABI parameters and concrete implementation selection.</summary>
+    Traits,
+
     /// <summary>Ownership, reference counting, reuse, and representation, correlated.</summary>
     Memory,
 }
@@ -67,6 +70,7 @@ public sealed record ExplainRequest(
             case "ownership": kind = ExplainKind.Ownership; return true;
             case "rc": kind = ExplainKind.Rc; return true;
             case "reuse": kind = ExplainKind.Reuse; return true;
+            case "traits": kind = ExplainKind.Traits; return true;
             case "memory": kind = ExplainKind.Memory; return true;
             default:
                 error = $"Unknown explain type '{kindText}'.";
@@ -75,7 +79,7 @@ public sealed record ExplainRequest(
     }
 
     /// <summary>The valid values, in report order, for help text and error messages.</summary>
-    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "memory"];
+    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "traits", "memory"];
 }
 
 /// <summary>One function's ownership contract, as reported.</summary>
@@ -134,7 +138,8 @@ internal sealed record CompilationExplainReport(
     IReadOnlyList<OwnershipFunctionReport> Ownership,
     IReadOnlyList<RcFunctionReport> Rc,
     IReadOnlyList<ReuseFunctionReport> Reuse,
-    IReadOnlyList<RepresentationFunctionReport> Representation)
+    IReadOnlyList<RepresentationFunctionReport> Representation,
+    TraitEvidenceAnnotations TraitEvidence)
 {
-    internal static CompilationExplainReport Empty { get; } = new([], [], [], []);
+    internal static CompilationExplainReport Empty { get; } = new([], [], [], [], TraitEvidenceAnnotations.Empty);
 }

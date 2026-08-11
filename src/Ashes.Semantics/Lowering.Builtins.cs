@@ -1926,6 +1926,8 @@ public sealed partial class Lowering
         // Capture the free variables that resolve to a value binding (locals / captured env). Globals,
         // constructors and builtins resolve inside the coroutine without capture (registry / by-label).
         var freeNames = FreeVars(valueArg, new HashSet<string>(StringComparer.Ordinal));
+        freeNames.UnionWith(CollectActiveTraitMethodCaptures(valueArg));
+        freeNames.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(valueArg));
         var captureNames = new List<string>();
         var captureTemps = new List<int>();
         var captureTypes = new List<TypeRef>();

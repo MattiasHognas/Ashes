@@ -16,7 +16,7 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-o <output>]]");
     AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|memory>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|traits|memory>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--project <project.json>]] [[--path <dir>]] [[--dev]]");
@@ -39,7 +39,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Defaults to -O0; an explicit -O1/-O2/-O3 is honored.");
-    table.AddRow("[yellow]--explain[/]", "Report compiler decisions to stderr: ownership, rc, reuse, or memory. Repeatable; append [grey]:name[/] to filter by function (compile/run/test only).");
+    table.AddRow("[yellow]--explain[/]", "Report compiler decisions to stderr: ownership, rc, reuse, traits, or memory. Repeatable; append [grey]:name[/] to filter by function (compile/run/test only).");
     table.AddRow("[yellow]--emit-ir[/]", "Dump semantic IR to stderr: lowered or final. Repeatable; append [grey]:name[/] to filter by function (compile/run only).");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");
@@ -167,7 +167,8 @@ static byte[] CompileToImage(
     CombinedCompilationLayout? sourceLayout = null,
     ExplainRequest? explain = null,
     IrDumpRequest? emitIr = null,
-    bool disableReuse = false)
+    bool disableReuse = false,
+    bool disableTraitOperatorSpecialization = false)
 {
     var diag = new Diagnostics();
     var program = new Parser(source, diag).ParseProgram();
@@ -178,7 +179,9 @@ static byte[] CompileToImage(
         importedStdModules,
         moduleAliases,
         sourceLayout?.ConstructorModules,
-        new LoweringConfiguration(EnableReuse: !disableReuse));
+        new LoweringConfiguration(
+            EnableReuse: !disableReuse,
+            EnableTraitOperatorSpecialization: !disableTraitOperatorSpecialization));
     if (sourceLayout is { } layout)
     {
         lowering.SetSourceContext(layout);
@@ -242,6 +245,13 @@ static (CombinedCompilationLayout Layout, IReadOnlySet<string>? ImportedStdModul
     var importedStdModules = parsed.ImportNames
         .Where(ProjectSupport.IsStdModule)
         .ToHashSet(StringComparer.Ordinal);
+    importedStdModules.Add("Ashes.Trait");
+    if (layout.ModuleProvenanceByPath is not null)
+    {
+        importedStdModules.UnionWith(layout.ModuleProvenanceByPath.Values
+            .Select(provenance => provenance.ModuleName)
+            .Where(ProjectSupport.IsStdModule));
+    }
 
     return (layout, importedStdModules.Count == 0 ? null : importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases);
 }
@@ -252,11 +262,12 @@ static byte[] CompileProjectToImage(
     BackendCompileOptions? backendOptions = null,
     ExplainRequest? explain = null,
     IrDumpRequest? emitIr = null,
-    bool disableReuse = false)
+    bool disableReuse = false,
+    bool disableTraitOperatorSpecialization = false)
 {
     var plan = ProjectSupport.BuildCompilationPlan(project);
     var layout = ProjectSupport.BuildCompilationLayout(plan);
-    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout, explain, emitIr, disableReuse);
+    return CompileToImage(layout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, layout, explain, emitIr, disableReuse, disableTraitOperatorSpecialization);
 }
 
 static bool TryParseOptimizationFlag(string arg, out BackendOptimizationLevel level)
@@ -648,7 +659,16 @@ async Task<int> RunCompileAsync(string[] a)
     var (project, target, backendOptions) = await ResolveCompileContextAsync(arguments).ConfigureAwait(false);
 
     var sw = Stopwatch.StartNew();
-    var image = await CompileCliInputAsync(project, arguments.InputFile, arguments.Expr, target, backendOptions, arguments.Explain, arguments.EmitIr, arguments.DisableReuse).ConfigureAwait(false);
+    var image = await CompileCliInputAsync(
+        project,
+        arguments.InputFile,
+        arguments.Expr,
+        target,
+        backendOptions,
+        arguments.Explain,
+        arguments.EmitIr,
+        arguments.DisableReuse,
+        arguments.DisableTraitOperatorSpecialization).ConfigureAwait(false);
     if (image is null)
     {
         return 1;
@@ -684,7 +704,7 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
     bool explicitOpt = false;
-    bool debugMode = false, disableReuse = false;
+    bool debugMode = false, disableReuse = false, disableTraitOperatorSpecialization = false;
     string? outPath = null;
     string? expr = null;
     string? inputFile = null;
@@ -703,7 +723,11 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
         if ((string.Equals(arg, "-o", StringComparison.Ordinal) || string.Equals(arg, "--out", StringComparison.Ordinal)) && i + 1 < a.Length) { outPath = a[++i]; continue; }
         if (string.Equals(arg, "--expr", StringComparison.Ordinal) && i + 1 < a.Length) { expr = a[++i]; continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
-        if (TryParseDebugOptions(arg, ref debugMode, ref disableReuse)) { continue; }
+        if (TryParseDebugOptions(
+                arg,
+                ref debugMode,
+                ref disableReuse,
+                ref disableTraitOperatorSpecialization)) { continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; explicitOpt = true; continue; }
 
         if (!arg.StartsWith("-", StringComparison.Ordinal) && inputFile is null) { inputFile = arg; continue; }
@@ -712,7 +736,7 @@ static CompileCommandArguments ParseCompileArguments(string[] a)
     }
 
     optimizationLevel = ResolveDebugOptimizationLevel(optimizationLevel, debugMode, explicitOpt);
-    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, reports.ToExplainRequest(), reports.ToIrDumpRequest(), disableReuse);
+    return new CompileCommandArguments(target, optimizationLevel, debugMode, outPath, expr, inputFile, projectPath, targetCpu, parallelStackBytes, parallelWorkers, reports.ToExplainRequest(), reports.ToIrDumpRequest(), disableReuse, disableTraitOperatorSpecialization);
 }
 
 // Either compiler-report option, so a parser pays one line for both.
@@ -749,7 +773,11 @@ static bool TryParseEmitIrOption(string[] a, ref int i, CompilerReportOptions re
     return true;
 }
 
-static bool TryParseDebugOptions(string argument, ref bool debugMode, ref bool disableReuse)
+static bool TryParseDebugOptions(
+    string argument,
+    ref bool debugMode,
+    ref bool disableReuse,
+    ref bool disableTraitOperatorSpecialization)
 {
     if (argument is "--debug" or "-g")
     {
@@ -759,6 +787,11 @@ static bool TryParseDebugOptions(string argument, ref bool debugMode, ref bool d
     if (string.Equals(argument, "--debug-disable-reuse", StringComparison.Ordinal))
     {
         disableReuse = true;
+        return true;
+    }
+    if (string.Equals(argument, "--debug-disable-trait-specialization", StringComparison.Ordinal))
+    {
+        disableTraitOperatorSpecialization = true;
         return true;
     }
     return false;
@@ -835,7 +868,8 @@ static async Task<byte[]?> CompileCliInputAsync(
     BackendCompileOptions backendOptions,
     ExplainRequest? explain = null,
     IrDumpRequest? emitIr = null,
-    bool disableReuse = false)
+    bool disableReuse = false,
+    bool disableTraitOperatorSpecialization = false)
 {
     if (project is null)
     {
@@ -846,7 +880,7 @@ static async Task<byte[]?> CompileCliInputAsync(
         {
             var prepared = PrepareStandaloneCompilationSource(source, displayPath);
             diagnosticLayout = prepared.Layout;
-            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout, explain, emitIr, disableReuse);
+            return CompileToImage(prepared.Layout.Source, target, backendOptions, prepared.ImportedStdModules, prepared.ModuleAliases, prepared.Layout, explain, emitIr, disableReuse, disableTraitOperatorSpecialization);
         }
         catch (CompileDiagnosticException ex)
         {
@@ -862,7 +896,7 @@ static async Task<byte[]?> CompileCliInputAsync(
 
     try
     {
-        return CompileProjectToImage(project, target, backendOptions, explain, emitIr, disableReuse);
+        return CompileProjectToImage(project, target, backendOptions, explain, emitIr, disableReuse, disableTraitOperatorSpecialization);
     }
     catch (CompileDiagnosticException ex)
     {
@@ -2130,7 +2164,8 @@ sealed record CompileCommandArguments(
     long? ParallelWorkers,
     ExplainRequest Explain,
     IrDumpRequest EmitIr,
-    bool DisableReuse = false);
+    bool DisableReuse = false,
+    bool DisableTraitOperatorSpecialization = false);
 
 
 

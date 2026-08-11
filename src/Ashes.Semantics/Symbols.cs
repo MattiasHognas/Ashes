@@ -6,6 +6,128 @@ namespace Ashes.Semantics;
 /// <param name="Name">The parameter's name as written (e.g. <c>T</c>).</param>
 public sealed record TypeParameterSymbol(string Name);
 
+/// <summary>A source location and ownership identity retained for coherent instance diagnostics.</summary>
+public sealed record TraitDeclarationProvenance(
+    string PackageId,
+    string ModuleName,
+    string SourcePath,
+    TextSpan Span);
+
+/// <summary>One statically resolved trait requirement.</summary>
+public sealed record TraitConstraint(TraitSymbol Trait, IReadOnlyList<TypeRef> TypeArgs)
+{
+    /// <summary>Returns constraints in deterministic dictionary-layout and diagnostic order.</summary>
+    public static IReadOnlyList<TraitConstraint> Canonicalize(IEnumerable<TraitConstraint> constraints)
+    {
+        return constraints
+            .OrderBy(StableKey, StringComparer.Ordinal)
+            .DistinctBy(StableKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    internal static string StableKey(TraitConstraint constraint)
+    {
+        return $"{constraint.Trait.QualifiedName}({string.Join(",", constraint.TypeArgs.Select(TypeStableKey))})";
+    }
+
+    private static string TypeStableKey(TypeRef type) => type switch
+    {
+        TypeRef.TInt => "Int",
+        TypeRef.TUInt unsigned => $"u{unsigned.Bits}",
+        TypeRef.TFloat => "Float",
+        TypeRef.TBigInt => "BigInt",
+        TypeRef.TStr => "Str",
+        TypeRef.TBytes => "Bytes",
+        TypeRef.TBool => "Bool",
+        TypeRef.TNever => "Never",
+        TypeRef.TVar variable => $"?{variable.Id:D10}",
+        TypeRef.TTypeParam parameter => $"'{parameter.Symbol.Name}",
+        TypeRef.TList list => $"List({TypeStableKey(list.Element)})",
+        TypeRef.TTuple tuple => $"Tuple({string.Join(",", tuple.Elements.Select(TypeStableKey))})",
+        TypeRef.TFun function => $"Fun({TypeStableKey(function.Arg)},{TypeStableKey(function.Ret)})",
+        TypeRef.TNamedType named => $"{named.Symbol.Name}({string.Join(",", named.TypeArgs.Select(TypeStableKey))})",
+        TypeRef.TPtr pointer => $"Ptr({TypeStableKey(pointer.Pointee)})",
+        TypeRef.TOpaque opaque => $"Opaque({opaque.Name})",
+        TypeRef.TCapability capability => $"Capability({capability.Symbol.Name},{string.Join(",", capability.Args.Select(TypeStableKey))})",
+        TypeRef.TRow row => $"Row({string.Join(",", row.Capabilities.Select(TypeStableKey))}|{(row.Tail is null ? "" : TypeStableKey(row.Tail))})",
+        _ => type.GetType().Name,
+    };
+}
+
+/// <summary>A method declared by a trait.</summary>
+public sealed record TraitMethodSymbol(
+    string Name,
+    TypeScheme Scheme,
+    Expr? DefaultImplementation,
+    TextSpan Span);
+
+/// <summary>An immutable registered trait declaration.</summary>
+public sealed class TraitSymbol
+{
+    /// <summary>Creates a fully registered immutable trait symbol.</summary>
+    public TraitSymbol(
+        string name,
+        string qualifiedName,
+        IReadOnlyList<TypeParameterSymbol> typeParameters,
+        IReadOnlyDictionary<string, TraitMethodSymbol> methods,
+        IReadOnlyList<TraitConstraint> supertraits,
+        TraitDecl declaringSyntax,
+        TraitDeclarationProvenance provenance)
+    {
+        Name = name;
+        QualifiedName = qualifiedName;
+        TypeParameters = typeParameters.ToArray();
+        Methods = new Dictionary<string, TraitMethodSymbol>(methods, StringComparer.Ordinal);
+        Supertraits = TraitConstraint.Canonicalize(supertraits);
+        DeclaringSyntax = declaringSyntax;
+        Provenance = provenance;
+    }
+
+    /// <summary>The source-level unqualified trait name.</summary>
+    public string Name { get; }
+    /// <summary>The stable module-qualified trait name.</summary>
+    public string QualifiedName { get; }
+    /// <summary>The declared type parameters in source order.</summary>
+    public IReadOnlyList<TypeParameterSymbol> TypeParameters { get; }
+    /// <summary>The methods keyed by source name.</summary>
+    public IReadOnlyDictionary<string, TraitMethodSymbol> Methods { get; }
+    /// <summary>The canonically ordered direct supertrait requirements.</summary>
+    public IReadOnlyList<TraitConstraint> Supertraits { get; }
+    /// <summary>The frontend declaration that produced this symbol.</summary>
+    public TraitDecl DeclaringSyntax { get; }
+    /// <summary>The package, module, file, and span that own this declaration.</summary>
+    public TraitDeclarationProvenance Provenance { get; }
+}
+
+/// <summary>The resolved head of an instance declaration.</summary>
+public sealed record TraitInstanceHead(TraitSymbol Trait, IReadOnlyList<TypeRef> TypeArgs);
+
+/// <summary>An immutable registered instance and its conditional evidence requirements.</summary>
+public sealed record TraitInstanceSymbol(
+    TraitInstanceHead Head,
+    IReadOnlyList<TraitConstraint> Requirements,
+    IReadOnlyDictionary<string, Expr> MethodImplementations,
+    TraitImplementationDecl DeclaringSyntax,
+    TraitDeclarationProvenance Provenance);
+
+/// <summary>
+/// A deterministic proof that one concrete or structurally reducible trait goal is supplied by a
+/// unique coherent instance. Conditional requirements and inherited evidence retain their complete
+/// proof trees for dictionary construction and diagnostics.
+/// </summary>
+public abstract record TraitEvidencePlan(TraitConstraint Goal)
+{
+    /// <summary>Evidence that must be supplied by a constrained caller.</summary>
+    public sealed record Parameter(TraitConstraint Constraint) : TraitEvidencePlan(Constraint);
+
+    /// <summary>Evidence constructed from the unique coherent instance and its dependencies.</summary>
+    public sealed record Instance(
+        TraitConstraint Constraint,
+        TraitInstanceSymbol SelectedInstance,
+        IReadOnlyList<TraitEvidencePlan> Requirements,
+        IReadOnlyList<TraitEvidencePlan> Supertraits) : TraitEvidencePlan(Constraint);
+}
+
 /// <summary>A resolved data constructor of an algebraic data type.</summary>
 /// <param name="Name">The constructor's name (e.g. <c>Some</c>).</param>
 /// <param name="ParentType">The name of the type this constructor belongs to.</param>

@@ -2,55 +2,47 @@
 import Ashes.Collection.Map
 import Ashes.IO
 import Ashes.Text
-let compareInt left right =
-    if left == right
-    then 0
-    else
-        if left <= right
-        then -1
-        else 1
+let map = Ashes.Collection.Map.set(3)("three")(Ashes.Collection.Map.set(1)("one")(Ashes.Collection.Map.set(2)("two updated")(Ashes.Collection.Map.empty)))
 in
-    let map = Ashes.Collection.Map.set(compareInt)(3)("three")(Ashes.Collection.Map.set(compareInt)(1)("one")(Ashes.Collection.Map.set(compareInt)(2)("two updated")(Ashes.Collection.Map.empty)))
+    let fromListMap = Ashes.Collection.Map.fromList((4, "four") :: (2, "two") :: [])
     in
-        let fromListMap = Ashes.Collection.Map.fromList(compareInt)((4, "four") :: (2, "two") :: [])
+        let merged = Ashes.Collection.Map.set(4)("four")(map)
         in
-            let merged = Ashes.Collection.Map.set(compareInt)(4)("four")(map)
+            let summary =
+                Ashes.Collection.Map.foldLeft(given (acc) ->
+                    given (key) ->
+                        given (value) -> acc + Ashes.Text.fromInt(key) + "=" + value + ";")("")(merged)
             in
-                let summary =
-                    Ashes.Collection.Map.foldLeft(given (acc) ->
-                        given (key) ->
-                            given (value) -> acc + Ashes.Text.fromInt(key) + "=" + value + ";")("")(merged)
-                in
-                    match Ashes.Collection.Map.get(compareInt)(2)(merged) with
-                        | None -> Ashes.IO.print("fail")
-                        | Some(two) ->
-                            match Ashes.Collection.Map.get(compareInt)(4)(fromListMap) with
-                                | None -> Ashes.IO.print("fail")
-                                | Some(four) ->
-                                    if Ashes.Collection.Map.contains(compareInt)(1)(merged)
-                                    then
-                                        if Ashes.Collection.Map.contains(compareInt)(5)(merged)
-                                        then Ashes.IO.print("fail")
-                                        else
-                                            if Ashes.Collection.Map.isEmpty(Ashes.Collection.Map.empty)
-                                            then
-                                                if Ashes.Collection.Map.isEmpty(merged)
-                                                then Ashes.IO.print("fail")
-                                                else
-                                                    if Ashes.Collection.Map.size(merged) == 4
+                match Ashes.Collection.Map.get(2)(merged) with
+                    | None -> Ashes.IO.print("fail")
+                    | Some(two) ->
+                        match Ashes.Collection.Map.get(4)(fromListMap) with
+                            | None -> Ashes.IO.print("fail")
+                            | Some(four) ->
+                                if Ashes.Collection.Map.contains(1)(merged)
+                                then
+                                    if Ashes.Collection.Map.contains(5)(merged)
+                                    then Ashes.IO.print("fail")
+                                    else
+                                        if Ashes.Collection.Map.isEmpty(Ashes.Collection.Map.empty)
+                                        then
+                                            if Ashes.Collection.Map.isEmpty(merged)
+                                            then Ashes.IO.print("fail")
+                                            else
+                                                if Ashes.Collection.Map.size(merged) == 4
+                                                then
+                                                    if Ashes.Collection.Map.size(fromListMap) == 2
                                                     then
-                                                        if Ashes.Collection.Map.size(fromListMap) == 2
+                                                        if two == "two updated"
                                                         then
-                                                            if two == "two updated"
+                                                            if four == "four"
                                                             then
-                                                                if four == "four"
-                                                                then
-                                                                    if summary == "1=one;2=two updated;3=three;4=four;"
-                                                                    then Ashes.IO.print("ok")
-                                                                    else Ashes.IO.print("fail")
+                                                                if summary == "1=one;2=two updated;3=three;4=four;"
+                                                                then Ashes.IO.print("ok")
                                                                 else Ashes.IO.print("fail")
                                                             else Ashes.IO.print("fail")
                                                         else Ashes.IO.print("fail")
                                                     else Ashes.IO.print("fail")
-                                            else Ashes.IO.print("fail")
-                                    else Ashes.IO.print("fail")
+                                                else Ashes.IO.print("fail")
+                                        else Ashes.IO.print("fail")
+                                else Ashes.IO.print("fail")

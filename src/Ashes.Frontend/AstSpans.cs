@@ -32,6 +32,11 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<ExternalDecl, SpanBox> ExternalDeclSpans = new();
     private static readonly ConditionalWeakTable<CapabilityDecl, SpanBox> CapabilityDeclSpans = new();
     private static readonly ConditionalWeakTable<ProvideDecl, SpanBox> ProvideDeclSpans = new();
+    private static readonly ConditionalWeakTable<TraitDecl, SpanBox> TraitDeclSpans = new();
+    private static readonly ConditionalWeakTable<TraitMethodDecl, SpanBox> TraitMethodDeclSpans = new();
+    private static readonly ConditionalWeakTable<TraitImplementationDecl, SpanBox> TraitImplementationDeclSpans = new();
+    private static readonly ConditionalWeakTable<TraitImplementationMethodBinding, SpanBox> TraitImplementationMethodBindingSpans = new();
+    private static readonly ConditionalWeakTable<TraitConstraintSyntax, SpanBox> TraitConstraintSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.LetDecl, SpanBox> LetDeclSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanBox> RecursiveGroupSpans = new();
     private static readonly ConditionalWeakTable<TopLevelItem.RecursiveGroup, SpanListBox>
@@ -224,4 +229,44 @@ public static class AstSpans
     {
         return ProvideDeclSpans.TryGetValue(provideDecl, out var spanBox) ? spanBox.Span : default;
     }
+
+    /// <summary>Records the source span of a trait declaration.</summary>
+    public static void Set(TraitDecl declaration, TextSpan span) => SetSpan(TraitDeclSpans, declaration, span);
+
+    /// <summary>Returns the source span of a trait declaration.</summary>
+    public static TextSpan GetOrDefault(TraitDecl declaration) => GetSpan(TraitDeclSpans, declaration);
+
+    /// <summary>Records the source span of a trait method declaration.</summary>
+    public static void Set(TraitMethodDecl method, TextSpan span) => SetSpan(TraitMethodDeclSpans, method, span);
+
+    /// <summary>Returns the source span of a trait method declaration.</summary>
+    public static TextSpan GetOrDefault(TraitMethodDecl method) => GetSpan(TraitMethodDeclSpans, method);
+
+    /// <summary>Records the source span of a trait implementation declaration.</summary>
+    public static void Set(TraitImplementationDecl declaration, TextSpan span) => SetSpan(TraitImplementationDeclSpans, declaration, span);
+
+    /// <summary>Returns the source span of a trait implementation declaration.</summary>
+    public static TextSpan GetOrDefault(TraitImplementationDecl declaration) => GetSpan(TraitImplementationDeclSpans, declaration);
+
+    /// <summary>Records the source span of a trait implementation method binding.</summary>
+    public static void Set(TraitImplementationMethodBinding binding, TextSpan span) => SetSpan(TraitImplementationMethodBindingSpans, binding, span);
+
+    /// <summary>Returns the source span of a trait implementation method binding.</summary>
+    public static TextSpan GetOrDefault(TraitImplementationMethodBinding binding) => GetSpan(TraitImplementationMethodBindingSpans, binding);
+
+    /// <summary>Records the source span of a written trait constraint.</summary>
+    public static void Set(TraitConstraintSyntax constraint, TextSpan span) => SetSpan(TraitConstraintSpans, constraint, span);
+
+    /// <summary>Returns the source span of a written trait constraint.</summary>
+    public static TextSpan GetOrDefault(TraitConstraintSyntax constraint) => GetSpan(TraitConstraintSpans, constraint);
+
+    private static void SetSpan<T>(ConditionalWeakTable<T, SpanBox> table, T key, TextSpan span)
+        where T : class
+    {
+        table.Remove(key);
+        table.Add(key, new SpanBox(span));
+    }
+
+    private static TextSpan GetSpan<T>(ConditionalWeakTable<T, SpanBox> table, T key)
+        where T : class => table.TryGetValue(key, out SpanBox? spanBox) ? spanBox.Span : default;
 }

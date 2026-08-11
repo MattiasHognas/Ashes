@@ -18,6 +18,9 @@ Current codes:
 | `ASH006` | Use-after-drop (using a resource after it has been closed)    |
 | `ASH007` | Double-drop (closing a resource that has already been closed) |
 | `ASH008` | Use-after-move (using or closing a resource after its ownership was moved) |
+| `ASH010` | Invalid trait declaration, constraint, or deriving clause                |
+| `ASH011` | Invalid trait implementation or generated derived implementation          |
+| `ASH012` | Trait coherence violation, including overlap, orphans, and ambiguity      |
 | `ASH013` | Duplicate top-level binding name                              |
 | `ASH014` | Reference to a binding not yet declared (forward reference)   |
 | `ASH015` | `and` used without a preceding `let recursive`                      |
@@ -30,6 +33,7 @@ Current codes:
 | `ASH022` | Inline module path collides with a file module of the same path |
 | `ASH023` | Inline module named `Ashes` or shadowing a reserved `Ashes.*` path |
 | `ASH024` | Duplicate inline module name in the same scope                |
+| `ASH025` | Non-terminating trait, default-method, or implementation-requirement cycle |
 | `ASH026` | Duplicate or incomplete static provider (`provide`)            |
 | `ASH027` | Capability satisfied by both a provider and an enclosing handler |
 | `ASH028` | A dependency exports a module outside its declared namespace   |
@@ -40,10 +44,35 @@ Current codes:
 | `ASH033` | The selected project's lock file is stale (resolution would change) under `--frozen` |
 | `ASH034` | Content-hash mismatch against the lock file                    |
 | `ASH035` | Dependency graph contains a cycle                             |
+| `ASH036` | Missing or otherwise unresolvable concrete trait implementation |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
-Codes `ASH010`–`ASH012` and `ASH025` are unused and free for reuse.
+
+## Trait diagnostics
+
+These codes cover trait declarations, `implement` declarations, `requires` clauses, deriving,
+coherence, and evidence resolution. Requirement failures include a deterministic trace from the
+original goal to the failing dependency. Coherence failures identify both conflicting source paths
+and source offsets so editor and command-line users can find both declarations.
+
+- `ASH010` — **Invalid trait declaration.** A trait has invalid parameters, methods, supertraits, a
+  malformed or unjustified `requires` clause, or an invalid `deriving` request.
+- `ASH011` — **Invalid trait implementation.** An implementation names an unknown trait or method,
+  has the wrong arity, omits a required method, has invalid requirements, or deriving cannot produce
+  a legal ordinary implementation for a field.
+- `ASH012` — **Trait coherence violation.** Implementations overlap, violate the package orphan rule,
+  or more than one implementation matches a concrete requirement. Overlap and ambiguity messages
+  identify every conflicting declaration location.
+- `ASH025` — **Trait resolution cycle.** Supertrait/default-method cycles and non-decreasing
+  implementation requirements are rejected before they could make evidence construction diverge.
+- `ASH036` — **Trait resolution failure.** A concrete requirement has no implementation, exceeds the
+  bounded resolution depth, or reaches a cyclic/non-decreasing dependency. The message includes the
+  complete requirement trace. This is the general diagnostic for every operator now that operators
+  resolve through traits (see [language.md section 21](language.md#21-traits-and-implementations)): for
+  example `5.5 % 2.0` reports `No implementation supplies 'Ashes.Trait.Remainder(Float)'` rather than a
+  `%`-specific message naming the supported primitive types. Check the `Ashes.Trait` section of
+  [standard-library.md](standard-library.md) for which primitive types each operator trait implements.
 
 ## Top-level declaration and import diagnostics
 

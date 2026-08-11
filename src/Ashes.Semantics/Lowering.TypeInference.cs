@@ -86,15 +86,7 @@ public sealed partial class Lowering
         {
             if (binding is Binding.Scheme s)
             {
-                // Free vars of a scheme are ftv(body) minus the quantified var IDs.
-                var bodyFtv = new HashSet<int>();
-                FtvType(s.S.Body, bodyFtv);
-                foreach (var qv in s.S.Quantified)
-                {
-                    bodyFtv.Remove(qv.Id);
-                }
-
-                result.UnionWith(bodyFtv);
+                result.UnionWith(TraitTypeOperations.FreeVariables(s.S));
             }
             else if (binding is Binding.EnvScheme es)
             {
@@ -117,38 +109,33 @@ public sealed partial class Lowering
 
     private void AddSchemeFtv(TypeScheme scheme, HashSet<int> result)
     {
-        var bodyFtv = new HashSet<int>();
-        FtvType(scheme.Body, bodyFtv);
-        foreach (var qv in scheme.Quantified)
-        {
-            bodyFtv.Remove(qv.Id);
-        }
-
-        result.UnionWith(bodyFtv);
+        result.UnionWith(TraitTypeOperations.FreeVariables(scheme));
     }
 
     // Generalize t over free type variables not fixed by the current environment.
-    private TypeScheme Generalize(TypeRef t)
+    private TypeScheme Generalize(TypeRef t, IReadOnlyList<TraitConstraint>? constraints = null)
     {
+        t = PruneConstraintType(t);
+        IReadOnlyList<TraitConstraint> normalizedConstraints = constraints is null
+            ? []
+            : TraitConstraint.Canonicalize(constraints.Select(PruneTraitConstraint));
         var typeFtv = new HashSet<int>();
         FtvType(t, typeFtv);
+        foreach (TraitConstraint constraint in normalizedConstraints)
+        {
+            foreach (TypeRef argument in constraint.TypeArgs)
+            {
+                FtvType(argument, typeFtv);
+            }
+        }
         var envFtv = new HashSet<int>();
         FtvEnv(envFtv);
         typeFtv.ExceptWith(envFtv);
-        // A type var used as a '+' operand must be Int/Float/Str (no type classes), so it cannot be
-        // generalized — a single IR function can't be both AddInt and ConcatStr. Keep it monomorphic
-        // so its uses resolve it; ResolveDeferredAdds defaults any that stay unbound to Int. Compare
-        // by current representative, since the '+' var may have since been unified (e.g. with a
-        // lambda's result var). Same reasoning applies to '==' / '!=' operand vars.
-        typeFtv.ExceptWith(ConstrainedAddVarRepIds());
-        typeFtv.ExceptWith(ConstrainedEqVarRepIds());
-        typeFtv.ExceptWith(ConstrainedMulVarRepIds());
-
         var quantified = typeFtv
             .OrderBy(id => id)
             .Select(id => new TypeVar(id, $"t{id}"))
             .ToList();
-        return new TypeScheme(quantified, t);
+        return new TypeScheme(quantified, t, normalizedConstraints);
     }
 
     // Rename a scheme's quantified variables to brand-new, unbound type-variable IDs (rewriting the
@@ -172,24 +159,20 @@ public sealed partial class Lowering
             freshQuantified.Add(new TypeVar(fresh.Id, qv.Name));
         }
 
-        return new TypeScheme(freshQuantified, ApplyInstSubst(scheme.Body, subst));
+        return TraitTypeOperations.SubstituteScheme(scheme, subst, freshQuantified);
     }
 
     // Instantiate a scheme: replace each quantified variable with a fresh type variable.
     private TypeRef Instantiate(TypeScheme scheme)
     {
-        if (scheme.Quantified.Count == 0)
-        {
-            return scheme.Body;
-        }
+        InstantiatedTypeScheme instantiated = InstantiateScheme(scheme);
+        RequireTraitConstraints(instantiated.Constraints);
+        return instantiated.Body;
+    }
 
-        var subst = new Dictionary<int, TypeRef>(scheme.Quantified.Count);
-        foreach (var tv in scheme.Quantified)
-        {
-            subst[tv.Id] = NewTypeVar();
-        }
-
-        return ApplyInstSubst(scheme.Body, subst);
+    private InstantiatedTypeScheme InstantiateScheme(TypeScheme scheme)
+    {
+        return TraitTypeOperations.Instantiate(scheme, NewTypeVar);
     }
 
     // Apply an instantiation substitution (mapping old TVar IDs to fresh TypeRefs) to a type.
@@ -444,10 +427,10 @@ public sealed partial class Lowering
             return "";
         }
 
-        return " " + PrettyRow(new TypeRef.TRow(capabilities, tail), typeVarNames, includeUsesKeyword: true);
+        return " " + PrettyRow(new TypeRef.TRow(capabilities, tail), typeVarNames, includeNeedsKeyword: true);
     }
 
-    private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeUsesKeyword = false)
+    private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeNeedsKeyword = false)
     {
         var (capabilities, tail) = NormalizeRow(row);
         var items = string.Join(
@@ -460,7 +443,7 @@ public sealed partial class Lowering
         var rendered = tail is null
             ? $"{{{items}}}"
             : $"{{{items} | {GetTypeVarName(tail.Id, typeVarNames)}}}";
-        return includeUsesKeyword ? $"uses {rendered}" : rendered;
+        return includeNeedsKeyword ? $"needs {rendered}" : rendered;
     }
 
     private void RecordExprHoverType(Expr expr, TypeRef type)
@@ -470,12 +453,17 @@ public sealed partial class Lowering
 
     private void RecordHoverType(TextSpan span, string? name, TypeRef type)
     {
+        RecordHoverScheme(span, name, new TypeScheme([], type));
+    }
+
+    private void RecordHoverScheme(TextSpan span, string? name, TypeScheme scheme)
+    {
         if (!IsValidSpan(span))
         {
             return;
         }
 
-        _hoverTypes.Add(new HoverTypeInfo(span, name, type));
+        _hoverTypes.Add(new HoverTypeInfo(span, name, scheme.Body, scheme.Constraints));
     }
 
     private static bool IsValidSpan(TextSpan span)

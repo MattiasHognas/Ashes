@@ -123,6 +123,84 @@ public sealed class TcoPromotionCostSignalTests
     }
 
     [Test]
+    public void Annotated_grown_string_list_accumulator_allocates_runtime_managed_cons_cells()
+    {
+        const string source =
+            """
+            let recursive rev : List(Str) -> List(Str) -> List(Str) =
+                given (acc) ->
+                    given (xs) ->
+                        match xs with
+                            | [] -> acc
+                            | head :: tail -> rev(head :: acc)(tail)
+
+            rev([])(["a", "b", "c"])
+            """;
+
+        (Lowering lowering, IrProgram ir) = LowerProgramAndIr(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "rev", "acc");
+        IrFunction function = ir.Functions.Single(candidate =>
+            string.Equals(candidate.Origin?.Source?.SourceName, "rev", StringComparison.Ordinal)
+            && candidate.Instructions.Any(instruction => instruction is IrInst.TcoResetPending or IrInst.Jump));
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.Eligibility.Reason.ShouldBe(TcoRcEligibilityReason.AffineConsList);
+        function.Instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            SizeBytes: 16,
+            RuntimeManaged: true,
+        })
+            .ShouldBeTrue();
+    }
+
+    [Test]
+    public void Nested_annotated_grown_string_list_accumulator_matches_its_runtime_placement()
+    {
+        const string source =
+            """
+            let join : Str -> List(Str) -> List(Str) =
+                given (separator) ->
+                    given (parts) ->
+                        let recursive rev : List(Str) -> List(Str) -> List(Str) =
+                            given (acc) ->
+                                given (xs) ->
+                                    match xs with
+                                        | [] -> acc
+                                        | head :: tail -> rev(head :: acc)(tail)
+                        in
+                            let recursive interleave : List(Str) -> List(Str) -> List(Str) =
+                                given (acc) ->
+                                    given (xs) ->
+                                        match xs with
+                                            | [] -> rev([])(acc)
+                                            | head :: tail ->
+                                                match acc with
+                                                    | [] -> interleave(head :: [])(tail)
+                                                    | _ -> interleave(head :: separator :: acc)(tail)
+                            in interleave([])(parts)
+
+            match join(", ")(["a", "b", "c"]) with
+                | head :: _ -> head
+                | [] -> ""
+            """;
+
+        (Lowering lowering, IrProgram ir) = LowerProgramAndIr(source);
+        TcoParamPlacementTrace placement = GetPlacement(lowering, "rev", "acc");
+        IrFunction function = ir.Functions.Single(candidate =>
+            string.Equals(candidate.Origin?.Source?.SourceName, "rev", StringComparison.Ordinal)
+            && candidate.Instructions.Any(instruction => instruction is IrInst.TcoResetPending or IrInst.Jump));
+
+        placement.Current.Representation.ShouldBe(TcoPlacementRepresentation.RuntimeRc);
+        placement.Current.Eligibility.Reason.ShouldBe(TcoRcEligibilityReason.AffineConsList);
+        function.Instructions.Any(instruction => instruction is IrInst.Alloc
+        {
+            SizeBytes: 16,
+            RuntimeManaged: true,
+        })
+            .ShouldBeTrue();
+    }
+
+    [Test]
     public void Pass_through_parameter_is_promoted_by_post_body_type_resolution()
     {
         const string source =

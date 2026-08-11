@@ -677,7 +677,12 @@ public sealed partial class Lowering
             public override TextSpan? DefinitionSpan => Span;
         }
 
-        public sealed record Self(string FuncLabel, TypeRef T, int EnvSizeBytes, TextSpan? Span = null) : Binding(T)
+        public sealed record Self(
+            string FuncLabel,
+            TypeRef T,
+            int EnvSizeBytes,
+            TextSpan? Span = null,
+            IReadOnlyList<TraitConstraint>? Requirements = null) : Binding(T)
         {
             public override TextSpan? DefinitionSpan => Span;
         }

@@ -299,6 +299,7 @@ public sealed class MatchTypingTests
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames);
         var program = new Parser(layout.Source, diag).ParseProgram();
         var lowering = new Lowering(diag);
+        lowering.SetSourceContext(layout);
         lowering.Lower(program);
         return (lowering, diag);
     }

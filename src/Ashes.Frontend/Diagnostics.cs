@@ -53,11 +53,16 @@ public static class DiagnosticCodes
     public const string DoubleDrop = "ASH007";
     /// <summary>A value is used after ownership of it has been moved elsewhere.</summary>
     public const string UseAfterMove = "ASH008";
-
-    // ASH010–ASH012 were allocated for an `async`-block enforcement model (await/networking outside
-    // `async`, async error-type conflict) that the language no longer has — `async` is now a builtin
-    // (Ashes.Task.task), not a keyword, and async-only safety is enforced by the Task type. They
-    // were never emitted, so the numbers are free for reuse by future diagnostics.
+    /// <summary>A trait declaration, method signature, constraint, or deriving clause is invalid.</summary>
+    public const string InvalidTraitDeclaration = "ASH010";
+    /// <summary>A trait implementation declaration or generated derived implementation is invalid.</summary>
+    public const string InvalidTraitImplementation = "ASH011";
+    /// <summary>Trait coherence is violated by overlap, an orphan implementation, or ambiguous evidence.</summary>
+    public const string TraitCoherence = "ASH012";
+    /// <summary>A trait, default-method, or implementation-requirement cycle cannot terminate.</summary>
+    public const string TraitCycle = "ASH025";
+    /// <summary>A concrete trait requirement has no resolvable implementation.</summary>
+    public const string TraitResolution = "ASH036";
 }
 
 /// <summary>

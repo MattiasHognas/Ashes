@@ -1159,7 +1159,10 @@ public sealed partial class Lowering
     {
         if (ownedType is not TypeRef.TNamedType
             || armPattern is not Pattern.Constructor ctorPattern
-            || !_constructorSymbols.TryGetValue(ctorPattern.Name, out ConstructorSymbol? matchedCtor)
+            || !TryResolveConstructorSymbol(
+                ctorPattern.Name,
+                GetSpan(ctorPattern),
+                out ConstructorSymbol? matchedCtor)
             || ctorPattern.Patterns.Count != matchedCtor.Arity)
         {
             return (null, null, null);
@@ -1527,7 +1530,8 @@ public sealed partial class Lowering
 
             case Pattern.Var v:
                 // Check if this identifier is a known nullary constructor
-                if (_constructorSymbols.TryGetValue(v.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
+                if (TryResolveConstructorSymbol(v.Name, GetSpan(v), out var nullaryCtor)
+                    && nullaryCtor.Arity == 0)
                 {
                     return InstantiateAdtType(nullaryCtor);
                 }
@@ -1551,7 +1555,7 @@ public sealed partial class Lowering
                 return new TypeRef.TTuple(tuple.Elements.Select(p => InferPatternType(p, bindings)).ToList());
 
             case Pattern.Constructor ctor:
-                return InferConstructorPatternType(ctor.Name, ctor.Patterns, bindings);
+                return InferConstructorPatternType(ctor, bindings);
 
             case Pattern.IntLit:
                 return new TypeRef.TInt();
@@ -1567,9 +1571,13 @@ public sealed partial class Lowering
         }
     }
 
-    private TypeRef InferConstructorPatternType(string name, IReadOnlyList<Pattern> patterns, Dictionary<string, TypeRef> bindings)
+    private TypeRef InferConstructorPatternType(
+        Pattern.Constructor pattern,
+        Dictionary<string, TypeRef> bindings)
     {
-        if (!_constructorSymbols.TryGetValue(name, out var ctor))
+        string name = pattern.Name;
+        IReadOnlyList<Pattern> patterns = pattern.Patterns;
+        if (!TryResolveConstructorSymbol(name, GetSpan(pattern), out var ctor))
         {
             var span = patterns.Count > 0
                 ? TextSpan.FromBounds(GetSpan(patterns[0]).Start, GetSpan(patterns[^1]).End)
@@ -1676,7 +1684,8 @@ public sealed partial class Lowering
     private void EmitVarPattern(Pattern.Var v, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
     {
         // If this is a known nullary constructor, emit a tag check instead of binding
-        if (_constructorSymbols.TryGetValue(v.Name, out var nullaryCtor) && nullaryCtor.Arity == 0)
+        if (TryResolveConstructorSymbol(v.Name, GetSpan(v), out var nullaryCtor)
+            && nullaryCtor.Arity == 0)
         {
             EmitRequireNonZero(valueTemp, failLabel);
             EmitRequireTagMatch(valueTemp, GetConstructorTag(nullaryCtor), failLabel);
@@ -1692,7 +1701,7 @@ public sealed partial class Lowering
 
     private void EmitConstructorPattern(Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
     {
-        if (!_constructorSymbols.TryGetValue(ctor.Name, out var ctorSym))
+        if (!TryResolveConstructorSymbol(ctor.Name, GetSpan(ctor), out var ctorSym))
         {
             // Unknown constructor — already diagnosed in InferPatternType
             return;
@@ -1743,10 +1752,7 @@ public sealed partial class Lowering
             return;
         }
 
-        RecordUnknownProducedTemp(
-            fieldTemp,
-            LoweredTempOwnershipReason.BorrowForward,
-            location: null);
+        RecordUnknownBorrowedTemp(fieldTemp, location: null);
         RefineTempBytesProvenance(fieldTemp, aggregateFact.BytesProvenance);
     }
 
@@ -2013,7 +2019,8 @@ public sealed partial class Lowering
             return tuple.Elements.All(IsCatchAllPattern);
         }
 
-        return p is Pattern.Var v && (!_constructorSymbols.TryGetValue(v.Name, out var ctor) || ctor.Arity != 0);
+        return p is Pattern.Var v
+            && (!TryResolveConstructorSymbol(v.Name, GetSpan(v), out var ctor) || ctor.Arity != 0);
     }
 
     private IReadOnlyList<string>? GetMissingAdtConstructors(TypeRef valueType, IReadOnlyList<MatchCase> cases)
@@ -2094,13 +2101,19 @@ public sealed partial class Lowering
     private bool TryGetConstructorSymbol(Pattern p, out ConstructorSymbol ctor)
     {
         ctor = default!;
-        if (p is Pattern.Constructor ctorPattern && _constructorSymbols.TryGetValue(ctorPattern.Name, out var ctorPatternSymbol))
+        if (p is Pattern.Constructor ctorPattern
+            && TryResolveConstructorSymbol(
+                ctorPattern.Name,
+                GetSpan(ctorPattern),
+                out var ctorPatternSymbol))
         {
             ctor = ctorPatternSymbol;
             return true;
         }
 
-        if (p is Pattern.Var v && _constructorSymbols.TryGetValue(v.Name, out var varPatternSymbol) && varPatternSymbol.Arity == 0)
+        if (p is Pattern.Var v
+            && TryResolveConstructorSymbol(v.Name, GetSpan(v), out var varPatternSymbol)
+            && varPatternSymbol.Arity == 0)
         {
             ctor = varPatternSymbol;
             return true;

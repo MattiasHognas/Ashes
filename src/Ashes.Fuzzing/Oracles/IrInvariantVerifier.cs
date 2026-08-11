@@ -31,8 +31,6 @@ internal sealed class IrInvariantVerifier
     };
     private static readonly IReadOnlySet<string> LocalSlotPropertyNames = new HashSet<string>(StringComparer.Ordinal)
     {
-        "AffineResvEndSlot",
-        "AffineResvStartSlot",
         "CursorLocalSlot",
         "EndLocalSlot",
         "OwnerSlot",

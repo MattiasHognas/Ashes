@@ -27,12 +27,14 @@ internal static class IrExplainReporter
         bool wantsRc = request.Includes(ExplainKind.Rc) || request.Includes(ExplainKind.Memory);
         bool wantsReuse = request.Includes(ExplainKind.Reuse) || request.Includes(ExplainKind.Memory);
         bool wantsRepresentation = request.Includes(ExplainKind.Memory);
+        bool wantsTraits = request.Includes(ExplainKind.Traits) || request.Includes(ExplainKind.Memory);
 
         return new CompilationExplainReport(
             wantsOwnership ? BuildOwnership(snapshot, request.FunctionFilter) : [],
             wantsRc ? BuildRc(finalIr, request.FunctionFilter) : [],
             wantsReuse ? BuildReuse(snapshot, request.FunctionFilter) : [],
-            wantsRepresentation ? BuildRepresentation(snapshot, request.FunctionFilter) : []);
+            wantsRepresentation ? BuildRepresentation(snapshot, request.FunctionFilter) : [],
+            wantsTraits ? finalIr.TraitEvidence : TraitEvidenceAnnotations.Empty);
     }
 
     private static IReadOnlyList<OwnershipFunctionReport> BuildOwnership(

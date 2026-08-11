@@ -14,9 +14,9 @@ internal static partial class LlvmCodegen
 
     /// <summary>
     /// Releases the OS resources a <c>Process</c> owns when it is dropped: closes the three pipe
-    /// fds/handles and reaps the child. Linux uses a non-blocking <c>waitpid(WNOHANG)</c> so a
-    /// still-running child is not waited on (it detaches and is reaped by init on program exit);
-    /// already-exited children are reaped here so they don't linger as zombies.
+    /// fds/handles, terminates a child that is still running, and reaps or releases it. A child does
+    /// not detach merely because a non-blocking wait observes it still running: without this full
+    /// cleanup it later remains a zombie until the Ashes program exits.
     /// </summary>
     private static void EmitProcessDrop(LlvmCodegenState state, LlvmValueHandle processRef)
     {
@@ -27,17 +27,119 @@ internal static partial class LlvmCodegen
 
         if (IsLinuxFlavor(state.Flavor))
         {
-            // waitpid(pid, NULL, WNOHANG=1, NULL) — non-blocking reap of an exited child.
-            EmitLinuxSyscall4(state, SyscallWaitpid, pid,
-                LlvmApi.ConstInt(state.I64, 0, 0),
-                LlvmApi.ConstInt(state.I64, 1, 0),
-                LlvmApi.ConstInt(state.I64, 0, 0), "proc_drop_reap");
+            EmitLinuxProcessDrop(state, pid);
         }
         else
         {
-            // On Windows the pid field is the process HANDLE; closing it releases the kernel object.
-            EmitWindowsCloseHandle(state, pid, "proc_drop_handle");
+            EmitWindowsProcessDrop(state, pid);
         }
+    }
+
+    private static void EmitLinuxProcessDrop(LlvmCodegenState state, LlvmValueHandle pid)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle waitResult = EmitLinuxSyscall4(
+            state,
+            SyscallWaitpid,
+            pid,
+            zero,
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            zero,
+            "proc_drop_reap");
+        LlvmValueHandle stillRunning = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            waitResult,
+            zero,
+            "proc_drop_running");
+        LlvmBasicBlockHandle terminateBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context,
+            state.Function,
+            "proc_drop_terminate");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context,
+            state.Function,
+            "proc_drop_done");
+        LlvmApi.BuildCondBr(builder, stillRunning, terminateBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, terminateBlock);
+        EmitLinuxSyscall(
+            state,
+            SyscallKill,
+            pid,
+            LlvmApi.ConstInt(state.I64, 9, 0),
+            zero,
+            "proc_drop_kill");
+        EmitLinuxSyscall4(
+            state,
+            SyscallWaitpid,
+            pid,
+            zero,
+            zero,
+            zero,
+            "proc_drop_wait");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+    }
+
+    private static void EmitWindowsProcessDrop(
+        LlvmCodegenState state,
+        LlvmValueHandle processHandle)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle waitType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+        LlvmValueHandle waitPointer = LlvmApi.BuildLoad2(
+            builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsWaitForSingleObjectImport,
+            "proc_drop_wait_fn_ptr");
+        LlvmValueHandle waitResult = LlvmApi.BuildCall2(
+            builder,
+            waitType,
+            waitPointer,
+            [processHandle, LlvmApi.ConstInt(state.I32, 0, 0)],
+            "proc_drop_wait_poll");
+        LlvmValueHandle stillRunning = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            waitResult,
+            LlvmApi.ConstInt(state.I32, 258, 0),
+            "proc_drop_running");
+        LlvmBasicBlockHandle terminateBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context,
+            state.Function,
+            "proc_drop_terminate");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context,
+            state.Function,
+            "proc_drop_done");
+        LlvmApi.BuildCondBr(builder, stillRunning, terminateBlock, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, terminateBlock);
+        LlvmTypeHandle terminateType = LlvmApi.FunctionType(state.I32, [state.I64, state.I32]);
+        LlvmValueHandle terminatePointer = LlvmApi.BuildLoad2(
+            builder,
+            LlvmApi.PointerTypeInContext(state.Target.Context, 0),
+            state.WindowsTerminateProcessImport,
+            "proc_drop_terminate_fn_ptr");
+        LlvmApi.BuildCall2(
+            builder,
+            terminateType,
+            terminatePointer,
+            [processHandle, LlvmApi.ConstInt(state.I32, 1, 0)],
+            "proc_drop_terminate_call");
+        LlvmApi.BuildCall2(
+            builder,
+            waitType,
+            waitPointer,
+            [processHandle, LlvmApi.ConstInt(state.I32, uint.MaxValue, 0)],
+            "proc_drop_wait_call");
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        EmitWindowsCloseHandle(state, processHandle, "proc_drop_handle");
     }
 
     private static LlvmValueHandle EmitAllocProcessStruct(LlvmCodegenState state)
