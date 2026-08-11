@@ -106,15 +106,37 @@ public sealed class TraitTypeSchemeTests
     [Test]
     public void HoverMetadataRetainsCanonicalConstraintEvidence()
     {
-        TraitSymbol eq = CreateTrait("Eq");
-        Lowering.HoverTypeInfo hover = new(
-            new TextSpan(2, 5),
-            "same",
-            new TypeRef.TBool(),
-            [new TraitConstraint(eq, [new TypeRef.TInt()])]);
+        // Exercises the real inference/hover-recording path (RecordHoverScheme, called from
+        // FinalizeLetTraitScheme during ordinary lowering) rather than constructing a
+        // HoverTypeInfo by hand and asserting the field just set.
+        const string source = """
+            trait Eq(a) =
+                | equal : a -> a -> Bool
 
+            let same : a -> a -> Bool requires {Eq(a)} =
+                given (left) -> given (right) -> Eq.equal(left)(right)
+
+            same
+            """;
+
+        Lowering lowering = Lower(source, out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+        Lowering.HoverTypeInfo hover = lowering.GetTypeAtPosition(
+            source.IndexOf("same :", StringComparison.Ordinal)).ShouldNotBeNull();
         hover.Constraints.ShouldNotBeNull();
-        hover.Constraints.Single().Trait.ShouldBeSameAs(eq);
+        hover.Constraints.Single().Trait.Name.ShouldBe("Eq");
+        lowering.FormatType(hover.Type).ShouldBe("a -> a -> Bool");
+    }
+
+    private static Lowering Lower(string source, out Diagnostics diagnostics)
+    {
+        diagnostics = new Diagnostics();
+        Ashes.Frontend.Program program = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        lowering.SetSourceContext("<memory>", source);
+        _ = lowering.Lower(program);
+        return lowering;
     }
 
     private static TraitSymbol CreateTrait(string name)

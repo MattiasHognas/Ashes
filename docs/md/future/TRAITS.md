@@ -767,30 +767,44 @@ keyword.
 
 ### Task 20: Test-coverage and tooling follow-ups
 
-- [ ] Wire `vscode-extension/src/test/fixtures/traits.ash` into a real tokenization test (loading the
-      grammar through `vscode-textmate` or the extension's existing token-inspection helper, not just
-      regex-matching grammar patterns against sample strings as `syntaxHighlighting.test.ts` currently
-      does), or delete the fixture if it's not going to be used.
-- [ ] Review the unrelated change in `vscode-extension/src/extension.ts` that removes
-      `context.subscriptions.push(client)` from the language-client registration — it rode along in this
-      commit but has nothing to do with traits. Confirm it's intentional and safe (deactivate-time
-      `client.stop()` still runs) or revert it as out-of-scope for this branch.
-- [ ] Add a parser/formatter round-trip and idempotence test for a multi-parameter trait (e.g.
-      `trait Convert(source, destination)`, a documented form in `language.md`) — currently untested.
-- [ ] Add a formatter assertion (not just a parse-level test) for a recursive group's per-member `requires`
-      clauses.
-- [ ] Add at least one `tests/projects/` multi-file fixture exercising Task 8's full acceptance scenario
-      (trait declared in one module, constrained function called abstractly from a second module,
-      instantiated concretely in a third) with real computed-value assertions — the existing coverage for
-      this scenario is in-process C# unit tests, several of which assert only that no diagnostics were
-      raised rather than that the computed result is correct.
-- [ ] Replace `TraitTypeSchemeTests.HasHoverMetadata` (`TraitTypeSchemeTests.cs:107-118`), which constructs
-      a `HoverTypeInfo` by hand and asserts the field it just set, with a test that exercises the real
-      `GetTypeAtPosition` hover path for a constrained binding, mirroring `TraitInferenceTests.cs:25-29`.
-- [ ] Strengthen the Task 4 import-order-independence test
-      (`TraitRegistrationTests.cs:184-195`) to assert order-independence of the actual implementation
-      registry, overlap diagnostics, and resolution results — not just the set of registered trait
-      qualified names.
+- [x] Wired `vscode-extension/src/test/fixtures/traits.ash` into a real tokenization test
+      (`src/test/suite/traitTokenization.test.ts`), added `vscode-textmate`/`vscode-oniguruma` as
+      devDependencies, and confirmed the full extension test suite actually runs headlessly in this
+      environment (`node ./out/test/runTest.js`, 25 passing before, 32 after) before committing to the
+      approach. The new tests load the grammar through the real TextMate engine and tokenize every line
+      of the fixture, catching a real gap the shape-only test couldn't: the qualified-call highlighting
+      pattern only recognizes the closed standard trait/method name list (`Eq`/`equal`, etc.), so a
+      user-defined trait's call site (`Render.render(value)`) gets no special scope at all, unlike its
+      declaration and implementation sites. That's correct, intentional grammar behavior (it avoids
+      false-positiving on ordinary module-qualified calls), so the fixture and test now cover both cases
+      explicitly instead of assuming one pattern handles everything.
+- [x] Reviewed the `extension.ts` change: the `onDidOpenTextDocument` listener move is a genuine fix (the
+      auto-start setting is now read live per document instead of being frozen at activation time) and was
+      kept. The `context.subscriptions.push(client)` removal was pure regression risk with no stated
+      benefit — `deactivate()`'s `client.stop()` still runs since `client` is a module-level variable, but
+      losing the subscription-based disposal safety net (VS Code's own guidance is to register disposables
+      alongside `deactivate()`, not instead of it) was unexplained and unrelated to traits, so that one
+      line was restored.
+- [x] Added `MultiParameterTraitDeclarationAndImplementationSurviveFormattingAndReparsing`
+      (`TraitFrontendTests.cs`) for `trait Convert(source, destination)` / `implement Convert(Int, Str)`,
+      verified against the built compiler before writing the exact expected formatted output into the test.
+- [x] Added `FormatterPreservesEachRecursiveGroupMemberSWrittenRequiresClause` (`TraitFrontendTests.cs`),
+      asserting the formatted text (not just the reparsed AST) for a two-member recursive group with
+      different per-member `requires` clauses.
+- [x] Added `tests/projects/trait_cross_module_evidence/` (`Describable.ash` declares the trait,
+      `Reporting.ash` calls it abstractly through a `requires`-constrained function, `Main.ash` supplies
+      the concrete `Int` implementation and calls both the constrained function and a cross-module default
+      method) with a real `// expect:` computed-value assertion, not just a no-diagnostics check.
+- [x] Replaced `TraitTypeSchemeTests.HasHoverMetadata` with a version that compiles real source through
+      `Lowering.Lower` and calls the actual `GetTypeAtPosition` hover path, mirroring
+      `TraitInferenceTests.DirectMethodUseInfersAndGeneralizesAConstraint`, instead of constructing a
+      `HoverTypeInfo` by hand and asserting the field just set.
+- [x] Added `OverlapDetectionAndResolvedInstancesAreIndependentOfImplementationModuleOrder`
+      (`TraitRegistrationTests.cs`), which registers two overlapping implementations (a generic and a
+      concrete `Eq(List(_))`) split across two modules in both orders and asserts the coherence
+      diagnostic names the same two module locations and the resolved `TraitInstances` registry has the
+      same count either way — exercising the actual overlap/registry machinery, not just registered trait
+      names.
 
 Acceptance: the gaps above no longer read as untested claims; each has either real coverage or an explicit,
 documented reason it's out of scope.

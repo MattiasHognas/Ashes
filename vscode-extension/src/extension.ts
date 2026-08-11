@@ -67,6 +67,7 @@ async function ensureLanguageClientStarted(
       serverOptions,
       clientOptions,
     );
+    context.subscriptions.push(client);
     await client.start();
   } catch (err) {
     void vscode.window.showErrorMessage(

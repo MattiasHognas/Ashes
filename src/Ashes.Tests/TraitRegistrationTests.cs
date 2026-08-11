@@ -195,6 +195,70 @@ public sealed class TraitRegistrationTests
     }
 
     [Test]
+    public void OverlapDetectionAndResolvedInstancesAreIndependentOfImplementationModuleOrder()
+    {
+        // KeepsSameNamedTraitsDistinctAcrossModulesAndIndependentOfDeclarationOrder above only
+        // checks that the set of registered trait qualified names matches; this checks the actual
+        // implementation registry an overlap or a resolution walks: which two locations a coherence
+        // diagnostic names, and the full resolved TraitInstances set, are identical whichever of the
+        // two conflicting implementation modules is registered first.
+        (ISet<string> Locations, int InstanceCount) forward = RegisterOverlappingImplementationModules(
+            reverseImplementationOrder: false);
+        (ISet<string> Locations, int InstanceCount) reversed = RegisterOverlappingImplementationModules(
+            reverseImplementationOrder: true);
+
+        forward.InstanceCount.ShouldBe(2);
+        reversed.InstanceCount.ShouldBe(2);
+        forward.Locations.ShouldBe(reversed.Locations);
+    }
+
+    private static (ISet<string> Locations, int InstanceCount) RegisterOverlappingImplementationModules(
+        bool reverseImplementationOrder)
+    {
+        const string traitSource = "trait Eq(a) =\n    | equal : a -> a -> Bool\n";
+        const string generic = "implement Eq(List(a)) requires {Eq(a)} =\n    | equal = given (left) -> given (right) -> true\n";
+        const string concrete = "implement Eq(List(Int)) =\n    | equal = given (left) -> given (right) -> true\n";
+        // The trailing "0" entry-module expression must stay at the very end of the combined
+        // source regardless of which implementation module is registered last.
+        string first = reverseImplementationOrder ? concrete : generic;
+        string second = (reverseImplementationOrder ? generic : concrete) + "0";
+        string firstPath = reverseImplementationOrder ? "/Concrete.ash" : "/Generic.ash";
+        string secondPath = reverseImplementationOrder ? "/Generic.ash" : "/Concrete.ash";
+        string source = traitSource + first + second;
+        int secondStart = traitSource.Length + first.Length;
+        CombinedCompilationLayout layout = new(
+            source,
+            secondStart,
+            source.Length - 1,
+            [
+                ("/Traits.ash", 0, traitSource.Length),
+                (firstPath, traitSource.Length, secondStart),
+                (secondPath, secondStart, source.Length),
+            ],
+            ModuleProvenanceByPath: new Dictionary<string, ModuleProvenance>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["/Traits.ash"] = new("package", "Traits"),
+                [firstPath] = new("package", reverseImplementationOrder ? "Concrete" : "Generic"),
+                [secondPath] = new("package", reverseImplementationOrder ? "Generic" : "Concrete"),
+            });
+
+        Lowering lowering = Lower(source, layout, out Diagnostics diagnostics);
+
+        DiagnosticEntry overlap = diagnostics.StructuredErrors.Single(error =>
+            string.Equals(error.Code, DiagnosticCodes.TraitCoherence, StringComparison.Ordinal));
+        HashSet<string> locations = new(StringComparer.Ordinal);
+        if (overlap.Message.Contains("/Generic.ash", StringComparison.Ordinal))
+        {
+            locations.Add("/Generic.ash");
+        }
+        if (overlap.Message.Contains("/Concrete.ash", StringComparison.Ordinal))
+        {
+            locations.Add("/Concrete.ash");
+        }
+        return (locations, lowering.TraitInstances.Count);
+    }
+
+    [Test]
     public void ProjectModulesExportTraitsThroughSelectorsWhileImplementationsRemainProgramGlobal()
     {
         string root = Path.Combine(Path.GetTempPath(), $"ashes-trait-project-{Guid.NewGuid():N}");

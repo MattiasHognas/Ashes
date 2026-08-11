@@ -12,4 +12,7 @@ type Box(a) =
 let display : a -> Str requires {Render(a)} =
     given (value) -> Render.render(value)
 
+let sameBox : Box(Int) -> Box(Int) -> Bool =
+    given (left) -> given (right) -> Eq.equal(left)(right)
+
 display(1)

@@ -113,6 +113,57 @@ public sealed class TraitFrontendTests
     }
 
     [Test]
+    public void MultiParameterTraitDeclarationAndImplementationSurviveFormattingAndReparsing()
+    {
+        const string source = """
+            trait Convert(source, destination)=
+              | convert:source->destination
+            implement Convert(Int, Str) =
+              | convert=given (value)->"x"
+            """;
+
+        Ashes.Frontend.Program parsed = ParseProgram(source, out Diagnostics firstDiagnostics);
+        string formatted = Ashes.Formatter.Formatter.Format(parsed);
+        Ashes.Frontend.Program reparsed = ParseProgram(formatted, out Diagnostics secondDiagnostics);
+
+        firstDiagnostics.Errors.ShouldBeEmpty();
+        secondDiagnostics.Errors.ShouldBeEmpty(formatted);
+        TraitDecl trait = parsed.Items[0].ShouldBeOfType<TopLevelItem.Trait>().Decl;
+        trait.TypeParameters.ShouldBe([new TypeParameter("source"), new TypeParameter("destination")]);
+        TraitImplementationDecl implementation = parsed.Items[1].ShouldBeOfType<TopLevelItem.Implementation>().Decl;
+        implementation.TypeArgs.ShouldBe([new TypeExpr.Named("Int"), new TypeExpr.Named("Str")]);
+        formatted.ShouldBe(
+            "trait Convert(source, destination) =\n"
+                + "    | convert : source -> destination\n\n"
+                + "implement Convert(Int, Str) =\n"
+                + "    | convert =\n"
+                + "        given (value) -> \"x\"\n");
+        Ashes.Formatter.Formatter.Format(reparsed).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void FormatterPreservesEachRecursiveGroupMemberSWrittenRequiresClause()
+    {
+        const string source = """
+            let recursive first : a -> a requires {Eq(a)} = given (value) -> second(value)
+            and second : a -> a requires {Show(a)} = given (value) -> first(value)
+            """;
+
+        Ashes.Frontend.Program parsed = ParseProgram(source, out Diagnostics firstDiagnostics);
+        string formatted = Ashes.Formatter.Formatter.Format(parsed);
+        Ashes.Frontend.Program reparsed = ParseProgram(formatted, out Diagnostics secondDiagnostics);
+
+        firstDiagnostics.Errors.ShouldBeEmpty();
+        secondDiagnostics.Errors.ShouldBeEmpty(formatted);
+        formatted.ShouldContain("first : a -> a requires {Eq(a)} =");
+        formatted.ShouldContain("second : a -> a requires {Show(a)} =");
+        TopLevelItem.RecursiveGroup reparsedGroup = reparsed.Items.Single().ShouldBeOfType<TopLevelItem.RecursiveGroup>();
+        reparsedGroup.Requires[0].Single().TraitName.ShouldBe("Eq");
+        reparsedGroup.Requires[1].Single().TraitName.ShouldBe("Show");
+        Ashes.Formatter.Formatter.Format(reparsed).ShouldBe(formatted);
+    }
+
+    [Test]
     public void BitwiseOrInsideAnImplementationBodySurvivesFormattingAndReparsing()
     {
         const string source = """
