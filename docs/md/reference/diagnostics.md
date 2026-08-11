@@ -68,7 +68,11 @@ and source offsets so editor and command-line users can find both declarations.
   implementation requirements are rejected before they could make evidence construction diverge.
 - `ASH036` — **Trait resolution failure.** A concrete requirement has no implementation, exceeds the
   bounded resolution depth, or reaches a cyclic/non-decreasing dependency. The message includes the
-  complete requirement trace.
+  complete requirement trace. This is the general diagnostic for every operator now that operators
+  resolve through traits (see [language.md section 21](language.md#21-traits-and-implementations)): for
+  example `5.5 % 2.0` reports `No implementation supplies 'Ashes.Trait.Remainder(Float)'` rather than a
+  `%`-specific message naming the supported primitive types. Check the `Ashes.Trait` section of
+  [standard-library.md](standard-library.md) for which primitive types each operator trait implements.
 
 ## Top-level declaration and import diagnostics
 

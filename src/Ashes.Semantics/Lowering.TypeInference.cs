@@ -427,10 +427,10 @@ public sealed partial class Lowering
             return "";
         }
 
-        return " " + PrettyRow(new TypeRef.TRow(capabilities, tail), typeVarNames, includeUsesKeyword: true);
+        return " " + PrettyRow(new TypeRef.TRow(capabilities, tail), typeVarNames, includeNeedsKeyword: true);
     }
 
-    private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeUsesKeyword = false)
+    private string PrettyRow(TypeRef.TRow row, Dictionary<int, string> typeVarNames, bool includeNeedsKeyword = false)
     {
         var (capabilities, tail) = NormalizeRow(row);
         var items = string.Join(
@@ -443,7 +443,7 @@ public sealed partial class Lowering
         var rendered = tail is null
             ? $"{{{items}}}"
             : $"{{{items} | {GetTypeVarName(tail.Id, typeVarNames)}}}";
-        return includeUsesKeyword ? $"uses {rendered}" : rendered;
+        return includeNeedsKeyword ? $"needs {rendered}" : rendered;
     }
 
     private void RecordExprHoverType(Expr expr, TypeRef type)

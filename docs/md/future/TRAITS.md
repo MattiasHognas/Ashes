@@ -435,8 +435,12 @@ implement declarations or runtime searches.
 
 - [x] Choose the shipped `Ashes.*` module location and export surface for standard traits.
 - [x] Add `Ordering`, `Eq`, `Ord`, `Show`, `Hash`, `Default`, and every mapped operator trait.
-- [x] Add primitive implementations that exactly preserve current backend behavior.
-- [x] Add conditional structural implementations for supported lists, tuples, `Maybe`, and `Result` shapes.
+- [x] Add primitive implementations that exactly preserve current backend behavior, with one deliberate
+      addition rather than a straight preservation: `implement Ord(Str)` makes `<`/`<=`/`>`/`>=` legal on
+      strings (byte comparison) where they previously were not. Documented in
+      [standard-library.md](../reference/standard-library.md).
+- [x] Add conditional structural implementations for supported lists, 2-tuples, `Maybe`, and `Result`
+      shapes (3-tuples and wider have no structural implementation yet).
 - [x] Deliberately omit nonsensical implementations for functions, tasks, effects, resources, and opaque
       externals.
 - [x] Ensure trait declarations and implementations ship in every target's `lib/Ashes` and `dist` payload.
@@ -468,7 +472,14 @@ implement every suitable operator family through ordinary implementations.
 - [x] Rewrite `Ashes.Test.assertEqual` as an ordinary constrained function.
 - [x] Replace comparator-parameter APIs with constrained alternatives where doing so improves the
       public API; preserve explicit-comparator variants where custom orderings remain useful.
-- [x] Migrate collection equality, ordering, hashing, display, and defaults to standard traits.
+- [x] Migrate collection equality, ordering, display, and defaults to standard traits.
+      **Hashing was not migrated**: `Collection.HashMap.ash`/`Collection.HashTrie.ash` are `Str`-keyed by
+      construction (`type HashMapTree(V)` bakes `Str` into the node's key field rather than taking a key
+      type parameter at all), calling `Ashes.Byte.hash` directly instead of `requires {Hash(K)}`. Making
+      them generic over the key type is a real type-signature change to the ADT itself plus every
+      function and call site, not a like-for-like trait swap; out of scope for this pass. `Hash` has no
+      stdlib consumer today — every existing use compiles and runs correctly, this is a documentation
+      correction, not a regression.
 - [x] Ensure generic stdlib functions remain usable from imported modules at abstract types.
 - [x] Update examples, test directives, standard-library docs, and API signatures.
 - [x] Add compatibility tests for existing source that uses primitive operators and `assertEqual`.
@@ -726,31 +737,29 @@ from a faster gate is a documented decision, not a gap.
 Smaller defects found by the audit that don't affect correctness but leave the spec, docs, or diagnostics
 inconsistent with the shipped behavior.
 
-- [ ] Add `deriving` to the reserved-keyword list in `docs/md/reference/language.md` (currently only
-      `trait`, `implement`, `requires` are listed there, even though `deriving` is lexed as a keyword and
-      is separately documented as reserved at `language.md:3333` and `:3427`).
-- [ ] Add a worked accepted example for a default method and a rejected example for a default-method
-      dependency cycle to the accepted/rejected examples list in `language.md` section 21.14; both rules
-      currently exist only as prose.
-- [ ] Correct the "tuples" wording in this document's Task 10 and in `docs/md/reference/standard-library.md`
-      to state that structural tuple implementations cover 2-tuples only (`Trait.ash` has no 3+ arity
-      implementations); either extend coverage or make the limitation explicit everywhere it's implied to
-      be general.
-- [ ] Document that `implement Ord(Str)` (enabling `<`/`<=`/`>`/`>=` on strings via byte comparison) is a
-      new behavior, not preserved pre-existing behavior — call it out in the standard-library docs and this
-      file's Task 10 rather than leaving it implied as a straight migration.
-- [ ] Decide and act on the `Remainder(Float)` diagnostic regression: `5.5 % 2.0` now reports the generic
-      `ASH036` no-implementation message instead of the previous primitive-specific `'%' requires
-      Int%Int, unsigned%unsigned, or BigInt%BigInt` message. Either restore a tailored diagnostic for this
-      case or accept `ASH036` and note the change in `docs/md/reference/diagnostics.md`.
-- [ ] Fix the constrained-type pretty-printer (`Lowering.TypeInference.cs:433-447`) to print the actual
-      `needs` keyword for capability rows instead of `uses`, which does not exist in the language. Correct
-      the two tests that currently assert the wrong keyword as expected output
-      (`TraitTypeSchemeTests.cs:103`, `TraitInferenceTests.cs:303`).
-- [ ] Correct Task 12's claim that collection hashing was migrated to standard traits: `Collection.HashMap.ash:20`
-      and `Collection.HashTrie.ash:8` still call `Ashes.Byte.hash` directly rather than taking
-      `requires {Hash(K)}`, and `Hash` currently has no stdlib consumer at all. Either migrate these two
-      modules or correct the checklist wording to describe what actually shipped.
+- [x] Add `deriving` to the reserved-keyword list in `docs/md/reference/language.md`.
+- [x] Add a worked accepted example for a default method (`Greet`/`greet`) and a rejected example for a
+      default-method dependency cycle (`Choice`, matching `TraitDefaultMethodTests.DefaultOnlyDependencyCycleIsRejectedBeforeUse`'s
+      shape) to section 21.14. Verified both against the built compiler before writing them up: the
+      accepted one prints `"Hello, Point"`, the rejected one reports `ASH025`.
+- [x] Corrected the "tuples" wording in this document's Task 10 and in `standard-library.md` to state
+      2-tuples explicitly (3-tuples and wider have no structural implementation yet).
+- [x] Documented that `implement Ord(Str)` is a new behavior, not preserved pre-existing behavior, in both
+      `standard-library.md` and this document's Task 10.
+- [x] Decided on the `Remainder(Float)` diagnostic: kept `ASH036` rather than restoring a tailored
+      per-operator message, since that would resurrect exactly the special-casing Task 14 removed. Noted
+      the change and where to find supported types in `docs/md/reference/diagnostics.md`.
+- [x] Fixed the constrained-type pretty-printer (`Lowering.TypeInference.cs`) to print `needs` instead of
+      the nonexistent `uses`, renamed its `includeUsesKeyword` parameter to `includeNeedsKeyword` to match,
+      and corrected the two tests that had locked in the wrong keyword as expected output
+      (`TraitTypeSchemeTests.cs`, `TraitInferenceTests.cs`). Confirmed no other test or doc asserted the
+      wrong keyword (repo-wide grep for `"uses {` came back empty after the fix).
+- [x] Corrected Task 12's claim that collection hashing was migrated: `HashMapTree`/the HashTrie node
+      layout bake `Str` into the key field rather than taking a key type parameter at all, so migrating
+      them to `Hash(K)` is a real ADT type-signature change plus every call site, not a like-for-like trait
+      swap — out of scope here. Corrected the checklist wording rather than attempting the migration;
+      `standard-library.md`'s own HashMap/HashTrie sections were already accurate (never claimed `Hash`
+      trait involvement), so no change was needed there.
 
 Acceptance: the language reference, standard-library docs, and diagnostics reference accurately describe
 the shipped behavior with no known contradictions; pretty-printed types never reference a nonexistent

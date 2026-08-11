@@ -300,7 +300,7 @@ public sealed class TraitInferenceTests
 
         diagnostics.StructuredErrors.ShouldBeEmpty();
         lowering.LastTraitConstraints.Single().Trait.Name.ShouldBe("Eq");
-        lowering.FormatType(lowering.LastLoweredType!).ShouldContain("uses {Log}");
+        lowering.FormatType(lowering.LastLoweredType!).ShouldContain("needs {Log}");
     }
 
     [Test]

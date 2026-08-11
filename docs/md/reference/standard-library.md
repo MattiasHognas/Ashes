@@ -739,6 +739,7 @@ Show.show(Eq.equal([1, 2])([1, 2]))
   and transitive except where the represented primitive contract already differs, notably IEEE NaN.
 - `Ord(a)` extends `Eq(a)`, supplies `compare(a)(a)`, and derives `less`, `lessOrEqual`, `greater`, and
   `greaterOrEqual`; comparisons must agree with equality, while `Unordered` preserves Float NaN behavior.
+  `implement Ord(Str)` (byte comparison) is new: `<`/`<=`/`>`/`>=` were not legal on `Str` before traits.
 - `Show(a)` supplies deterministic developer-facing `show(a) : Str`; it is not a locale-sensitive or
   round-trip serialization format.
 - `Hash(a)` supplies deterministic `hash(a) : Int`; equal values must have equal hashes.
@@ -749,11 +750,11 @@ Show.show(Eq.equal([1, 2])([1, 2]))
 
 Primitive implementations preserve the established behavior for `Int`, `Float`, `BigInt`, `u8`,
 `u16`, `u32`, `u64`, `Bool`, and `Str` wherever an operation is meaningful. Conditional `Eq`, `Ord`,
-`Show`, and `Hash` implementations are supplied for lists, `Maybe`, `Result`, and supported tuple
-shapes when their contained types supply the same evidence. Lists, `Maybe`, and tuples also have
-canonical `Default` implementations where defined. Functions, tasks, capabilities, handlers,
-resources, and opaque external values deliberately receive no invented equality, ordering, hashing,
-display, or default behavior.
+`Show`, and `Hash` implementations are supplied for lists, `Maybe`, `Result`, and 2-tuples when their
+contained types supply the same evidence — wider tuple arities (3-tuples and above) have no structural
+implementation yet. Lists, `Maybe`, and 2-tuples also have canonical `Default` implementations where
+defined. Functions, tasks, capabilities, handlers, resources, and opaque external values deliberately
+receive no invented equality, ordering, hashing, display, or default behavior.
 
 ## `Ashes.Core` — core value helpers
 

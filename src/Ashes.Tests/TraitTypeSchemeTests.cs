@@ -100,7 +100,7 @@ public sealed class TraitTypeSchemeTests
         TypeScheme scheme = new([new TypeVar(1, "a")], function, [new TraitConstraint(eq, [variable])]);
         Lowering lowering = new(new Diagnostics());
 
-        lowering.FormatTypeScheme(scheme).ShouldBe("a -> a uses {Log} requires {Eq(a)}");
+        lowering.FormatTypeScheme(scheme).ShouldBe("a -> a needs {Log} requires {Eq(a)}");
     }
 
     [Test]

@@ -33,7 +33,7 @@ The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `recursive`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `when`, `given`,
 `true`, `false`, `type`, `external`, `await`, `import`, `as`,
-`capability`, `needs`, `perform`, `handle`, `trait`, `implement`, `requires`
+`capability`, `needs`, `perform`, `handle`, `trait`, `implement`, `requires`, `deriving`
 
 Two principles govern the keyword set:
 
@@ -3384,6 +3384,22 @@ let orderedEqual : a -> a -> Bool requires {Ord(a)} =
     given (left) -> given (right) -> Eq.equal(left)(right)
 ```
 
+Default method:
+
+```ash
+trait Greet(a) =
+    | name : a -> Str
+    | greet : a -> Str =
+        given (value) -> "Hello, " + Greet.name(value)
+
+implement Greet(Point) =
+    | name = given (point) -> "Point"
+    // greet is not implemented, so Greet.greet uses the trait's default body above.
+```
+
+`Greet.greet(point)` evaluates to `"Hello, Point"`: an implementation that supplies every method with
+no default (here, `name`) inherits every method that has one (here, `greet`) without repeating it.
+
 Effectful method:
 
 ```ash
@@ -3409,6 +3425,13 @@ implement Eq(Foreign.Point) = ...                  // orphan if Eq and Point are
 
 trait First(a) requires {Second(a)} = ...
 trait Second(a) requires {First(a)} = ...          // supertrait cycle
+
+trait Choice(a) =
+    | first : a -> Bool = given (value) -> Choice.second(value)
+    | second : a -> Bool = given (value) -> Choice.first(value)
+    | base : a -> Bool
+implement Choice(Int) =
+    | base = given (value) -> true             // first/second both left as defaults: cycle
 
 let ambiguous : Bool requires {Default(a)} = true // a cannot be selected by a caller
 
