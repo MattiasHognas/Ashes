@@ -53,23 +53,20 @@ feature.
 
 **Implemented + benchmarked.** [`fannkuch-redux.ash`](fannkuch-redux.ash) is the intended fully-pure
 solution (List-based permutation, one-pass O(k) `flip`, faithful factorial-order enumeration). Writing
-it surfaced **three distinct compiler bugs** — exactly the flaw-finding this challenge exists for —
+it surfaced **four distinct compiler bugs** — exactly the flaw-finding this challenge exists for —
 **all now fixed**:
 
 1. a self-recursive function threading **two** `List` accumulators with an early ADT return dropped
    the early return — the TCO shallow copy-out only preserved a list's top cons cell;
 2. a spurious `ASH014` for a non-recursive helper that calls a recursive helper;
 3. a **use-after-reset** segfault of a pointer-bearing accumulator across the TCO back-edge (same root
-   as (1)).
+   as (1));
+4. a pattern-extracted RC list passed through a non-owning call retained an extra reference, while
+   arena aggregate children were released before successor normalization.
 
-Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`). Resident memory was
-constant for a period (the `State(perm, count)` accumulator carried across the TCO reset by a recursive
-deep copy, reset to the fixed loop-entry watermark), but the pattern-binding Perceus cutover
-(`docs/md/internals/changelog.md`'s "Pattern-binding Perceus cutover" entry, PR #357) superseded the
-ownership machinery that deep-copy relied on, and peak RSS now scales with `N!` again — a known,
-already-documented tradeoff of that cutover, explicitly deferred to a future memory-model milestone
-(see `fannkuch-redux.ash`'s own header comment), not a new regression. Larger N is therefore bounded
-by both *time* and *memory* (`N!` enumeration).
+Output is correct against the reference at every N (checksum / `Pfannkuchen(N)`). RC ownership now
+keeps the `State(perm, count)` graph balanced across helper calls and TCO normalization, restoring
+constant resident memory. Larger N is bounded by enumeration time rather than accumulated garbage.
 
 ## Build & run
 
@@ -81,14 +78,14 @@ dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch
 ## Benchmark
 
 Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`. All outputs match
-the reference. The Time/Peak RSS columns below are current (single-run wall-clock + GNU `time -v`,
-not the original hyperfine-averaged flat-memory figures they replace — see the note above):
+the reference. The Time/Peak RSS columns below are current single-run wall-clock and GNU `time`
+measurements after the RC ownership fix:
 
 | N | checksum / Pfannkuchen | Time | Peak RSS |
 |---|---|------|----------|
-| 9 | 8629 / 30 | 0.26 s | 99 MB |
-| 10 | 73196 / 38 | 2.90 s | 1.1 GB |
-| 11 | 556355 / 51 | 37.3 s | 13.4 GB |
+| 9 | 8629 / 30 | 0.24 s | 8.2 MB |
+| 10 | 73196 / 38 | 2.82 s | 8.2 MB |
+| 11 | 556355 / 51 | 34.9 s | 8.2 MB |
 
 Constant resident memory at every N (the `State(perm, count)` accumulator deep-copies across the
 fixed-watermark reset); larger N is bounded only by time (`N!` enumeration). Permutation-range

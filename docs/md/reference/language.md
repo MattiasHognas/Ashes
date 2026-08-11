@@ -3080,6 +3080,11 @@ printed form of each argument from left to right. Exact duplicates are removed a
 by a stronger constraint are omitted. This order is used by diagnostics, formatter output, hover text,
 module metadata, and dictionary parameters.
 
+Multiple requirements for the same trait remain distinct when their complete type arguments differ.
+For example, `requires {Eq(a), Eq(b)}` threads two independently selected dictionaries; calls and
+method references match evidence by the complete instantiated constraint rather than by the trait name
+alone.
+
 A constraint is **ambiguous** when one of its variables cannot be determined from the scheme's
 ordinary argument/result type, its expected type, or another resolved constraint. Ashes does not use
 numeric defaulting to hide ambiguity. Numeric literals retain their existing concrete types and suffix

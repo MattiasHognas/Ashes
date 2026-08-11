@@ -1030,8 +1030,11 @@ ordinary source parameters. Dictionaries are immutable compiler-generated values
 dictionary is represented by that field directly; a larger dictionary is an ordinary tuple-shaped
 allocation with one eight-byte field per entry. Method closures come first in ordinal method-name
 order, followed by direct supertrait dictionaries in ordinal qualified-trait order. Multiple root
-constraints are passed in ordinal qualified-trait order, with written constraint order as the stable
-tie-breaker.
+constraints are passed in ordinal qualified-trait order, with canonical printed type-argument order as
+the stable tie-breaker. Each root slot retains the complete instantiated constraint identity, including its type
+arguments, so two slots such as `Eq(a)` and `Eq(b)` never alias merely because they share a trait name.
+Syntax-only call rewriting declines ambiguous same-trait mappings; semantic lowering selects the slot
+after ordinary arguments have unified the constraint types.
 
 The function body destructures each dictionary once and rewrites `Trait.method` references and
 trait-backed operators to the corresponding method value. Calls at abstract types thread the
@@ -1051,16 +1054,18 @@ use this exact ABI and resolution path.
 
 Primitive trait-backed operators retain their dedicated semantic IR instructions after resolution,
 preserving the existing integer, unsigned, floating-point, string, and BigInt backend paths. Nominal
-and abstract calls use ordinary closure application. A saturated concrete `Str` call to a recursive
-constrained function whose ownership facts prove an affine self-appending accumulator is cloned once
-per concrete instantiation and reported as a `TraitOperatorSpecialization`; its source `Add(Str)`
-operator lowers directly in the clone. The narrow gate avoids cloning unrelated constrained
-recursion, while retaining the original tail-call ownership facts so affine string growth remains
-available instead of degrading to repeated dictionary calls and copies. Disabling trait-operator
+and abstract calls use ordinary closure application. Two bounded concrete cases clone the function
+once per concrete instantiation and report a `TraitOperatorSpecialization`: recursive constrained
+functions whose ownership facts prove an affine self-appending `Str` accumulator, and capture-free
+non-reuse helpers with one primitive constraint and fully concrete ordinary arguments. The latter may
+also specialize inside a reuse specialization, so collection helpers such as an integer `hMax` do not
+repeatedly construct and invoke an `Ord(Int)` dictionary in a hot path. Keeping this gate narrow avoids
+bypassing evidence carried by captured or higher-order arguments. Each clone lowers its trait-backed
+operators directly and retains the original tail-call ownership facts. Disabling trait-operator
 specialization keeps the dictionary-only path for differential validation without changing trait
 resolution or observable behavior. Concrete evidence construction and other known-closure calls may
-subsequently be folded or devirtualized by the normal IR optimizer, but those optimizer passes are
-not required for correctness.
+subsequently be folded or devirtualized by the normal IR optimizer, but those optimizer passes are not
+required for correctness.
 
 `--emit-ir lowered|final` carries stable trait-evidence annotations listing dictionary parameters and
 resolved implementations. `--explain traits` renders the same facts, while `--explain memory` includes

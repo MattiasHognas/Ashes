@@ -1262,7 +1262,8 @@ public sealed partial class Lowering
                 isResource: false,
                 GetSpan(binder),
                 bindingType,
-                perceusPatternOwner: true);
+                perceusPatternOwner: true,
+                perceusRootParameterSlot: tco.ParamSlots[ownership.RootParameterOrdinal]);
         }
     }
 

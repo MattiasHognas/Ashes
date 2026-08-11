@@ -514,8 +514,7 @@ public sealed partial class Lowering
         RecursiveGroupExpr group,
         LoweredValueRequest request)
     {
-        (IReadOnlyList<(string Name, Expr Value)> Bindings, bool[] UsesDictionary) evidence =
-            PrepareRecursiveGroupTraitEvidence(group);
+        var evidence = PrepareRecursiveGroupTraitEvidence(group);
         var bindings = evidence.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
 
@@ -538,6 +537,7 @@ public sealed partial class Lowering
             setup.Context,
             request.WithoutExpectedType(),
             evidence.UsesDictionary,
+            evidence.DictionaryInfos,
             out bool[] needsLateTraitTypeHints);
         ReplaceRecursiveGroupEvidenceRequirements(
             inferredRequirements,
@@ -588,17 +588,21 @@ public sealed partial class Lowering
         }
     }
 
-    private (IReadOnlyList<(string Name, Expr Value)> Bindings, bool[] UsesDictionary)
+    private (IReadOnlyList<(string Name, Expr Value)> Bindings,
+        bool[] UsesDictionary,
+        TraitDictionaryFunctionInfo?[] DictionaryInfos)
         PrepareRecursiveGroupTraitEvidence(RecursiveGroupExpr group)
     {
         List<(string Name, Expr Value)> bindings = [];
         bool[] usesDictionary = new bool[group.Bindings.Count];
+        var dictionaryInfos = new TraitDictionaryFunctionInfo?[group.Bindings.Count];
         for (int index = 0; index < group.Bindings.Count; index++)
         {
             (string name, Expr value) = group.Bindings[index];
             usesDictionary[index] = _traitDictionaryFunctions.TryGetValue(
                 name,
                 out TraitDictionaryFunctionInfo? info);
+            dictionaryInfos[index] = info;
             bindings.Add((
                 name,
                 usesDictionary[index]
@@ -608,7 +612,7 @@ public sealed partial class Lowering
                         threadDictionaryFunctions: true)
                     : value));
         }
-        return (bindings, usesDictionary);
+        return (bindings, usesDictionary, dictionaryInfos);
     }
 
     private RecursiveGroupSetup CreateRecursiveGroupSetup(
@@ -787,6 +791,7 @@ public sealed partial class Lowering
         RecursiveGroupContext groupContext,
         LoweredValueRequest request,
         IReadOnlyList<bool> usesTraitDictionary,
+        IReadOnlyList<TraitDictionaryFunctionInfo?> dictionaryInfos,
         out bool[] needsLateTraitTypeHints)
     {
         // Mutual recursion is reached through closure calls, not the single-function tail-call loop, so
@@ -798,6 +803,12 @@ public sealed partial class Lowering
         needsLateTraitTypeHints = new bool[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
+            if (usesTraitDictionary[i])
+            {
+                BindTraitDictionaryParameterConstraints(
+                    dictionaryInfos[i]!,
+                    signatures[i].SourceOrderedRequirements);
+            }
             var value = bindings[i].Value;
             var savedAnnotationParamTypes = _annotationParamTypes;
             var savedAnnotationParamCursor = _annotationParamCursor;

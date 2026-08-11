@@ -8,7 +8,6 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [Traits / Typeclasses](TRAITS.md) | Planned | Type-directed dispatch on the capability dictionary machinery, retiring the polymorphic-operator inlining hacks |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
 

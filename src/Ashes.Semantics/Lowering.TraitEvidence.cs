@@ -9,6 +9,8 @@ public sealed partial class Lowering
         IReadOnlyList<TraitMethodSymbol> Methods,
         IReadOnlyList<TraitDictionaryShape> Supertraits,
         int ConstraintOrdinal,
+        int SourceOrdinal,
+        string ConstraintSyntaxKey,
         string Path);
 
     private sealed record TraitDictionaryFunctionInfo(
@@ -20,6 +22,9 @@ public sealed partial class Lowering
     private readonly Dictionary<string, TraitDictionaryFunctionInfo> _traitDictionaryFunctions =
         new(StringComparer.Ordinal);
 
+    private readonly Dictionary<string, Expr.Lambda> _traitOperatorSpecializableFunctions =
+        new(StringComparer.Ordinal);
+
     private readonly Dictionary<(string Name, int Position), TraitDictionaryFunctionInfo>
         _traitDictionaryFunctionsByBinding = [];
 
@@ -29,7 +34,15 @@ public sealed partial class Lowering
     private readonly Dictionary<TypeScheme, TraitDictionaryFunctionInfo> _traitDictionaryFunctionsByScheme =
         new(ReferenceEqualityComparer.Instance);
 
-    private readonly Dictionary<string, TraitDictionaryShape> _traitDictionaryParameterMetadata =
+    private sealed record TraitDictionaryParameterMetadata(
+        TraitDictionaryShape Shape,
+        TraitConstraint? Constraint);
+
+    private sealed record ActiveTraitDictionaryParameter(
+        string ParameterName,
+        TraitDictionaryParameterMetadata Metadata);
+
+    private readonly Dictionary<string, TraitDictionaryParameterMetadata> _traitDictionaryParameterMetadata =
         new(StringComparer.Ordinal);
 
     private readonly HashSet<string> _borrowedTraitDictionaryBindings = new(StringComparer.Ordinal);
@@ -37,7 +50,7 @@ public sealed partial class Lowering
     private readonly HashSet<IrInst> _traitEvidenceConstructionInstructions =
         new(ReferenceEqualityComparer.Instance);
 
-    private readonly Dictionary<string, List<string>> _activeTraitDictionaryParameters =
+    private readonly Dictionary<string, List<ActiveTraitDictionaryParameter>> _activeTraitDictionaryParameters =
         new(StringComparer.Ordinal);
     private int _suppressActiveTraitDictionaryReferenceDepth;
 
@@ -118,6 +131,7 @@ public sealed partial class Lowering
             switch (item)
             {
                 case TopLevelItem.LetDecl { IsRecursive: true } binding:
+                    RegisterTraitOperatorSpecializableFunction(binding.Name, binding.Value);
                     RegisterTraitDictionaryFunction(
                         binding.Name,
                         binding.Requires,
@@ -127,6 +141,7 @@ public sealed partial class Lowering
                             AstSpans.GetOrDefault(binding.Value).Start));
                     break;
                 case TopLevelItem.LetDecl binding:
+                    RegisterTraitOperatorSpecializableFunction(binding.Name, binding.Value);
                     RegisterTraitDictionaryFunction(
                         binding.Name,
                         binding.Requires,
@@ -136,6 +151,9 @@ public sealed partial class Lowering
                 case TopLevelItem.RecursiveGroup group:
                     for (int index = 0; index < group.Bindings.Count; index++)
                     {
+                        RegisterTraitOperatorSpecializableFunction(
+                            group.Bindings[index].Name,
+                            group.Bindings[index].Value);
                         RegisterTraitDictionaryFunction(
                             group.Bindings[index].Name,
                             index < group.Requires.Count ? group.Requires[index] : [],
@@ -158,6 +176,7 @@ public sealed partial class Lowering
             switch (cursor)
             {
                 case Expr.Let binding:
+                    RegisterTraitOperatorSpecializableFunction(binding.Name, binding.Value);
                     RegisterTraitDictionaryFunction(
                         binding.Name,
                         binding.Requires,
@@ -166,6 +185,7 @@ public sealed partial class Lowering
                     cursor = binding.Body;
                     break;
                 case Expr.LetRecursive binding:
+                    RegisterTraitOperatorSpecializableFunction(binding.Name, binding.Value);
                     RegisterTraitDictionaryFunction(
                         binding.Name,
                         binding.Requires,
@@ -174,6 +194,15 @@ public sealed partial class Lowering
                     cursor = binding.Body;
                     break;
             }
+        }
+    }
+
+    private void RegisterTraitOperatorSpecializableFunction(string name, Expr value)
+    {
+        if (RegisterInlinableStrip(value) is Expr.Lambda lambda
+            && ExpressionContainsMappedTraitOperator(lambda))
+        {
+            _traitOperatorSpecializableFunctions[name] = lambda;
         }
     }
 
@@ -771,7 +800,8 @@ public sealed partial class Lowering
             .Where(shape => shape is not null)
             .Cast<TraitDictionaryShape>()
             .OrderBy(shape => shape.Trait.QualifiedName, StringComparer.Ordinal)
-            .ThenBy(shape => shape.ConstraintOrdinal)
+            .ThenBy(shape => shape.ConstraintSyntaxKey, StringComparer.Ordinal)
+            .Select((shape, ordinal) => ReordinalTraitDictionaryShape(shape, ordinal))
             .ToArray();
         if (shapes.Length > 0)
         {
@@ -804,12 +834,18 @@ public sealed partial class Lowering
         TraitSymbol? trait = LookupTrait(requirement.TraitName, span);
         return trait is null
             ? null
-            : CreateTraitDictionaryShape(trait, ordinal, "root", new HashSet<string>(StringComparer.Ordinal));
+            : CreateTraitDictionaryShape(
+                trait,
+                ordinal,
+                TraitConstraintSyntaxStableKey(requirement),
+                "root",
+                new HashSet<string>(StringComparer.Ordinal));
     }
 
     private static TraitDictionaryShape CreateTraitDictionaryShape(
         TraitSymbol trait,
         int ordinal,
+        string constraintSyntaxKey,
         string path,
         HashSet<string> includedTraits)
     {
@@ -821,6 +857,7 @@ public sealed partial class Lowering
             .Select((supertrait, index) => CreateTraitDictionaryShape(
                 supertrait,
                 ordinal,
+                constraintSyntaxKey,
                 $"{path}_{index}",
                 includedTraits))
             .ToArray();
@@ -829,8 +866,36 @@ public sealed partial class Lowering
             trait.Methods.Values.OrderBy(method => method.Name, StringComparer.Ordinal).ToArray(),
             supertraits,
             ordinal,
+            ordinal,
+            constraintSyntaxKey,
             path);
     }
+
+    private static TraitDictionaryShape ReordinalTraitDictionaryShape(
+        TraitDictionaryShape shape,
+        int ordinal) =>
+        shape with
+        {
+            ConstraintOrdinal = ordinal,
+            Supertraits = shape.Supertraits.Select(supertrait =>
+                ReordinalTraitDictionaryShape(supertrait, ordinal)).ToArray(),
+        };
+
+    private static string TraitConstraintSyntaxStableKey(TraitConstraintSyntax constraint) =>
+        $"{constraint.TraitName}({string.Join(",", constraint.TypeArgs.Select(TraitTypeSyntaxStableKey))})";
+
+    private static string TraitTypeSyntaxStableKey(TypeExpr type) => type switch
+    {
+        TypeExpr.Named named => named.Name,
+        TypeExpr.Applied applied =>
+            $"{applied.Name}({string.Join(",", applied.Args.Select(TraitTypeSyntaxStableKey))})",
+        TypeExpr.Arrow arrow =>
+            $"({TraitTypeSyntaxStableKey(arrow.From)}->{TraitTypeSyntaxStableKey(arrow.To)})",
+        TypeExpr.TupleType tuple =>
+            $"({string.Join(",", tuple.Elements.Select(TraitTypeSyntaxStableKey))})",
+        TypeExpr.UnitType => "()",
+        _ => type.GetType().Name,
+    };
 
     private Expr TransformTraitDictionaryValue(
         Expr value,
@@ -840,9 +905,13 @@ public sealed partial class Lowering
         bool rewriteMethodReferences = true)
     {
         Dictionary<(string Trait, string Method), string> methodParameters = [];
+        HashSet<(string Trait, string Method)> ambiguousMethodParameters = [];
         foreach (TraitDictionaryShape dictionary in info.Dictionaries)
         {
-            CollectTraitMethodParameterNames(dictionary, methodParameters);
+            CollectTraitMethodParameterNames(
+                dictionary,
+                methodParameters,
+                ambiguousMethodParameters);
         }
 
         // Operators are resolved while lowering, when their inferred operand type is available.
@@ -880,7 +949,9 @@ public sealed partial class Lowering
         string parameterName,
         TraitDictionaryShape shape)
     {
-        _traitDictionaryParameterMetadata[parameterName] = shape;
+        _traitDictionaryParameterMetadata[parameterName] = new TraitDictionaryParameterMetadata(
+            shape,
+            Constraint: null);
         foreach (TraitMethodSymbol method in shape.Methods)
         {
             _borrowedTraitDictionaryBindings.Add(TraitRawMethodParameterName(shape, method.Name));
@@ -892,6 +963,71 @@ public sealed partial class Lowering
             RegisterTraitDictionaryParameterMetadata(
                 TraitSuperDictionaryParameterName(shape, index),
                 shape.Supertraits[index]);
+        }
+    }
+
+    private void BindTraitDictionaryParameterConstraints(
+        TraitDictionaryFunctionInfo info,
+        IReadOnlyList<TraitConstraint> sourceOrderedRequirements)
+    {
+        for (int index = 0; index < info.Dictionaries.Count; index++)
+        {
+            TraitDictionaryShape shape = info.Dictionaries[index];
+            TraitConstraint? constraint = shape.SourceOrdinal < sourceOrderedRequirements.Count
+                ? sourceOrderedRequirements[shape.SourceOrdinal]
+                : null;
+            BindTraitDictionaryParameterConstraint(
+                StaticEvidenceParameterName("trait", index),
+                shape,
+                constraint);
+        }
+    }
+
+    private void BindTraitDictionaryParameterConstraintsInAbiOrder(
+        TraitDictionaryFunctionInfo info,
+        IReadOnlyList<TraitConstraint> requirements)
+    {
+        for (int index = 0; index < info.Dictionaries.Count; index++)
+        {
+            BindTraitDictionaryParameterConstraint(
+                StaticEvidenceParameterName("trait", index),
+                info.Dictionaries[index],
+                index < requirements.Count ? requirements[index] : null);
+        }
+    }
+
+    private void BindTraitDictionaryParameterConstraint(
+        string parameterName,
+        TraitDictionaryShape shape,
+        TraitConstraint? constraint)
+    {
+        _traitDictionaryParameterMetadata[parameterName] = new TraitDictionaryParameterMetadata(
+            shape,
+            constraint);
+        IReadOnlyDictionary<string, TypeRef>? substitution = constraint is null
+            ? null
+            : shape.Trait.TypeParameters
+                .Select((parameter, index) => (parameter.Name, Type: constraint.TypeArgs[index]))
+                .ToDictionary(item => item.Name, item => item.Type, StringComparer.Ordinal);
+        for (int index = 0; index < shape.Supertraits.Count; index++)
+        {
+            TraitDictionaryShape superShape = shape.Supertraits[index];
+            TraitConstraint? superConstraint = substitution is null
+                ? null
+                : shape.Trait.Supertraits
+                    .Where(candidate => string.Equals(
+                        candidate.Trait.QualifiedName,
+                        superShape.Trait.QualifiedName,
+                        StringComparison.Ordinal))
+                    .Select(candidate => new TraitConstraint(
+                        candidate.Trait,
+                        candidate.TypeArgs.Select(type =>
+                            SubstituteTraitParameters(type, substitution)).ToArray()))
+                    .FirstOrDefault();
+            BindTraitDictionaryParameterConstraint(
+                TraitSuperDictionaryParameterName(shape, index),
+                superShape,
+                superConstraint);
         }
     }
 
@@ -946,17 +1082,22 @@ public sealed partial class Lowering
 
     private static void CollectTraitMethodParameterNames(
         TraitDictionaryShape shape,
-        IDictionary<(string Trait, string Method), string> names)
+        IDictionary<(string Trait, string Method), string> names,
+        ISet<(string Trait, string Method)> ambiguous)
     {
         foreach (TraitMethodSymbol method in shape.Methods)
         {
-            names.TryAdd(
-                (shape.Trait.QualifiedName, method.Name),
-                TraitMethodParameterName(shape, method.Name));
+            (string QualifiedName, string Name) key = (shape.Trait.QualifiedName, method.Name);
+            if (!ambiguous.Contains(key)
+                && !names.TryAdd(key, TraitMethodParameterName(shape, method.Name)))
+            {
+                names.Remove(key);
+                ambiguous.Add(key);
+            }
         }
         foreach (TraitDictionaryShape supertrait in shape.Supertraits)
         {
-            CollectTraitMethodParameterNames(supertrait, names);
+            CollectTraitMethodParameterNames(supertrait, names, ambiguous);
         }
     }
 
@@ -1029,21 +1170,24 @@ public sealed partial class Lowering
         List<int> mapped = [];
         foreach (TraitDictionaryShape needed in callee.Dictionaries)
         {
-            int index = enclosing.Dictionaries
+            int[] candidates = enclosing.Dictionaries
                 .Select((candidate, ordinal) => (candidate, ordinal))
                 .Where(item => string.Equals(
                     item.candidate.Trait.QualifiedName,
                     needed.Trait.QualifiedName,
                     StringComparison.Ordinal))
                 .Select(item => item.ordinal)
-                .DefaultIfEmpty(-1)
-                .First();
-            if (index < 0)
+                .ToArray();
+            // A syntax-only pre-pass cannot safely map two evidence values for the same trait: the
+            // callee's type variables may have different names from the caller's. Leave that call
+            // untouched so lowering can match instantiated semantic constraints after its real
+            // arguments have unified them.
+            if (candidates.Length != 1)
             {
                 indexes = [];
                 return false;
             }
-            mapped.Add(index);
+            mapped.Add(candidates[0]);
         }
         indexes = mapped.ToArray();
         return true;
@@ -1086,30 +1230,35 @@ public sealed partial class Lowering
 
     private IReadOnlyList<string>? EnterTraitDictionaryParameterScope(string parameterName)
     {
-        if (!_traitDictionaryParameterMetadata.TryGetValue(parameterName, out TraitDictionaryShape? shape))
+        if (!_traitDictionaryParameterMetadata.TryGetValue(
+                parameterName,
+                out TraitDictionaryParameterMetadata? metadata))
         {
             return null;
         }
         List<string> enteredTraits = [];
-        void Enter(TraitDictionaryShape current, string currentParameter)
+        void Enter(TraitDictionaryParameterMetadata current, string currentParameter)
         {
             if (!_activeTraitDictionaryParameters.TryGetValue(
-                    current.Trait.QualifiedName,
-                    out List<string>? parameters))
+                    current.Shape.Trait.QualifiedName,
+                    out List<ActiveTraitDictionaryParameter>? parameters))
             {
                 parameters = [];
-                _activeTraitDictionaryParameters[current.Trait.QualifiedName] = parameters;
+                _activeTraitDictionaryParameters[current.Shape.Trait.QualifiedName] = parameters;
             }
-            parameters.Add(currentParameter);
-            enteredTraits.Add(current.Trait.QualifiedName);
-            for (int index = 0; index < current.Supertraits.Count; index++)
+            parameters.Add(new ActiveTraitDictionaryParameter(currentParameter, current));
+            enteredTraits.Add(current.Shape.Trait.QualifiedName);
+            for (int index = 0; index < current.Shape.Supertraits.Count; index++)
             {
+                string superParameter = TraitSuperDictionaryParameterName(current.Shape, index);
+                TraitDictionaryParameterMetadata superMetadata =
+                    _traitDictionaryParameterMetadata[superParameter];
                 Enter(
-                    current.Supertraits[index],
-                    TraitSuperDictionaryParameterName(current, index));
+                    superMetadata,
+                    superParameter);
             }
         }
-        Enter(shape, parameterName);
+        Enter(metadata, parameterName);
         return enteredTraits;
     }
 
@@ -1121,7 +1270,8 @@ public sealed partial class Lowering
         }
         foreach (string traitName in traitNames.Reverse())
         {
-            List<string> parameters = _activeTraitDictionaryParameters[traitName];
+            List<ActiveTraitDictionaryParameter> parameters =
+                _activeTraitDictionaryParameters[traitName];
             parameters.RemoveAt(parameters.Count - 1);
             if (parameters.Count == 0)
             {
@@ -1131,19 +1281,33 @@ public sealed partial class Lowering
     }
 
     private (int Temp, TypeRef Type)? TryLowerActiveTraitMethod(
-        TraitSymbol trait,
+        TraitConstraint constraint,
         TraitMethodSymbol method)
     {
-        if (!_activeTraitDictionaryParameters.TryGetValue(
-                trait.QualifiedName,
-                out List<string>? activeParameters)
-            || !_traitDictionaryParameterMetadata.TryGetValue(
-                activeParameters[^1],
-                out TraitDictionaryShape? shape))
+        ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint);
+        if (active is null)
         {
             return null;
         }
-        return LowerExpr(new Expr.Var(TraitMethodParameterName(shape, method.Name))).AsPair();
+        return LowerExpr(new Expr.Var(
+            TraitMethodParameterName(active.Metadata.Shape, method.Name))).AsPair();
+    }
+
+    private ActiveTraitDictionaryParameter? FindActiveTraitDictionaryParameter(
+        TraitConstraint constraint)
+    {
+        if (!_activeTraitDictionaryParameters.TryGetValue(
+                constraint.Trait.QualifiedName,
+                out List<ActiveTraitDictionaryParameter>? activeParameters))
+        {
+            return null;
+        }
+        ActiveTraitDictionaryParameter? exact = activeParameters.LastOrDefault(parameter =>
+            parameter.Metadata.Constraint is { } activeConstraint
+            && TraitResolutionConstraintsEqual(
+                PruneTraitConstraint(activeConstraint),
+                PruneTraitConstraint(constraint)));
+        return exact ?? (activeParameters.Count == 1 ? activeParameters[0] : null);
     }
 
     private (int Temp, TypeRef Type)? TryLowerTraitDictionaryFunctionCall(
@@ -1207,15 +1371,12 @@ public sealed partial class Lowering
         IReadOnlyList<TraitConstraint> constraints,
         TextSpan span)
     {
-        if (!_configuration.EnableTraitOperatorSpecialization
-            || _inSpecialization
-            || !_specializableFunctions.TryGetValue(functionName, out var specialization)
-            || specialization.ArgCount != arguments.Count
-            || !ExpressionContainsMappedTraitOperator(specialization.Lambda)
-            || !PreservesAffineStringAppendOptimization(
-                specialization.Lambda,
+        if (!TrySelectTraitOperatorSpecializationLambda(
+                functionName,
+                arguments.Count,
                 constraints,
-                span))
+                span,
+                out Expr.Lambda specializationLambda))
         {
             return null;
         }
@@ -1233,7 +1394,7 @@ public sealed partial class Lowering
 
         string label = GetOrCreateTraitOperatorSpecialization(
             functionName,
-            specialization.Lambda,
+            specializationLambda,
             functionType,
             concreteParameterTypes);
         int applied = LowerTraitOperatorSpecializationClosure(label);
@@ -1245,6 +1406,46 @@ public sealed partial class Lowering
         }
         TypeRef resultType = Prune(loweredArguments.Result);
         return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
+    }
+
+    private bool TrySelectTraitOperatorSpecializationLambda(
+        string functionName,
+        int argumentCount,
+        IReadOnlyList<TraitConstraint> constraints,
+        TextSpan span,
+        out Expr.Lambda lambda)
+    {
+        lambda = null!;
+        if (!_configuration.EnableTraitOperatorSpecialization || _inTraitOperatorSpecialization)
+        {
+            return false;
+        }
+        if (_specializableFunctions.TryGetValue(functionName, out var reuseSpecialization))
+        {
+            if (_inSpecialization
+                || reuseSpecialization.ArgCount != argumentCount
+                || !ExpressionContainsMappedTraitOperator(reuseSpecialization.Lambda)
+                || !PreservesAffineStringAppendOptimization(reuseSpecialization.Lambda, constraints, span))
+            {
+                return false;
+            }
+            lambda = reuseSpecialization.Lambda;
+            return true;
+        }
+
+        if (constraints.Count != 1)
+        {
+            return false;
+        }
+        Expr.Lambda? registered = _traitOperatorSpecializableFunctions.GetValueOrDefault(functionName);
+        if (registered is null
+            || CountLambdaChain(registered) != argumentCount
+            || CollectReuseSpecializationCaptures(registered, functionName).Count > 0)
+        {
+            return false;
+        }
+        lambda = registered;
+        return true;
     }
 
     private bool PreservesAffineStringAppendOptimization(
@@ -1316,10 +1517,14 @@ public sealed partial class Lowering
             functionName);
 
         bool savedInSpecialization = _inSpecialization;
+        bool savedInTraitOperatorSpecialization = _inTraitOperatorSpecialization;
+        bool savedSuppressTraitConstraintCollection = _suppressTraitConstraintCollection;
         IReadOnlyList<TypeRef>? savedConcreteTypes = _specializationConcreteParamTypes;
         int savedParameterCursor = _specializationParamCursor;
         TcoContext? savedTco = _tcoCtx;
         _inSpecialization = true;
+        _inTraitOperatorSpecialization = true;
+        _suppressTraitConstraintCollection = true;
         _specializationConcreteParamTypes = concreteParameterTypes;
         _specializationParamCursor = 0;
         _tcoCtx = CreateTraitOperatorSpecializationTcoContext(lambda, functionName);
@@ -1343,6 +1548,8 @@ public sealed partial class Lowering
         finally
         {
             _inSpecialization = savedInSpecialization;
+            _inTraitOperatorSpecialization = savedInTraitOperatorSpecialization;
+            _suppressTraitConstraintCollection = savedSuppressTraitConstraintCollection;
             _specializationConcreteParamTypes = savedConcreteTypes;
             _specializationParamCursor = savedParameterCursor;
             _tcoCtx = savedTco;
@@ -1537,9 +1744,7 @@ public sealed partial class Lowering
         Binding binding)
     {
         if (_suppressActiveTraitDictionaryReferenceDepth > 0
-            || !TryGetTraitDictionaryInfo(reference.Name, binding, out TraitDictionaryFunctionInfo? info)
-            || !info!.Dictionaries.All(dictionary =>
-                _activeTraitDictionaryParameters.ContainsKey(dictionary.Trait.QualifiedName)))
+            || !TryGetTraitDictionaryInfo(reference.Name, binding, out TraitDictionaryFunctionInfo? info))
         {
             return null;
         }
@@ -1560,11 +1765,18 @@ public sealed partial class Lowering
                 return null;
         }
 
-        List<int> dictionaries = [];
-        foreach (TraitDictionaryShape dictionary in info.Dictionaries)
+        if (instantiated.Constraints.Count != info!.Dictionaries.Count
+            || instantiated.Constraints.Any(constraint =>
+                FindActiveTraitDictionaryParameter(constraint) is null))
         {
-            string parameterName = _activeTraitDictionaryParameters[dictionary.Trait.QualifiedName][^1];
-            dictionaries.Add(LowerExpr(new Expr.Var(parameterName)).Temp);
+            return null;
+        }
+
+        List<int> dictionaries = [];
+        foreach (TraitConstraint constraint in instantiated.Constraints)
+        {
+            ActiveTraitDictionaryParameter active = FindActiveTraitDictionaryParameter(constraint)!;
+            dictionaries.Add(LowerExpr(new Expr.Var(active.ParameterName)).Temp);
         }
         RequireTraitConstraints(instantiated.Constraints);
         int applied = ApplyStaticEvidenceArguments(functionTemp, dictionaries);
@@ -1752,19 +1964,17 @@ public sealed partial class Lowering
         List<(int Temp, TypeRef Type)> dictionaries = [];
         foreach (TraitDictionaryShape shape in info.Dictionaries)
         {
-            if (_activeTraitDictionaryParameters.TryGetValue(
+            TraitConstraint? constraint = shape.ConstraintOrdinal < constraints.Count
+                ? PruneTraitConstraint(constraints[shape.ConstraintOrdinal])
+                : null;
+            if (constraint is not null
+                && !string.Equals(
+                    constraint.Trait.QualifiedName,
                     shape.Trait.QualifiedName,
-                    out List<string>? activeParameters))
+                    StringComparison.Ordinal))
             {
-                dictionaries.Add(LowerExpr(new Expr.Var(activeParameters[^1])).AsPair());
-                continue;
+                constraint = null;
             }
-            TraitConstraint? constraint = constraints
-                .Select(PruneTraitConstraint)
-                .FirstOrDefault(candidate => string.Equals(
-                    candidate.Trait.QualifiedName,
-                    shape.Trait.QualifiedName,
-                    StringComparison.Ordinal));
             if (constraint is null)
             {
                 ReportDiagnostic(
@@ -1772,6 +1982,12 @@ public sealed partial class Lowering
                     $"Internal trait evidence ABI for '{functionName}' has no '{shape.Trait.QualifiedName}' constraint.",
                     InvalidTraitDeclarationCode);
                 dictionaries.Add((EmitDummyTemp(), new TypeRef.TNever()));
+                continue;
+            }
+            ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint);
+            if (active is not null)
+            {
+                dictionaries.Add(LowerExpr(new Expr.Var(active.ParameterName)).AsPair());
                 continue;
             }
             TraitEvidencePlan? plan = ResolveTraitEvidence(constraint, span, [], 0);
@@ -1871,11 +2087,11 @@ public sealed partial class Lowering
     {
         if (plan is TraitEvidencePlan.Parameter parameter)
         {
-            if (_activeTraitDictionaryParameters.TryGetValue(
-                    parameter.Constraint.Trait.QualifiedName,
-                    out List<string>? parameters))
+            ActiveTraitDictionaryParameter? active =
+                FindActiveTraitDictionaryParameter(parameter.Constraint);
+            if (active is not null)
             {
-                return LowerExpr(new Expr.Var(parameters[^1])).AsPair();
+                return LowerExpr(new Expr.Var(active.ParameterName)).AsPair();
             }
             ReportDiagnostic(
                 span,
@@ -2207,42 +2423,48 @@ public sealed partial class Lowering
         HashSet<string> captures = new(StringComparer.Ordinal);
         void Visit(Expr current)
         {
-            (string Trait, string Method)? mapped = current switch
-            {
-                Expr.Add => ("Add", "add"),
-                Expr.Subtract { Left: Expr.IntLit { Value: 0 } } => ("Negate", "negate"),
-                Expr.Subtract => ("Subtract", "subtract"),
-                Expr.Multiply => ("Multiply", "multiply"),
-                Expr.Divide => ("Divide", "divide"),
-                Expr.Modulo => ("Remainder", "remainder"),
-                Expr.LogicalNot => ("Not", "not"),
-                Expr.BitwiseAnd => ("BitAnd", "bitAnd"),
-                Expr.BitwiseOr => ("BitOr", "bitOr"),
-                Expr.BitwiseXor => ("BitXor", "bitXor"),
-                Expr.ShiftLeft => ("ShiftLeft", "shiftLeft"),
-                Expr.ShiftRight => ("ShiftRight", "shiftRight"),
-                Expr.BitwiseNot => ("BitwiseNot", "bitwiseNot"),
-                Expr.Equal => ("Eq", "equal"),
-                Expr.NotEqual => ("Eq", "notEqual"),
-                Expr.LessThan => ("Ord", "less"),
-                Expr.LessOrEqual => ("Ord", "lessOrEqual"),
-                Expr.GreaterThan => ("Ord", "greater"),
-                Expr.GreaterOrEqual => ("Ord", "greaterOrEqual"),
-                _ => null,
-            };
+            (string Trait, string Method)? mapped = current is Expr.QualifiedVar reference
+                && TryGetTraitMethod(reference, out TraitSymbol explicitTrait, out TraitMethodSymbol explicitMethod)
+                    ? (explicitTrait.QualifiedName, explicitMethod.Name)
+                    : current switch
+                    {
+                        Expr.Add => ("Add", "add"),
+                        Expr.Subtract { Left: Expr.IntLit { Value: 0 } } => ("Negate", "negate"),
+                        Expr.Subtract => ("Subtract", "subtract"),
+                        Expr.Multiply => ("Multiply", "multiply"),
+                        Expr.Divide => ("Divide", "divide"),
+                        Expr.Modulo => ("Remainder", "remainder"),
+                        Expr.LogicalNot => ("Not", "not"),
+                        Expr.BitwiseAnd => ("BitAnd", "bitAnd"),
+                        Expr.BitwiseOr => ("BitOr", "bitOr"),
+                        Expr.BitwiseXor => ("BitXor", "bitXor"),
+                        Expr.ShiftLeft => ("ShiftLeft", "shiftLeft"),
+                        Expr.ShiftRight => ("ShiftRight", "shiftRight"),
+                        Expr.BitwiseNot => ("BitwiseNot", "bitwiseNot"),
+                        Expr.Equal => ("Eq", "equal"),
+                        Expr.NotEqual => ("Eq", "notEqual"),
+                        Expr.LessThan => ("Ord", "less"),
+                        Expr.LessOrEqual => ("Ord", "lessOrEqual"),
+                        Expr.GreaterThan => ("Ord", "greater"),
+                        Expr.GreaterOrEqual => ("Ord", "greaterOrEqual"),
+                        _ => null,
+                    };
             if (mapped is { } operation)
             {
-                foreach ((string qualifiedName, List<string> parameters) in _activeTraitDictionaryParameters)
+                foreach ((string qualifiedName, List<ActiveTraitDictionaryParameter> parameters) in
+                         _activeTraitDictionaryParameters)
                 {
                     if (!string.Equals(qualifiedName, operation.Trait, StringComparison.Ordinal)
-                        && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal)
-                        || !_traitDictionaryParameterMetadata.TryGetValue(
-                            parameters[^1],
-                            out TraitDictionaryShape? shape))
+                        && !qualifiedName.EndsWith($".{operation.Trait}", StringComparison.Ordinal))
                     {
                         continue;
                     }
-                    captures.Add(TraitMethodParameterName(shape, operation.Method));
+                    foreach (ActiveTraitDictionaryParameter parameter in parameters)
+                    {
+                        captures.Add(TraitMethodParameterName(
+                            parameter.Metadata.Shape,
+                            operation.Method));
+                    }
                 }
             }
             _ = MapChildExpressions(current, child =>

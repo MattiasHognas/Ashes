@@ -10,13 +10,12 @@
 // N! grows factorially, so the Benchmarks Game standard N=12 is out of reach for a pure immutable
 // enumeration -- benchmark at small N.
 //
-// STATUS: runs correctly. The three compiler bugs this benchmark surfaced (a two-threaded-list
-// early-return miscompile, a spurious ASH014, and a TCO back-edge use-after-reset segfault) are all
-// fixed. The permutation and its factorial counter are modeled as one `State(perm,
-// count)` pair, threaded through the enumeration loop; that is a design choice, not a workaround now.
-// N! grows factorially, so resident memory grows with the enumeration (the growing pointer-bearing
-// accumulator is not reclaimed within the loop yet -- the memory-model milestone), and the Benchmarks
-// Game standard N=12 is out of reach; benchmark at small N.
+// STATUS: runs correctly. The compiler bugs this benchmark surfaced are fixed, including the
+// pattern-owner retain imbalance that made resident memory scale with the number of permutations.
+// The permutation and its factorial counter are modeled as one `State(perm, count)` pair, threaded
+// through the enumeration loop; that is a design choice, not a workaround. RC normalization and
+// release keep resident memory constant; the Benchmarks Game standard N=12 remains time-bound for
+// this pure immutable, single-threaded enumeration.
 //
 // Usage: ./fannkuch-redux 7   (defaults to 7)
 import Ashes.IO as io

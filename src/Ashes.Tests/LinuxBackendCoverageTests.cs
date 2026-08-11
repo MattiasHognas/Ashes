@@ -3003,6 +3003,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_pattern_owned_call_argument_in_arena_aggregate_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildPatternOwnedCallArgumentArenaAggregateMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("pattern-owned call argument in arena aggregate", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -3162,6 +3177,12 @@ public sealed class LinuxBackendCoverageTests
 
         IrProgram hashMapProbe = LowerProgramWithImports(BuildPersistentHashMapUpdateMemoryProgram(1));
         AllInstructions(hashMapProbe).Any(instruction => instruction is IrInst.AllocAdtToSpace).ShouldBeTrue();
+        hashMapProbe.Functions.Any(function =>
+            function.Origin?.Kind == IrFunctionOriginKind.TraitOperatorSpecialization
+            && string.Equals(
+                function.Origin.Source?.SourceName,
+                "Ashes_Collection_HashMap_hMax",
+                StringComparison.Ordinal)).ShouldBeTrue();
 
         List<MemoryExecutionResult> mapSamples = await MeasureImportedMemoryGrowthAsync(
             BuildPersistentMapStringUpdateMemoryProgram,
@@ -7663,6 +7684,40 @@ public sealed class LinuxBackendCoverageTests
                 else loop(n - 1)(total + consume(build(64)([])([]))(0))
 
             Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildPatternOwnedCallArgumentArenaAggregateMemoryProgram(int iterations)
+        => $$"""
+            type State =
+                | S(List(Int), List(Int))
+
+            let recursive setAt i value values =
+                match values with
+                    | [] -> []
+                    | head :: tail ->
+                        if i == 0
+                        then value :: tail
+                        else head :: setAt(i - 1)(value)(tail)
+
+            let recursive resetCounts r count =
+                if r == 1
+                then count
+                else resetCounts(r - 1)(setAt(r - 1)(r)(count))
+
+            let identity value = value
+
+            let recursive loop remaining state total =
+                match state with
+                    | S(perm, count) ->
+                        let count1 = resetCounts(4)(count)
+                        in
+                            let next = identity(S(perm)(count1))
+                            in
+                                if remaining <= 0
+                                then total
+                                else loop(remaining - 1)(next)(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
             """;
 
     private static string BuildRuntimeRcRecordHeadListTcoMemoryProgram(int iterations)

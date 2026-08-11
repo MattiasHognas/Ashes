@@ -107,7 +107,8 @@ public sealed partial class Lowering
 
     private sealed record ResolvedBindingSignature(
         TypeRef? Type,
-        IReadOnlyList<TraitConstraint> Requirements);
+        IReadOnlyList<TraitConstraint> Requirements,
+        IReadOnlyList<TraitConstraint> SourceOrderedRequirements);
 
     private ResolvedBindingSignature ResolveBindingSignature(
         TypeExpr? annotation,
@@ -116,7 +117,7 @@ public sealed partial class Lowering
     {
         if (annotation is null && requirements.Count == 0)
         {
-            return new ResolvedBindingSignature(null, []);
+            return new ResolvedBindingSignature(null, [], []);
         }
 
         Dictionary<string, TypeRef>? savedParameterScope = _typeExprParamScope;
@@ -162,7 +163,8 @@ public sealed partial class Lowering
             }
             return new ResolvedBindingSignature(
                 resolvedType,
-                TraitConstraint.Canonicalize(resolvedRequirements));
+                TraitConstraint.Canonicalize(resolvedRequirements),
+                resolvedRequirements.ToArray());
         }
         finally
         {
@@ -591,17 +593,21 @@ public sealed partial class Lowering
         }
         if (plan is TraitEvidencePlan.Parameter)
         {
-            if (!_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
+            (int Temp, TypeRef Type)? active = TryLowerActiveTraitMethod(
+                prunedConstraint,
+                method);
+            if (active is null)
             {
                 RequireLateTraitTypeHint();
                 if (_emitTraitDictionaries)
                 {
                     return ReportUnresolvableTraitConstraint(prunedConstraint, span);
                 }
+                int placeholder = NewTemp();
+                Emit(new IrInst.LoadConstInt(placeholder, 0));
+                return (placeholder, Prune(current));
             }
-            int placeholder = NewTemp();
-            Emit(new IrInst.LoadConstInt(placeholder, 0));
-            return (placeholder, Prune(current));
+            return (ApplyTraitMethodArguments(active.Value.Temp, argumentTemps), Prune(current));
         }
         (int methodTemp, _) = SelectTraitDictionaryMethod(
             BuildTraitDictionary(plan, span),
@@ -699,7 +705,7 @@ public sealed partial class Lowering
             return ReturnNeverWithDummyTemp();
         }
         if (plan is TraitEvidencePlan.Parameter
-            && !_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
+            && FindActiveTraitDictionaryParameter(constraint) is null)
         {
             RequireLateTraitTypeHint();
             if (_emitTraitDictionaries)
@@ -710,7 +716,7 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(placeholder, 0));
             return (placeholder, returnsBool ? new TypeRef.TBool() : operandType);
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(trait, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int first = NewTemp();
         Emit(new IrInst.CallClosure(first, methodTemp, leftTemp));
@@ -749,7 +755,7 @@ public sealed partial class Lowering
             return ReturnNeverWithDummyTemp();
         }
         if (plan is TraitEvidencePlan.Parameter
-            && !_activeTraitDictionaryParameters.ContainsKey(trait.QualifiedName))
+            && FindActiveTraitDictionaryParameter(constraint) is null)
         {
             RequireLateTraitTypeHint();
             if (_emitTraitDictionaries)
@@ -760,7 +766,7 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadConstInt(placeholder, 0));
             return (placeholder, pruned);
         }
-        (int methodTemp, _) = TryLowerActiveTraitMethod(trait, method)
+        (int methodTemp, _) = TryLowerActiveTraitMethod(constraint, method)
             ?? SelectTraitDictionaryMethod(BuildTraitDictionary(plan, span), trait, method);
         int result = NewTemp();
         Emit(new IrInst.CallClosure(result, methodTemp, operandTemp));
