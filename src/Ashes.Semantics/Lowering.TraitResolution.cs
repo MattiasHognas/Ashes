@@ -140,6 +140,7 @@ public sealed partial class Lowering
         TraitConstraint[] requirements = match.Instance.Requirements
             .Select(requirement => SubstituteInstanceParameters(requirement, match.Substitution))
             .ToArray();
+        bool goalIsConcrete = IsConcreteTraitConstraint(goal);
         int goalSize = TraitConstraintStructuralSize(goal);
         foreach (TraitConstraint requirement in requirements)
         {
@@ -151,7 +152,10 @@ public sealed partial class Lowering
                     $"Cyclic trait resolution requirement: {FormatResolutionTrace(trace, requirement)}.");
                 return null;
             }
-            if (TraitConstraintStructuralSize(requirement) >= goalSize)
+            // See ValidateInstanceRequirementTermination: a concrete goal's requirement graph is finite
+            // and already guarded by the cycle check above plus the max-depth check in
+            // ValidateTraitResolutionTraversal, so it does not also need to shrink in structural size.
+            if (!goalIsConcrete && TraitConstraintStructuralSize(requirement) >= goalSize)
             {
                 ReportTraitResolutionFailure(
                     TraitConstraint.StableKey(goal),
@@ -454,8 +458,25 @@ public sealed partial class Lowering
         _ => 1,
     };
 
+    /// <summary>
+    /// A generic instance head (e.g. <c>Show(List(a))</c>) can be matched against goals of unbounded
+    /// structural size as <c>a</c> is instantiated, so its requirements must be strictly smaller than
+    /// the head to guarantee the substitution-driven requirement chain shrinks toward a base case.
+    /// A fully concrete head (e.g. <c>Show(Box)</c>) has no free type variable for a caller to grow, so
+    /// every requirement it can ever produce is fixed at declaration time: the resolution graph rooted
+    /// at a concrete instance is finite, and <see cref="ValidateTraitResolutionTraversal"/> and
+    /// <see cref="ResolveMatchedTraitEvidence"/> already reject exact cycles and cap total depth at
+    /// <see cref="MaximumTraitResolutionDepth"/> independently of requirement size. The structural
+    /// -decrease rule is therefore only load-bearing for generic heads; applying it to concrete ones as
+    /// well would reject sound, terminating implementations like <c>implement Show(Box) requires
+    /// {Show(Int)}</c> purely because the unrelated types happen to have equal structural size.
+    /// </summary>
     private bool ValidateInstanceRequirementTermination(TraitInstanceSymbol instance)
     {
+        if (instance.Head.TypeArgs.All(IsConcreteTraitType))
+        {
+            return true;
+        }
         int headSize = 1 + instance.Head.TypeArgs.Sum(TraitTypeStructuralSize);
         bool valid = true;
         foreach (TraitConstraint requirement in instance.Requirements)

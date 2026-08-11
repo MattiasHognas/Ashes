@@ -156,6 +156,32 @@ public sealed class TraitResolutionTests
     }
 
     [Test]
+    public void ConcreteInstanceHeadPermitsARequirementNoSmallerThanTheHead()
+    {
+        const string source = """
+            type Box =
+                | Box(Int)
+            trait Show(a) =
+                | show : a -> Str
+            implement Show(Int) =
+                | show = given (_) -> "int"
+            implement Show(Box) requires {Show(Int)} =
+                | show = given (_) -> Show.show(1)
+            Show.show(Box(1))
+            """;
+
+        Lowering lowering = Lower(source, out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+        lowering.TraitInstances.Count.ShouldBe(2);
+        TraitEvidencePlan.Instance plan = lowering.ResolvedConcreteTraitEvidence
+            .Single(candidate => candidate.Goal.TypeArgs.Single() is TypeRef.TNamedType { Symbol.Name: "Box" })
+            .ShouldBeOfType<TraitEvidencePlan.Instance>();
+        plan.Requirements.Single().ShouldBeOfType<TraitEvidencePlan.Instance>()
+            .Goal.TypeArgs.Single().ShouldBeOfType<TypeRef.TInt>();
+    }
+
+    [Test]
     public void DepthLimitTerminatesADeepButDecreasingResolution()
     {
         const string source = """

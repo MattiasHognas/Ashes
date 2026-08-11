@@ -535,7 +535,12 @@ public sealed partial class Lowering
 
     // Registered type and constructor symbols
     private readonly Dictionary<string, TypeSymbol> _typeSymbols = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, TraitDeclarationProvenance> _typeProvenanceByName = new(StringComparer.Ordinal);
+    // Keyed by TypeSymbol reference identity, not name: two packages may each declare a type with
+    // the same simple name (e.g. both a "Point"), and the orphan rule (ValidateOrphanRule) must not
+    // confuse one package's outer-type ownership for the other's just because the unqualified name
+    // collides.
+    private readonly Dictionary<TypeSymbol, TraitDeclarationProvenance> _typeProvenanceBySymbol =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, ConstructorSymbol> _constructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ConstructorSymbol> _builtinConstructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeRef.TNamedType> _resolvedTypes = new(StringComparer.Ordinal);

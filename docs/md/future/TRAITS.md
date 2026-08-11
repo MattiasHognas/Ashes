@@ -390,8 +390,14 @@ trait-focused lowering component.
 - [x] Elaborate every abstract constraint into a hidden immutable dictionary parameter with stable
       method order.
 - [x] Rewrite trait method calls to dictionary method values when evidence remains abstract.
-- [x] Build concrete implementation dictionaries from implementations, defaults, requirements, and
-      supertraits.
+- [x] Build concrete implementation dictionaries from implementations, defaults, and supertraits (packed
+      as extra dictionary fields via `TraitEvidencePlan.Instance.Supertraits`). An instance's own
+      conditional `requires` clause is resolved ahead of time too (`TraitEvidencePlan.Instance
+      .Requirements`), but is consumed differently: by the time its method body is lowered its type
+      parameter has been unified to something concrete, so a nested trait-method call on that value
+      resolves and builds its own dictionary independently through the normal call-site path rather than
+      reading a pre-built field off `.Requirements`. See Task 21 for the resulting (non-correctness-
+      affecting) code-size finding.
 - [x] Specialize concrete evidence to direct calls where safe, while retaining dictionary passing as
       the correctness path.
 - [x] Ensure default methods dispatch through the same selected dictionary and cannot accidentally
@@ -811,21 +817,65 @@ documented reason it's out of scope.
 
 ### Task 21: Coherence and resolution hardening
 
-- [ ] Fix `_typeProvenanceByName` (`Lowering.cs:538`), which keys outer-type provenance for the orphan rule
-      by unqualified type name. Two packages declaring a type with the same simple name can collide and
-      silently grant or deny orphan rights to the wrong package. Key by package-qualified identity instead.
-- [ ] Decide whether `ValidateInstanceRequirementTermination` should apply the strict structural-decrease
-      rule to implementations with a fully concrete head, not only generic ones — it currently rejects a
-      shape like `implement Show(Box) requires {Show(Int)}` (head size 2, requirement size 2, both
-      concrete, so termination is not actually at risk). Either relax the rule for concrete heads and add a
-      positive test, or keep it and document the stricter-than-normative-text behavior explicitly in
-      `language.md` section 21.8.
-- [ ] Resolve the dead-data gap in `TraitEvidencePlan.Instance.Requirements`: conditional implementation
-      requirements are computed during resolution but never consumed during dictionary construction
-      (requirements are re-resolved at the concrete goal inside the method body instead of being
-      materialized as dictionary fields). Either wire the computed requirements into
-      `BuildTraitDictionary`, or remove the dead computation and correct Task 7's wording so it describes
-      the re-resolution design that actually shipped.
+- [x] Fixed `_typeProvenanceByName` (`Lowering.cs:538`), which keyed outer-type provenance for the orphan
+      rule by unqualified type name, by renaming it to `_typeProvenanceBySymbol` and keying by `TypeSymbol`
+      identity (`ReferenceEqualityComparer.Instance`) instead of `string`. Updated both registration sites
+      (`Lowering.Symbols.cs`) and `ValidateOrphanRule`'s lookup (`Lowering.Traits.cs`).
+      Honest scope note: while writing a regression test for the two-packages-collide scenario, the scenario
+      turned out to be unreachable today — `Lowering.Symbols.cs:236-239` has a pre-existing, unrelated,
+      globally-scoped "Duplicate type name" check that rejects any two type declarations anywhere in a
+      stitched program sharing an unqualified name, regardless of package. Type names are therefore already
+      unique program-wide (unlike trait names, which are legitimately module-qualified and can repeat), so
+      the collision this item worried about cannot currently occur. The fix is kept anyway as correctness-by
+      -construction defensive hardening — it removes an incidental dependency on that unrelated global
+      check remaining in place — but it is not closing a live, currently-triggerable bug, and no regression
+      test was added since none can exercise the collision without first defeating the duplicate-name guard.
+- [x] Relaxed `ValidateInstanceRequirementTermination` (`Lowering.TraitResolution.cs`) to skip the
+      structural-decrease rule when the instance head is fully concrete (`instance.Head.TypeArgs.All(
+      IsConcreteTraitType)`). Applied the same relaxation to the analogous dynamic check in
+      `ResolveMatchedTraitEvidence` (guarded by `IsConcreteTraitConstraint(goal)`), since that check
+      independently enforces the identical rule at every real resolution call and would otherwise still
+      reject the same shape at first use even with the declaration-time check alone relaxed. Rationale: a
+      generic head can be matched against goals of unbounded size as its type variable is instantiated, so
+      its requirements must shrink to guarantee the substitution-driven chain terminates; a concrete head
+      has no free variable to grow, so its entire requirement graph is fixed and finite at declaration
+      time, and is already guarded independently by the existing exact-cycle check
+      (`ValidateTraitResolutionTraversal`/the `trace.Any` check in `ResolveMatchedTraitEvidence`) and the
+      `MaximumTraitResolutionDepth` cap — the structural-decrease rule was only ever load-bearing for
+      generic heads. Added `ConcreteInstanceHeadPermitsARequirementNoSmallerThanTheHead`
+      (`TraitResolutionTests.cs`), which compiles and resolves `implement Show(Box) requires {Show(Int)}`
+      end to end and asserts the resulting evidence tree, confirming the shape the audit flagged now
+      works; `RejectsNonDecreasingInstanceRequirementBeforeExpressionLowering` (a generic head) still
+      passes unchanged, confirming the real termination guard is untouched.
+- [x] Investigated the claimed dead-data gap in `TraitEvidencePlan.Instance.Requirements`. Verified it is
+      not actually dead: `IsFullyConcreteEvidence` (`Lowering.TraitResolution.cs`) reads it to decide
+      whether a resolved plan is safe to memoize in `_concreteTraitEvidenceCache` — without traversing
+      `.Requirements`, a plan with an unresolved parameter buried inside its own instance requirement
+      would vacuously read as fully concrete and get cached wrongly — and `CollectEvidenceParameters`
+      reads it to propagate any abstract sub-requirement up to the enclosing function's own residual
+      constraint set. Removing the computation, as the "or remove it" option proposed, would have
+      reintroduced exactly the kind of silent-wrongness bug this whole task category exists to close, so
+      that option is rejected.
+      What genuinely doesn't happen is reading `.Requirements` directly as prebuilt dictionary fields in
+      `BuildTraitDictionary`: by the time an instance's method body is lowered, its own requirement's type
+      parameter has already been unified to something concrete, so a trait-method call inside that body on
+      a value of that type is an ordinary, independent call site that resolves and builds its own
+      dictionary through the standard `LowerTraitMethodCall` -> `ResolveTraitEvidence` ->
+      `BuildTraitDictionary` path — correctly, but from scratch, ignoring that the identical concrete
+      dictionary may already have been built once for the same goal elsewhere in the same function (there
+      is no cross-call-site cache of already-emitted dictionary-construction IR, only of the resolved
+      `TraitEvidencePlan` data). This can duplicate a required dictionary's construction IR once per call
+      site that needs it, which only matters for conditional instances (`requires {...}`) whose own method
+      bodies invoke the required trait on the type-parameter-derived value — a real but narrow compile
+      -time code-size effect, not a correctness or unbounded-blowup issue. Threading prebuilt requirement
+      dictionaries into the method body as captured closure values (mirroring how
+      `_activeTraitDictionaryParameters` already threads *abstract* hidden-parameter dictionaries) would
+      remove the duplication, but requires the new values to be constructed in the enclosing scope and
+      captured across the closure boundary, which interacts with the Perceus reuse-token/ownership state
+      that `BuildTraitDictionary` already isolates carefully (see its comment on source reuse tokens) —
+      a nontrivial change to justify for a code-size nicety with no behavioral upside. Deferred as a known,
+      explicitly out-of-scope optimization; corrected Task 7's wording above so it no longer implies
+      requirements are threaded into dictionary fields the same way supertraits are.
 
 Acceptance: orphan-rule provenance cannot be confused across packages with colliding simple names;
 the termination rule's actual scope matches its documentation; no computed evidence-resolution data is

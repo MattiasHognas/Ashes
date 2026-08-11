@@ -268,7 +268,7 @@ public sealed partial class Lowering
         // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
         // constructor list is filled in place below.
         _typeSymbols[decl.Name] = typeSymbol;
-        _typeProvenanceByName[decl.Name] = ResolveDeclarationProvenance(GetSpan(decl));
+        _typeProvenanceBySymbol[typeSymbol] = ResolveDeclarationProvenance(GetSpan(decl));
         _resolvedTypes[decl.Name] = new TypeRef.TNamedType(
             typeSymbol,
             typeParameterSymbols.Select(tp => (TypeRef)new TypeRef.TTypeParam(tp)).ToList());
@@ -449,7 +449,7 @@ public sealed partial class Lowering
                 IsBuiltin: true);
 
             _typeSymbols[builtinType.Name] = typeSymbol;
-            _typeProvenanceByName[builtinType.Name] = new TraitDeclarationProvenance(
+            _typeProvenanceBySymbol[typeSymbol] = new TraitDeclarationProvenance(
                 "ashes-core",
                 "Ashes.Core",
                 $"<builtin:{builtinType.Name}>",

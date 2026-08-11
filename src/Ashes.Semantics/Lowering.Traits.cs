@@ -1361,7 +1361,7 @@ public sealed partial class Lowering
     {
         bool ownsTrait = string.Equals(trait.Provenance.PackageId, provenance.PackageId, StringComparison.Ordinal);
         bool ownsOuterType = headTypes.OfType<TypeRef.TNamedType>().Any(type =>
-            _typeProvenanceByName.TryGetValue(type.Symbol.Name, out TraitDeclarationProvenance? typeProvenance)
+            _typeProvenanceBySymbol.TryGetValue(type.Symbol, out TraitDeclarationProvenance? typeProvenance)
             && string.Equals(typeProvenance.PackageId, provenance.PackageId, StringComparison.Ordinal));
         if (!ownsTrait && !ownsOuterType)
         {
