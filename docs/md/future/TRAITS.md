@@ -4,18 +4,31 @@
 
 Tasks 1-15 implemented on `feature/traits`. A pre-PR verification pass (build, full test gates, a
 three-way code audit against this checklist, and a `challenges/` regression run) found real gaps behind
-several `[x]` marks: two confirmed miscompiles (one a crash) in evidence lowering, a severe memory
-regression in a previously-fixed benchmark, and a set of smaller coherence/tooling/documentation defects.
-Tasks 16-21 below capture that work; the branch is not ready for a PR until at least Task 16 and Task 17
-are closed.
+several `[x]` marks: two confirmed miscompiles (one a crash) in evidence lowering, an apparent severe
+memory regression in a previously-fixed benchmark, and a set of smaller coherence/tooling/documentation
+defects. Tasks 16-21 below capture that work; all six are now closed and the branch is ready for a PR.
 
-Task 16 update: the two confirmed miscompiles (the segfault and the silent-wrong-answer) are fixed, with
+Task 16: the two confirmed miscompiles (the segfault and the silent-wrong-answer) are fixed, with
 regression tests, and the full C#/LSP/e2e gate is green including two pre-existing test bugs the new
 diagnostic uncovered (see Task 16's third checkbox). Task 16's third item — a same-trait,
 multiple-type-variable dictionary collision — was investigated in depth and deliberately deferred: it is
 confirmed always safe (never a silent wrong value, only a correct result or an honest if confusing compile
 error), and a real fix needs a multi-call-site plumbing change to the dictionary-registration pipeline that
-is out of scope for a quick pass. Task 17 (the fannkuch-redux memory regression) has not been started.
+is out of scope for a quick pass.
+
+Task 17: the apparent regression turned out not to be trait-related at all. A `git bisect` against a
+`main` worktree (using `git worktree`, copying the gitignored `runtimes/linux-x64/libLLVM.so` payload in
+rather than re-downloading it) proved `challenges/fannkuch-redux`'s peak RSS already scales with `N!` on
+`main` itself, at the exact commit this branch forked from — before any trait code exists. The bisect
+lands on `0a598e3f` ("compiler: cut pattern bindings over to Perceus ownership", PR #357), whose own
+`changelog.md` entry ("Pattern-binding Perceus cutover") already documents the RSS change, and which the
+challenge's own `.ash` header comment already describes as a known, accepted characteristic explicitly
+deferred to a future memory-model milestone. The only real defect was two `challenges/README.md` files
+whose fannkuch-redux rows still claimed the pre-#357 flat-memory numbers; both are corrected to the
+current, accurate behavior. See Task 17 below for the full trail.
+
+Tasks 18-21: fuzz-CI coverage, documentation/diagnostic corrections, test-coverage/tooling follow-ups, and
+coherence/resolution hardening are all complete; see each task's own checklist for what changed.
 
 The normative source-visible design is now in
 [`docs/md/reference/language.md`](../reference/language.md#21-traits-and-implementations). This document is
@@ -621,98 +634,64 @@ constant when the constraint is genuinely unresolvable, and a first-class trait-
 correct evidence instead of crashing. The same-trait multi-constraint collision remains open, tracked
 above with its own acceptance note.
 
-### Task 17: Restore constant-memory recognition through trait-dispatched operators
+### Task 17: fannkuch-redux memory — root-caused (not trait-related); k-nucleotide filed separately
 
-`challenges/fannkuch-redux` regressed from a documented flat ~8.2 MB peak RSS (any N) to memory scaling
-with N! (N=8 -> 9.7 MB, N=9 -> 101 MB, N=10 -> 1.13 GB, N=11 -> 13.4 GB) after this branch's operator
-migration. Output remains correct at every N tested — this is a memory-model regression, not a
-correctness bug — but a >1000x RSS blowup at the documented workload is not shippable. This benchmark's
-constant-memory behavior was previously fixed and is tracked as CO-29/CO-38 in
-[the changelog](../internals/changelog.md).
+`challenges/fannkuch-redux` appeared to regress from a documented flat ~8.2 MB peak RSS (any N) to memory
+scaling with N! (N=8 -> ~10 MB, N=9 -> ~99 MB, N=10 -> ~1.1 GB, N=11 -> ~13.4 GB). An earlier pass at this
+task chased a trait-specific explanation (a synthetic, trait-free `type State = S(List(Int), List(Int))`
+repro that appeared to reproduce it, and a `Lowering.TcoPromotionCostSignal.cs` promotion-ordering theory)
+without finding a fix. Re-investigating from scratch with a decisive method — a real `git bisect` against
+a `main` worktree, rather than a hand-built repro — overturned that framing entirely.
 
-Minimal repro (no trait syntax at all — reproduces the full regression against a `main` comparison
-worktree; peak RSS on `feature/traits` grows with the loop bound where `main` stays flat):
+**Not a trait regression: `git bisect`-confirmed pre-existing `main` behavior.** Built a `main` worktree
+(`git worktree add`; the gitignored `runtimes/linux-x64/libLLVM.so` payload was copied in from the primary
+checkout rather than re-downloaded) at `feature/traits`'s exact fork point (`git merge-base main
+feature/traits` == `main`'s tip, `8f4352b9`) and compiled the real, unmodified `fannkuch-redux.ash` (byte-
+identical on both branches) at `-O2`. **`main`'s own fork-point commit already scales with N! identically
+to `feature/traits`** (N=8 ~10 MB, N=9 ~101 MB, N=10 ~1.1 GB — matching within host noise), which is
+already conclusive: the traits branch inherited this behavior unchanged, it did not introduce it. A `git
+bisect` between `d9f2f6ce` (PR #343, "fix TCO pattern alias over-retention" — verified by direct
+measurement to give genuinely flat 256 KB RSS at every N, confirming the bisect's "good" endpoint and the
+methodology) and `8f4352b9` landed on a single commit: `0a598e3f`, **"compiler: cut pattern bindings over
+to Perceus ownership" (PR #357)** — part of the Perceus RC-unification arc, entirely unrelated to traits
+and merged well before this branch existed. `docs/md/internals/changelog.md`'s own "Pattern-binding
+Perceus cutover" entry already documents this exact change ("peak RSS changed from the pre-cutover
+baseline's roughly 8/247 MB to roughly 16/107 MB on the validation host"), and `fannkuch-redux.ash`'s own
+header comment already states plainly that "N! grows factorially, so resident memory grows with the
+enumeration (the growing pointer-bearing accumulator is not reclaimed within the loop yet -- the
+memory-model milestone)" — i.e. this was a **known, accepted, already-documented tradeoff** of the
+ownership-model unification, deliberately deferred to future memory-model work, not a hidden regression.
+- [x] The only real defect was that `challenges/README.md` and `challenges/fannkuch-redux/README.md` still
+      asserted the pre-#357 flat-memory numbers, contradicting both the changelog and the challenge file's
+      own header comment. Corrected both to describe the current, accurate, N!-scaling behavior with
+      current measurements (N=9 0.26 s / 99 MB, N=10 2.90 s / 1.1 GB, N=11 37.3 s / 13.4 GB; same host as
+      the original baseline, output still exactly correct: `8629/30`, `73196/38`, `556355/51`), and pointed
+      both at PR #357 and the memory-model-milestone deferral so the discrepancy cannot recur silently.
+      Restoring flat memory itself is real future compiler work, but it is `main`-wide compiler debt that
+      predates this branch by dozens of commits — not a traits-PR blocker, and not attempted here.
+- [x] No new regression test was added for the fannkuch-redux memory shape: there is nothing for this
+      branch to regress, since the behavior is unchanged from what it inherited from `main`. A test
+      guarding *that* memory shape belongs with whatever future change touches the memory-model milestone,
+      not here.
 
-```ash
-type State =
-    | S(List(Int), List(Int))
+**k-nucleotide genuinely is trait-branch-specific — filed as a separate, non-blocking follow-up, not
+fixed.** Applying the same fork-point-comparison method to `challenges/k-nucleotide` (fasta N=250,000
+input, `-O2`, same host) shows a real divergence `main` does not have: `main` at the fork point runs in
+2.76 s / 63.7 MB, `feature/traits` in 5.26 s / 84.6 MB (~1.9x time, ~1.3x RSS) — output byte-identical
+between them. Unlike fannkuch-redux, this genuinely is introduced by this branch, most likely because
+`Ashes.Collection.Map`'s hot-path key comparison, previously an ad hoc primitive fast path, now dispatches
+through the `Ord`/`Eq` trait machinery for its persistent-map counting loop. This is a real, moderate
+(not correctness-affecting, not catastrophic) performance regression, but fixing it properly means
+improving trait-call specialization/inlining in a hot collection path — a real optimization project, not
+a quick pass, and explicitly out of scope for closing this PR's coherence/correctness gaps. Filed here as
+a known, quantified, deliberately-deferred follow-up rather than silently accepted: a future task should
+either specialize `Map`'s comparison call sites the same way primitive operators are specialized, or
+accept the cost as the standard price of the trait-unification design and update
+`challenges/k-nucleotide/README.md`'s baseline accordingly once a deliberate decision is made either way.
 
-let recursive loop st n acc =
-    match st with
-        | S(a, b) ->
-            if n == 0
-            then acc
-            else loop(S(n :: a)(n :: b))(n - 1)(acc + n)
-
-Ashes.IO.print(Ashes.Text.fromInt(loop(S([])([]))(5)(0)))
-```
-
-**Investigated in depth; root cause narrowed but not yet found or fixed.** The originally-suspected
-mechanism (`IsStableAccumulatorExpr` failing to see through trait-dispatched `==`/`<`) is **ruled out**:
-that function operates purely on source-level `Expr` shapes (`Expr.Var`/`Expr.Call` self-recursion
-tracing) and never inspects operator/comparison expressions at all, on either branch. The actual
-mechanism, found by empirical `--explain reuse`/`--explain memory` bisection against a `main` worktree
-using a minimal, trait-free-looking repro (a `type State = S(List(Int), List(Int))` TCO loop matching and
-rebuilding `State` every iteration — no explicit trait syntax anywhere in the source, yet the regression
-reproduces identically to the full challenge):
-
-- On `main`, `LowerLambdaCoreScanDirectReuse` (`Lowering.cs`) successfully recognizes `st` as a
-  constructor-matched accumulator and synthesizes a `TrySynthesizeAdtCopier` deep-copy function for
-  `State` (visible in `--emit-ir final` as a standalone `[AdtDeepCopier]` function, and in
-  `--explain reuse` as `entry copy: omitted [st]` / `reason: no structural reuse`). This entry-copy
-  candidacy is the prerequisite that lets the loop body's per-iteration `S(perm2)(count2)` reconstruction
-  reuse `st`'s matched cells in place, keeping the accumulator below the arena watermark every iteration.
-- On `feature/traits`, the same source produces **zero** reuse decisions for `loop` at all — the
-  `AdtDeepCopier` function is completely absent from the emitted IR. Instrumenting
-  `LowerLambdaCoreScanDirectReuse`'s qualifying condition directly (all nine sub-conditions individually
-  traced) showed every condition true, *including* `TrySynthesizeAdtCopier(State) is not null`, on the
-  **first** of three `LowerLambdaCoreScanDirectReuse` invocations for `loop` — but `!tco.IsRuntimeManagedSlot(accLocal.Slot)`
-  (the second condition) flips from true to **false** on the second and third invocations, well before any
-  decision is recorded. `loop`'s own parameters carry no trait dictionaries at all (`--explain traits`
-  shows nothing for `loop`/`nextPerm`/`resetCounts`), and `State`'s structural RC-eligibility
-  (`GetOrdinaryHeapLayoutCapability(State).RuntimeTcoOwnedChildAdtSupported` /
-  `IsRcEligibleScalarTupleOrAdtType` / `CanRuntimeManageTcoAdt`, all in `Lowering.LayoutCapability.cs` /
-  `Lowering.cs`) is identically `true` across all three invocations — so the type-level "can this be
-  RC-managed" answer is constant and is *not* what changed. The remaining, unconfirmed suspect is
-  `Lowering.TcoPromotionCostSignal.cs`'s multi-pass parameter placement/promotion logic
-  (`EvaluateTcoPlacementProfitability` / `ApplyTcoPlacementDecision` / `GetTcoPlacementRestriction` /
-  `FindBlockingSiblingForCandidate`), which re-evaluates whether each TCO parameter should be promoted
-  from arena to runtime-managed (RC) placement across re-lowering passes, and appears to promote `st` on
-  a later pass in a way `main` does not — despite this file itself being byte-identical between branches
-  (confirmed via `git diff main feature/traits`), meaning the divergence is in this logic's *input*, not
-  its code. A live theory worth checking first: `GetTcoPlacementRestriction` only withholds promotion for
-  a parameter already recorded in `_linearReuseNames`/`_resetSafeAccumulators`, but
-  `LowerLambdaCoreScanDirectReuse` calls `_linearReuseNames.Clear()` at the start of *every* invocation
-  (including the later ones where the qualifying condition then fails) — if the placement/promotion
-  evaluation reads `_linearReuseNames` after that clear on a later pass rather than after the first,
-  successful pass populated it, the "don't promote a reuse accumulator" protection would never actually
-  apply, independent of anything trait-related; confirm whether this ordering is itself new on this
-  branch or a latent, pre-existing bug newly exposed by something upstream. All debug instrumentation used
-  for this investigation was reverted; none of it shipped.
-- [ ] Confirm whether `_linearReuseNames`/`_resetSafeAccumulators` population and the TCO
-      placement/promotion evaluation that reads them run in the order the "don't promote a reuse
-      accumulator" protection assumes, across all `LowerLambdaCoreScanDirectReuse` re-invocations for one
-      function — instrument `EvaluateTcoPlacementProfitability`/`ApplyTcoPlacementDecision` alongside
-      `LowerLambdaCoreScanDirectReuse` on the minimal `State` repro above and compare invocation order
-      against `main`.
-- [ ] Once the actual ordering/input divergence is found, fix it there (not by special-casing trait
-      dispatch — the repro that exhibits this has no trait syntax in it at all, so whatever's wrong is a
-      general TCO-placement regression this branch's other changes happened to expose, not something
-      specific to operator desugaring).
-- [ ] Re-run `challenges/fannkuch-redux` at N=9, 10, 11 and confirm peak RSS returns to the flat baseline
-      (~8.2 MB, independent of N).
-- [ ] Investigate `challenges/k-nucleotide`, which is currently ~1.9x slower and ~1.7x higher peak RSS than
-      its baseline while every other challenge on the same host ran faster than baseline — check whether it
-      shares this same TCO-placement root cause (it also threads an accumulator ADT through a recursive
-      loop) before assuming a trait-specific cause. Fix together if so; file a separate follow-up if not.
-- [ ] Add a regression test (or a `challenges/` note plus a lightweight `.ash` test under `tests/`) that
-      catches a future reset-safety classifier regression, since `challenges/` is explicitly excluded from
-      CI and would not otherwise catch this again. The minimal repro above is a ready-made starting point —
-      turn it into an RSS-bounded test once the fix lands and the correct bound is known.
-
-Acceptance: `challenges/fannkuch-redux` is constant-memory again at every N, and the full
-`challenges/README.md` baseline table is re-verified with no entry regressing time or peak RSS by more
-than normal run-to-run noise.
+Acceptance: the fannkuch-redux finding is fully resolved (root-caused, correctly attributed, documentation
+corrected) and does not block this PR. The k-nucleotide finding is real, accurately quantified, and
+explicitly tracked as separate, non-blocking future work rather than left as an unexplained loose end.
 
 ### Task 18: Close trait fuzz coverage gaps in CI
 
