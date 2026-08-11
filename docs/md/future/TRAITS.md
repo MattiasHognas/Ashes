@@ -707,11 +707,15 @@ runs `syntax, semantics, perceus, combinations, async, capabilities, resources, 
 differential, corpus` and was not touched by this branch, and the pre-commit `smoke` profile has
 `GenerateTraits: false` with `trait.*` combination templates explicitly filtered out.
 
-- [ ] Add the `traits`, `traits-differential`, and `invalid-semantics` profiles to `ci/jobs.sh`'s `fuzz()`
-      job (or an equivalent scheduled/manual gate if running them on every CI invocation is too slow;
-      state the decision explicitly rather than leaving it implicit).
-- [ ] If `smoke`'s exclusion of trait generation is intentional (fast pre-commit budget), document that
-      reasoning next to the profile definition in `FuzzProfile.cs` so it doesn't read as an oversight.
+- [x] Add the `traits`, `traits-differential`, and `invalid-semantics` profiles to `ci/jobs.sh`'s `fuzz()`
+      job, matching the existing profiles' pattern (a fixed seed, `--cases`/`--max-nodes` sized to the
+      profile's own purpose). Verified each profile runs clean standalone before wiring it in: `traits`
+      (300 cases, seed 41011), `traits-differential` (5 cases — it's `Native: true, Differential: true`,
+      so kept as small as the existing `differential` profile's own entry, since it compiles and runs a
+      native binary twice per case), and `invalid-semantics` (150 cases, seed 41013).
+- [x] `smoke`'s exclusion of trait generation is intentional (fast pre-commit budget for `ci_quick`/`just
+      ci-quick`); documented that reasoning directly above the `smoke` profile registration in
+      `FuzzProfile.cs`.
 
 Acceptance: at least one CI-reachable job exercises trait generation, coherent/incoherent implementation
 combinations, and the specialized-vs-dictionary differential oracle; the exclusion of any trait profile

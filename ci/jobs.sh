@@ -65,6 +65,9 @@ fuzz() {
     dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile invalid-source --seed 41008 --cases 250 --max-nodes 80
     dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile compile --seed 41009 --cases 10 --max-nodes 50
     dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile differential --seed 41010 --cases 5 --max-nodes 50
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile traits --seed 41011 --cases 300 --max-nodes 140
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile traits-differential --seed 41012 --cases 5 --max-nodes 120
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile invalid-semantics --seed 41013 --cases 150 --max-nodes 80
     dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- corpus
   "
 }

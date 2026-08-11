@@ -139,6 +139,11 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("async", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "async.capture-across-await", "async.closure-match-across-await", "async.spawn-shared-value", "async.task-result-reuse" }, ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match", "capability.result-operation", "capability.recursive-list" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80), ResourceTypes: [Generation.AshesType.FileHandle]));
+        // GenerateTraits is deliberately off here: smoke backs ci_quick (`just ci-quick`), the fast
+        // pre-commit inner loop, budgeted for a fixed-seed pass on every commit. Trait declarations and
+        // coherent implementations add real generation and validation cost (see the "traits" profile's
+        // larger Defaults(100, 140) below); that cost belongs in the traits/traits-differential/
+        // invalid-semantics profiles wired into ci/jobs.sh's fuzz() job instead, not on every commit.
         registry.Register(new FuzzProfile("smoke", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 0, OwnershipInterests: ownershipInterests, Defaults: Defaults(40, 40)));
         registry.Register(new FuzzProfile(
             "all",
