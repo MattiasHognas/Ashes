@@ -825,4 +825,36 @@ public sealed class LspDocumentServiceTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Test]
+    public void Project_module_completion_and_definition_omit_hidden_exports()
+    {
+        var root = CreateTempProjectDirectory(
+            "export (value visible, type Choice(Yes))\n" +
+            "type Choice =\n    | Yes\n    | No\n" +
+            "let hidden = 1\nlet visible = hidden\n");
+        try
+        {
+            string mainPath = Path.Combine(root, "Main.ash");
+            const string source = "import Math\nMath.";
+            File.WriteAllText(mainPath, source);
+
+            IReadOnlyList<string> completions = DocumentService.GetCompletions(source, source.Length, mainPath);
+            completions.ShouldContain("visible");
+            completions.ShouldContain("Choice");
+            completions.ShouldContain("Yes");
+            completions.ShouldNotContain("hidden");
+            completions.ShouldNotContain("No");
+
+            const string hiddenReference = "import Math\nMath.hidden";
+            DocumentService.GetDefinition(
+                hiddenReference,
+                hiddenReference.IndexOf("hidden", StringComparison.Ordinal),
+                mainPath).ShouldBeNull();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }

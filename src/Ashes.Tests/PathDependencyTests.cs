@@ -148,7 +148,7 @@ public sealed class PathDependencyTests
         File.WriteAllText(Path.Combine(root, "dep", "ashes.json"),
             """{ "name": "greet", "entry": "src/Greet.ash", "sourceRoots": ["src"] }""");
         File.WriteAllText(Path.Combine(root, "dep", "src", "Greet.ash"),
-            "let hello = given (name) -> name\n");
+            "export (value hello)\nlet privateGreeting = \"private\"\nlet hello = given (name) -> name\n");
 
         File.WriteAllText(Path.Combine(root, "app", "ashes.json"),
             """{ "name": "app", "entry": "src/Main.ash", "sourceRoots": ["src"], "dependencies": { "greet": { "path": "../dep" } } }""");

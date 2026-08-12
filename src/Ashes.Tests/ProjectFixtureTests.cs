@@ -47,13 +47,17 @@ public sealed class ProjectFixtureTests
             var ex = Should.Throw<Exception>(() =>
             {
                 var plan = ProjectSupport.BuildCompilationPlan(project);
-                var combinedSource = ProjectSupport.BuildCompilationSource(plan);
+                CombinedCompilationLayout layout = ProjectSupport.BuildCompilationLayout(plan);
 
                 var diag = new Diagnostics();
-                var ast = new Parser(combinedSource, diag).ParseProgram();
+                var ast = new Parser(layout.Source, diag).ParseProgram();
                 diag.ThrowIfAny();
 
-                _ = new Lowering(diag, plan.ImportedStdModules).Lower(ast);
+                _ = new Lowering(
+                    diag,
+                    plan.ImportedStdModules,
+                    plan.MergedAliases,
+                    layout.ConstructorModules).Lower(ast);
                 diag.ThrowIfAny();
             });
 
@@ -64,8 +68,8 @@ public sealed class ProjectFixtureTests
         expected.ShouldNotBeNull($"Project fixture in {testDir} must declare // expect: or // expect-compile-error:");
 
         var compilationPlan = ProjectSupport.BuildCompilationPlan(project);
-        var combinedSource = ProjectSupport.BuildCompilationSource(compilationPlan);
-        var stdout = await CompileRunCaptureAsync(combinedSource, compilationPlan.ImportedStdModules).ConfigureAwait(false);
+        CombinedCompilationLayout compilationLayout = ProjectSupport.BuildCompilationLayout(compilationPlan);
+        var stdout = await CompileRunCaptureAsync(compilationLayout, compilationPlan).ConfigureAwait(false);
         stdout.TrimEnd().ShouldBe(expected);
     }
 
@@ -106,13 +110,19 @@ public sealed class ProjectFixtureTests
         return (expected, compileError);
     }
 
-    private static async Task<string> CompileRunCaptureAsync(string source, IReadOnlySet<string>? importedStdModules = null)
+    private static async Task<string> CompileRunCaptureAsync(
+        CombinedCompilationLayout layout,
+        ProjectCompilationPlan plan)
     {
         var diag = new Diagnostics();
-        var ast = new Parser(source, diag).ParseProgram();
+        var ast = new Parser(layout.Source, diag).ParseProgram();
         diag.ThrowIfAny();
 
-        var ir = new Lowering(diag, importedStdModules).Lower(ast);
+        var ir = new Lowering(
+            diag,
+            plan.ImportedStdModules,
+            plan.MergedAliases,
+            layout.ConstructorModules).Lower(ast);
         diag.ThrowIfAny();
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-project-fixtures");

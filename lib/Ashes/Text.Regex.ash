@@ -4,39 +4,49 @@
 // Pattern and subject are treated as UTF-8 with Unicode property support (\d, \w, \p{...}). Offsets
 // returned by find/findAll are byte offsets into the subject.
 //
-// The low-level PCRE2 primitives — compileRaw, compileError, findFrom, capturesFrom, substituteAll —
-// are native members of this module; the ergonomic API below is written on top of them.
+// The low-level PCRE2 primitives live in the compiler-reserved Ashes.Internal.Regex module; the
+// ergonomic API below is the complete public surface.
+
+export (
+    value compile,
+    value isMatch,
+    value find,
+    value captures,
+    value findAll,
+    value replace,
+    type Regex,
+)
 
 type Regex =
-    | Regex(Int)
+    | CompiledRegex(Int)
 
 let compile pattern =
-    (let code = Ashes.Text.Regex.compileRaw(pattern)
+    (let code = Ashes.Internal.Regex.compileRaw(pattern)
     in
         if code == 0
-        then Error(Ashes.Text.Regex.compileError(pattern))
-        else Ok(Regex(code)))
+        then Error(Ashes.Internal.Regex.compileError(pattern))
+        else Ok(CompiledRegex(code)))
 
 let isMatch regex text =
     match regex with
-        | Regex(code) ->
-            match Ashes.Text.Regex.findFrom(code)(text)(0) with
+        | CompiledRegex(code) ->
+            match Ashes.Internal.Regex.findFrom(code)(text)(0) with
                 | Some(_span) -> true
                 | None -> false
 
 let find regex text =
     match regex with
-        | Regex(code) -> Ashes.Text.Regex.findFrom(code)(text)(0)
+        | CompiledRegex(code) -> Ashes.Internal.Regex.findFrom(code)(text)(0)
 
 let captures regex text =
     match regex with
-        | Regex(code) -> Ashes.Text.Regex.capturesFrom(code)(text)(0)
+        | CompiledRegex(code) -> Ashes.Internal.Regex.capturesFrom(code)(text)(0)
 
 let findAll regex text =
     match regex with
-        | Regex(code) ->
+        | CompiledRegex(code) ->
             let recursive go start =
-                match Ashes.Text.Regex.findFrom(code)(text)(start) with
+                match Ashes.Internal.Regex.findFrom(code)(text)(start) with
                     | None -> []
                     | Some((s, e)) ->
                         (s, e) :: go(if e > s
@@ -46,4 +56,4 @@ let findAll regex text =
 
 let replace regex text replacement =
     match regex with
-        | Regex(code) -> Ashes.Text.Regex.substituteAll(code)(text)(replacement)
+        | CompiledRegex(code) -> Ashes.Internal.Regex.substituteAll(code)(text)(replacement)

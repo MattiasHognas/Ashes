@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -164,6 +165,11 @@ public sealed record SourceFunctionName(string SourceName, string QualifiedName)
 /// </summary>
 public static class ProjectSupport
 {
+    /// <summary>Compiler-only prefix used when stitching a constructor hidden by an explicit interface.</summary>
+    public const string PrivateConstructorPrefix = "AshesPrivateConstructor_";
+    /// <summary>Compiler-only prefix used when stitching a type hidden by an explicit interface.</summary>
+    public const string PrivateTypePrefix = "AshesPrivateType_";
+
     // Inline modules (LANGUAGE_SPEC §13.1)
     // An inline `module Name = <indented block>` is lifted, before shaping/combination, into a
     // synthetic module whose name is the file-composed path (`File.Name`). Within the defining file
@@ -200,6 +206,21 @@ public static class ProjectSupport
 
     private sealed record ModuleBindingGroup(IReadOnlyList<ModuleBindingFragment> Bindings, bool IsRecursiveGroup);
 
+    private sealed record ModuleExportPolicy(
+        bool IsExplicit,
+        IReadOnlySet<string> Values,
+        IReadOnlySet<string> Types,
+        IReadOnlySet<string> Constructors,
+        IReadOnlySet<string> Modules)
+    {
+        public static ModuleExportPolicy Compatibility { get; } = new(
+            false,
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal),
+            new HashSet<string>(StringComparer.Ordinal));
+    }
+
     private readonly record struct QualifiedReference(string ModuleName, string ExportName);
 
     private readonly record struct ReferencedNames(
@@ -213,6 +234,7 @@ public static class ProjectSupport
         IReadOnlyList<ModuleBindingGroup> TopLevelBindings,
         string? LegacyExportName,
         bool IsFlat,
+        ModuleExportPolicy? ExportPolicy = null,
         bool HasTrailingExpression = true,
         // Original position of each hoisted declaration fragment inside TypeDeclarationsSource:
         // (offset within TypeDeclarationsSource, offset in the module's imports-stripped source,
@@ -946,9 +968,39 @@ public static class ProjectSupport
 
         var dependency = ResolveImportForPlan(
             import, project, searchRoots, resolvedByModuleName, resolvedByPath, inlineChildrenByPath);
+        ValidateInlineImportSurface(import, traversal.Peek().ModuleName, resolvedByModuleName);
         VisitModuleForPlan(
             dependency, project, searchRoots, resolvedByModuleName, resolvedByPath,
             states, traversal, ordered, importedStdModules, inlineChildrenByPath);
+    }
+
+    private static void ValidateInlineImportSurface(
+        string importedModule,
+        string importingModule,
+        IReadOnlyDictionary<string, ProjectModule> modules)
+    {
+        for (int separator = importedModule.LastIndexOf('.'); separator > 0; separator = importedModule.LastIndexOf('.', separator - 1))
+        {
+            string parentName = importedModule[..separator];
+            string childPath = importedModule[(separator + 1)..];
+            string childName = childPath.Split('.')[0];
+            if (!modules.TryGetValue(parentName, out ProjectModule? parent)
+                || string.Equals(importingModule, parentName, StringComparison.Ordinal)
+                || importingModule.StartsWith(parentName + ".", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var diagnostics = new Diagnostics();
+            Program program = new Parser(parent.Source, diagnostics).ParseProgram();
+            ExportDecl? declaration = program.Items.OfType<TopLevelItem.Export>().Select(item => item.Decl).SingleOrDefault();
+            if (declaration is not null
+                && !declaration.Items.OfType<ExportItem.Module>().Any(module =>
+                    string.Equals(module.Name, childName, StringComparison.Ordinal)))
+            {
+                throw new InvalidOperationException($"Module '{parentName}' does not export '{childName}'.");
+            }
+        }
     }
 
     private static void AppendPlannedModule(
@@ -1735,10 +1787,25 @@ public static class ProjectSupport
             string source = string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase)
                 ? entrySourceOverride ?? module.Source
                 : module.Source;
-            shapes[module.ModuleName] = ShapeModuleSource(source);
+            IReadOnlySet<string> directModules = modules
+                .Select(candidate => candidate.ModuleName)
+                .Where(name => IsDirectChildModule(module.ModuleName, name))
+                .Select(name => name[(module.ModuleName.Length + 1)..])
+                .ToHashSet(StringComparer.Ordinal);
+            shapes[module.ModuleName] = ShapeModuleSource(source, module.ModuleName, directModules);
         }
 
         return shapes;
+    }
+
+    private static bool IsDirectChildModule(string parent, string candidate)
+    {
+        if (!candidate.StartsWith(parent + ".", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return candidate.AsSpan(parent.Length + 1).IndexOf('.') < 0;
     }
 
     private static (IReadOnlyDictionary<string, IReadOnlyList<string>> Names,
@@ -1750,8 +1817,41 @@ public static class ProjectSupport
             module => module.ModuleName,
             module => GetExportNames(shapes[module.ModuleName]),
             StringComparer.Ordinal);
+        ValidateNestedModuleExports(modules, shapes);
         ValidateSelectorExports(modules, names);
         return (names, BuildExportAnnotationLookup(modules, shapes));
+    }
+
+    private static void ValidateNestedModuleExports(
+        IReadOnlyList<ProjectModule> modules,
+        IReadOnlyDictionary<string, ModuleSourceShape> shapes)
+    {
+        foreach (ProjectModule importer in modules)
+        {
+            IEnumerable<string> importedNames = importer.Imports.Concat(importer.Selectors.Select(selector => selector.ModuleName));
+            foreach (string importedName in importedNames.Distinct(StringComparer.Ordinal))
+            {
+                int separator = importedName.LastIndexOf('.');
+                if (separator < 0)
+                {
+                    continue;
+                }
+
+                string parent = importedName[..separator];
+                string child = importedName[(separator + 1)..];
+                if (!shapes.TryGetValue(parent, out ModuleSourceShape? parentShape)
+                    || parentShape.ExportPolicy is not { IsExplicit: true } policy
+                    || policy.Modules.Contains(child)
+                    || string.Equals(importer.ModuleName, parent, StringComparison.Ordinal)
+                    || importer.ModuleName.StartsWith(parent + ".", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"Module '{parent}' does not export '{child}'.");
+            }
+        }
     }
 
     private static bool ApplyEntryBoundary(
@@ -1833,10 +1933,7 @@ public static class ProjectSupport
                 ? entrySourceOverride ?? module.Source
                 : module.Source;
             CollectAllExportNames(source, out var ctorNames);
-            if (ctorNames.Count > 0)
-            {
-                result[module.ModuleName] = ctorNames;
-            }
+            result[module.ModuleName] = ctorNames;
         }
 
         return result;
@@ -1855,6 +1952,7 @@ public static class ProjectSupport
         {
             var start = prefix.Length;
             prefix.Append(entryShape.TypeDeclarationsSource);
+            EnsureEndsWithNewline(prefix);
             moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
         }
 
@@ -1866,8 +1964,17 @@ public static class ProjectSupport
             {
                 var start = prefix.Length;
                 prefix.Append(typeDecls);
+                EnsureEndsWithNewline(prefix);
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
             }
+        }
+    }
+
+    private static void EnsureEndsWithNewline(StringBuilder source)
+    {
+        if (source.Length > 0 && source[^1] != '\n')
+        {
+            source.Append('\n');
         }
     }
 
@@ -2193,32 +2300,15 @@ public static class ProjectSupport
             return names;
         }
 
+        if (TryCollectExplicitExportNames(program, out IReadOnlySet<string> explicitNames, out IReadOnlySet<string> explicitConstructors))
+        {
+            constructorNames = explicitConstructors;
+            return explicitNames;
+        }
+
         foreach (var item in program.Items)
         {
-            switch (item)
-            {
-                case TopLevelItem.LetDecl letDecl:
-                    names.Add(letDecl.Name);
-                    break;
-                case TopLevelItem.RecursiveGroup recursiveGroup:
-                    foreach (var (name, _) in recursiveGroup.Bindings)
-                    {
-                        names.Add(name);
-                    }
-
-                    break;
-                case TopLevelItem.Type typeDecl:
-                    names.Add(typeDecl.Decl.Name);
-                    foreach (var ctor in typeDecl.Decl.Constructors)
-                    {
-                        ctorNames.Add(ctor.Name);
-                    }
-
-                    break;
-                case TopLevelItem.Trait traitDecl:
-                    names.Add(traitDecl.Decl.Name);
-                    break;
-            }
+            CollectCompatibilityTopLevelExport(item, names, ctorNames);
         }
 
         for (var expr = program.Body; expr is not null;)
@@ -2240,6 +2330,92 @@ public static class ProjectSupport
         }
 
         return names;
+    }
+
+    private static void CollectCompatibilityTopLevelExport(
+        TopLevelItem item,
+        HashSet<string> names,
+        HashSet<string> constructors)
+    {
+        switch (item)
+        {
+            case TopLevelItem.LetDecl letDecl:
+                names.Add(letDecl.Name);
+                break;
+            case TopLevelItem.RecursiveGroup recursiveGroup:
+                names.UnionWith(recursiveGroup.Bindings.Select(binding => binding.Name));
+                break;
+            case TopLevelItem.Type typeDecl:
+                names.Add(typeDecl.Decl.Name);
+                constructors.UnionWith(typeDecl.Decl.Constructors.Select(constructor => constructor.Name));
+                break;
+            case TopLevelItem.Trait traitDecl:
+                names.Add(traitDecl.Decl.Name);
+                break;
+        }
+    }
+
+    private static bool TryCollectExplicitExportNames(
+        Program program,
+        out IReadOnlySet<string> names,
+        out IReadOnlySet<string> constructors)
+    {
+        ExportDecl? explicitInterface = program.Items
+            .OfType<TopLevelItem.Export>()
+            .Select(item => item.Decl)
+            .SingleOrDefault();
+        if (explicitInterface is null)
+        {
+            names = new HashSet<string>(StringComparer.Ordinal);
+            constructors = new HashSet<string>(StringComparer.Ordinal);
+            return false;
+        }
+
+        var exportedNames = new HashSet<string>(StringComparer.Ordinal);
+        var exportedConstructors = new HashSet<string>(StringComparer.Ordinal);
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes = program.Items
+            .OfType<TopLevelItem.Type>()
+            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        foreach (ExportItem export in explicitInterface.Items)
+        {
+            CollectExplicitExport(export, declaredTypes, exportedNames, exportedConstructors);
+        }
+
+        names = exportedNames;
+        constructors = exportedConstructors;
+        return true;
+    }
+
+    private static void CollectExplicitExport(
+        ExportItem export,
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes,
+        HashSet<string> names,
+        HashSet<string> constructors)
+    {
+        if (export is ExportItem.Value value)
+        {
+            names.Add(value.Name);
+            return;
+        }
+
+        if (export is not ExportItem.Type type)
+        {
+            return;
+        }
+
+        names.Add(type.Name);
+        if (!declaredTypes.TryGetValue(type.Name, out TypeDecl? declaration))
+        {
+            return;
+        }
+
+        IEnumerable<string> selected = type.Constructors switch
+        {
+            ExportConstructors.All => declaration.Constructors.Select(constructor => constructor.Name),
+            ExportConstructors.Selected constructorSelection => constructorSelection.Names,
+            _ => [],
+        };
+        constructors.UnionWith(selected);
     }
 
     private static string BuildEntryExpression(
@@ -2744,6 +2920,15 @@ public static class ProjectSupport
 
     private static IReadOnlyList<string> GetExportNames(ModuleSourceShape shape)
     {
+        if (shape.ExportPolicy is { IsExplicit: true } policy)
+        {
+            return shape.TopLevelBindings
+                .SelectMany(group => group.Bindings)
+                .Select(binding => binding.Name)
+                .Where(policy.Values.Contains)
+                .ToArray();
+        }
+
         if (shape.TopLevelBindings.Count > 0)
         {
             return shape.TopLevelBindings
@@ -2777,11 +2962,18 @@ public static class ProjectSupport
         return annotations;
     }
 
-    private static ModuleSourceShape ShapeModuleSource(string source)
+    private static ModuleSourceShape ShapeModuleSource(
+        string source,
+        string moduleName = "Main",
+        IReadOnlySet<string>? directModules = null)
     {
+        (source, ModuleExportPolicy policy) = ApplyExplicitExportInterface(
+            source,
+            moduleName,
+            directModules ?? new HashSet<string>(StringComparer.Ordinal));
         if (TryShapeFlatModule(source, out var flatShape))
         {
-            return flatShape;
+            return flatShape with { ExportPolicy = policy };
         }
 
         var bodyStart = FindExpressionBodyStart(source);
@@ -2803,7 +2995,239 @@ public static class ProjectSupport
         var legacyFragments = typeDeclarationsSource.Length > 0
             ? new[] { (0, 0, typeDeclarationsSource.Length) }
             : null;
-        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false, TypeDeclFragments: legacyFragments);
+        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false, policy, TypeDeclFragments: legacyFragments);
+    }
+
+    private static (string Source, ModuleExportPolicy Policy) ApplyExplicitExportInterface(
+        string source,
+        string moduleName,
+        IReadOnlySet<string> directModules)
+    {
+        var diagnostics = new Diagnostics();
+        Program program = new Parser(source, diagnostics).ParseProgram();
+        if (diagnostics.StructuredErrors.Count > 0)
+        {
+            return (source, ModuleExportPolicy.Compatibility);
+        }
+
+        List<(int Index, ExportDecl Decl)> declarations = program.Items
+            .Select((item, index) => (item, index))
+            .Where(pair => pair.item is TopLevelItem.Export)
+            .Select(pair => (pair.index, ((TopLevelItem.Export)pair.item).Decl))
+            .ToList();
+        if (declarations.Count == 0)
+        {
+            return (source, ModuleExportPolicy.Compatibility);
+        }
+
+        if (declarations.Count != 1 || declarations[0].Index != 0)
+        {
+            throw new InvalidOperationException(
+                $"[ASH038] Module '{moduleName}' must contain exactly one export declaration before all other declarations.");
+        }
+
+        ExportDecl declaration = declarations[0].Decl;
+        CollectExportableDeclarations(program, out HashSet<string> declaredValues, out Dictionary<string, TypeDecl> declaredTypes);
+        ModuleExportPolicy policy = BuildExportPolicy(
+            moduleName, declaration, declaredValues, declaredTypes, directModules);
+        TextSpan span = AstSpans.GetOrDefault(declaration);
+        string withoutDeclaration = BlankSpans(source, [(span.Start, span.End)]);
+        return (RenamePrivateModuleMembers(withoutDeclaration, moduleName, declaredValues, declaredTypes, policy), policy);
+    }
+
+    private static void CollectExportableDeclarations(
+        Program program,
+        out HashSet<string> declaredValues,
+        out Dictionary<string, TypeDecl> declaredTypes)
+    {
+        declaredValues = new HashSet<string>(StringComparer.Ordinal);
+        declaredTypes = new Dictionary<string, TypeDecl>(StringComparer.Ordinal);
+        foreach (TopLevelItem item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.LetDecl letDecl:
+                    declaredValues.Add(letDecl.Name);
+                    break;
+                case TopLevelItem.RecursiveGroup group:
+                    foreach ((string name, _) in group.Bindings)
+                    {
+                        declaredValues.Add(name);
+                    }
+                    break;
+                case TopLevelItem.Type type:
+                    declaredTypes[type.Decl.Name] = type.Decl;
+                    break;
+            }
+        }
+    }
+
+    private static ModuleExportPolicy BuildExportPolicy(
+        string moduleName,
+        ExportDecl declaration,
+        IReadOnlySet<string> declaredValues,
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes,
+        IReadOnlySet<string> directModules)
+    {
+        var values = new HashSet<string>(StringComparer.Ordinal);
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        var constructors = new HashSet<string>(StringComparer.Ordinal);
+        var modules = new HashSet<string>(StringComparer.Ordinal);
+        var entries = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ExportItem item in declaration.Items)
+        {
+            ValidateExportItem(
+                moduleName, item, declaredValues, declaredTypes, directModules,
+                values, types, constructors, modules, entries);
+        }
+
+        return new ModuleExportPolicy(true, values, types, constructors, modules);
+    }
+
+    private static string RenamePrivateModuleMembers(
+        string source,
+        string moduleName,
+        IReadOnlySet<string> declaredValues,
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes,
+        ModuleExportPolicy policy)
+    {
+        var renames = new List<KeyValuePair<string, string>>();
+        string sanitized = SanitizeModuleBindingName(moduleName);
+        foreach (string value in declaredValues.Where(name => !policy.Values.Contains(name)))
+        {
+            renames.Add(new(value, $"__ashes_private_value_{sanitized}_{value}"));
+        }
+
+        foreach ((string typeName, TypeDecl typeDecl) in declaredTypes)
+        {
+            if (!policy.Types.Contains(typeName))
+            {
+                renames.Add(new(typeName, $"{PrivateTypePrefix}{sanitized}_{typeName}"));
+            }
+
+            foreach (TypeConstructor constructor in typeDecl.Constructors)
+            {
+                if (!policy.Constructors.Contains(constructor.Name)
+                    && (!policy.Types.Contains(typeName) || !string.Equals(typeName, constructor.Name, StringComparison.Ordinal)))
+                {
+                    renames.Add(new(constructor.Name, $"{PrivateConstructorPrefix}{sanitized}_{constructor.Name}"));
+                }
+            }
+        }
+
+        return RenameIdentifiers(source, renames);
+    }
+
+    private static void ValidateExportItem(
+        string moduleName,
+        ExportItem item,
+        IReadOnlySet<string> declaredValues,
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes,
+        IReadOnlySet<string> directModules,
+        HashSet<string> values,
+        HashSet<string> types,
+        HashSet<string> constructors,
+        HashSet<string> modules,
+        HashSet<string> entries)
+    {
+        string key = item switch
+        {
+            ExportItem.Value value => $"value:{value.Name}",
+            ExportItem.Type type => $"type:{type.Name}",
+            ExportItem.Module module => $"module:{module.Name}",
+            _ => throw new UnreachableException(),
+        };
+        if (!entries.Add(key))
+        {
+            throw new InvalidOperationException($"[ASH037] Duplicate export '{key}' in module '{moduleName}'.");
+        }
+
+        switch (item)
+        {
+            case ExportItem.Value value when !declaredValues.Contains(value.Name):
+                throw UnknownExport(moduleName, value.Name);
+            case ExportItem.Value value:
+                values.Add(value.Name);
+                break;
+            case ExportItem.Module module when !directModules.Contains(module.Name):
+                throw UnknownExport(moduleName, module.Name);
+            case ExportItem.Module module:
+                modules.Add(module.Name);
+                break;
+            case ExportItem.Type type:
+                if (!declaredTypes.TryGetValue(type.Name, out TypeDecl? declaration))
+                {
+                    throw UnknownExport(moduleName, type.Name);
+                }
+
+                types.Add(type.Name);
+                AddExportedConstructors(moduleName, type, declaration, constructors);
+                break;
+        }
+    }
+
+    private static void AddExportedConstructors(
+        string moduleName,
+        ExportItem.Type export,
+        TypeDecl declaration,
+        HashSet<string> constructors)
+    {
+        IReadOnlyList<string> names = export.Constructors switch
+        {
+            ExportConstructors.Hidden => [],
+            ExportConstructors.All => declaration.Constructors.Select(constructor => constructor.Name).ToArray(),
+            ExportConstructors.Selected constructorSelection => constructorSelection.Names,
+            _ => throw new UnreachableException(),
+        };
+        var uniqueNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string name in names)
+        {
+            if (!uniqueNames.Add(name) || !constructors.Add(name))
+            {
+                throw new InvalidOperationException($"[ASH037] Duplicate constructor export '{name}' in module '{moduleName}'.");
+            }
+
+            if (!declaration.Constructors.Any(constructor => string.Equals(constructor.Name, name, StringComparison.Ordinal)))
+            {
+                throw UnknownExport(moduleName, name);
+            }
+        }
+    }
+
+    private static InvalidOperationException UnknownExport(string moduleName, string name) =>
+        new($"[ASH038] Module '{moduleName}' does not export unknown local declaration '{name}'.");
+
+    private static string RenameIdentifiers(
+        string source,
+        IReadOnlyList<KeyValuePair<string, string>> replacements)
+    {
+        if (replacements.Count == 0)
+        {
+            return source;
+        }
+
+        var byName = replacements.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var diagnostics = new Diagnostics();
+        var lexer = new Lexer(source, diagnostics);
+        var builder = new StringBuilder();
+        int copied = 0;
+        while (true)
+        {
+            Token token = lexer.Next();
+            if (token.Kind == TokenKind.EOF)
+            {
+                break;
+            }
+
+            if (token.Kind == TokenKind.Ident && byName.TryGetValue(token.Text, out string? replacement))
+            {
+                builder.Append(source[copied..token.Position]).Append(replacement);
+                copied = token.End;
+            }
+        }
+
+        builder.Append(source[copied..]);
+        return builder.ToString();
     }
 
     /// <summary>

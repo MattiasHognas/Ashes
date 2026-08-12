@@ -82,9 +82,16 @@ public sealed class Parser
         var items = new List<TopLevelItem>();
         Expr? body = null;
 
-        while (_current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability
-            or TokenKind.Provide or TokenKind.Trait or TokenKind.Implement)
+        while (IsExportDeclaration()
+            || _current.Kind is TokenKind.Type or TokenKind.External or TokenKind.Let or TokenKind.Capability
+                or TokenKind.Provide or TokenKind.Trait or TokenKind.Implement)
         {
+            if (IsExportDeclaration())
+            {
+                items.Add(new TopLevelItem.Export(ParseExportDecl()));
+                continue;
+            }
+
             if (_current.Kind != TokenKind.Let)
             {
                 items.Add(ParseNonLetTopLevelItem());
@@ -127,6 +134,89 @@ public sealed class Parser
         TokenKind.Implement => new TopLevelItem.Implementation(ParseTraitImplementationDecl()),
         _ => throw new InvalidOperationException($"Unexpected top-level token {_current.Kind}."),
     };
+
+    private ExportDecl ParseExportDecl()
+    {
+        Token start = Advance();
+        Consume(TokenKind.LParen);
+        var items = new List<ExportItem>();
+        while (_current.Kind != TokenKind.RParen && _current.Kind != TokenKind.EOF)
+        {
+            ExportItem? item = ParseExportItem();
+            if (item is not null)
+            {
+                items.Add(item);
+            }
+
+            if (_current.Kind != TokenKind.Comma)
+            {
+                break;
+            }
+
+            Advance();
+        }
+
+        Token end = Consume(TokenKind.RParen);
+        var declaration = new ExportDecl(items);
+        AstSpans.Set(declaration, TextSpan.FromBounds(start.Position, end.End));
+        return declaration;
+    }
+
+    private bool IsExportDeclaration() =>
+        _current.Kind == TokenKind.Ident
+        && string.Equals(_current.Text, "export", StringComparison.Ordinal);
+
+    private ExportItem? ParseExportItem()
+    {
+        if (_current.Kind != TokenKind.Type)
+        {
+            Token category = Consume(TokenKind.Ident);
+            string name = Consume(TokenKind.Ident).Text;
+            if (string.Equals(category.Text, "value", StringComparison.Ordinal))
+            {
+                return new ExportItem.Value(name);
+            }
+
+            if (string.Equals(category.Text, "module", StringComparison.Ordinal))
+            {
+                return new ExportItem.Module(name);
+            }
+
+            _diag.Error(category.Span, "Expected 'value', 'type', or 'module' in export.", DiagnosticCodes.ParseError);
+            return null;
+        }
+
+        Advance();
+        string typeName = Consume(TokenKind.Ident).Text;
+        if (_current.Kind != TokenKind.LParen)
+        {
+            return new ExportItem.Type(typeName, new ExportConstructors.Hidden());
+        }
+
+        Advance();
+        if (_current.Kind == TokenKind.Dot)
+        {
+            Advance();
+            Consume(TokenKind.Dot);
+            Consume(TokenKind.RParen);
+            return new ExportItem.Type(typeName, new ExportConstructors.All());
+        }
+
+        var names = new List<string>();
+        while (_current.Kind == TokenKind.Ident)
+        {
+            names.Add(Advance().Text);
+            if (_current.Kind != TokenKind.Comma)
+            {
+                break;
+            }
+
+            Advance();
+        }
+
+        Consume(TokenKind.RParen);
+        return new ExportItem.Type(typeName, new ExportConstructors.Selected(names));
+    }
 
     /// <summary>
     /// Parses one top-level <c>let</c> construct. A flat declaration or a recursive group is added

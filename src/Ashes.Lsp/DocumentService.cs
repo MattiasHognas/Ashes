@@ -762,6 +762,9 @@ public static partial class DocumentService
         lowering.Lower(program);
 
         var completionNames = new HashSet<string>(lowering.ConstructorSymbols.Keys, StringComparer.Ordinal);
+        completionNames.RemoveWhere(name =>
+            name.StartsWith(ProjectSupport.PrivateConstructorPrefix, StringComparison.Ordinal)
+            || name.StartsWith(ProjectSupport.PrivateTypePrefix, StringComparison.Ordinal));
         completionNames.UnionWith(lowering.TraitSymbols.Values.Select(trait => trait.Name));
 
         var strippedDiag = new Diagnostics();
@@ -1132,14 +1135,9 @@ public static partial class DocumentService
         }
 
         var qualifier = prefix[..^1];
-        var moduleName = ResolveCompletionModuleName(qualifier, imports);
-        if (moduleName is not null)
+        if (TryGetModuleExportCompletions(qualifier, filePath, imports, out completions))
         {
-            completions = GetModuleCompletionItems(moduleName);
-            if (completions.Count > 0)
-            {
-                return true;
-            }
+            return true;
         }
 
         int prefixStart = position - prefix.Length;
@@ -1175,6 +1173,28 @@ public static partial class DocumentService
         }
 
         completions = traits[0].Methods.Keys.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        return completions.Count > 0;
+    }
+
+    private static bool TryGetModuleExportCompletions(
+        string qualifier,
+        string? filePath,
+        IReadOnlyList<ImportItem> imports,
+        out IReadOnlyList<string> completions)
+    {
+        string? moduleName = ResolveCompletionModuleName(qualifier, imports);
+        if (moduleName is null)
+        {
+            completions = [];
+            return false;
+        }
+
+        completions = GetModuleCompletionItems(moduleName);
+        if (completions.Count == 0 && filePath is not null)
+        {
+            completions = GetProjectModuleCompletionItems(moduleName, filePath);
+        }
+
         return completions.Count > 0;
     }
 
@@ -1249,7 +1269,8 @@ public static partial class DocumentService
         var prefix = moduleName + ".";
         foreach (var name in BuiltinRegistry.StandardModuleNames)
         {
-            if (string.Equals(name, "Ashes.Internal", StringComparison.Ordinal))
+            if (string.Equals(name, "Ashes.Internal", StringComparison.Ordinal)
+                || name.StartsWith("Ashes.Internal.", StringComparison.Ordinal))
             {
                 continue;
             }
@@ -1263,6 +1284,108 @@ public static partial class DocumentService
         }
 
         return items.ToArray();
+    }
+
+    private static IReadOnlyList<string> GetProjectModuleCompletionItems(string moduleName, string filePath)
+    {
+        try
+        {
+            string? projectPath = ProjectSupport.DiscoverProjectFile(Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? filePath);
+            if (projectPath is null)
+            {
+                return [];
+            }
+
+            AshesProject project = ProjectSupport.LoadProject(projectPath);
+            ProjectCompilationPlan plan = ProjectSupport.BuildCompilationPlan(project with
+            {
+                EntryPath = Path.GetFullPath(filePath),
+                EntryModuleName = Path.GetFileNameWithoutExtension(filePath),
+            });
+            ProjectModule? module = plan.OrderedModules.FirstOrDefault(candidate =>
+                string.Equals(candidate.ModuleName, moduleName, StringComparison.Ordinal));
+            if (module is null)
+            {
+                return [];
+            }
+
+            var diagnostics = new Diagnostics();
+            Frontend.Program program = new Parser(module.Source, diagnostics).ParseProgram();
+            if (diagnostics.StructuredErrors.Count > 0)
+            {
+                return [];
+            }
+
+            return CollectModuleCompletionExports(program);
+        }
+        catch (IOException)
+        {
+            return [];
+        }
+        catch (InvalidOperationException)
+        {
+            return [];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<string> CollectModuleCompletionExports(Frontend.Program program)
+    {
+        ExportDecl? declaration = program.Items
+            .OfType<TopLevelItem.Export>()
+            .Select(item => item.Decl)
+            .SingleOrDefault();
+        if (declaration is null)
+        {
+            return program.Items.SelectMany(item => item switch
+            {
+                TopLevelItem.LetDecl letDecl => [letDecl.Name],
+                TopLevelItem.RecursiveGroup group => group.Bindings.Select(binding => binding.Name),
+                TopLevelItem.Type type => new[] { type.Decl.Name }.Concat(type.Decl.Constructors.Select(constructor => constructor.Name)),
+                _ => [],
+            }).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        IReadOnlyDictionary<string, TypeDecl> types = program.Items.OfType<TopLevelItem.Type>()
+            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        foreach (ExportItem item in declaration.Items)
+        {
+            switch (item)
+            {
+                case ExportItem.Value value:
+                    names.Add(value.Name);
+                    break;
+                case ExportItem.Module module:
+                    names.Add(module.Name);
+                    break;
+                case ExportItem.Type type:
+                    names.Add(type.Name);
+                    AddCompletionConstructors(type, types, names);
+                    break;
+            }
+        }
+
+        return names.OrderBy(name => name, StringComparer.Ordinal).ToArray();
+    }
+
+    private static void AddCompletionConstructors(
+        ExportItem.Type export,
+        IReadOnlyDictionary<string, TypeDecl> types,
+        HashSet<string> names)
+    {
+        if (export.Constructors is ExportConstructors.Selected selected)
+        {
+            names.UnionWith(selected.Names);
+        }
+        else if (export.Constructors is ExportConstructors.All
+            && types.TryGetValue(export.Name, out TypeDecl? declaration))
+        {
+            names.UnionWith(declaration.Constructors.Select(constructor => constructor.Name));
+        }
     }
 
     /// <summary>
@@ -1800,6 +1923,52 @@ public static partial class DocumentService
         }
 
         return null;
+    }
+
+    private static bool ExplicitInterfaceExportsName(Frontend.Program program, string name)
+    {
+        ExportDecl? declaration = program.Items
+            .OfType<TopLevelItem.Export>()
+            .Select(item => item.Decl)
+            .SingleOrDefault();
+        if (declaration is null)
+        {
+            return true;
+        }
+
+        IReadOnlyDictionary<string, TypeDecl> types = program.Items
+            .OfType<TopLevelItem.Type>()
+            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        foreach (ExportItem item in declaration.Items)
+        {
+            if (item is ExportItem.Value value && string.Equals(value.Name, name, StringComparison.Ordinal)
+                || item is ExportItem.Module module && string.Equals(module.Name, name, StringComparison.Ordinal)
+                || item is ExportItem.Type type && ExportedTypeContainsName(type, name, types))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool ExportedTypeContainsName(
+        ExportItem.Type export,
+        string name,
+        IReadOnlyDictionary<string, TypeDecl> types)
+    {
+        if (string.Equals(export.Name, name, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return export.Constructors switch
+        {
+            ExportConstructors.Selected selected => selected.Names.Contains(name, StringComparer.Ordinal),
+            ExportConstructors.All when types.TryGetValue(export.Name, out TypeDecl? declaration) =>
+                declaration.Constructors.Any(constructor => string.Equals(constructor.Name, name, StringComparison.Ordinal)),
+            _ => false,
+        };
     }
 
     private static int? MapOriginalPositionToAnalysis(int position, AnalysisContext context)
@@ -2594,6 +2763,11 @@ public static partial class DocumentService
             return null;
         }
 
+        if (!ExplicitInterfaceExportsName(program, exportName))
+        {
+            return null;
+        }
+
         // A module's exports are its top-level let/type declarations; search those first.
         if (TryFindTopLevelExport(program, exportName, module.FilePath, out var topLevelDefinition))
         {
@@ -2641,6 +2815,16 @@ public static partial class DocumentService
                 case TopLevelItem.Type type when string.Equals(type.Decl.Name, exportName, StringComparison.Ordinal):
                     definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(type.Decl));
                     return true;
+
+                case TopLevelItem.Type type:
+                    TypeConstructor? constructor = type.Decl.Constructors.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Name, exportName, StringComparison.Ordinal));
+                    if (constructor is not null)
+                    {
+                        definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(constructor));
+                        return true;
+                    }
+                    break;
 
                 case TopLevelItem.Trait trait when string.Equals(trait.Decl.Name, exportName, StringComparison.Ordinal):
                     definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(trait.Decl));

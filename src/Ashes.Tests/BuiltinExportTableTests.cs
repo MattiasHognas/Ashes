@@ -79,6 +79,14 @@ public sealed class BuiltinExportTableTests
 
         BuiltinRegistry.TryGetModuleExports("Ashes.Collection.Map", out var mapExports).ShouldBeTrue();
         mapExports.ShouldContain("MapTree");
+        mapExports.ShouldNotContain("Node");
+        mapExports.ShouldNotContain("balance");
+
+        BuiltinRegistry.TryGetModuleExports("Ashes.Text.Regex", out var regexExports).ShouldBeTrue();
+        regexExports.ShouldContain("Regex");
+        regexExports.ShouldContain("compile");
+        regexExports.ShouldNotContain("CompiledRegex");
+        regexExports.ShouldNotContain("compileRaw");
     }
 
     [Test]
