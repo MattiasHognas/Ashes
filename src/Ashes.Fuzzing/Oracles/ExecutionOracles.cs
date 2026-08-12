@@ -218,6 +218,154 @@ internal sealed class CrossTargetOracle : IFuzzOracle
     }
 }
 
+internal sealed record MemoryGrowthSample(int Iterations, long Checksum, long MaximumResidentSetKilobytes);
+
+internal sealed class MemoryGrowthOracle : IFuzzOracle
+{
+    internal const long MaximumResidentSetKilobytes = 64_000;
+    internal const long GrowthBudgetKilobytes = 8_192;
+    internal static IReadOnlyList<int> IterationCounts { get; } = [2_000, 10_000, 50_000];
+
+    public string Id => "memory-growth";
+
+    public async ValueTask<FuzzOracleResult> EvaluateAsync(
+        GeneratedFuzzCase testCase,
+        FuzzExecutionContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+        {
+            return FuzzOracleResult.Failed(Id, "The memory-growth oracle requires a native Linux or Windows host.");
+        }
+
+        List<MemoryGrowthSample> samples = new(IterationCounts.Count);
+        List<string> standardOutput = new(IterationCounts.Count);
+        List<string> standardError = new(IterationCounts.Count);
+        foreach (int iterations in IterationCounts)
+        {
+            string source = Execution.ObservableValueRenderer.RenderMemoryWorkload(testCase, iterations);
+            (Execution.ProcessResult compile, Execution.ProcessResult? run) = await context.Compiler.CompileAndRunAsync(
+                source,
+                context.RepositoryRoot,
+                context.Target,
+                "-O2",
+                context.CompilerTimeout,
+                context.ProgramTimeout,
+                context.MaximumOutputBytes,
+                cancellationToken,
+                measurePeakRss: true).ConfigureAwait(false);
+            if (NativeOutcomeValidator.Failure($"compiler at {iterations} iterations", compile) is string compileFailure)
+            {
+                return FuzzOracleResult.Failed(Id, compileFailure, compile.StandardOutput, compile.StandardError);
+            }
+            if (run is null)
+            {
+                return FuzzOracleResult.Failed(
+                    Id,
+                    $"Compilation succeeded but the selected target could not be measured at {iterations} iterations.",
+                    compile.StandardOutput,
+                    compile.StandardError);
+            }
+            if (NativeOutcomeValidator.Failure($"generated program at {iterations} iterations", run) is string runFailure)
+            {
+                return FuzzOracleResult.Failed(Id, runFailure, run.StandardOutput, run.StandardError);
+            }
+            if (run.MaximumResidentSetKilobytes is not long peakRssKb)
+            {
+                return FuzzOracleResult.Failed(
+                    Id,
+                    $"Peak RSS was not reported at {iterations} iterations.",
+                    run.StandardOutput,
+                    run.StandardError);
+            }
+            if (!long.TryParse(
+                    run.StandardOutput.Trim(),
+                    System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out long checksum))
+            {
+                return FuzzOracleResult.Failed(
+                    Id,
+                    $"Generated program did not print an integer checksum at {iterations} iterations.",
+                    run.StandardOutput,
+                    run.StandardError);
+            }
+
+            samples.Add(new MemoryGrowthSample(iterations, checksum, peakRssKb));
+            standardOutput.Add(run.StandardOutput);
+            standardError.Add(run.StandardError);
+        }
+
+        string? failure = Assess(samples);
+        return failure is null
+            ? FuzzOracleResult.Passed(Id, Describe(samples))
+            : FuzzOracleResult.Failed(
+                Id,
+                failure,
+                string.Concat(standardOutput),
+                string.Concat(standardError));
+    }
+
+    internal static string? Assess(IReadOnlyList<MemoryGrowthSample> samples)
+    {
+        if (samples.Count != IterationCounts.Count)
+        {
+            return $"Expected {IterationCounts.Count} memory-growth samples, received {samples.Count}.";
+        }
+
+        long? checksumPerIteration = null;
+        foreach (MemoryGrowthSample sample in samples)
+        {
+            if (sample.Iterations <= 0 || sample.Checksum % sample.Iterations != 0)
+            {
+                return $"Checksum {sample.Checksum} is not stable across {sample.Iterations} iterations.";
+            }
+            long currentChecksum = sample.Checksum / sample.Iterations;
+            if (checksumPerIteration is not null && currentChecksum != checksumPerIteration.Value)
+            {
+                return $"Per-iteration checksum changed from {checksumPerIteration.Value} to {currentChecksum}.";
+            }
+            checksumPerIteration = currentChecksum;
+        }
+
+        string sampleSummary = SampleSummary(samples);
+        MemoryGrowthSample? excessive = samples.FirstOrDefault(sample =>
+            sample.MaximumResidentSetKilobytes <= 0 ||
+            sample.MaximumResidentSetKilobytes >= MaximumResidentSetKilobytes);
+        if (excessive is not null)
+        {
+            return $"Memory sample at {excessive.Iterations} iterations was outside the allowed range; samples: {sampleSummary}.";
+        }
+
+        long totalGrowthKb = Math.Max(
+            0,
+            samples[^1].MaximumResidentSetKilobytes - samples[0].MaximumResidentSetKilobytes);
+        long lateGrowthKb = Math.Max(
+            0,
+            samples[^1].MaximumResidentSetKilobytes - samples[^2].MaximumResidentSetKilobytes);
+        if (totalGrowthKb >= GrowthBudgetKilobytes || lateGrowthKb >= GrowthBudgetKilobytes)
+        {
+            return $"Resident memory did not plateau: total growth={totalGrowthKb} KB, late growth={lateGrowthKb} KB; samples: {sampleSummary}.";
+        }
+        return null;
+    }
+
+    internal static string Describe(IReadOnlyList<MemoryGrowthSample> samples)
+    {
+        long totalGrowthKb = Math.Max(
+            0,
+            samples[^1].MaximumResidentSetKilobytes - samples[0].MaximumResidentSetKilobytes);
+        long lateGrowthKb = Math.Max(
+            0,
+            samples[^1].MaximumResidentSetKilobytes - samples[^2].MaximumResidentSetKilobytes);
+        return $"RSS samples: {SampleSummary(samples)}; total growth={totalGrowthKb} KB; late growth={lateGrowthKb} KB";
+    }
+
+    private static string SampleSummary(IReadOnlyList<MemoryGrowthSample> samples) => string.Join(
+        ", ",
+        samples.Select(sample => $"{sample.Iterations}:{sample.MaximumResidentSetKilobytes} KB"));
+}
+
 internal static class NativeOutcomeValidator
 {
     internal static string? Failure(string stage, Execution.ProcessResult result)

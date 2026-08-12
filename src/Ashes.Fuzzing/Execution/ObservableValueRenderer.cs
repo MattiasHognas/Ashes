@@ -16,6 +16,52 @@ internal static class ObservableValueRenderer
         return AshesFormatter.Format(observable);
     }
 
+    internal static string RenderMemoryWorkload(GeneratedFuzzCase testCase, int iterations)
+    {
+        if (iterations <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(iterations));
+        }
+
+        ObservationNames names = new();
+        string loop = names.Next("MemoryLoop");
+        string remaining = names.Next("MemoryRemaining");
+        string checksum = names.Next("MemoryChecksum");
+        string observed = names.Next("MemoryObserved");
+        Expr rendered = Render(testCase.Program.Body, testCase.Type, names);
+        Expr nextChecksum = new Expr.Add(
+            new Expr.Var(checksum),
+            Call("Ashes.Text", "byteLength", new Expr.Var(observed)));
+        Expr recursiveCall = new Expr.Call(
+            new Expr.Call(
+                new Expr.Var(loop),
+                new Expr.Subtract(new Expr.Var(remaining), new Expr.IntLit(1))),
+            nextChecksum);
+        Expr loopBody = new Expr.If(
+            new Expr.Equal(new Expr.Var(remaining), new Expr.IntLit(0)),
+            new Expr.Var(checksum),
+            new Expr.Let(observed, rendered, recursiveCall));
+        Expr loopFunction = new Expr.Lambda(
+            remaining,
+            new Expr.Lambda(checksum, loopBody) { ParamAnnotation = AshesType.Int.ToSyntax() })
+        {
+            ParamAnnotation = AshesType.Int.ToSyntax(),
+        };
+        Expr result = new Expr.Call(
+            new Expr.Call(new Expr.Var(loop), new Expr.IntLit(iterations)),
+            new Expr.IntLit(0));
+        Expr print = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.IO", "print"),
+            Call("Ashes.Text", "fromInt", result));
+        Expr workload = new Expr.LetRecursive(loop, loopFunction, print)
+        {
+            TypeAnnotation = new AshesType.Function(
+                AshesType.Int,
+                new AshesType.Function(AshesType.Int, AshesType.Int)).ToSyntax(),
+        };
+        return AshesFormatter.Format(testCase.Program with { Body = workload });
+    }
+
     private static Expr Render(Expr value, AshesType type, ObservationNames names) => type switch
     {
         AshesType.Primitive { Name: "Int" } => Call("Ashes.Text", "fromInt", value),
@@ -172,6 +218,7 @@ internal static class ObservableValueRenderer
     {
         private int _next;
 
-        internal string Next() => "fuzzObserved" + (_next++).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        internal string Next(string purpose = "Observed") => "fuzz" + purpose +
+            (_next++).ToString(System.Globalization.CultureInfo.InvariantCulture);
     }
 }

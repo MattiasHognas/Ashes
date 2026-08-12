@@ -85,6 +85,18 @@ fuzz_long() {
   "
 }
 
+fuzz_memory() {
+  local forwarded="" arg quoted
+  for arg in "$@"; do
+    printf -v quoted '%q' "$arg"
+    forwarded+=" $quoted"
+  done
+  run_in base "
+    set -euo pipefail
+    dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- run --profile memory-growth --seed 42001$forwarded
+  "
+}
+
 fuzz_replay() {
   local seed="${1:?usage: fuzz_replay <seed> <case> [profile]}"
   local case_index="${2:?usage: fuzz_replay <seed> <case> [profile]}"
@@ -743,7 +755,7 @@ release_github() {
 cmd="${1:?usage: jobs.sh <job> [args]}"
 shift
 case "$cmd" in
-  build | fmt_check | test | coverage | deps_check | sast | ext | docs | publish_cli | matrix | matrix_one | fuzz | fuzz_long | fuzz_replay | fuzz_corpus | fuzz_smoke | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
+  build | fmt_check | test | coverage | deps_check | sast | ext | docs | publish_cli | matrix | matrix_one | fuzz | fuzz_long | fuzz_memory | fuzz_replay | fuzz_corpus | fuzz_smoke | ci_quick | ci | release_build | release_github) "$cmd" "$@" ;;
   *)
     echo "jobs.sh: unknown job '$cmd'" >&2
     exit 1

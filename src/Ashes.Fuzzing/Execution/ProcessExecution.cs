@@ -1,13 +1,28 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 
 namespace Ashes.Fuzzing.Execution;
 
-internal sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError, bool TimedOut, bool OutputTruncated, TimeSpan Duration);
+internal sealed record ProcessResult(
+    int ExitCode,
+    string StandardOutput,
+    string StandardError,
+    bool TimedOut,
+    bool OutputTruncated,
+    TimeSpan Duration,
+    long? MaximumResidentSetKilobytes = null);
 
 internal static class ProcessTimeout
 {
-    internal static async Task<ProcessResult> RunAsync(string fileName, IReadOnlyList<string> arguments, string workingDirectory, TimeSpan timeout, int maximumOutputBytes, CancellationToken cancellationToken)
+    internal static async Task<ProcessResult> RunAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        int maximumOutputBytes,
+        CancellationToken cancellationToken,
+        bool capturePeakWorkingSet = false)
     {
         if (timeout <= TimeSpan.Zero || maximumOutputBytes < 0)
         {
@@ -52,13 +67,69 @@ internal static class ProcessTimeout
         {
             cancellationToken.ThrowIfCancellationRequested();
         }
+        long? maximumResidentSetKilobytes = capturePeakWorkingSet
+            ? process.PeakWorkingSet64 / 1024
+            : null;
         return new ProcessResult(
             timedOut ? -1 : process.ExitCode,
             stdout.Text,
             stderr.Text,
             timedOut,
             stdout.Truncated || stderr.Truncated,
-            stopwatch.Elapsed);
+            stopwatch.Elapsed,
+            maximumResidentSetKilobytes);
+    }
+
+    internal static async Task<ProcessResult> RunWithNativePeakRssAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        int maximumOutputBytes,
+        CancellationToken cancellationToken)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return await RunAsync(
+                fileName,
+                arguments,
+                workingDirectory,
+                timeout,
+                maximumOutputBytes,
+                cancellationToken,
+                capturePeakWorkingSet: true).ConfigureAwait(false);
+        }
+        if (!OperatingSystem.IsLinux())
+        {
+            throw new PlatformNotSupportedException("Peak RSS measurement is supported on native Linux and Windows hosts.");
+        }
+
+        const string timePath = "/usr/bin/time";
+        const string marker = "__ASHES_FUZZ_MAX_RSS_KB__=";
+        List<string> measuredArguments = ["-f", marker + "%M", fileName, .. arguments];
+        ProcessResult measured = await RunAsync(
+            timePath,
+            measuredArguments,
+            workingDirectory,
+            timeout,
+            maximumOutputBytes,
+            cancellationToken).ConfigureAwait(false);
+        string[] stderrLines = measured.StandardError.Split('\n');
+        string? measurement = stderrLines.LastOrDefault(line =>
+            line.StartsWith(marker, StringComparison.Ordinal));
+        if (measurement is null ||
+            !long.TryParse(measurement[marker.Length..].Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out long peakRssKb))
+        {
+            return measured;
+        }
+
+        string stderr = string.Join('\n', stderrLines.Where(line =>
+            !line.StartsWith(marker, StringComparison.Ordinal)));
+        return measured with
+        {
+            StandardError = stderr,
+            MaximumResidentSetKilobytes = peakRssKb,
+        };
     }
 
     private static async Task<BoundedOutput> ReadBoundedAsync(Stream stream, int maximumBytes)

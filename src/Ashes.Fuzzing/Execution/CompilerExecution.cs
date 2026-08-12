@@ -12,7 +12,8 @@ internal sealed class CompilerExecution
         int maximumOutputBytes,
         CancellationToken cancellationToken,
         bool disableReuse = false,
-        bool disableTraitSpecialization = false)
+        bool disableTraitSpecialization = false,
+        bool measurePeakRss = false)
     {
         string temporaryRoot = Directory.CreateTempSubdirectory("ashes-fuzz-").FullName;
         try
@@ -31,7 +32,9 @@ internal sealed class CompilerExecution
             {
                 return (compile, null);
             }
-            ProcessResult run = await ProcessTimeout.RunAsync(executablePath, [], temporaryRoot, programTimeout, maximumOutputBytes, cancellationToken).ConfigureAwait(false);
+            ProcessResult run = measurePeakRss
+                ? await ProcessTimeout.RunWithNativePeakRssAsync(executablePath, [], temporaryRoot, programTimeout, maximumOutputBytes, cancellationToken).ConfigureAwait(false)
+                : await ProcessTimeout.RunAsync(executablePath, [], temporaryRoot, programTimeout, maximumOutputBytes, cancellationToken).ConfigureAwait(false);
             return (compile, run);
         }
         finally

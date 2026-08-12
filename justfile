@@ -5,6 +5,7 @@
 #   just provision       # fetch LLVM native libs into runtimes/ (once / on bump)
 #   just ci-quick        # fast build + test
 #   just fuzz            # deterministic bounded compiler fuzz suite
+#   just fuzz-memory     # native generated memory-growth campaign
 #   just fuzz-long -- --profile perceus --cases 100000 --seed 12345 --campaign-timeout 3600
 #   just ci              # full PR-equivalent pipeline
 #   just release 1.2.3   # build release artifacts into artifacts/release/ (local)
@@ -58,6 +59,10 @@ test:
 # Deterministic bounded fuzz suite.
 fuzz:
     ci/jobs.sh fuzz
+
+# Native generated workloads measured at increasing scales for RSS growth.
+fuzz-memory *args:
+    ci/jobs.sh fuzz_memory {{args}}
 
 # Extended configurable fuzz campaign; arguments are forwarded to Ashes.Fuzzing.
 fuzz-long *args:
