@@ -8,6 +8,7 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| [Language Evolution](EVOLVE_LANGUAGE.md) | Exploratory | Strengthen abstraction, resource safety, authority tracking, structured concurrency, Unicode text, and zero-cost domain modeling |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
 
