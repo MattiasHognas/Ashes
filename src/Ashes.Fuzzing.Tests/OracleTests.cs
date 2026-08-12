@@ -89,7 +89,68 @@ public sealed class OracleTests
             _ = new Lowering(diagnostics).Lower(parsed);
 
             diagnostics.Errors.ShouldBeEmpty($"type {types[index]}:\n{observable}");
+
+            string memoryWorkload = ObservableValueRenderer.RenderMemoryWorkload(generated, 7);
+            Diagnostics memoryDiagnostics = new();
+            Ashes.Frontend.Program memoryProgram = new Parser(memoryWorkload, memoryDiagnostics).ParseProgram();
+            _ = new Lowering(memoryDiagnostics).Lower(memoryProgram);
+
+            memoryDiagnostics.Errors.ShouldBeEmpty($"memory workload for type {types[index]}:\n{memoryWorkload}");
         }
+    }
+
+    [Test]
+    public void MemoryGrowthAssessmentRequiresStableOutputAndPlateauingRss()
+    {
+        MemoryGrowthSample[] plateau =
+        [
+            new(2_000, 14_000, 1_024),
+            new(10_000, 70_000, 2_048),
+            new(50_000, 350_000, 4_096),
+        ];
+        MemoryGrowthOracle.Assess(plateau).ShouldBeNull();
+
+        MemoryGrowthSample[] corrupted =
+        [
+            new(2_000, 14_000, 1_024),
+            new(10_000, 80_000, 2_048),
+            new(50_000, 350_000, 4_096),
+        ];
+        MemoryGrowthOracle.Assess(corrupted).ShouldNotBeNull().ShouldContain("checksum changed");
+
+        MemoryGrowthSample[] growing =
+        [
+            new(2_000, 14_000, 1_024),
+            new(10_000, 70_000, 9_000),
+            new(50_000, 350_000, 12_000),
+        ];
+        MemoryGrowthOracle.Assess(growing).ShouldNotBeNull().ShouldContain("did not plateau");
+    }
+
+    [Test]
+    public async Task NativePeakRssMeasurementReportsProcessUsage()
+    {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string executable = OperatingSystem.IsWindows()
+            ? Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe"
+            : "/bin/true";
+        IReadOnlyList<string> arguments = OperatingSystem.IsWindows() ? ["/c", "exit", "0"] : [];
+
+        ProcessResult result = await ProcessTimeout.RunWithNativePeakRssAsync(
+            executable,
+            arguments,
+            Environment.CurrentDirectory,
+            TimeSpan.FromSeconds(5),
+            4096,
+            CancellationToken.None);
+
+        result.ExitCode.ShouldBe(0);
+        result.MaximumResidentSetKilobytes.ShouldNotBeNull();
+        result.MaximumResidentSetKilobytes.Value.ShouldBeGreaterThan(0);
     }
 
     [Test]

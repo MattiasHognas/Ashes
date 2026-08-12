@@ -74,6 +74,10 @@ internal sealed class FuzzCampaign
                             Console.Error.WriteLine(coverage.Summary());
                             return await ReportFailureAsync(testCase, result, configuration, context, cancellationToken).ConfigureAwait(false);
                         }
+                        if (!string.Equals(result.Message, "passed", StringComparison.Ordinal))
+                        {
+                            Console.WriteLine($"case={caseIndex} oracle={oracleId}: {result.Message}");
+                        }
                     }
                     completed++;
                 }
@@ -110,6 +114,7 @@ internal sealed class FuzzCampaign
             7 => "traits",
             8 => "invalid-semantics",
             9 => "traits-differential",
+            10 => "memory-growth",
             _ => null,
         };
         if (focused is not null)
@@ -117,7 +122,7 @@ internal sealed class FuzzCampaign
             return _profiles.Get(focused);
         }
         string[] stable = ["syntax", "semantics", "perceus", "combinations"];
-        return _profiles.Get(stable[(slot - 10) % stable.Length]);
+        return _profiles.Get(stable[(slot - 11) % stable.Length]);
     }
 
     internal async Task<int> RunCorpusAsync(FuzzConfiguration configuration, string repositoryRoot, CancellationToken cancellationToken)

@@ -73,6 +73,15 @@ public sealed class ReplayTests
         defaults.CompilerTimeout.ShouldBe(TimeSpan.FromSeconds(30));
         defaults.Target.ShouldBe("host");
 
+        FuzzProfile memoryGrowth = fixture.Profiles.Get("memory-growth");
+        FuzzConfiguration memoryDefaults = FuzzConfiguration.Parse(["run", "--profile", "memory-growth"])
+            .ApplyProfileDefaults(memoryGrowth);
+        memoryDefaults.Cases.ShouldBe(3);
+        memoryDefaults.MaximumNodes.ShouldBe(50);
+        memoryDefaults.CompilerTimeout.ShouldBe(TimeSpan.FromSeconds(30));
+        memoryDefaults.ProgramTimeout.ShouldBe(TimeSpan.FromSeconds(30));
+        memoryDefaults.Target.ShouldBe("host");
+
         FuzzConfiguration overridden = FuzzConfiguration.Parse(
                 ["run", "--profile", "compile", "--cases", "17", "--max-nodes", "91", "--compiler-timeout", "44", "--target", "linux-arm64"])
             .ApplyProfileDefaults(compile);

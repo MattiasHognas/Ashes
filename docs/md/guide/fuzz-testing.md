@@ -73,6 +73,26 @@ for a large Perceus run is:
 just fuzz-long -- --profile perceus --cases 100000 --seed 12345 --seeds 4 --max-nodes 120 --campaign-timeout 3600
 ```
 
+Run the native memory-growth profile with:
+
+```sh
+just fuzz-memory -- --cases 10 --max-nodes 60 --campaign-timeout 3600
+```
+
+For every generated observable program, this profile builds three repeatable workloads containing
+2,000, 10,000, and 50,000 evaluations. Each evaluation fully renders the generated value and folds
+its byte length into an integer checksum, forcing the value graph to be traversed and then dropped.
+The oracle requires the checksum per iteration to remain identical at every scale, measures native
+peak RSS through `/usr/bin/time` on Linux and peak working set through `Process.PeakWorkingSet64` on
+Windows, rejects a peak of 64,000 KB or more, and rejects either total or
+late growth of 8,192 KB or more. This distinguishes a fixed allocator high-water mark from retained
+per-iteration values. It runs only when the selected target executes natively on a Linux or Windows
+host and defaults to three cases. Concurrent task and suspension shapes are excluded because
+outstanding background work is still live memory rather than a dropped-value leak; dedicated async
+RSS tests cover those lifecycles. The profile is kept out of `just ci-quick` and `just fuzz` because
+each case performs three native compilations and executions, but one case runs in every 50-case
+rotation of the `all` profile.
+
 List profiles, rules, combinations, and oracles with:
 
 ```sh
@@ -80,7 +100,7 @@ dotnet run --project src/Ashes.Fuzzing -- list
 ```
 
 Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `differential`,
-`invalid-source`, `invalid-semantics`, `traits`, `traits-differential`, `async`, `capabilities`,
+`memory-growth`, `invalid-source`, `invalid-semantics`, `traits`, `traits-differential`, `async`, `capabilities`,
 `resources`, `cross-target`, and `all`. The `traits` profile generates coherent user trait
 declarations, concrete and conditional implementations, constrained generic functions,
 multi-parameter traits, derived implementations, concrete resolution sites, and generic
@@ -96,8 +116,8 @@ type, and uses deterministic file-handle shapes. `Socket` and `TlsSocket` are re
 immutable generation type model but stay disabled until deterministic network-resource templates
 are added.
 The `all` profile deterministically covers every stable profile in each 50-case cycle while limiting
-compile, optimization/reuse differential, trait-evidence differential, and cross-target work to one
-case each per cycle.
+compile, memory-growth, optimization/reuse differential, trait-evidence differential, and
+cross-target work to one case each per cycle.
 Invalid-source fuzzing deterministically mutates valid generated source
 and rotates through checked-in corpus cases, trait declaration tests, general compiler tests,
 examples, and parser fixtures. It uses

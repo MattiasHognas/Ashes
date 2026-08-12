@@ -156,7 +156,7 @@ public sealed class CoverageExpansionTests
     public void NativeProfilesOnlyScheduleCombinationsWithObservableResultTypes()
     {
         var fixture = TestFixture.Create();
-        foreach (string profileId in new[] { "compile", "differential", "cross-target" })
+        foreach (string profileId in new[] { "compile", "differential", "memory-growth", "cross-target" })
         {
             FuzzProfile profile = fixture.Profiles.Get(profileId);
             string[] enabled = profile.EnabledCombinations.Order(StringComparer.Ordinal).ToArray();
@@ -193,6 +193,7 @@ public sealed class CoverageExpansionTests
             "differential",
             "invalid-semantics",
             "invalid-source",
+            "memory-growth",
             "perceus",
             "resources",
             "semantics",
@@ -203,10 +204,21 @@ public sealed class CoverageExpansionTests
 
         cycle.Select(profile => profile.Id).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)
             .ShouldBe(expected);
-        cycle.Count(profile => profile.Native).ShouldBe(4);
+        cycle.Count(profile => profile.Native).ShouldBe(5);
         all.EnabledCombinations.ShouldContain("resource.deterministic-file-handle");
         all.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
         campaign.ResolveProfile(all, 50).Id.ShouldBe(campaign.ResolveProfile(all, 0).Id);
+    }
+
+    [Test]
+    public void MemoryGrowthProfileExcludesConcurrentSuspensionShapes()
+    {
+        var fixture = TestFixture.Create();
+        FuzzProfile memoryGrowth = fixture.Profiles.Get("memory-growth");
+
+        memoryGrowth.ContextFlags.ShouldBe(GenerationFlags.RecursionAllowed);
+        memoryGrowth.EnabledCombinations.ShouldAllBe(id =>
+            !id.StartsWith("async.", StringComparison.Ordinal));
     }
 
     [Test]

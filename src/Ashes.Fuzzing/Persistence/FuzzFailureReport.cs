@@ -31,7 +31,7 @@ internal static class FuzzFailureReport
     {
         "differential-optimization" => "Release; -O0 vs -O2",
         "differential-reuse" => "Release; -O2 reuse enabled vs disabled",
-        "execution" or "cross-target" => "Release; -O2",
+        "execution" or "cross-target" or "memory-growth" => "Release; -O2",
         _ => "in-process compiler defaults",
     };
 

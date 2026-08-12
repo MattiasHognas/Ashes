@@ -6,6 +6,7 @@ namespace Ashes.Fuzzing.Oracles;
 internal sealed record FuzzOracleResult(string Oracle, bool Success, string Message, string StandardOutput = "", string StandardError = "")
 {
     internal static FuzzOracleResult Passed(string oracle) => new(oracle, true, "passed");
+    internal static FuzzOracleResult Passed(string oracle, string message) => new(oracle, true, message);
     internal static FuzzOracleResult Failed(string oracle, string message, string stdout = "", string stderr = "") => new(oracle, false, message, stdout, stderr);
 }
 
@@ -49,6 +50,7 @@ internal sealed class FuzzOracleRegistry
         registry.Register(new DifferentialReuseOracle());
         registry.Register(new DifferentialTraitEvidenceOracle());
         registry.Register(new CrossTargetOracle());
+        registry.Register(new MemoryGrowthOracle());
         return registry;
     }
 }

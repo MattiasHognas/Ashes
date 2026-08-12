@@ -90,6 +90,9 @@ internal sealed class FuzzProfileRegistry
             defaultCombinations,
             combinations,
             observableTypes);
+        string[] memoryCombinations = observableCombinations
+            .Where(id => !id.StartsWith("async.", StringComparison.Ordinal))
+            .ToArray();
         IReadOnlySet<Generation.OwnershipInterest> ownershipInterests = Enum.GetValues<Generation.OwnershipInterest>()
             .ToHashSet();
         FuzzProfileRegistry registry = new();
@@ -99,6 +102,7 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("combinations", allRules.ToHashSet(StringComparer.Ordinal), defaultCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir"], allTypes, 2, OwnershipInterests: ownershipInterests, Defaults: Defaults(100, 100)));
         registry.Register(new FuzzProfile("compile", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "execution"], observableTypes, 1, Native: true, OwnershipInterests: ownershipInterests, Defaults: Defaults(10, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("differential", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "differential-optimization", "differential-reuse"], observableTypes, 1, Native: true, Differential: true, OwnershipInterests: ownershipInterests, Defaults: Defaults(5, 50, compilerTimeout: 30)));
+        registry.Register(new FuzzProfile("memory-growth", allRules.ToHashSet(StringComparer.Ordinal), memoryCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "ir", "memory-growth"], observableTypes, 1, Native: true, ContextFlags: Generation.GenerationFlags.RecursionAllowed, OwnershipInterests: ownershipInterests, Defaults: Defaults(3, 50, compilerTimeout: 30, programTimeout: 30)));
         registry.Register(new FuzzProfile("cross-target", allRules.ToHashSet(StringComparer.Ordinal), observableCombinations.ToHashSet(StringComparer.Ordinal), ["parse", "format", "semantic", "cross-target"], observableTypes, 1, Native: true, Defaults: Defaults(10, 50, compilerTimeout: 30)));
         registry.Register(new FuzzProfile("invalid-source", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal), ["invalid-source"], scalarTypes, 0, MutateSource: true, Defaults: Defaults(250, 80)));
         registry.Register(new FuzzProfile(
