@@ -203,6 +203,26 @@ internal static partial class LlvmCodegen
         IReadOnlyList<FfiType> parameterTypes,
         FfiType returnType)
     {
+        IReadOnlyList<LlvmValueHandle> arguments = argTemps
+            .Select(temp => LoadTemp(state, temp))
+            .ToArray();
+        return EmitCallExternalValues(
+            state,
+            symbolName,
+            libraryName,
+            arguments,
+            parameterTypes,
+            returnType);
+    }
+
+    private static LlvmValueHandle EmitCallExternalValues(
+        LlvmCodegenState state,
+        string symbolName,
+        string? libraryName,
+        IReadOnlyList<LlvmValueHandle> argumentValues,
+        IReadOnlyList<FfiType> parameterTypes,
+        FfiType returnType)
+    {
         LlvmTypeHandle llvmReturnType = GetLlvmFfiType(state, returnType);
         var llvmParameterTypes = parameterTypes.Select(type => GetLlvmFfiType(state, type)).ToArray();
         LlvmTypeHandle functionType = LlvmApi.FunctionType(llvmReturnType, llvmParameterTypes);
@@ -226,10 +246,10 @@ internal static partial class LlvmCodegen
             }
         }
 
-        var args = new LlvmValueHandle[argTemps.Count];
-        for (int i = 0; i < argTemps.Count; i++)
+        var args = new LlvmValueHandle[argumentValues.Count];
+        for (int i = 0; i < argumentValues.Count; i++)
         {
-            args[i] = ConvertFfiArgument(state, LoadTemp(state, argTemps[i]), parameterTypes[i]);
+            args[i] = ConvertFfiArgument(state, argumentValues[i], parameterTypes[i]);
         }
 
         LlvmValueHandle result = LlvmApi.BuildCall2(

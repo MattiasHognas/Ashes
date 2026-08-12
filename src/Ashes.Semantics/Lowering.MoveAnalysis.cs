@@ -3308,7 +3308,7 @@ public sealed partial class Lowering
             bool copyField = constructor is not null
                 && fieldIndex >= 0
                 && fieldIndex < constructor.ParameterTypes.Count
-                && BuiltinRegistry.IsCopyType(constructor.ParameterTypes[fieldIndex]);
+                && CanArenaReset(constructor.ParameterTypes[fieldIndex]);
             if (!copyField)
             {
                 acc = ReachSum(acc, ResultReach(fieldValue, env, scope));
@@ -3547,7 +3547,7 @@ public sealed partial class Lowering
         for (int i = 0; i < args.Count; i++)
         {
             bool copyField = ctor.ParameterTypes.Count == ctor.Arity
-                && BuiltinRegistry.IsCopyType(ctor.ParameterTypes[i]);
+                && CanArenaReset(ctor.ParameterTypes[i]);
             if (copyField)
             {
                 continue; // inline scalar — cannot alias a heap cell the fold overwrites

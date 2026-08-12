@@ -1089,7 +1089,7 @@ public sealed partial class Lowering
         TypeRef accumulator = Prune(accType);
         if (accumulator is TypeRef.TList list)
         {
-            return BuiltinRegistry.IsCopyType(Prune(list.Element));
+            return CanArenaReset(list.Element);
         }
 
         if (accumulator is not TypeRef.TNamedType named)
@@ -1141,9 +1141,9 @@ public sealed partial class Lowering
     // nothing to do), Str/Bytes (dynamic copy), and tuples of copy-type elements (fixed-size shallow copy).
     // Must match the materialization cases in LowerConstructorApplication.
     private bool IsReuseMaterializableFieldType(TypeRef t) =>
-        BuiltinRegistry.IsCopyType(t)
+        CanArenaReset(t)
         || t is TypeRef.TStr or TypeRef.TBytes
-        || (t is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))));
+        || (t is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset));
 
     private sealed record ReuseSpecializationQualification(
         string TargetFunction,

@@ -806,6 +806,9 @@ external strlen(Str) -> Int
 external getpid() -> Int = "getpid"
 external type LLVMModuleRef
 external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
+external type Database resource destructor databaseClose
+external databaseClose(consume Database) -> void = "db_close@libdb"
+external databaseVersion(borrow Database) -> Int = "db_version@libdb"
 
 Rules:
 
@@ -822,13 +825,25 @@ Rules:
 - `Str` arguments are passed to C as null-terminated UTF-8 byte pointers.
 - Opaque external types are represented as native pointer-sized words and are
   intended for handles such as LLVM-C references.
+- `external type Name resource destructor closeName` classifies an opaque handle as an affine
+  resource. `closeName` must name an external function declared in the same file with exactly one
+  `consume Name` parameter and a `void` return. The same native symbol is used for explicit close and
+  compiler-inserted cleanup.
+- A direct resource parameter in an external function must be prefixed with `borrow` or `consume`.
+  `borrow` preserves caller ownership; `consume` transfers ownership and rejects later caller use.
+  These words are contextual within external parameter lists and are invalid on non-resource types,
+  pointers, or return types. Ordinary Ashes functions retain inferred borrowing and have no written
+  ownership syntax.
+- External resource return values are owned by the caller. Borrowed return views are not part of this
+  syntax.
 - Pointer external types are represented as native pointers and may be nested for
   C buffer and out-parameter APIs such as `*u8` and `**LLVMModuleRef`.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows external imports require an explicit DLL name.
-- External functions must be called directly; they are not first-class function
-  values in this initial FFI surface.
+- Ordinary external functions may be used as first-class function values. An external function that
+  borrows, consumes, or returns a declared resource must be called directly so its ownership contract
+  remains visible at the call site.
 
 ### 5.2 Result Binding
 
@@ -2160,8 +2175,9 @@ once created.
 
 ## 16. Resource Types and Deterministic Cleanup
 
-Certain built-in types represent external system resources (file handles,
-sockets). These are called **resource types**.
+Certain types represent external system resources whose release is observable. These are called
+**resource types**. They include compiler-provided handles and opaque FFI handles explicitly declared
+as resources.
 
 Currently classified resource types:
 
@@ -2169,8 +2185,39 @@ Currently classified resource types:
 - `Socket` — TCP socket handles from `Ashes.Net.Tcp.connect`
 - `TlsSocket` — TLS session handles from `Ashes.Net.Tls.connect` or a server-side
   `Ashes.Net.Tls.Server.handshake`
+- `Process` — child-process handles from `Ashes.Process.spawn`
 
-### 16.1 Automatic Cleanup
+### 16.1 Declared External Resources
+
+An FFI binding opts an opaque handle into the same affine ownership system with a destructor
+declaration:
+
+```ash
+external type Database resource destructor databaseClose
+external databaseClose(consume Database) -> void = "db_close@libdb"
+external databaseQuery(borrow Database, Str) -> Int = "db_query@libdb"
+external databaseTransfer(consume Database) -> void = "db_transfer@libdb"
+```
+
+The destructor name is an Ashes-visible external function declared in the same file. It must take
+exactly one `consume` parameter of the declared resource type and return `void`; missing, duplicate,
+or mismatched destructors are rejected with `ASH041`. Every other direct resource parameter must
+also say `borrow` or `consume`; missing markers and markers on non-resource types are rejected with
+`ASH042`.
+
+Calling the destructor explicitly closes the binding and suppresses its automatic cleanup. Calling
+another consuming external transfers ownership and marks the binding moved. A borrow neither closes
+nor transfers it. Resource values returned from externals begin owned, and a zero-cost nominal type
+over a declared resource retains this classification.
+
+An external function that borrows, consumes, or returns a declared resource is not a first-class
+function value and must be called directly. This preserves the explicit native ownership boundary;
+ordinary external functions remain first-class.
+
+`resource`, `destructor`, `borrow`, and `consume` are contextual in external declarations and remain
+available as identifiers elsewhere. Declared resources do not add finalizers to ordinary values.
+
+### 16.2 Automatic Cleanup
 
 Resource bindings are automatically cleaned up when they go out of scope.
 The compiler inserts cleanup calls at the end of every scope that contains
@@ -2183,7 +2230,7 @@ a live resource binding. This includes:
 Users do not write cleanup calls manually unless they want explicit control
 over when a resource is released.
 
-### 16.2 Explicit Close
+### 16.3 Explicit Close
 
 Resources may be closed explicitly using the appropriate API:
 
@@ -2193,7 +2240,7 @@ Resources may be closed explicitly using the appropriate API:
 When a resource is closed explicitly, the automatic cleanup for that
 resource is skipped (no double close).
 
-### 16.2.1 Move on Transfer
+### 16.3.1 Move on Transfer
 
 Ownership of a resource **moves** out of a scope when the resource is handed off to something that
 takes responsibility for it — so the original scope no longer cleans it up. Ownership moves when a
@@ -2211,10 +2258,10 @@ combinator's own scope closing it a second time (for example `Ashes.Net.Tcp.Serv
 
 **Borrowing.** Passing a resource to a function that only *reads* it — never closing, storing,
 returning, or capturing it — is a **borrow**, not a move: the caller keeps ownership and closes it
-once, and may keep using the resource afterward. Borrowing is inferred automatically (there is no
-borrow syntax); a parameter is treated as borrowed only when the compiler can prove every use in the
-callee is a read. This lets read-only helpers take a resource without consuming it. Anything the
-compiler cannot prove is a pure read is conservatively a move.
+once, and may keep using the resource afterward. Borrowing for ordinary Ashes functions is inferred
+automatically; a parameter is treated as borrowed only when the compiler can prove every use in the
+callee is a read. External functions instead use the explicit markers in §16.1 because native code
+cannot be inspected. Anything the compiler cannot prove is a pure read is conservatively a move.
 
 Using or closing a resource *after* its ownership has moved is a compile-time error (`ASH008`),
 distinct from use-after-close (`ASH006`): the resource was not closed here, its ownership was
@@ -2222,7 +2269,7 @@ transferred. Storing a resource into an aggregate that then escapes and is never
 the original binding is the intended pattern and stays valid — the error only fires when the moved-out
 binding is used again.
 
-### 16.3 Compile-Time Safety
+### 16.4 Compile-Time Safety
 
 The compiler enforces resource safety with three rules:
 
@@ -2234,18 +2281,18 @@ The compiler enforces resource safety with three rules:
    is a compile-time error (diagnostic `ASH007`).
 
 3. **No use-after-move.** Using or closing a resource after its ownership
-   has moved (see §16.2.1) is a compile-time error (diagnostic `ASH008`).
+   has moved (see §16.3.1) is a compile-time error (diagnostic `ASH008`).
 
 These checks are performed at compile time during semantic analysis.
 
-### 16.4 What Is Not Affected
+### 16.5 What Is Not Affected
 
 Resource safety rules (use-after-close, double-close, use-after-move) apply only to resource
 types. Ordinary immutable heap values (`Str`, `Bytes`, `List`, tuples, ADTs,
 records, `BigInt`, and closures) use compiler-inferred ownership and RC/region
 lowering but introduce no use-after-move restriction in source code — see §17.
 
-### 16.5 No Garbage Collection
+### 16.6 No Garbage Collection
 
 All resource cleanup is deterministic and compile-time verified. It does not
 depend on ordinary reference counts or a garbage collector. The compiler

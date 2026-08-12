@@ -312,6 +312,154 @@ public sealed class FfiTests
         diagnostics.Errors.ShouldBeEmpty();
     }
 
+    [Test]
+    public void Resource_aware_external_function_must_be_called_directly()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external closeHandle(consume Handle) -> void
+            let close = closeHandle in 0
+            """);
+
+        diagnostics.StructuredErrors.ShouldContain(
+            error => error.Code == DiagnosticCodes.InvalidExternalOwnershipMarker
+                && error.Message.Contains("must be called directly", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Resource_returning_external_function_must_be_called_directly()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external closeHandle(consume Handle) -> void
+            let open = openHandle in 0
+            """);
+
+        diagnostics.StructuredErrors.ShouldContain(
+            error => error.Code == DiagnosticCodes.InvalidExternalOwnershipMarker
+                && error.Message.Contains("must be called directly", StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void Declared_resource_emits_its_external_destructor_at_scope_exit()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external closeHandle(consume Handle) -> void
+            let resource = openHandle() in 0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrInst.CleanupResource cleanup = program.EntryFunction.Instructions
+            .OfType<IrInst.CleanupResource>()
+            .Single();
+        cleanup.TypeName.ShouldBe("Handle");
+        cleanup.Destructor.ShouldNotBeNull();
+        cleanup.Destructor.Name.ShouldBe("closeHandle");
+        cleanup.Destructor.DestructorForResource.ShouldBe("Handle");
+    }
+
+    [Test]
+    public void Borrowed_resource_call_preserves_ownership_until_explicit_close()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external inspectHandle(borrow Handle) -> Int
+            external closeHandle(consume Handle) -> void
+            let resource = openHandle() in
+                let _ = inspectHandle(resource) in
+                    closeHandle(resource)
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.EntryFunction.Instructions.OfType<IrInst.CallExternal>()
+            .Select(call => call.SymbolName)
+            .ShouldBe(["openHandle", "inspectHandle", "closeHandle"]);
+        program.EntryFunction.Instructions.OfType<IrInst.CleanupResource>().ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Consuming_resource_call_rejects_later_use()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external takeHandle(consume Handle) -> void
+            external inspectHandle(borrow Handle) -> Int
+            external closeHandle(consume Handle) -> void
+            let resource = openHandle() in
+                let _ = takeHandle(resource) in
+                    inspectHandle(resource)
+            """);
+
+        diagnostics.StructuredErrors.ShouldContain(error => error.Code == DiagnosticCodes.UseAfterMove);
+    }
+
+    [Test]
+    public void Closing_declared_resource_twice_reports_double_close()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external closeHandle(consume Handle) -> void
+            let resource = openHandle() in
+                let _ = closeHandle(resource) in
+                    closeHandle(resource)
+            """);
+
+        diagnostics.StructuredErrors.ShouldContain(error => error.Code == DiagnosticCodes.DoubleDrop);
+    }
+
+    [Test]
+    public void Direct_resource_parameter_requires_ownership_marker()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external inspectHandle(Handle) -> Int
+            external closeHandle(consume Handle) -> void
+            0
+            """);
+
+        diagnostics.StructuredErrors.ShouldContain(
+            error => error.Code == DiagnosticCodes.InvalidExternalOwnershipMarker);
+    }
+
+    [Test]
+    public void Resource_requires_a_matching_consume_destructor()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external closeHandle(borrow Handle) -> void
+            0
+            """);
+
+        diagnostics.StructuredErrors.Count(
+            error => string.Equals(error.Code, DiagnosticCodes.InvalidExternalResourceDestructor, StringComparison.Ordinal)).ShouldBe(1);
+    }
+
+    [Test]
+    public void Resource_bearing_aggregate_recursively_uses_declared_destructor()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external closeHandle(consume Handle) -> void
+            type Wrapped = | Wrapped(Handle)
+            let wrapped = Wrapped(openHandle()) in 0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrInst.CleanupResource cleanup = program.EntryFunction.Instructions
+            .OfType<IrInst.CleanupResource>()
+            .Single();
+        cleanup.Destructor.ShouldNotBeNull();
+        cleanup.Destructor.Name.ShouldBe("closeHandle");
+    }
+
     private sealed record UnsupportedParsedType : ParsedType;
 
     private static (IrProgram Program, Diagnostics Diagnostics) LowerProgram(string source)

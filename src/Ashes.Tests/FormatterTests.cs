@@ -699,6 +699,17 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_round_trip_external_resource_ownership()
+    {
+        const string source = "external type Handle resource destructor closeHandle\nexternal closeHandle(consume Handle) -> void\nexternal inspect(borrow Handle) -> Int\n0\n";
+
+        string formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("external type Handle resource destructor closeHandle\nexternal closeHandle(consume Handle) -> void\nexternal inspect(borrow Handle) -> Int\n\n0\n");
+        FormatFixtureSource(formatted).ShouldBe(formatted);
+    }
+
+    [Test]
     public void Format_should_round_trip_nested_external_pointer_types()
     {
         const string source = "external type Handle\nexternal fill(**u8) -> *Handle\n0\n";

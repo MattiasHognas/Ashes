@@ -20,6 +20,9 @@ external rlClearScreenBuffers() -> void = "rlClearScreenBuffers@$ORIGIN/../vendo
 external rlEnableDepthTest() -> void = "rlEnableDepthTest@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 external rlDisableDepthTest() -> void = "rlDisableDepthTest@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 external rlDisableBackfaceCulling() -> void = "rlDisableBackfaceCulling@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
+external type LoadedFileText resource destructor UnloadFileText
+external LoadFileText(Str) -> LoadedFileText = "LoadFileText@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
+external UnloadFileText(consume LoadedFileText) -> void = "UnloadFileText@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 
 let rlTriangles = 4
 
@@ -84,3 +87,5 @@ let cameraTurn _ = rlRotatef(-38.0)(0.0)(1.0)(0.0)
 let cameraScale _ = rlScalef(0.52)(0.52)(0.52)
 
 let skyClear _ = rlClearColor(112u8)(168u8)(210u8)(255u8)
+
+let loadFileText path _ = LoadFileText path

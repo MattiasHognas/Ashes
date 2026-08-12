@@ -784,13 +784,23 @@ public static class Formatter
             case ExternalDecl.OpaqueType opaqueType:
                 sb.Append("external type ");
                 sb.Append(opaqueType.Name);
+                if (opaqueType.DestructorName is not null)
+                {
+                    sb.Append(" resource destructor ");
+                    sb.Append(opaqueType.DestructorName);
+                }
                 sb.Append('\n');
                 break;
             case ExternalDecl.Function func:
                 sb.Append("external ");
                 sb.Append(func.Name);
                 sb.Append('(');
-                sb.Append(string.Join(", ", func.ParameterTypes.Select(WriteParsedType)));
+                sb.Append(string.Join(", ", func.ParameterTypes.Select((type, index) =>
+                    WriteExternalParameter(
+                        type,
+                        index < func.ParameterOwnerships.Count
+                            ? func.ParameterOwnerships[index]
+                            : ExternalParameterOwnership.Unspecified))));
                 sb.Append(") -> ");
                 sb.Append(WriteParsedType(func.ReturnType));
                 if (func.SymbolName is not null)
@@ -802,6 +812,19 @@ public static class Formatter
                 sb.Append('\n');
                 break;
         }
+    }
+
+    private static string WriteExternalParameter(
+        ParsedType type,
+        ExternalParameterOwnership ownership)
+    {
+        string prefix = ownership switch
+        {
+            ExternalParameterOwnership.Borrow => "borrow ",
+            ExternalParameterOwnership.Consume => "consume ",
+            _ => string.Empty,
+        };
+        return prefix + WriteParsedType(type);
     }
 
     private static bool EndsWithNewLine(StringBuilder sb, string newLine)

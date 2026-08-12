@@ -87,6 +87,19 @@ internal sealed record PatternBindingRecord(
     PatternBindingPlacementOutcome PlacementOutcome,
     SourceLocation? Location);
 
+/// <summary>A declared affine external resource and its FFI ownership contract.</summary>
+internal sealed record ExternalResourceOwnershipRecord(
+    string TypeName,
+    string Destructor,
+    IReadOnlyList<ExternalResourceParameterRecord> Parameters);
+
+/// <summary>One external resource parameter whose ownership is declared at the FFI boundary.</summary>
+internal sealed record ExternalResourceParameterRecord(
+    string Function,
+    int ParameterIndex,
+    string TypeName,
+    FfiParameterOwnership Ownership);
+
 /// <summary>
 /// The read-only record of what semantic lowering decided, for consumers that report on compilation
 /// rather than participate in it.
@@ -118,6 +131,7 @@ internal sealed record CompilationDecisionSnapshot(
     IReadOnlyList<CoroutineRepresentationRecord> CoroutineRepresentations,
     IReadOnlyList<PatternBindingRecord> PatternBindings)
 {
+    public IReadOnlyList<ExternalResourceOwnershipRecord> ExternalResources { get; init; } = [];
     /// <summary>
     /// Every function ownership record for one reportable origin. Colliding local names share a name
     /// but not an origin, so this is the lookup that separates them.
@@ -233,6 +247,29 @@ public sealed partial class Lowering
             [.. _valuePlacementRecords],
             [.. ReuseDecisions],
             [.. CoroutineRepresentationDecisions],
-            patternBindings);
+            patternBindings)
+        {
+            ExternalResources = CaptureExternalResourceOwnership(),
+        };
+    }
+
+    private IReadOnlyList<ExternalResourceOwnershipRecord> CaptureExternalResourceOwnership()
+    {
+        return [.. _externalResourceTypes
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => new ExternalResourceOwnershipRecord(
+                pair.Key,
+                pair.Value.DestructorName ?? string.Empty,
+                [.. _externalFunctions.SelectMany(function => function.ParameterTypes
+                    .Select((type, index) => (Function: function, Type: type, Index: index)))
+                    .Where(parameter => parameter.Type is FfiType.Opaque opaque
+                        && string.Equals(opaque.Name, pair.Key, StringComparison.Ordinal))
+                    .Select(parameter => new ExternalResourceParameterRecord(
+                        parameter.Function.Name,
+                        parameter.Index,
+                        pair.Key,
+                        parameter.Index < parameter.Function.ParameterOwnerships.Count
+                            ? parameter.Function.ParameterOwnerships[parameter.Index]
+                            : FfiParameterOwnership.Unspecified))]))];
     }
 }

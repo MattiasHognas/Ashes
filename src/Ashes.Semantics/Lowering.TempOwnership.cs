@@ -488,6 +488,23 @@ public sealed partial class Lowering
         RefineTempOwnershipType(target, type);
     }
 
+    private void MarkFrameOwnedResourceTemp(int temp, TypeRef type)
+    {
+        _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? existing);
+        RecordTempOwnership(
+            temp,
+            LoweredTempRepresentation.Unknown,
+            ownerTemp: temp,
+            sourceTemp: existing?.SourceTemp,
+            type: type,
+            layout: LayoutForType(type),
+            dropKind: LoweredTempDropKind.Unknown,
+            ownership: LoweredTempOwnershipKind.Transferred,
+            producer: existing?.Producer ?? LoweredTempProducerKind.Borrow,
+            location: existing?.Location,
+            reason: LoweredTempOwnershipReason.OwnershipTransfer);
+    }
+
     private void MarkRuntimeManagedTemp(
         int temp,
         LoweredTempOwnershipReason reason = LoweredTempOwnershipReason.ExplicitLoweringDecision,

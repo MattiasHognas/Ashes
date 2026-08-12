@@ -66,8 +66,10 @@ let recursive loop _ =
         |> renderFrame
         |> loop
 
-Unit
-|> initWindow 960 540 "Ashes + raylib terrain"
-|> setTargetFps 60
-|> loop
-|> closeWindow
+let sceneSource = loadFileText("Scene.ash")(Unit)
+in
+    Unit
+    |> initWindow 960 540 "Ashes + raylib terrain"
+    |> setTargetFps 60
+    |> loop
+    |> closeWindow

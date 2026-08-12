@@ -21,7 +21,7 @@ internal static class ExplainReportFormatter
         var lines = new List<string>();
         if (request.Includes(ExplainKind.Ownership))
         {
-            AppendOwnership(lines, report.Ownership);
+            AppendOwnership(lines, report.Ownership, report.ExternalResources);
         }
 
         if (request.Includes(ExplainKind.Rc))
@@ -71,14 +71,19 @@ internal static class ExplainReportFormatter
         lines.Add(string.Empty);
     }
 
-    private static void AppendOwnership(List<string> lines, IReadOnlyList<OwnershipFunctionReport> reports)
+    private static void AppendOwnership(
+        List<string> lines,
+        IReadOnlyList<OwnershipFunctionReport> reports,
+        IReadOnlyList<ExternalResourceOwnershipRecord> resources)
     {
         Heading(lines, "Ownership report");
-        if (reports.Count == 0)
+        if (reports.Count == 0 && resources.Count == 0)
         {
             lines.Add("  (no functions matched)");
             return;
         }
+
+        AppendExternalResources(lines, resources);
 
         foreach (OwnershipFunctionReport report in reports)
         {
@@ -122,6 +127,22 @@ internal static class ExplainReportFormatter
                 }
             }
 
+            lines.Add(string.Empty);
+        }
+    }
+
+    private static void AppendExternalResources(
+        List<string> lines,
+        IReadOnlyList<ExternalResourceOwnershipRecord> resources)
+    {
+        foreach (ExternalResourceOwnershipRecord resource in resources)
+        {
+            lines.Add($"External resource: {resource.TypeName}");
+            lines.Add($"  destructor: {resource.Destructor}");
+            foreach (ExternalResourceParameterRecord parameter in resource.Parameters)
+            {
+                lines.Add($"  {parameter.Function} parameter #{parameter.ParameterIndex + 1}: {parameter.Ownership.ToString().ToLowerInvariant()}");
+            }
             lines.Add(string.Empty);
         }
     }

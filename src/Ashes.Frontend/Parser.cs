@@ -318,19 +318,36 @@ public sealed class Parser
         {
             Consume(TokenKind.Type);
             var typeName = Consume(TokenKind.Ident).Text;
-            return RegisterExternalDecl(new ExternalDecl.OpaqueType(typeName), start, LastConsumedEnd);
+            string? destructorName = null;
+            if (_current.Kind == TokenKind.Ident
+                && string.Equals(_current.Text, "resource", StringComparison.Ordinal))
+            {
+                Consume(TokenKind.Ident);
+                if (_current.Kind != TokenKind.Ident
+                    || !string.Equals(_current.Text, "destructor", StringComparison.Ordinal))
+                {
+                    _diag.Error(_current.Span, "Expected 'destructor' after external resource type.");
+                }
+                Consume(TokenKind.Ident);
+                destructorName = Consume(TokenKind.Ident).Text;
+            }
+            return RegisterExternalDecl(
+                new ExternalDecl.OpaqueType(typeName) { DestructorName = destructorName },
+                start,
+                LastConsumedEnd);
         }
 
         var name = Consume(TokenKind.Ident).Text;
         Consume(TokenKind.LParen);
         var parameterTypes = new List<ParsedType>();
+        var parameterOwnerships = new List<ExternalParameterOwnership>();
         if (_current.Kind != TokenKind.RParen)
         {
-            parameterTypes.Add(ParseFfiType());
+            ParseExternalParameter(parameterTypes, parameterOwnerships);
             while (_current.Kind == TokenKind.Comma)
             {
                 Consume(TokenKind.Comma);
-                parameterTypes.Add(ParseFfiType());
+                ParseExternalParameter(parameterTypes, parameterOwnerships);
             }
         }
 
@@ -345,7 +362,35 @@ public sealed class Parser
             symbolName = Consume(TokenKind.String).Text;
         }
 
-        return RegisterExternalDecl(new ExternalDecl.Function(name, parameterTypes, returnType, symbolName), start, LastConsumedEnd);
+        return RegisterExternalDecl(
+            new ExternalDecl.Function(name, parameterTypes, returnType, symbolName)
+            {
+                ParameterOwnerships = parameterOwnerships,
+            },
+            start,
+            LastConsumedEnd);
+    }
+
+    private void ParseExternalParameter(
+        List<ParsedType> parameterTypes,
+        List<ExternalParameterOwnership> parameterOwnerships)
+    {
+        ExternalParameterOwnership ownership = ExternalParameterOwnership.Unspecified;
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "borrow", StringComparison.Ordinal))
+        {
+            ownership = ExternalParameterOwnership.Borrow;
+            Consume(TokenKind.Ident);
+        }
+        else if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "consume", StringComparison.Ordinal))
+        {
+            ownership = ExternalParameterOwnership.Consume;
+            Consume(TokenKind.Ident);
+        }
+
+        parameterOwnerships.Add(ownership);
+        parameterTypes.Add(ParseFfiType());
     }
 
     private ParsedType ParseFfiType()

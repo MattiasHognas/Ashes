@@ -21,6 +21,13 @@ public sealed partial class Lowering
         IReadOnlyList<string>? ParameterNames = null,
         bool IsParameter = false);
 
+    /// <summary>Declared affine ownership metadata exposed to tooling without reimplementing FFI semantics.</summary>
+    public readonly record struct ExternalOwnershipInfo(
+        bool IsResourceType,
+        string? Destructor,
+        IReadOnlyList<string> ParameterOwnerships,
+        bool ReturnsOwnedResource);
+
     private readonly Diagnostics _diag;
     private readonly LoweringConfiguration _configuration;
     private readonly IReadOnlySet<string> _importedStdModules;
@@ -559,6 +566,9 @@ public sealed partial class Lowering
     private readonly Dictionary<string, ConstructorSymbol> _builtinConstructorSymbols = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeRef.TNamedType> _resolvedTypes = new(StringComparer.Ordinal);
     private readonly HashSet<string> _externalOpaqueTypes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ExternalDecl.OpaqueType> _externalResourceTypes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, IrExternalFunction> _externalResourceDestructors = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _invalidExternalResourceDestructors = new(StringComparer.Ordinal);
     private readonly List<IrExternalFunction> _externalFunctions = new();
 
     /// <summary>The type declarations registered during lowering, keyed by type name.</summary>
@@ -569,6 +579,34 @@ public sealed partial class Lowering
     public IReadOnlyDictionary<string, TypeRef.TNamedType> ResolvedTypes => _resolvedTypes;
     /// <summary>The inferred type of the most recently lowered expression, exposed for tooling queries.</summary>
     public TypeRef? LastLoweredType { get; private set; }
+
+    /// <summary>Gets the declared resource contract for an external type or function.</summary>
+    public ExternalOwnershipInfo? GetExternalOwnershipInfo(string name)
+    {
+        if (_externalResourceTypes.TryGetValue(name, out ExternalDecl.OpaqueType? resource))
+        {
+            return new ExternalOwnershipInfo(true, resource.DestructorName, [], false);
+        }
+
+        IrExternalFunction? function = _externalFunctions.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, name, StringComparison.Ordinal));
+        if (function is null)
+        {
+            return null;
+        }
+
+        IReadOnlyList<string> parameters = [.. function.ParameterTypes
+            .Select((type, index) => type is FfiType.Opaque opaque
+                && _externalResourceTypes.ContainsKey(opaque.Name)
+                    ? $"#{index + 1} {opaque.Name}: {function.ParameterOwnerships[index].ToString().ToLowerInvariant()}"
+                    : string.Empty)
+            .Where(description => description.Length > 0)];
+        bool returnsOwnedResource = function.ReturnType is FfiType.Opaque returned
+            && _externalResourceTypes.ContainsKey(returned.Name);
+        return parameters.Count == 0 && !returnsOwnedResource
+            ? null
+            : new ExternalOwnershipInfo(false, null, parameters, returnsOwnedResource);
+    }
 
     /// <summary>
     /// Returns the narrowest recorded <see cref="HoverTypeInfo"/> whose span contains
@@ -2669,7 +2707,7 @@ public sealed partial class Lowering
                 break;
 
             case Binding.ExternalFunction externalFunction:
-                result = EmitExternalFunctionThunk(externalFunction.Function, externalFunction.Type, GetSpan(v));
+                result = LowerExternalFunctionReference(v, externalFunction, temp);
                 break;
 
             case Binding.PreludeValue value:
@@ -2691,6 +2729,29 @@ public sealed partial class Lowering
 
         return result;
     }
+
+    private (int Temp, TypeRef Type) LowerExternalFunctionReference(
+        Expr.Var variable,
+        Binding.ExternalFunction externalFunction,
+        int fallbackTemp)
+    {
+        if (!HasExternalResourceOwnershipContract(externalFunction.Function))
+        {
+            return EmitExternalFunctionThunk(externalFunction.Function, externalFunction.Type, GetSpan(variable));
+        }
+
+        ReportDiagnostic(
+            GetSpan(variable),
+            $"External function '{variable.Name}' has a resource ownership contract and must be called directly.",
+            DiagnosticCodes.InvalidExternalOwnershipMarker);
+        Emit(new IrInst.LoadConstInt(fallbackTemp, 0));
+        return (fallbackTemp, externalFunction.Type);
+    }
+
+    private bool HasExternalResourceOwnershipContract(IrExternalFunction function) =>
+        function.ParameterOwnerships.Any(ownership => ownership != FfiParameterOwnership.Unspecified)
+        || function.ReturnType is FfiType.Opaque returned
+            && _externalResourceTypes.ContainsKey(returned.Name);
 
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
     {
@@ -10155,6 +10216,11 @@ public sealed partial class Lowering
         TypeRef sourceCursor = sourceFunctionType;
         for (int i = 0; i < args.Count; i++)
         {
+            FfiParameterOwnership ownership = GetExternalParameterOwnership(externalFunction, i);
+            bool explicitDestructor = externalFunction.DestructorForResource is not null
+                && ownership == FfiParameterOwnership.Consume;
+            CheckExternalResourceArgument(args[i], ownership, explicitDestructor);
+
             var (argTemp, argType) = LowerExpr(args[i]);
             TypeRef.TFun sourceFunction = (TypeRef.TFun)Prune(sourceCursor);
             TypeRef expectedType = sourceFunction.Arg;
@@ -10174,6 +10240,8 @@ public sealed partial class Lowering
             {
                 loweredArgTemps.Add(argTemp);
             }
+
+            ApplyExternalResourceTransfer(args[i], ownership, explicitDestructor);
         }
 
         int target = NewTemp();
@@ -10183,7 +10251,78 @@ public sealed partial class Lowering
             return LowerUnitValue();
         }
 
-        return (target, Prune(sourceCursor));
+        TypeRef resultType = Prune(sourceCursor);
+        RecordCallResultTempOwnership(
+            target,
+            resultType,
+            runtimeManagedResult: false,
+            normalizedRuntimeManagedResult: false,
+            BuiltinRegistry.BytesOwnershipProvenance.Unknown);
+        return (target, resultType);
+    }
+
+    private static FfiParameterOwnership GetExternalParameterOwnership(
+        IrExternalFunction function,
+        int index) => index < function.ParameterOwnerships.Count
+            ? function.ParameterOwnerships[index]
+            : FfiParameterOwnership.Unspecified;
+
+    private void CheckExternalResourceArgument(
+        Expr argument,
+        FfiParameterOwnership ownership,
+        bool explicitDestructor)
+    {
+        if (explicitDestructor)
+        {
+            CheckExplicitExternalResourceClose(argument);
+        }
+        else if (ownership is FfiParameterOwnership.Borrow or FfiParameterOwnership.Consume)
+        {
+            CheckUseAfterDrop(argument);
+        }
+    }
+
+    private void ApplyExternalResourceTransfer(
+        Expr argument,
+        FfiParameterOwnership ownership,
+        bool explicitDestructor)
+    {
+        if (ownership != FfiParameterOwnership.Consume)
+        {
+            return;
+        }
+        if (explicitDestructor && argument is Expr.Var closed)
+        {
+            TryMarkDropped(closed.Name);
+        }
+        else
+        {
+            MarkResourceArgMoved(argument);
+        }
+    }
+
+    private void CheckExplicitExternalResourceClose(Expr argument)
+    {
+        if (argument is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not { IsDropped: true } info)
+        {
+            return;
+        }
+
+        if (info.ReleaseKind == ResourceReleaseKind.Moved)
+        {
+            ReportDiagnostic(
+                GetSpan(argument),
+                $"Resource '{variable.Name}' has been moved and can no longer be closed here. Ownership was transferred when it was passed to a function or stored in a data structure.",
+                DiagnosticCodes.UseAfterMove);
+        }
+        else
+        {
+            ReportDiagnostic(
+                GetSpan(argument),
+                $"Resource '{variable.Name}' has already been closed. Closing a resource twice is not allowed.",
+                DiagnosticCodes.DoubleDrop);
+        }
     }
 
     /// <summary>

@@ -6,8 +6,24 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    private static bool EmitResourceCleanup(LlvmCodegenState state, LlvmValueHandle value, string typeName)
+    private static bool EmitResourceCleanup(
+        LlvmCodegenState state,
+        LlvmValueHandle value,
+        string typeName,
+        IrExternalFunction? destructor)
     {
+        if (destructor is not null)
+        {
+            _ = EmitCallExternalValues(
+                state,
+                destructor.SymbolName,
+                destructor.LibraryName,
+                [value],
+                destructor.ParameterTypes,
+                destructor.ReturnType);
+            return false;
+        }
+
         switch (typeName)
         {
             case "FileHandle":

@@ -149,6 +149,29 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void External_resource_hover_exposes_destructor_and_parameter_ownership()
+    {
+        const string source =
+            "external type Handle resource destructor closeHandle\n" +
+            "external inspectHandle(borrow Handle) -> Int\n" +
+            "external closeHandle(consume Handle) -> void\n" +
+            "0";
+
+        DocumentService.HoverItem? typeHover = DocumentService.GetHover(
+            source,
+            source.IndexOf("Handle", StringComparison.Ordinal));
+        typeHover.ShouldNotBeNull();
+        typeHover.Value.Contents.ShouldContain("affine external resource");
+        typeHover.Value.Contents.ShouldContain("Destructor:** `closeHandle`");
+
+        DocumentService.HoverItem? functionHover = DocumentService.GetHover(
+            source,
+            source.IndexOf("inspectHandle", StringComparison.Ordinal));
+        functionHover.ShouldNotBeNull();
+        functionHover.Value.Contents.ShouldContain("#1 Handle: borrow");
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

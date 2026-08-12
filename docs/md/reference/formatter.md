@@ -157,6 +157,14 @@ type Point =
     | y: Int
 ```
 
+External resources
+
+- An external resource type stays on one line:
+  `external type Handle resource destructor closeHandle`.
+- External parameter ownership markers use one space before their type:
+  `external inspect(borrow Handle) -> Int` and
+  `external transfer(consume Handle) -> void`.
+
 Records
 
 - Record construction is rendered as a constructor call with named arguments:

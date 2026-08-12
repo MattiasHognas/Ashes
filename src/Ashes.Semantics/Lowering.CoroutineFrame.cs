@@ -18,7 +18,16 @@ public sealed partial class Lowering
     /// </summary>
     private int RetainCoroutineCapture(string name, int captureTemp, TypeRef captureType)
     {
-        if (LookupOwnedValue(name) is not { RuntimeManaged: true, IsDropped: false })
+        OwnershipInfo? owner = LookupOwnedValue(name);
+        if (owner is { IsDropped: false }
+            && (owner.IsResource || owner.IsResourceBearing))
+        {
+            owner.ReleaseKind = ResourceReleaseKind.Moved;
+            MarkFrameOwnedResourceTemp(captureTemp, Prune(captureType));
+            return captureTemp;
+        }
+
+        if (owner is not { RuntimeManaged: true, IsDropped: false })
         {
             return captureTemp;
         }
@@ -198,10 +207,14 @@ public sealed partial class Lowering
         LoweredTempOwnershipFact fact,
         TypeRef? type)
     {
-        if (fact.Representation == LoweredTempRepresentation.BorrowedView
-            || fact.LayoutCapability is { ContainsResourceOrBorrowedView: true })
+        if (fact.Representation == LoweredTempRepresentation.BorrowedView)
         {
             return (CoroutineFrameSlotOwnership.ResourceOrBorrowedView, CoroutineFrameSlotReason.ResourceOrBorrowedStorage);
+        }
+
+        if (type is not null && IsResourceBearing(type))
+        {
+            return (CoroutineFrameSlotOwnership.FrameOwnedResource, CoroutineFrameSlotReason.FrameOwnedResource);
         }
 
         if (type is not null && CanArenaReset(type))
@@ -250,7 +263,8 @@ public sealed partial class Lowering
         IrFunctionOrigin? coroutineOrigin)
     {
         List<CoroutineFrameSlot> owned = [.. slots
-            .Where(slot => slot.Ownership == CoroutineFrameSlotOwnership.FrameOwnedRuntimeRc)
+            .Where(slot => slot.Ownership is CoroutineFrameSlotOwnership.FrameOwnedRuntimeRc
+                or CoroutineFrameSlotOwnership.FrameOwnedResource)
             .OrderBy(slot => slot.OffsetBytes)];
         if (owned.Count == 0)
         {
@@ -309,6 +323,12 @@ public sealed partial class Lowering
     private void EmitCoroutineFrameSlotDrop(CoroutineFrameSlot slot, int valueTemp)
     {
         TypeRef? type = slot.Type is null ? null : Prune(slot.Type);
+        if (slot.Ownership == CoroutineFrameSlotOwnership.FrameOwnedResource && type is not null)
+        {
+            EmitResourceBearingDrop(valueTemp, type);
+            return;
+        }
+
         switch (slot.DropKind)
         {
             case OrdinaryHeapChildDropKind.List when type is TypeRef.TList list:
@@ -345,6 +365,8 @@ public sealed partial class Lowering
                 slot.Ownership switch
                 {
                     CoroutineFrameSlotOwnership.FrameOwnedRuntimeRc =>
+                        CoroutineValueRepresentationDecision.SavedInTaskFrame,
+                    CoroutineFrameSlotOwnership.FrameOwnedResource =>
                         CoroutineValueRepresentationDecision.SavedInTaskFrame,
                     CoroutineFrameSlotOwnership.RegionOwned =>
                         CoroutineValueRepresentationDecision.RegionBecauseSuspendGraphUnknown,

@@ -32,7 +32,7 @@ internal sealed class ProgramGenerator
         {
             budget = budget with
             {
-                RemainingDeclarations = Math.Max(budget.RemainingDeclarations, 24),
+                RemainingDeclarations = Math.Max(budget.RemainingDeclarations, 29),
                 RemainingFunctions = Math.Max(budget.RemainingFunctions, 16),
                 RemainingAdts = Math.Max(budget.RemainingAdts, 6),
             };

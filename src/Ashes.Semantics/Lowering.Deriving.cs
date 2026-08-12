@@ -156,7 +156,9 @@ public sealed partial class Lowering
                 reason = "an unsupported function type";
                 return true;
             case TypeRef.TOpaque opaque:
-                reason = $"the opaque external type '{opaque.Name}'";
+                reason = _externalResourceTypes.ContainsKey(opaque.Name)
+                    ? $"the resource type '{opaque.Name}'"
+                    : $"the opaque external type '{opaque.Name}'";
                 return true;
             case TypeRef.TPtr:
                 reason = "an unsupported external pointer type";

@@ -34,7 +34,27 @@ internal static class IrExplainReporter
             wantsRc ? BuildRc(finalIr, request.FunctionFilter) : [],
             wantsReuse ? BuildReuse(snapshot, request.FunctionFilter) : [],
             wantsRepresentation ? BuildRepresentation(snapshot, request.FunctionFilter) : [],
-            wantsTraits ? finalIr.TraitEvidence : TraitEvidenceAnnotations.Empty);
+            wantsTraits ? finalIr.TraitEvidence : TraitEvidenceAnnotations.Empty)
+        {
+            ExternalResources = wantsOwnership
+                ? FilterExternalResources(snapshot.ExternalResources, request.FunctionFilter)
+                : [],
+        };
+    }
+
+    private static IReadOnlyList<ExternalResourceOwnershipRecord> FilterExternalResources(
+        IReadOnlyList<ExternalResourceOwnershipRecord> resources,
+        string? filter)
+    {
+        if (filter is null)
+        {
+            return resources;
+        }
+
+        return [.. resources.Where(resource =>
+            string.Equals(resource.Destructor, filter, StringComparison.Ordinal)
+            || resource.Parameters.Any(parameter =>
+                string.Equals(parameter.Function, filter, StringComparison.Ordinal)))];
     }
 
     private static IReadOnlyList<OwnershipFunctionReport> BuildOwnership(
