@@ -289,6 +289,23 @@ That means:
   formatting verification scripts to exempt intentionally malformed fixtures
   from formatting checks.
 
+## Compilation Pipelines
+
+`ashes test` uses the normal optimized compiler path by default. The `--pipeline` option selects the
+Ashes semantic pipeline independently of LLVM's `-O0` through `-O3` setting:
+
+- `optimized` lowers, runs `IrOptimizer`, and then invokes LLVM. This matches `ashes compile` and
+  `ashes run` and is the default.
+- `lowered` bypasses `IrOptimizer` and sends raw lowered IR to LLVM. LLVM still uses the selected
+  `-O` level.
+- `both` compiles and runs every runnable test through both paths, and the test passes only when both
+  executions satisfy the same directives. Compile-error tests compile once because they stop before
+  the semantic optimizer boundary.
+
+Full CI uses `--pipeline both` so semantic optimization cannot hide a lowering/runtime regression and
+the optimizer cannot introduce a regression that the raw-lowered path misses. In this mode, native
+execution timings are labeled `opt=<time>` and `lowered=<time>`; compilation remains excluded.
+
 ## Failure Reporting
 
 When a test fails, the runner reports:

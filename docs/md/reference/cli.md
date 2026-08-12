@@ -363,7 +363,7 @@ Discover and execute `.ash` test files. A test file must contain a leading `// e
 #### Synopsis
 
 ```sh
-ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <ashes.json>] [--explain <kind>] [paths...]
+ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--pipeline <optimized|lowered|both>] [--project <ashes.json>] [--explain <kind>] [paths...]
 ```
 
 #### Arguments
@@ -380,6 +380,7 @@ ashes test [--target <id>] [--target-cpu <cpu>] [-O0|-O1|-O2|-O3] [--project <as
 | `--target-cpu` | string | `generic` / `x86-64` | No | Target CPU microarchitecture for test compilation. |
 | `--project` | file path | — | No | Load a project manifest. When no explicit `[paths...]` are given, test discovery uses `<projectDir>/tests` if that directory exists; otherwise it falls back to the project directory itself. |
 | `-O0`\|`-O1`\|`-O2`\|`-O3` | enum | `-O2` | No | Select LLVM optimization level for test compilation. |
+| `--pipeline` | `optimized`\|`lowered`\|`both` | `optimized` | No | Select whether tests use the normal Ashes semantic optimizer, bypass it, or run through both semantic pipelines. This is independent of the LLVM `-O` level. |
 
 #### Test File Conventions
 
@@ -427,7 +428,22 @@ Results are printed as a table to **stdout**:
  failing.ash   FAIL     12ms
 ```
 
-A summary line follows: `N passed, N failed, N skipped in <elapsed>`.
+The per-test `Time` value measures only the launched native process, excluding parsing, lowering,
+LLVM code generation, linking, executable-file setup, and test-fixture setup. Sub-millisecond
+executions are reported in microseconds. With `--pipeline both`, the column labels the two process
+times as `opt=<time> lowered=<time>`. A compile-error test displays `—` because it does not
+launch a process.
+
+The default `optimized` pipeline matches `ashes compile` and `ashes run`: it lowers the program,
+runs the Ashes semantic optimizer, and passes the resulting IR to LLVM. `lowered` passes the raw
+lowered IR directly to LLVM, which is useful for exposing correctness bugs hidden by dead-code
+elimination or compile-time evaluation. `both` requires every runnable test to satisfy the same
+directives in both pipelines. Compile-error tests run once because compilation stops before the
+semantic optimizer boundary. The selected `-O0` through `-O3` level still applies independently to
+LLVM in every pipeline.
+
+A summary line follows: `N passed, N failed, N skipped in <elapsed>`. Its elapsed value retains the
+complete compile-and-run test time.
 Failure details (expected vs. actual stdout) are printed after the table.
 
 #### Examples
@@ -444,6 +460,9 @@ ashes test tests/hello.ash
 
 # Run tests for a named project
 ashes test --project path/to/ashes.json
+
+# Compare normal and raw-lowered semantic pipelines
+ashes test --pipeline both tests/
 ```
 
 ---
@@ -913,10 +932,10 @@ allocate counters, or profile a run — runtime profiling is a separate concern,
 visualization and report viewers. Nor do they explain LLVM's own optimizations: everything reported
 here is an Ashes-level decision made before code generation.
 
-`rc` describes the Ashes IR handed to the backend, not optimized LLVM IR, and it observes after the
-Ashes-level optimizer so its counts match the code that ships. Under `ashes test` the runner hands the
-backend the IR exactly as lowered, with no optimizer pass, so the report describes that IR instead —
-the same invariant at a different point.
+`rc` describes the Ashes IR handed to the backend, not optimized LLVM IR. It observes after the
+Ashes-level optimizer in the default `ashes test --pipeline optimized` mode, matching the code that
+ships. With `--pipeline lowered`, it describes the raw lowered IR instead. `--pipeline both` emits a
+report for each pipeline.
 
 Requesting a report cannot change generated code: the same source compiles to identical bytes with and
 without `--explain`.

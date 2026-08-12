@@ -275,4 +275,40 @@ public sealed class TestRunnerFixtureTests
             }
         }
     }
+
+    [Test]
+    public void RunTests_both_pipeline_labels_each_native_execution()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));
+        var filePath = Path.Combine(root, "both-pipelines.ash");
+
+        try
+        {
+            Directory.CreateDirectory(root);
+            File.WriteAllText(filePath, "// expect: 42\nAshes.IO.print(40 + 2)\n");
+
+            using var output = new StringWriter();
+            var console = AnsiConsole.Create(new AnsiConsoleSettings
+            {
+                Out = new AnsiConsoleOutput(output)
+            });
+
+            int exitCode = Runner.RunTests(
+                [filePath],
+                BackendFactory.DefaultForCurrentOS(),
+                console,
+                pipeline: Runner.TestPipeline.Both);
+
+            exitCode.ShouldBe(0, output.ToString());
+            output.ToString().ShouldContain("opt=");
+            output.ToString().ShouldContain("lowered=");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
 }

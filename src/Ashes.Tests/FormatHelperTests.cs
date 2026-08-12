@@ -38,6 +38,26 @@ public sealed class FormatHelperTests
         Runner.FormatElapsed(90_000).ShouldBe("1.50min");
 
     [Test]
+    public void FormatExecutionElapsed_zero() =>
+        Runner.FormatExecutionElapsed(TimeSpan.Zero).ShouldBe("0µs");
+
+    [Test]
+    public void FormatExecutionElapsed_sub_microsecond() =>
+        Runner.FormatExecutionElapsed(TimeSpan.FromTicks(5)).ShouldBe("0.5µs");
+
+    [Test]
+    public void FormatExecutionElapsed_microseconds() =>
+        Runner.FormatExecutionElapsed(TimeSpan.FromTicks(5_000)).ShouldBe("500µs");
+
+    [Test]
+    public void FormatExecutionElapsed_fractional_milliseconds() =>
+        Runner.FormatExecutionElapsed(TimeSpan.FromTicks(12_500)).ShouldBe("1.25ms");
+
+    [Test]
+    public void FormatExecutionElapsed_seconds() =>
+        Runner.FormatExecutionElapsed(TimeSpan.FromMilliseconds(1_500)).ShouldBe("1.50s");
+
+    [Test]
     public void FormatSize_zero_bytes() =>
         Runner.FormatSize(0).ShouldBe("0 B");
 
