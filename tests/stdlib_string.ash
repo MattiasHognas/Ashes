@@ -41,11 +41,11 @@ in
                                     in
                                         let hasTrim = Ashes.Text.trim(" \n\tvalue\r ") == "value"
                                         in
-                                            let hasIsLetter = Ashes.Text.isLetter("A")
+                                            let hasIsLetter = Ashes.Rune.isAsciiLetter('A')
                                             in
-                                                let hasIsDigit = Ashes.Text.isDigit("7")
+                                                let hasIsDigit = Ashes.Rune.isAsciiDigit('7')
                                                 in
-                                                    let hasIsWhiteSpace = Ashes.Text.isWhiteSpace("\n")
+                                                    let hasIsWhiteSpace = Ashes.Rune.isAsciiWhiteSpace('\n')
                                                     in
                                                         if hasLength
                                                         then

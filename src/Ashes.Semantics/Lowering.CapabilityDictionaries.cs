@@ -523,7 +523,7 @@ public sealed partial class Lowering
     {
         switch (e)
         {
-            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit
+            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit or Expr.BoolLit
                 or Expr.Var or Expr.QualifiedVar:
                 return e;
             case Expr.Add x: return new Expr.Add(f(x.Left), f(x.Right));

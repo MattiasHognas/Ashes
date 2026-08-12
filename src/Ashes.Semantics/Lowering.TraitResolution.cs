@@ -249,6 +249,7 @@ public sealed partial class Lowering
             (TypeRef.TFloat, TypeRef.TFloat) or
             (TypeRef.TBigInt, TypeRef.TBigInt) or
             (TypeRef.TStr, TypeRef.TStr) or
+            (TypeRef.TRune, TypeRef.TRune) or
             (TypeRef.TBytes, TypeRef.TBytes) or
             (TypeRef.TBool, TypeRef.TBool) or
             (TypeRef.TNever, TypeRef.TNever) => true,
@@ -366,6 +367,7 @@ public sealed partial class Lowering
             (TypeRef.TFloat, TypeRef.TFloat) or
             (TypeRef.TBigInt, TypeRef.TBigInt) or
             (TypeRef.TStr, TypeRef.TStr) or
+            (TypeRef.TRune, TypeRef.TRune) or
             (TypeRef.TBytes, TypeRef.TBytes) or
             (TypeRef.TBool, TypeRef.TBool) or
             (TypeRef.TNever, TypeRef.TNever) => true,

@@ -1489,7 +1489,7 @@ public sealed partial class Lowering
             case Expr.BigIntLit:
             case Expr.UIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return true;
             case Expr.If conditional:
@@ -2092,7 +2092,7 @@ public sealed partial class Lowering
         }
 
         return expression is Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit
-            or Expr.BigIntLit or Expr.StrLit or Expr.Add;
+            or Expr.BigIntLit or Expr.StrLit or Expr.RuneLit or Expr.Add;
     }
 
     private static bool IsFreshClosureRebuildExpr(Expr expression)
@@ -2842,7 +2842,7 @@ public sealed partial class Lowering
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return true;
 
@@ -3252,7 +3252,7 @@ public sealed partial class Lowering
     // heap cell, so they are confined and reach no parameter.
     private static bool ResultReachIsCopyScalar(Expr e)
     {
-        return e is Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit
+        return e is Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit
             or Expr.BoolLit
             or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
             or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
@@ -3939,7 +3939,7 @@ public sealed partial class Lowering
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return 0;
 
@@ -4443,7 +4443,7 @@ public sealed partial class Lowering
         switch (e)
         {
             case Expr.IntLit or Expr.BigIntLit or Expr.UIntLit or Expr.FloatLit
-                or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+                or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.QualifiedVar:
                 return true;
 
             case Expr.Var v:

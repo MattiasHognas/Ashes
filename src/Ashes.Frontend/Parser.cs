@@ -1849,6 +1849,7 @@ public sealed class Parser
             or TokenKind.LParen
             or TokenKind.Int
             or TokenKind.String
+            or TokenKind.Rune
             or TokenKind.True
             or TokenKind.False
             or TokenKind.Minus;
@@ -2204,7 +2205,7 @@ public sealed class Parser
 
     private static bool IsWhitespaceArgStarter(TokenKind kind)
     {
-        return kind is TokenKind.Ident or TokenKind.Int or TokenKind.BigInt or TokenKind.Float or TokenKind.String
+        return kind is TokenKind.Ident or TokenKind.Int or TokenKind.BigInt or TokenKind.Float or TokenKind.String or TokenKind.Rune
             or TokenKind.True or TokenKind.False or TokenKind.LBracket
             or TokenKind.Await or TokenKind.Let
             or TokenKind.If or TokenKind.Match or TokenKind.Given;
@@ -2231,6 +2232,7 @@ public sealed class Parser
             TokenKind.BigInt => ParseBigInt(),
             TokenKind.Float => ParseFloat(),
             TokenKind.String => ParseString(),
+            TokenKind.Rune => ParseRune(),
             TokenKind.True => ParseBool(true),
             TokenKind.False => ParseBool(false),
             TokenKind.Ident => ParseVar(),
@@ -2300,6 +2302,12 @@ public sealed class Parser
     {
         var t = Consume(TokenKind.String);
         return RegisterExpr(new Expr.StrLit(t.Text), t.Position, t.End);
+    }
+
+    private Expr ParseRune()
+    {
+        var token = Consume(TokenKind.Rune);
+        return RegisterExpr(new Expr.RuneLit(checked((int)token.IntValue)), token.Position, token.End);
     }
 
     private Expr ParseBool(bool value)
@@ -2485,6 +2493,7 @@ public sealed class Parser
             TokenKind.LParen => ParseParenPattern(),
             TokenKind.Int => ParseIntLitPattern(),
             TokenKind.String => ParseStrLitPattern(),
+            TokenKind.Rune => ParseRuneLitPattern(),
             TokenKind.True => ParseBoolLitPattern(true),
             TokenKind.False => ParseBoolLitPattern(false),
             TokenKind.Minus => ParseNegativeIntLitPattern(),
@@ -2571,6 +2580,12 @@ public sealed class Parser
     {
         var token = Consume(TokenKind.String);
         return RegisterPattern(new Pattern.StrLit(token.Text), token.Position, token.End);
+    }
+
+    private Pattern ParseRuneLitPattern()
+    {
+        var token = Consume(TokenKind.Rune);
+        return RegisterPattern(new Pattern.RuneLit(checked((int)token.IntValue)), token.Position, token.End);
     }
 
     private Pattern ParseBoolLitPattern(bool value)

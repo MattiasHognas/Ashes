@@ -68,7 +68,7 @@ public sealed partial class Lowering
         switch (e)
         {
             case Expr.IntLit or Expr.BigIntLit or Expr.UIntLit or Expr.FloatLit
-                or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+                or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.QualifiedVar:
                 return true;
 
             case Expr.Var v:

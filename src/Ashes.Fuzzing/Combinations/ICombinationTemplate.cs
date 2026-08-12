@@ -69,6 +69,7 @@ internal sealed class CombinationRegistry
         registry.Register(new LoopCarriedAdtTemplate());
         registry.Register(new TraitConstrainedClosureTemplate());
         registry.Register(new TraitDerivedOperatorSharingTemplate());
+        registry.Register(new RuneRoundTripTemplate());
         return registry;
     }
 }

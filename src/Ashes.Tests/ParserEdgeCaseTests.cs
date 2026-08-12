@@ -97,6 +97,12 @@ public sealed class ParserEdgeCaseTests
     }
 
     [Test]
+    public void Parse_should_support_rune_literal()
+    {
+        Parse("'😀'").ShouldBe(new Expr.RuneLit(0x1F600));
+    }
+
+    [Test]
     public void Parse_should_support_if_then_else()
     {
         var expr = Parse("if true then 1 else 2").ShouldBeOfType<Expr.If>();

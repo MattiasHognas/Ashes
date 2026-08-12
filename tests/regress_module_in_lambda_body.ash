@@ -8,7 +8,7 @@ import Ashes.Text
 let firstB s = Ashes.Text.indexOf(s)("b")
 in
     let recursive countUntilSemi text n =
-        match Ashes.Text.uncons(text) with
+        match Ashes.Text.unconsText(text) with
             | None -> n
             | Some((head, tail)) ->
                 if head == ";"

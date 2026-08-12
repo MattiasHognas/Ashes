@@ -113,7 +113,7 @@ public sealed partial class Lowering
             case Expr.BigIntLit:
             case Expr.UIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return;
             case Expr.If conditional:

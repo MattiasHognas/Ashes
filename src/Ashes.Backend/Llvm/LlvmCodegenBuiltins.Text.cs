@@ -6,7 +6,7 @@ namespace Ashes.Backend.Llvm;
 internal static partial class LlvmCodegen
 {
 
-    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
+    private static LlvmValueHandle EmitTextUnconsText(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LoadStringLength(state, textRef, "text_uncons_len");
@@ -57,6 +57,280 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "text_uncons_result_value");
+    }
+
+    private static LlvmValueHandle EmitTextUncons(LlvmCodegenState state, LlvmValueHandle textRef, bool runtimeManaged)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle len = LoadStringLength(state, textRef, "rune_uncons_len");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "rune_uncons_result");
+        LlvmBasicBlockHandle emptyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_uncons_empty");
+        LlvmBasicBlockHandle valueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_uncons_value");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_uncons_done");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, len, LlvmApi.ConstInt(state.I64, 0, 0), "rune_uncons_is_empty"),
+            emptyBlock,
+            valueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, emptyBlock);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0, runtimeManaged), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, valueBlock);
+        LlvmValueHandle bytes = GetStringBytesPointer(state, textRef, "rune_uncons_bytes");
+        (LlvmValueHandle rune, LlvmValueHandle width) = EmitDecodeFirstRune(state, bytes, len);
+        LlvmValueHandle tailLen = LlvmApi.BuildSub(builder, len, width, "rune_uncons_tail_len");
+        LlvmValueHandle tailBytes = LlvmApi.BuildGEP2(builder, state.I8, bytes, [width], "rune_uncons_tail_bytes");
+        LlvmValueHandle tail = runtimeManaged
+            ? EmitHeapStringSliceFromBytesPointer(state, tailBytes, tailLen, "rune_uncons_tail", runtimeManaged: true)
+            : EmitStringView(state, tailBytes, tailLen, "rune_uncons_tail");
+        LlvmValueHandle tuple = runtimeManaged ? EmitRuntimeRcAlloc(state, 16, "rc_rune_uncons_tuple") : EmitAlloc(state, 16);
+        StoreMemory(state, tuple, 0, rune, "rune_uncons_tuple_rune");
+        StoreMemory(state, tuple, 8, tail, "rune_uncons_tuple_tail");
+        LlvmValueHandle some = EmitAllocAdt(state, 1, 1, runtimeManaged);
+        StoreMemory(state, some, 8, tuple, "rune_uncons_some_value");
+        LlvmApi.BuildStore(builder, some, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "rune_uncons_result_value");
+    }
+
+    private static (LlvmValueHandle Rune, LlvmValueHandle Width) EmitDecodeFirstRune(
+        LlvmCodegenState state,
+        LlvmValueHandle bytes,
+        LlvmValueHandle len)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle b0 = LoadByteAsI64(state, bytes, LlvmApi.ConstInt(state.I64, 0, 0), "rune_b0");
+        LlvmValueHandle b1 = EmitLoadRuneByteOrZero(state, bytes, len, 1, "rune_b1");
+        LlvmValueHandle b2 = EmitLoadRuneByteOrZero(state, bytes, len, 2, "rune_b2");
+        LlvmValueHandle b3 = EmitLoadRuneByteOrZero(state, bytes, len, 3, "rune_b3");
+        LlvmValueHandle ascii = RuneByteBelow(state, b0, 0x80, "rune_ascii");
+        LlvmValueHandle cont1 = RuneContinuation(state, b1, "rune_cont1");
+        LlvmValueHandle cont2 = RuneContinuation(state, b2, "rune_cont2");
+        LlvmValueHandle cont3 = RuneContinuation(state, b3, "rune_cont3");
+        LlvmValueHandle valid2 = RuneAll(state,
+            RuneByteRange(state, b0, 0xC2, 0xDF, "rune_lead2"), cont1,
+            RuneLengthAtLeast(state, len, 2, "rune_len2"), "rune_valid2");
+        LlvmValueHandle valid3 = RuneAll(state,
+            RuneByteRange(state, b0, 0xE0, 0xEF, "rune_lead3"), cont1,
+            RuneAll(state, cont2, RuneLengthAtLeast(state, len, 3, "rune_len3"), "rune_valid3_tail"), "rune_valid3_base");
+        valid3 = LlvmApi.BuildAnd(builder, valid3, EmitRuneThreeByteBoundary(state, b0, b1), "rune_valid3");
+        LlvmValueHandle valid4 = RuneAll(state,
+            RuneByteRange(state, b0, 0xF0, 0xF4, "rune_lead4"), cont1,
+            RuneAll(state, cont2, cont3, "rune_cont23"), "rune_valid4_base");
+        valid4 = LlvmApi.BuildAnd(builder, valid4,
+            RuneAll(state, RuneLengthAtLeast(state, len, 4, "rune_len4"), EmitRuneFourByteBoundary(state, b0, b1), "rune_valid4_tail"),
+            "rune_valid4");
+        LlvmValueHandle width = LlvmApi.BuildSelect(builder, valid2, LlvmApi.ConstInt(state.I64, 2, 0),
+            LlvmApi.BuildSelect(builder, valid3, LlvmApi.ConstInt(state.I64, 3, 0),
+                LlvmApi.BuildSelect(builder, valid4, LlvmApi.ConstInt(state.I64, 4, 0), LlvmApi.ConstInt(state.I64, 1, 0), "rune_width4"),
+                "rune_width3"), "rune_width2");
+        LlvmValueHandle cp2 = RuneDecodeTwo(state, b0, b1);
+        LlvmValueHandle cp3 = RuneDecodeThree(state, b0, b1, b2);
+        LlvmValueHandle cp4 = RuneDecodeFour(state, b0, b1, b2, b3);
+        LlvmValueHandle rune = LlvmApi.BuildSelect(builder, ascii, b0,
+            LlvmApi.BuildSelect(builder, valid2, cp2,
+                LlvmApi.BuildSelect(builder, valid3, cp3,
+                    LlvmApi.BuildSelect(builder, valid4, cp4, LlvmApi.ConstInt(state.I64, 0xFFFD, 0), "rune_invalid"),
+                    "rune_value3"), "rune_value2"), "rune_value");
+        return (rune, width);
+    }
+
+    private static LlvmValueHandle EmitLoadRuneByteOrZero(
+        LlvmCodegenState state,
+        LlvmValueHandle bytes,
+        LlvmValueHandle len,
+        ulong index,
+        string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle slot = LlvmApi.BuildAlloca(builder, state.I64, name + "_slot");
+        LlvmBasicBlockHandle loadBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_load");
+        LlvmBasicBlockHandle zeroBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_zero");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, name + "_done");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt, len, LlvmApi.ConstInt(state.I64, index, 0), name + "_exists"),
+            loadBlock,
+            zeroBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, loadBlock);
+        LlvmApi.BuildStore(builder, LoadByteAsI64(state, bytes, LlvmApi.ConstInt(state.I64, index, 0), name), slot);
+        LlvmApi.BuildBr(builder, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, zeroBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), slot);
+        LlvmApi.BuildBr(builder, doneBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, slot, name + "_value");
+    }
+
+    private static LlvmValueHandle RuneLengthAtLeast(LlvmCodegenState state, LlvmValueHandle len, ulong count, string name) =>
+        LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Uge, len, LlvmApi.ConstInt(state.I64, count, 0), name);
+
+    private static LlvmValueHandle RuneByteBelow(LlvmCodegenState state, LlvmValueHandle value, ulong upper, string name) =>
+        LlvmApi.BuildICmp(state.Target.Builder, LlvmIntPredicate.Ult, value, LlvmApi.ConstInt(state.I64, upper, 0), name);
+
+    private static LlvmValueHandle RuneByteRange(LlvmCodegenState state, LlvmValueHandle value, ulong lower, ulong upper, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, value, LlvmApi.ConstInt(state.I64, lower, 0), name + "_lower"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, value, LlvmApi.ConstInt(state.I64, upper, 0), name + "_upper"), name);
+    }
+
+    private static LlvmValueHandle RuneContinuation(LlvmCodegenState state, LlvmValueHandle value, string name) =>
+        RuneByteRange(state, value, 0x80, 0xBF, name);
+
+    private static LlvmValueHandle RuneAll(LlvmCodegenState state, LlvmValueHandle left, LlvmValueHandle right, string name) =>
+        LlvmApi.BuildAnd(state.Target.Builder, left, right, name);
+
+    private static LlvmValueHandle RuneAll(
+        LlvmCodegenState state,
+        LlvmValueHandle first,
+        LlvmValueHandle second,
+        LlvmValueHandle third,
+        string name) => RuneAll(state, RuneAll(state, first, second, name + "_left"), third, name);
+
+    private static LlvmValueHandle EmitRuneThreeByteBoundary(LlvmCodegenState state, LlvmValueHandle b0, LlvmValueHandle b1)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle notOverlong = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, b0, LlvmApi.ConstInt(state.I64, 0xE0, 0), "rune_not_e0"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, b1, LlvmApi.ConstInt(state.I64, 0xA0, 0), "rune_e0_tail"), "rune_not_overlong3");
+        LlvmValueHandle notSurrogate = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, b0, LlvmApi.ConstInt(state.I64, 0xED, 0), "rune_not_ed"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, b1, LlvmApi.ConstInt(state.I64, 0xA0, 0), "rune_ed_tail"), "rune_not_surrogate");
+        return LlvmApi.BuildAnd(builder, notOverlong, notSurrogate, "rune_boundary3");
+    }
+
+    private static LlvmValueHandle EmitRuneFourByteBoundary(LlvmCodegenState state, LlvmValueHandle b0, LlvmValueHandle b1)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle notOverlong = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, b0, LlvmApi.ConstInt(state.I64, 0xF0, 0), "rune_not_f0"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Uge, b1, LlvmApi.ConstInt(state.I64, 0x90, 0), "rune_f0_tail"), "rune_not_overlong4");
+        LlvmValueHandle inRange = LlvmApi.BuildOr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, b0, LlvmApi.ConstInt(state.I64, 0xF4, 0), "rune_not_f4"),
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule, b1, LlvmApi.ConstInt(state.I64, 0x8F, 0), "rune_f4_tail"), "rune_in_range4");
+        return LlvmApi.BuildAnd(builder, notOverlong, inRange, "rune_boundary4");
+    }
+
+    private static LlvmValueHandle RuneDecodeTwo(LlvmCodegenState state, LlvmValueHandle b0, LlvmValueHandle b1) =>
+        RuneCombine(state, LlvmApi.BuildAnd(state.Target.Builder, b0, LlvmApi.ConstInt(state.I64, 0x1F, 0), "rune_cp2_head"), b1, 6, "rune_cp2");
+
+    private static LlvmValueHandle RuneDecodeThree(LlvmCodegenState state, LlvmValueHandle b0, LlvmValueHandle b1, LlvmValueHandle b2) =>
+        RuneCombine(state, RuneCombine(state,
+            LlvmApi.BuildAnd(state.Target.Builder, b0, LlvmApi.ConstInt(state.I64, 0x0F, 0), "rune_cp3_head"), b1, 6, "rune_cp3_mid"), b2, 6, "rune_cp3");
+
+    private static LlvmValueHandle RuneDecodeFour(LlvmCodegenState state, LlvmValueHandle b0, LlvmValueHandle b1, LlvmValueHandle b2, LlvmValueHandle b3) =>
+        RuneCombine(state, RuneCombine(state, RuneCombine(state,
+            LlvmApi.BuildAnd(state.Target.Builder, b0, LlvmApi.ConstInt(state.I64, 0x07, 0), "rune_cp4_head"), b1, 6, "rune_cp4_1"), b2, 6, "rune_cp4_2"), b3, 6, "rune_cp4");
+
+    private static LlvmValueHandle RuneCombine(LlvmCodegenState state, LlvmValueHandle head, LlvmValueHandle tail, ulong shift, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return LlvmApi.BuildOr(builder,
+            LlvmApi.BuildShl(builder, head, LlvmApi.ConstInt(state.I64, shift, 0), name + "_shift"),
+            LlvmApi.BuildAnd(builder, tail, LlvmApi.ConstInt(state.I64, 0x3F, 0), name + "_tail"), name);
+    }
+
+    private static LlvmValueHandle EmitRuneFromInt(LlvmCodegenState state, LlvmValueHandle value, bool runtimeManaged)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle belowSurrogate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, LlvmApi.ConstInt(state.I64, 0xD800, 0), "rune_from_below_surrogate");
+        LlvmValueHandle aboveSurrogate = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, value, LlvmApi.ConstInt(state.I64, 0xDFFF, 0), "rune_from_above_surrogate");
+        LlvmValueHandle nonNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sge, value, LlvmApi.ConstInt(state.I64, 0, 0), "rune_from_nonnegative");
+        LlvmValueHandle inRange = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sle, value, LlvmApi.ConstInt(state.I64, 0x10FFFF, 0), "rune_from_in_range");
+        LlvmValueHandle valid = RuneAll(state, nonNegative, inRange, "rune_from_bounds");
+        valid = RuneAll(state, valid, LlvmApi.BuildOr(builder, belowSurrogate, aboveSurrogate, "rune_from_not_surrogate"), "rune_from_valid");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "rune_from_result");
+        LlvmBasicBlockHandle validBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_from_some");
+        LlvmBasicBlockHandle invalidBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_from_none");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "rune_from_done");
+        LlvmApi.BuildCondBr(builder, valid, validBlock, invalidBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, validBlock);
+        LlvmValueHandle some = EmitAllocAdt(state, 1, 1, runtimeManaged);
+        StoreMemory(state, some, 8, value, "rune_from_some_value");
+        LlvmApi.BuildStore(builder, some, resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, invalidBlock);
+        LlvmApi.BuildStore(builder, EmitAllocAdt(state, 0, 0, runtimeManaged), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "rune_from_result_value");
+    }
+
+    private static LlvmValueHandle EmitRuneToText(LlvmCodegenState state, LlvmValueHandle rune, bool runtimeManaged)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle width = LlvmApi.BuildSelect(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, rune, LlvmApi.ConstInt(state.I64, 0x80, 0), "rune_text_ascii"),
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            LlvmApi.BuildSelect(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, rune, LlvmApi.ConstInt(state.I64, 0x800, 0), "rune_text_two"),
+                LlvmApi.ConstInt(state.I64, 2, 0),
+                LlvmApi.BuildSelect(builder,
+                    LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ult, rune, LlvmApi.ConstInt(state.I64, 0x10000, 0), "rune_text_three"),
+                    LlvmApi.ConstInt(state.I64, 3, 0), LlvmApi.ConstInt(state.I64, 4, 0), "rune_text_width34"),
+                "rune_text_width234"), "rune_text_width");
+        // Reserve the maximum four-byte payload so straight-line stores never address beyond the
+        // allocation; the logical string length remains the selected UTF-8 width.
+        LlvmValueHandle size = LlvmApi.ConstInt(state.I64, 12, 0);
+        LlvmValueHandle text = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, size, "rc_rune_text")
+            : EmitAllocDynamic(state, size);
+        StoreMemory(state, text, 0, width, "rune_text_len");
+        LlvmValueHandle bytes = GetStringBytesPointer(state, text, "rune_text_bytes");
+        EmitRuneStoreUtf8(state, bytes, rune, width);
+        return text;
+    }
+
+    private static void EmitRuneStoreUtf8(LlvmCodegenState state, LlvmValueHandle bytes, LlvmValueHandle rune, LlvmValueHandle width)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle one = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, width, LlvmApi.ConstInt(state.I64, 1, 0), "rune_store_one");
+        LlvmValueHandle two = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, width, LlvmApi.ConstInt(state.I64, 2, 0), "rune_store_two");
+        LlvmValueHandle three = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, width, LlvmApi.ConstInt(state.I64, 3, 0), "rune_store_three");
+        LlvmValueHandle first = LlvmApi.BuildSelect(builder, one, rune,
+            LlvmApi.BuildSelect(builder, two, RuneLeadByte(state, rune, 6, 0xC0, "rune_lead2"),
+                LlvmApi.BuildSelect(builder, three, RuneLeadByte(state, rune, 12, 0xE0, "rune_lead3"),
+                    RuneLeadByte(state, rune, 18, 0xF0, "rune_lead4"), "rune_first34"), "rune_first234"), "rune_first");
+        EmitRuneStoreByte(state, bytes, 0, first, "rune_text_b0");
+        LlvmValueHandle second = LlvmApi.BuildSelect(builder, two, RuneContinuationByte(state, rune, 0, "rune_second2"),
+            LlvmApi.BuildSelect(builder, three, RuneContinuationByte(state, rune, 6, "rune_second3"),
+                RuneContinuationByte(state, rune, 12, "rune_second4"), "rune_second34"), "rune_second");
+        EmitRuneStoreByte(state, bytes, 1, second, "rune_text_b1");
+        LlvmValueHandle third = LlvmApi.BuildSelect(builder, three, RuneContinuationByte(state, rune, 0, "rune_third3"),
+            RuneContinuationByte(state, rune, 6, "rune_third4"), "rune_third");
+        EmitRuneStoreByte(state, bytes, 2, third, "rune_text_b2");
+        EmitRuneStoreByte(state, bytes, 3, RuneContinuationByte(state, rune, 0, "rune_fourth"), "rune_text_b3");
+    }
+
+    private static LlvmValueHandle RuneLeadByte(LlvmCodegenState state, LlvmValueHandle rune, ulong shift, ulong prefix, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return LlvmApi.BuildOr(builder,
+            LlvmApi.BuildLShr(builder, rune, LlvmApi.ConstInt(state.I64, shift, 0), name + "_shift"),
+            LlvmApi.ConstInt(state.I64, prefix, 0), name);
+    }
+
+    private static LlvmValueHandle RuneContinuationByte(LlvmCodegenState state, LlvmValueHandle rune, ulong shift, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle shifted = shift == 0 ? rune : LlvmApi.BuildLShr(builder, rune, LlvmApi.ConstInt(state.I64, shift, 0), name + "_shift");
+        return LlvmApi.BuildOr(builder,
+            LlvmApi.BuildAnd(builder, shifted, LlvmApi.ConstInt(state.I64, 0x3F, 0), name + "_payload"),
+            LlvmApi.ConstInt(state.I64, 0x80, 0), name);
+    }
+
+    private static void EmitRuneStoreByte(LlvmCodegenState state, LlvmValueHandle bytes, ulong index, LlvmValueHandle value, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle pointer = LlvmApi.BuildGEP2(builder, state.I8, bytes, [LlvmApi.ConstInt(state.I64, index, 0)], name + "_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.BuildTrunc(builder, value, state.I8, name), pointer);
     }
 
     private readonly record struct IntParseSlots(LlvmValueHandle IndexSlot, LlvmValueHandle AccSlot, LlvmValueHandle NegativeSlot, LlvmValueHandle ResultSlot);

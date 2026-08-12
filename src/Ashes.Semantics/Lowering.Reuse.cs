@@ -2038,7 +2038,7 @@ public sealed partial class Lowering
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
             case Expr.QualifiedVar:
                 return false;

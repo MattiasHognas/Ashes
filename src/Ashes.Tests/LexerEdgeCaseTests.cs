@@ -81,6 +81,15 @@ public sealed class LexerEdgeCaseTests
     }
 
     [Test]
+    public void Next_should_tokenize_unicode_rune_escape()
+    {
+        var tokens = LexAll("'\\u{1F600}'");
+
+        tokens[0].Kind.ShouldBe(TokenKind.Rune);
+        tokens[0].Text.ShouldBe("'\\u{1F600}'");
+    }
+
+    [Test]
     public void Next_should_handle_single_lone_underscore_as_identifier()
     {
         var tokens = LexAll("_");

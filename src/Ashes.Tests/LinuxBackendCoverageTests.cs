@@ -1529,7 +1529,7 @@ public sealed class LinuxBackendCoverageTests
         }
 
         var result = await CompileRunWithLinuxLlvmAsync(
-            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(head + "|" + tail)""").ConfigureAwait(false);
+            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(Ashes.Rune.toText(head) + "|" + tail)""").ConfigureAwait(false);
         result.Stdout.ShouldBe("é|!\n");
     }
 
@@ -1547,7 +1547,7 @@ public sealed class LinuxBackendCoverageTests
             in match Ashes.Text.uncons(sample) with
             | None -> Ashes.IO.print("none")
             | Some((head, tail)) ->
-                if head == "{"
+                if head == '{'
                 then if tail == " \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }"
                 then Ashes.IO.print("ok")
                 else Ashes.IO.print("bad")
@@ -7404,12 +7404,12 @@ public sealed class LinuxBackendCoverageTests
                         let split = (let escaped = Ashes.Text.uncons("abcdef") in escaped) in
                         match split with
                             | None -> 0
-                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                            | Some((head, tail)) -> Ashes.Text.byteLength(Ashes.Rune.toText(head)) + Ashes.Text.byteLength(tail)
                     in let empty =
                         let split = (let escaped = Ashes.Text.uncons("") in escaped) in
                         match split with
                             | None -> 0
-                            | Some((head, tail)) -> Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tail)
+                            | Some((head, tail)) -> Ashes.Text.byteLength(Ashes.Rune.toText(head)) + Ashes.Text.byteLength(tail)
                     in loop(n - 1)(total + nonEmpty + empty)
 
             Ashes.IO.print(loop({{iterations}})(0))

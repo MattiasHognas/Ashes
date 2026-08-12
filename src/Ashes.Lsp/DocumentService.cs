@@ -913,7 +913,7 @@ public static partial class DocumentService
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
             case Expr.Var:
             case Expr.QualifiedVar:
@@ -2480,7 +2480,7 @@ public static partial class DocumentService
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return null;
 

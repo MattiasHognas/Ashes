@@ -19,7 +19,7 @@ let recursive sumRange lo hi acc =
     else sumRange(lo + 1)(hi)(acc + lo)
 
 let recursive tlen text acc =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> acc
         | Some((_h, t)) -> tlen(t)(acc + 1)
 

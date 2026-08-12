@@ -813,7 +813,7 @@ public sealed partial class Lowering
     private static bool ExprHasCallOrAggregate(Expr e) => e switch
     {
         Expr.Call or Expr.TupleLit or Expr.ListLit or Expr.Cons or Expr.RecordLit or Expr.RecordUpdate => true,
-        Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => false,
+        Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => false,
         Expr.Add x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Subtract x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Multiply x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
@@ -902,6 +902,7 @@ public sealed partial class Lowering
             (TypeRef.TFloat, TypeRef.TFloat) => true,
             (TypeRef.TBool, TypeRef.TBool) => true,
             (TypeRef.TStr, TypeRef.TStr) => true,
+            (TypeRef.TRune, TypeRef.TRune) => true,
             (TypeRef.TBytes, TypeRef.TBytes) => true,
             (TypeRef.TNever, TypeRef.TNever) => true,
             (TypeRef.TUInt ua, TypeRef.TUInt ub) => ua.Bits == ub.Bits,
@@ -2436,6 +2437,7 @@ public sealed partial class Lowering
             Expr.BigIntLit lit => LowerBigIntLit(lit, request),
             Expr.FloatLit lit => LowerFloat(lit),
             Expr.StrLit str => LowerStr(str),
+            Expr.RuneLit rune => LowerRune(rune),
             Expr.BoolLit b => LowerBool(b),
             Expr.Var v => LowerVar(v, request),
             Expr.QualifiedVar qv => LowerQualifiedVar(qv, request),
@@ -2514,6 +2516,13 @@ public sealed partial class Lowering
         int t = NewTemp();
         Emit(new IrInst.LoadConstStr(t, label));
         return (t, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerRune(Expr.RuneLit rune)
+    {
+        int temp = NewTemp();
+        Emit(new IrInst.LoadConstInt(temp, rune.Value));
+        return (temp, new TypeRef.TRune());
     }
 
     /// <summary>
@@ -4856,7 +4865,7 @@ public sealed partial class Lowering
     {
         return expr switch
         {
-            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit => true,
+            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit or Expr.BoolLit => true,
             Expr.Var value => !string.Equals(value.Name, recordName, StringComparison.Ordinal),
             Expr.QualifiedVar => true,
             Expr.Add value => Both(value.Left, value.Right),
@@ -9007,6 +9016,12 @@ public sealed partial class Lowering
             IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
             IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
+            IntrinsicKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),
+            IntrinsicKind.RuneToText => LowerRuneToText(collectedArgs[0], request),
+            IntrinsicKind.RuneToInt => LowerRuneToInt(collectedArgs[0]),
+            IntrinsicKind.RuneFromInt => LowerRuneFromInt(collectedArgs[0], request),
+            IntrinsicKind.RuneIsAsciiLetter or IntrinsicKind.RuneIsAsciiDigit or IntrinsicKind.RuneIsAsciiWhiteSpace
+                => LowerRunePredicate(collectedArgs[0], kind),
             IntrinsicKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
             IntrinsicKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
             IntrinsicKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
@@ -9201,6 +9216,13 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.RuneToText => LowerRuneToText(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.RuneToInt => LowerRuneToInt(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.RuneFromInt => LowerRuneFromInt(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiLetter => LowerRunePredicate(collectedArgs[0], IntrinsicKind.RuneIsAsciiLetter),
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiDigit => LowerRunePredicate(collectedArgs[0], IntrinsicKind.RuneIsAsciiDigit),
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiWhiteSpace => LowerRunePredicate(collectedArgs[0], IntrinsicKind.RuneIsAsciiWhiteSpace),
             BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerRegexCompile(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerRegexCompileError(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.RegexFind => LowerRegexFind(collectedArgs[0], collectedArgs[1], collectedArgs[2]),
@@ -11167,7 +11189,7 @@ public sealed partial class Lowering
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 return true;
             case Expr.Var v:
@@ -11498,7 +11520,7 @@ public sealed partial class Lowering
 
         switch (e)
         {
-            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.QualifiedVar:
+            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.QualifiedVar:
                 return e;
             case Expr.Var v:
                 return renames.TryGetValue(v.Name, out var tgt) ? new Expr.Var(tgt) : e;
@@ -11704,7 +11726,7 @@ public sealed partial class Lowering
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
             case Expr.QualifiedVar:
                 return true;

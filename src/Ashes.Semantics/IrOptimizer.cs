@@ -786,6 +786,9 @@ public static class IrOptimizer
             IrInst.FileReadLine f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.FileClose f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.TextUnconsText t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.RuneToText t => t with { RuneTemp = R(t.RuneTemp) },
+            IrInst.RuneFromInt t => t with { IntTemp = R(t.IntTemp) },
             IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextFromInt t => t with { ValueTemp = R(t.ValueTemp) },
@@ -2018,6 +2021,9 @@ public static class IrOptimizer
         switch (inst)
         {
             case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.TextUnconsText t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.RuneToText t: usedTemps.Add(t.RuneTemp); break;
+            case IrInst.RuneFromInt t: usedTemps.Add(t.IntTemp); break;
             case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextFromInt t: usedTemps.Add(t.ValueTemp); break;

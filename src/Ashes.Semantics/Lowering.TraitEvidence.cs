@@ -707,6 +707,7 @@ public sealed partial class Lowering
             TypeRef.TFloat => new TypeExpr.Named("Float"),
             TypeRef.TBigInt => new TypeExpr.Named("BigInt"),
             TypeRef.TStr => new TypeExpr.Named("Str"),
+            TypeRef.TRune => new TypeExpr.Named("Rune"),
             TypeRef.TBytes => new TypeExpr.Named("Bytes"),
             TypeRef.TBool => new TypeExpr.Named("Bool"),
             TypeRef.TNever => new TypeExpr.Named("Never"),
@@ -1911,6 +1912,7 @@ public sealed partial class Lowering
             Expr.BigIntLit => new TypeRef.TBigInt(),
             Expr.FloatLit => new TypeRef.TFloat(),
             Expr.StrLit => new TypeRef.TStr(),
+            Expr.RuneLit => new TypeRef.TRune(),
             Expr.BoolLit => new TypeRef.TBool(),
             Expr.Var variable => TryGetKnownBindingType(Lookup(variable.Name)),
             Expr.QualifiedVar qualified when ResolveSpecializableCalleeName(qualified) is { } resolved =>

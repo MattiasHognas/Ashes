@@ -70,7 +70,7 @@ internal sealed class GeneratorRegistry
 internal static class AdvertisedGenerationTypes
 {
     internal static IReadOnlyList<AshesType> Generic { get; } = [AshesType.Int, AshesType.Str];
-    internal static IReadOnlyList<AshesType> Primitive { get; } = [AshesType.Int, AshesType.Bool, AshesType.Str, AshesType.Float, AshesType.BigInt, new AshesType.UInt(8)];
+    internal static IReadOnlyList<AshesType> Primitive { get; } = [AshesType.Int, AshesType.Bool, AshesType.Str, AshesType.Rune, AshesType.Float, AshesType.BigInt, new AshesType.UInt(8)];
     internal static IReadOnlyList<AshesType> Numeric { get; } = [AshesType.Int, AshesType.Float, AshesType.BigInt, new AshesType.UInt(8)];
     internal static IReadOnlyList<AshesType> Bool { get; } = [AshesType.Bool];
     internal static IReadOnlyList<AshesType> Tuple { get; } = [new AshesType.Tuple([AshesType.Int, AshesType.Bool])];

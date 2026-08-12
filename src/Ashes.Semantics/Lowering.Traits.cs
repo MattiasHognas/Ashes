@@ -278,6 +278,7 @@ public sealed partial class Lowering
                 TypeRef.TFloat => "Float",
                 TypeRef.TBigInt => "BigInt",
                 TypeRef.TStr => "Str",
+                TypeRef.TRune => "Rune",
                 TypeRef.TBytes => "Bytes",
                 TypeRef.TBool => "Bool",
                 TypeRef.TNever => "Never",
@@ -784,8 +785,8 @@ public sealed partial class Lowering
     private static bool SupportsPrimitiveOperatorSpecialization(string traitName, TypeRef type) =>
         traitName switch
         {
-            "Eq" => type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt or TypeRef.TStr or TypeRef.TBool,
-            "Ord" => type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt,
+            "Eq" => type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt or TypeRef.TStr or TypeRef.TRune or TypeRef.TBool,
+            "Ord" => type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt or TypeRef.TRune,
             "Add" => type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt or TypeRef.TStr,
             "Subtract" or "Multiply" or "Divide" or "Negate" =>
                 type is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBigInt,
@@ -1436,6 +1437,7 @@ public sealed partial class Lowering
             (TypeRef.TFloat, TypeRef.TFloat) or
             (TypeRef.TBigInt, TypeRef.TBigInt) or
             (TypeRef.TStr, TypeRef.TStr) or
+            (TypeRef.TRune, TypeRef.TRune) or
             (TypeRef.TBytes, TypeRef.TBytes) or
             (TypeRef.TBool, TypeRef.TBool) or
             (TypeRef.TNever, TypeRef.TNever) => true,

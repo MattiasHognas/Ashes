@@ -1054,7 +1054,7 @@ public sealed class IrOptimizerTests
             match Ashes.Text.uncons(sample) with
                 | None -> Ashes.IO.print("none")
                 | Some((head, tail)) ->
-                    if head == "{"
+                    if head == '{'
                     then if tail == " \"name\" : \"Ashes\", \"active\" : true, \"count\" : 42, \"ratio\" : 1.5, \"items\" : [ null, false, { \"nested\" : \"ok\" } ] }"
                     then Ashes.IO.print("ok")
                     else Ashes.IO.print("tail")

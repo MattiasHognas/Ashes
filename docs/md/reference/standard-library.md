@@ -524,7 +524,11 @@ The single string module: character/codepoint helpers, search and slicing, parsi
 formatting. The conversion and case functions are compiler intrinsics; the search/slice/split
 layer is shipped Ashes code built on `Ashes.Byte`.
 
-- `uncons(text)` returning `Maybe((Str, Str))`
+- `uncons(text)` returning `Maybe((Rune, Str))`
+- `unconsText(text)` returning `Maybe((Str, Str))` — one-release compatibility helper for the old
+  string-headed `uncons` contract
+- `isLetterText(text)`, `isDigitText(text)`, and `isWhiteSpaceText(text)` — one-release
+  compatibility helpers for the former string-typed character predicates
 - `parseInt(text)` returning `Result(Str, Int)`
 - `parseFloat(text)` returning `Result(Str, Float)`
 - `parseBigInt(text)` returning `Result(Str, BigInt)` — decimal parse into a [`BigInt`](#ashesnumberbigint)
@@ -559,12 +563,24 @@ layer is shipped Ashes code built on `Ashes.Byte`.
 - `trim` — `Str -> Str`, strip leading and trailing whitespace
 - `trimStart` — `Str -> Str`, strip leading whitespace
 - `trimEnd` — `Str -> Str`, strip trailing whitespace
-- `isLetter` — `Str -> Bool`, whether the single character `text` is an ASCII letter (`a`–`z`, `A`–`Z`)
-- `isDigit` — `Str -> Bool`, whether the single character `text` is a decimal digit (`0`–`9`)
-- `isWhiteSpace` — `Str -> Bool`, whether the single character `text` is space, tab, newline, or carriage return
 - `compare` — `Str -> Str -> Int` total order returning `-1`/`0`/`1`. Compares by UTF-8 bytes (via
   `Ashes.Byte.fromText`), which equals Unicode codepoint order, so it is a correct total order over
   all strings — suitable directly as the ordering function for `Ashes.Collection.Map`/`Ashes.Collection.Array`.
+
+### `Ashes.Rune`
+
+Unicode scalar values. A `Rune` is an inline copy value containing a valid code point; it is neither
+a string nor a user-perceived grapheme cluster.
+
+- `toText(rune)` returning `Str` — encode one scalar as UTF-8
+- `toInt(rune)` returning `Int` — return its exact code point
+- `fromInt(value)` returning `Maybe(Rune)` — reject negative values, surrogates, and values above
+  U+10FFFF
+- `isAsciiLetter(rune)` returning `Bool` — `A`–`Z` or `a`–`z`
+- `isAsciiDigit(rune)` returning `Bool` — `0`–`9`
+- `isAsciiWhiteSpace(rune)` returning `Bool` — space, tab, newline, or carriage return
+
+`Rune` supports `Eq`, `Ord`, `Show`, and `Hash`, but not `Default`.
 
 ### `Ashes.Text.Regex`
 
