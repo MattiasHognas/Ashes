@@ -39,6 +39,11 @@ internal static class ExplainReportFormatter
             AppendTraits(lines, report.TraitEvidence);
         }
 
+        if (request.Includes(ExplainKind.Authority))
+        {
+            AppendAuthority(lines, report.Authority, report.ExternalAuthority);
+        }
+
         if (request.Includes(ExplainKind.Memory))
         {
             AppendMemory(lines, report);
@@ -46,6 +51,36 @@ internal static class ExplainReportFormatter
 
         return lines;
     }
+
+    private static void AppendAuthority(
+        List<string> lines,
+        IReadOnlyList<PublicAuthorityRecord> bindings,
+        IReadOnlyList<ExternalAuthorityRecord> externals)
+    {
+        Heading(lines, "Authority report");
+        if (bindings.Count == 0 && externals.Count == 0)
+        {
+            lines.Add("  (no functions matched)");
+            return;
+        }
+
+        foreach (PublicAuthorityRecord binding in bindings)
+        {
+            lines.Add($"Public binding: {binding.Binding}");
+            lines.Add($"  needs: {FormatCapabilities(binding.Capabilities)}");
+        }
+
+        foreach (ExternalAuthorityRecord external in externals)
+        {
+            lines.Add($"External function: {external.Function}");
+            lines.Add($"  needs: {FormatCapabilities(external.Capabilities)}");
+        }
+
+        lines.Add(string.Empty);
+    }
+
+    private static string FormatCapabilities(IReadOnlyList<string> capabilities) =>
+        capabilities.Count == 0 ? "{}" : $"{{{string.Join(", ", capabilities)}}}";
 
     private static void AppendTraits(List<string> lines, TraitEvidenceAnnotations evidence)
     {

@@ -122,7 +122,7 @@ public sealed class LspHoverTests
                     .GetProperty("contents")
                     .GetProperty("value")
                     .GetString()!;
-                markdown.ShouldContain("Ashes.IO.print : a -> Unit");
+                markdown.ShouldContain("Ashes.IO.print : a -> Unit needs {ConsoleIO}");
                 markdown.ShouldContain("Write a printable scalar");
                 markdown.ShouldContain("standard-library#ashes-io");
             }
@@ -150,7 +150,7 @@ public sealed class LspHoverTests
                     .GetProperty("contents")
                     .GetProperty("value")
                     .GetString()!;
-                markdown.ShouldContain("Ashes.IO.print : a -> Unit");
+                markdown.ShouldContain("Ashes.IO.print : a -> Unit needs {ConsoleIO}");
                 markdown.ShouldContain("Write a printable scalar");
                 markdown.ShouldContain("standard-library#ashes-io");
             }

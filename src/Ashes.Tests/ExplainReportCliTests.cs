@@ -92,6 +92,7 @@ public sealed class ExplainReportCliTests
                 ("rc", "RC report"),
                 ("reuse", "Reuse report"),
                 ("traits", "Trait evidence report"),
+                ("authority", "Authority report"),
                 ("memory", "Memory report"),
             })
             {

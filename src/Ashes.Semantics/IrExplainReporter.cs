@@ -28,6 +28,7 @@ internal static class IrExplainReporter
         bool wantsReuse = request.Includes(ExplainKind.Reuse) || request.Includes(ExplainKind.Memory);
         bool wantsRepresentation = request.Includes(ExplainKind.Memory);
         bool wantsTraits = request.Includes(ExplainKind.Traits) || request.Includes(ExplainKind.Memory);
+        bool wantsAuthority = request.Includes(ExplainKind.Authority);
 
         return new CompilationExplainReport(
             wantsOwnership ? BuildOwnership(snapshot, request.FunctionFilter) : [],
@@ -39,8 +40,26 @@ internal static class IrExplainReporter
             ExternalResources = wantsOwnership
                 ? FilterExternalResources(snapshot.ExternalResources, request.FunctionFilter)
                 : [],
+            Authority = wantsAuthority
+                ? FilterPublicAuthority(snapshot.PublicAuthority, request.FunctionFilter)
+                : [],
+            ExternalAuthority = wantsAuthority
+                ? FilterExternalAuthority(snapshot.ExternalAuthority, request.FunctionFilter)
+                : [],
         };
     }
+
+    private static IReadOnlyList<PublicAuthorityRecord> FilterPublicAuthority(
+        IReadOnlyList<PublicAuthorityRecord> records,
+        string? filter) => filter is null
+            ? records
+            : [.. records.Where(record => record.Binding.Contains(filter, StringComparison.OrdinalIgnoreCase))];
+
+    private static IReadOnlyList<ExternalAuthorityRecord> FilterExternalAuthority(
+        IReadOnlyList<ExternalAuthorityRecord> records,
+        string? filter) => filter is null
+            ? records
+            : [.. records.Where(record => record.Function.Contains(filter, StringComparison.OrdinalIgnoreCase))];
 
     private static IReadOnlyList<ExternalResourceOwnershipRecord> FilterExternalResources(
         IReadOnlyList<ExternalResourceOwnershipRecord> resources,

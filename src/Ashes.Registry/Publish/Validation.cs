@@ -154,9 +154,8 @@ public sealed class SemanticManifestValidator : IManifestValidator
 }
 
 /// <summary>
-/// Default capability extractor. Real extraction reuses the compiler front end to read the inferred
-/// <c>needs {...}</c> rows on the public API; until that integration lands it reports
-/// no capabilities, so the field is present and forward-compatible but not yet authoritative.
+/// Empty fallback capability extractor. Production publication uses
+/// <see cref="CompilerCapabilityExtractor"/> to read inferred <c>needs {...}</c> rows.
 /// </summary>
 public sealed class EmptyCapabilityExtractor : ICapabilityExtractor
 {

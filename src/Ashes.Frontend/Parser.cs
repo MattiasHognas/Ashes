@@ -354,21 +354,28 @@ public sealed class Parser
         Consume(TokenKind.RParen);
         Consume(TokenKind.Arrow);
         var returnType = ParseFfiType();
+        NeedsRowSyntax? needs = _current.Kind == TokenKind.Needs ? ParseNeedsRow() : null;
 
-        string? symbolName = null;
-        if (_current.Kind == TokenKind.Equals)
-        {
-            Consume(TokenKind.Equals);
-            symbolName = Consume(TokenKind.String).Text;
-        }
+        string? symbolName = ParseOptionalExternalSymbolName();
 
         return RegisterExternalDecl(
             new ExternalDecl.Function(name, parameterTypes, returnType, symbolName)
             {
                 ParameterOwnerships = parameterOwnerships,
+                Needs = needs,
             },
             start,
             LastConsumedEnd);
+    }
+
+    private string? ParseOptionalExternalSymbolName()
+    {
+        if (_current.Kind != TokenKind.Equals)
+        {
+            return null;
+        }
+        Consume(TokenKind.Equals);
+        return Consume(TokenKind.String).Text;
     }
 
     private void ParseExternalParameter(

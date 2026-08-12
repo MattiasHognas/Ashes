@@ -428,6 +428,18 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_external_closed_runtime_capability_row()
+    {
+        Program program = ParseProgram(
+            "external readConfig(Str) -> Str needs {FileRead, Entropy} = \"read_config@libconfig\"\n0");
+
+        ExternalDecl.Function function = program.ExternalDecls.Single().ShouldBeOfType<ExternalDecl.Function>();
+        function.Needs.ShouldNotBeNull();
+        function.Needs.Capabilities.Select(capability => capability.Name).ShouldBe(["FileRead", "Entropy"]);
+        function.Needs.TailVar.ShouldBeNull();
+    }
+
+    [Test]
     public void ParseProgram_should_parse_nested_external_pointer_types()
     {
         var program = ParseProgram("external fill(**u8) -> *Handle\n0");

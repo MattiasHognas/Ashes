@@ -710,6 +710,17 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_round_trip_external_capability_rows()
+    {
+        const string source = "external readConfig(Str) -> Str needs {FileRead, Entropy} = \"read_config@libconfig\"\nexternal pureHash(Int) -> Int needs {}\n0\n";
+
+        string formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("external readConfig(Str) -> Str needs {FileRead, Entropy} = \"read_config@libconfig\"\nexternal pureHash(Int) -> Int needs {}\n\n0\n");
+        FormatFixtureSource(formatted).ShouldBe(formatted);
+    }
+
+    [Test]
     public void Format_should_round_trip_nested_external_pointer_types()
     {
         const string source = "external type Handle\nexternal fill(**u8) -> *Handle\n0\n";

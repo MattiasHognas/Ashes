@@ -1,14 +1,14 @@
 // expect: ok
 import Ashes.Test.assertEqual
 import Ashes.Trait
-let check : a -> a -> a -> Unit requires {Eq(a)} =
+let check : a -> a -> a -> Unit needs {ConsoleIO} requires {Eq(a)} =
     given (expected) ->
         given (operatorValue) ->
             given (methodValue) ->
                 let checkedOperator = assertEqual(expected)(operatorValue)
                 in assertEqual(expected)(methodValue)
 
-let checkHash : a -> Unit requires {Hash(a)} =
+let checkHash : a -> Unit needs {ConsoleIO} requires {Hash(a)} =
     given (value) -> assertEqual(Hash.hash(value))(Hash.hash(value))
 
 let intEq = check(true)(7 == 7)(Eq.equal(7)(7))

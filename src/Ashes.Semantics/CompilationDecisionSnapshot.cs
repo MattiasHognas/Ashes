@@ -132,6 +132,10 @@ internal sealed record CompilationDecisionSnapshot(
     IReadOnlyList<PatternBindingRecord> PatternBindings)
 {
     public IReadOnlyList<ExternalResourceOwnershipRecord> ExternalResources { get; init; } = [];
+
+    public IReadOnlyList<PublicAuthorityRecord> PublicAuthority { get; init; } = [];
+
+    public IReadOnlyList<ExternalAuthorityRecord> ExternalAuthority { get; init; } = [];
     /// <summary>
     /// Every function ownership record for one reportable origin. Colliding local names share a name
     /// but not an origin, so this is the lookup that separates them.
@@ -250,6 +254,12 @@ public sealed partial class Lowering
             patternBindings)
         {
             ExternalResources = CaptureExternalResourceOwnership(),
+            PublicAuthority = CapturePublicAuthority(),
+            ExternalAuthority = [.. _externalFunctions
+                .OrderBy(function => function.Name, StringComparer.Ordinal)
+                .Select(function => new ExternalAuthorityRecord(
+                    function.Name,
+                    function.RuntimeCapabilities))],
         };
     }
 

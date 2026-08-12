@@ -29,6 +29,11 @@ imports work identically for all of them.
 
 ## `Ashes.IO` — console, file, and process I/O
 
+Ambient acquisition is reflected in inferred capability rows. Console input/output requires
+`ConsoleIO`; filesystem acquisition requires `FileRead` or `FileWrite`; process creation requires
+`ProcessSpawn`; and reading the monotonic clock requires `TimeRead`. Operations on an already-owned
+`FileHandle` or `Process` are possession-only and add no ambient capability.
+
 ### `Ashes.IO`
 
 - `print(value)` returning `Unit` — write a printable scalar (`Int`, `Str`, or `Bool`) to stdout, followed by a newline

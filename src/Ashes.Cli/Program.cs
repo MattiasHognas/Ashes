@@ -17,7 +17,7 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-o <output>]]");
     AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--pipeline optimized|lowered|both]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|traits|memory>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--pipeline optimized|lowered|both]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|traits|authority|memory>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--project <project.json>]] [[--path <dir>]] [[--dev]]");
@@ -40,7 +40,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Defaults to -O0; an explicit -O1/-O2/-O3 is honored.");
-    table.AddRow("[yellow]--explain[/]", "Report compiler decisions to stderr: ownership, rc, reuse, traits, or memory. Repeatable; append [grey]:name[/] to filter by function (compile/run/test only).");
+    table.AddRow("[yellow]--explain[/]", "Report compiler decisions to stderr: ownership, rc, reuse, traits, authority, or memory. Repeatable; append [grey]:name[/] to filter by function (compile/run/test only).");
     table.AddRow("[yellow]--emit-ir[/]", "Dump semantic IR to stderr: lowered or final. Repeatable; append [grey]:name[/] to filter by function (compile/run only).");
     table.AddRow("[yellow]-w[/]", "Write formatted output back to file(s) (fmt only).");
     table.AddRow("[yellow]--version[/], [yellow]-v[/]", "Print the compiler version and exit.");

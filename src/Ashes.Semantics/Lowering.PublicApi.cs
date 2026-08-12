@@ -13,15 +13,34 @@ public sealed partial class Lowering
     public IReadOnlyList<string> PublicApiCapabilities()
     {
         var names = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var hover in _hoverTypes)
+        foreach (PublicAuthorityRecord binding in CapturePublicAuthority())
         {
-            if (hover.Name is { } name && _topLevelBindingNames.Contains(name))
-            {
-                CollectCapabilityNames(hover.Type, names, 0);
-            }
+            names.UnionWith(binding.Capabilities);
         }
 
         return names.ToList();
+    }
+
+    private IReadOnlyList<PublicAuthorityRecord> CapturePublicAuthority()
+    {
+        var capabilitiesByBinding = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
+        foreach (HoverTypeInfo hover in _hoverTypes)
+        {
+            if (hover.Name is not { } name || !_topLevelBindingNames.Contains(name))
+            {
+                continue;
+            }
+
+            if (!capabilitiesByBinding.TryGetValue(name, out SortedSet<string>? capabilities))
+            {
+                capabilities = new SortedSet<string>(StringComparer.Ordinal);
+                capabilitiesByBinding.Add(name, capabilities);
+            }
+
+            CollectCapabilityNames(hover.Type, capabilities, 0);
+        }
+
+        return [.. capabilitiesByBinding.Select(pair => new PublicAuthorityRecord(pair.Key, [.. pair.Value]))];
     }
 
     private void CollectCapabilityNames(TypeRef type, SortedSet<string> acc, int depth)

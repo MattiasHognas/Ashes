@@ -1830,6 +1830,8 @@ public sealed record IrExternalFunction(
     public IReadOnlyList<FfiParameterOwnership> ParameterOwnerships { get; init; } = [];
     /// <summary>The declared resource type this function destroys, or null for an ordinary external.</summary>
     public string? DestructorForResource { get; init; }
+    /// <summary>The built-in runtime capabilities required by this native call.</summary>
+    public IReadOnlyList<string> RuntimeCapabilities { get; init; } = [];
 }
 
 /// <summary>Ownership at an FFI parameter boundary.</summary>

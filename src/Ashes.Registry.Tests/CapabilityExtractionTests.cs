@@ -44,6 +44,23 @@ public sealed class CapabilityExtractionTests
     }
 
     [Test]
+    public void Ambient_and_external_authority_is_reported_from_exported_rows()
+    {
+        var files = new List<SourceFile>
+        {
+            new("src/Native.ash", U("""
+                external nativeRead(Int) -> Int needs {FileRead}
+                external nativeUnknown(Int) -> Int
+                let read : Int -> Int needs {FileRead} = given value -> nativeRead(value)
+                let unknown : Int -> Int needs {UnsafeFfi} = given value -> nativeUnknown(value)
+                """)),
+        };
+
+        new CompilerCapabilityExtractor().PublicCapabilities(files, "Native")
+            .ShouldBe(["FileRead", "UnsafeFfi"]);
+    }
+
+    [Test]
     public void Unparseable_source_yields_no_capabilities_rather_than_throwing()
     {
         var files = new List<SourceFile> { new("src/Bad.ash", U("this is not @#$ ashes")) };
