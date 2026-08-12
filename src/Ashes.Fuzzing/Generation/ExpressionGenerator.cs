@@ -105,6 +105,42 @@ internal sealed class ExpressionGenerator
         };
     }
 
+    internal static int MaximumLeafFunctionCount(AshesType type, GenerationContext context) => type switch
+    {
+        AshesType.Function function => 1 + MaximumLeafFunctionCount(function.Return, context),
+        AshesType.Tuple tuple => tuple.Elements.Sum(element => MaximumLeafFunctionCount(element, context)),
+        AshesType.List => 0,
+        AshesType.Record record => MaximumRecordLeafFunctionCount(record, context),
+        AshesType.Result result => Math.Max(
+            MaximumLeafFunctionCount(result.Error, context),
+            MaximumLeafFunctionCount(result.Value, context)),
+        AshesType.Adt adt => MaximumAdtLeafFunctionCount(adt, context),
+        AshesType.Task task => MaximumLeafFunctionCount(task.Value, context),
+        _ => 0,
+    };
+
+    private static int MaximumRecordLeafFunctionCount(AshesType.Record type, GenerationContext context)
+    {
+        return Expressions.RecordGenerationRule.TryFindRecord(type, context, out GeneratedRecord declaration)
+            ? declaration.Fields.Sum(field => MaximumLeafFunctionCount(field.Type, context))
+            : 0;
+    }
+
+    private static int MaximumAdtLeafFunctionCount(AshesType.Adt type, GenerationContext context)
+    {
+        if (!Expressions.AdtGenerationRule.TryFindAdt(type, context, out GeneratedAdt declaration))
+        {
+            return 0;
+        }
+        return declaration.Constructors
+            .Where(constructor => !constructor.Fields.Any(field => Expressions.AdtGenerationRule.ContainsAdt(field, type.Name)))
+            .Select(constructor => constructor.Fields.Sum(field => MaximumLeafFunctionCount(
+                Expressions.AdtGenerationRule.Substitute(field, type.Arguments),
+                context)))
+            .DefaultIfEmpty(0)
+            .Max();
+    }
+
     private static GenerationResult<Expr> AggregateTuple(AshesType.Tuple tuple, GenerationContext context, GenerationBudget budget, FuzzRandom random)
     {
         List<Expr> values = [];

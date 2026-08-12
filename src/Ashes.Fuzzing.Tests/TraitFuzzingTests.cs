@@ -1,4 +1,6 @@
+using Ashes.Fuzzing.Combinations;
 using Ashes.Fuzzing.Configuration;
+using Ashes.Fuzzing.Execution;
 using Ashes.Fuzzing.Generation;
 using Ashes.Fuzzing.Oracles;
 using Shouldly;
@@ -7,6 +9,58 @@ namespace Ashes.Fuzzing.Tests;
 
 public sealed class TraitFuzzingTests
 {
+    [Test]
+    public void OvernightTraitFunctionTupleFitsItsDerivedMinimumFunctionBudget()
+    {
+        const ulong masterSeed = 202608110006;
+        const int caseIndex = 7490;
+        (GeneratorRegistry Rules, CombinationRegistry Combinations, FuzzProfileRegistry Profiles, ProgramGenerator Generator) fixture = TestFixture.Create();
+        FuzzProfile profile = fixture.Profiles.Get("traits");
+
+        GeneratedFuzzCase generated = fixture.Generator.Generate(masterSeed, caseIndex, profile, 160);
+        GeneratedFuzzCase replay = fixture.Generator.Generate(masterSeed, caseIndex, profile, 160);
+        GenerationBudgetUsage usage = GenerationBudgetValidator.Measure(
+            generated.Program,
+            generated.Trace,
+            generated.Source.Length);
+
+        AshesType.Tuple tuple = generated.Type.ShouldBeOfType<AshesType.Tuple>();
+        tuple.Elements.ShouldBe(
+        [
+            new AshesType.Function(AshesType.Int, AshesType.Str),
+            new AshesType.Function(AshesType.Int, AshesType.Str),
+        ]);
+        generated.Budget.RemainingFunctions.ShouldBe(17);
+        usage.Functions.ShouldBe(17);
+        GenerationBudgetValidator.Validate(
+            generated.Program,
+            generated.Trace,
+            generated.Source.Length,
+            generated.Budget).ShouldBeEmpty();
+        replay.Source.ShouldBe(generated.Source);
+        replay.Trace.Entries.ShouldBe(generated.Trace.Entries);
+        replay.CaseSeed.ShouldBe(generated.CaseSeed);
+    }
+
+    [Test]
+    public async Task GenerationFailureReportsExactReplayCoordinates()
+    {
+        const ulong masterSeed = 202608110006;
+        const int caseIndex = 7490;
+        (GeneratorRegistry Rules, CombinationRegistry Combinations, FuzzProfileRegistry Profiles, ProgramGenerator Generator) fixture = TestFixture.Create();
+        FuzzCampaign campaign = new(fixture.Generator, fixture.Profiles, FuzzOracleRegistry.CreateDefault());
+        FuzzConfiguration configuration = FuzzConfiguration.Parse(
+            ["replay", "--profile", "traits", "--seed", masterSeed.ToString(System.Globalization.CultureInfo.InvariantCulture), "--case", caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), "--max-nodes", "1"]);
+
+        InvalidOperationException exception = await Should.ThrowAsync<InvalidOperationException>(() =>
+            campaign.RunAsync(configuration, Environment.CurrentDirectory, CancellationToken.None));
+
+        ulong caseSeed = FuzzRandom.DeriveCaseSeed(masterSeed, caseIndex);
+        exception.Message.ShouldContain($"seed={masterSeed} case-seed={caseSeed} case={caseIndex} profile=traits");
+        exception.Message.ShouldContain("replay: dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- replay");
+        exception.Message.ShouldContain($"--profile traits --seed {masterSeed} --case {caseIndex} --max-nodes 1");
+    }
+
     [Test]
     public void TraitProfileIsByteAndTraceDeterministic()
     {

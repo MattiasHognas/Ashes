@@ -7,12 +7,20 @@ namespace Ashes.Fuzzing.Persistence;
 internal static class FuzzReplayCommand
 {
     internal static IReadOnlyList<string> Arguments(GeneratedFuzzCase testCase, FuzzConfiguration configuration) =>
+        Arguments(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.Budget.RemainingNodes, configuration);
+
+    internal static IReadOnlyList<string> Arguments(
+        ulong masterSeed,
+        int caseIndex,
+        string profile,
+        int maximumNodes,
+        FuzzConfiguration configuration) =>
     [
         "replay",
-        "--profile", testCase.Profile,
-        "--seed", testCase.MasterSeed.ToString(CultureInfo.InvariantCulture),
-        "--case", testCase.CaseIndex.ToString(CultureInfo.InvariantCulture),
-        "--max-nodes", testCase.Budget.RemainingNodes.ToString(CultureInfo.InvariantCulture),
+        "--profile", profile,
+        "--seed", masterSeed.ToString(CultureInfo.InvariantCulture),
+        "--case", caseIndex.ToString(CultureInfo.InvariantCulture),
+        "--max-nodes", maximumNodes.ToString(CultureInfo.InvariantCulture),
         "--target", configuration.Target,
         "--compiler-timeout", ((int)configuration.CompilerTimeout.TotalSeconds).ToString(CultureInfo.InvariantCulture),
         "--program-timeout", ((int)configuration.ProgramTimeout.TotalSeconds).ToString(CultureInfo.InvariantCulture),
@@ -21,8 +29,16 @@ internal static class FuzzReplayCommand
     ];
 
     internal static string Format(GeneratedFuzzCase testCase, FuzzConfiguration configuration)
+        => Format(testCase.MasterSeed, testCase.CaseIndex, testCase.Profile, testCase.Budget.RemainingNodes, configuration);
+
+    internal static string Format(
+        ulong masterSeed,
+        int caseIndex,
+        string profile,
+        int maximumNodes,
+        FuzzConfiguration configuration)
     {
-        string arguments = string.Join(" ", Arguments(testCase, configuration).Select(Quote));
+        string arguments = string.Join(" ", Arguments(masterSeed, caseIndex, profile, maximumNodes, configuration).Select(Quote));
         return $"dotnet run --project src/Ashes.Fuzzing/Ashes.Fuzzing.csproj --configuration Release -- {arguments}";
     }
 

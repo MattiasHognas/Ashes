@@ -61,15 +61,25 @@ internal sealed class ProgramGenerator
             .WithOwnershipInterests(profile.OwnershipInterests is null
                 ? Enum.GetValues<OwnershipInterest>()
                 : profile.OwnershipInterests);
-        int preludeNodes = AstCoverageMetrics.Measure(new FrontendProgram(prelude.Items, new Expr.IntLit(0))).Nodes - 1;
+        FrontendProgram measuredPrelude = new(prelude.Items, new Expr.IntLit(0));
+        int preludeNodes = AstCoverageMetrics.Measure(measuredPrelude).Nodes - 1;
         int availableExpressionNodes = Math.Max(2, maximumNodes - preludeNodes - 2);
+        GenerationBudget selectionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
+        AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, context, selectionBudget, random);
+        GenerationBudget baseBudget = budget;
+        int preludeFunctions = GenerationBudgetValidator.Measure(
+            measuredPrelude,
+            prelude.Trace,
+            sourceLength: 0).Functions;
+        budget = EnsureMinimumFunctionBudget(baseBudget, type, context, preludeFunctions, profile.GenerateTraits);
         GenerationBudget expressionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
-        AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, context, expressionBudget, random);
         GenerationResult<Expr> generated = expressions.Generate(type, context, expressionBudget, random);
         for (int attempt = 1; generated.Features.Count < profile.MinimumFeatureCount && attempt < 16; attempt++)
         {
             random = new FuzzRandom(caseSeed + (ulong)attempt);
-            type = SelectType(profile, preferredCombination, forcePreferredCombination, context, expressionBudget, random);
+            type = SelectType(profile, preferredCombination, forcePreferredCombination, context, selectionBudget, random);
+            budget = EnsureMinimumFunctionBudget(baseBudget, type, context, preludeFunctions, profile.GenerateTraits);
+            expressionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
             generated = expressions.Generate(type, context, expressionBudget, random);
         }
         if (generated.Features.Count < profile.MinimumFeatureCount)
@@ -106,6 +116,25 @@ internal sealed class ProgramGenerator
                 $"Generation budget {maximumNodes} is too small for the minimum valid '{type}' program in profile '{profile.Id}': {string.Join(" ", budgetErrors)}");
         }
         return new GeneratedFuzzCase(masterSeed, caseSeed, caseIndex, profile.Id, type, program, source, generated.Features, generated.Trace, metrics.Nodes, budget);
+    }
+
+    private static GenerationBudget EnsureMinimumFunctionBudget(
+        GenerationBudget budget,
+        AshesType type,
+        GenerationContext context,
+        int preludeFunctions,
+        bool generateTraits)
+    {
+        if (!generateTraits)
+        {
+            return budget;
+        }
+        int minimumCompleteProgramFunctions = preludeFunctions +
+            ExpressionGenerator.MaximumLeafFunctionCount(type, context);
+        return budget with
+        {
+            RemainingFunctions = Math.Max(budget.RemainingFunctions, minimumCompleteProgramFunctions),
+        };
     }
 
     private AshesType SelectType(
