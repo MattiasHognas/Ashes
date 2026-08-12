@@ -5,10 +5,7 @@ import { fileURLToPath } from "node:url";
 import { slugify } from "@mdit-vue/shared";
 import { defineConfig, type DefaultTheme } from "vitepress";
 import ashesGrammar from "../../../vscode-extension/syntaxes/ashes.tmLanguage.json";
-import {
-  ashesDarkTheme,
-  ashesLightTheme,
-} from "./ashes-shiki-themes";
+import { ashesDarkTheme, ashesLightTheme } from "./ashes-shiki-themes";
 
 const require = createRequire(import.meta.url);
 
@@ -109,10 +106,11 @@ export default defineConfig({
     // site can never drift.
     languages: [
       {
-        ...ashesGrammar,
         name: "ashes",
         aliases: ["ash"],
-      },
+        patterns: ashesGrammar.patterns,
+        repository: ashesGrammar.repository,
+      } as any,
     ],
     theme: {
       light: ashesLightTheme,
