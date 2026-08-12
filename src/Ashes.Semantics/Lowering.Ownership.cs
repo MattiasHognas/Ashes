@@ -17,18 +17,20 @@ public sealed partial class Lowering
     /// <summary>
     /// Returns true if the given pruned type is a resource type requiring deterministic cleanup.
     /// </summary>
-    private static bool IsResourceType(TypeRef prunedType)
+    private bool IsResourceType(TypeRef prunedType)
     {
-        return prunedType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+        TypeRef represented = EraseZeroCostTypeRepresentation(prunedType);
+        return represented is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
     }
 
     /// <summary>
     /// Returns the owned type name if the type is an owned type (heap-allocated),
     /// otherwise null. Copy types (Int, Float, Bool) return null.
     /// </summary>
-    private static string? GetOwnedTypeName(TypeRef prunedType)
+    private string? GetOwnedTypeName(TypeRef prunedType)
     {
-        return prunedType switch
+        TypeRef represented = EraseZeroCostTypeRepresentation(prunedType);
+        return represented switch
         {
             TypeRef.TStr => "String",
             TypeRef.TBytes => "Bytes",
@@ -45,9 +47,10 @@ public sealed partial class Lowering
     /// Returns the resource type name if the type is a resource type, otherwise null.
     /// Resource types are a subset of owned types with special cleanup behavior.
     /// </summary>
-    private static string? GetResourceTypeName(TypeRef prunedType)
+    private string? GetResourceTypeName(TypeRef prunedType)
     {
-        return prunedType is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+        TypeRef represented = EraseZeroCostTypeRepresentation(prunedType);
+        return represented is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
             ? named.Symbol.Name
             : null;
     }
@@ -1056,6 +1059,13 @@ public sealed partial class Lowering
 
     private void EmitAdtResourceDrop(int temp, TypeRef.TNamedType named, HashSet<string> visiting)
     {
+        if (named.Symbol.IsZeroCost)
+        {
+            TypeRef payload = GetZeroCostTypePayload(named);
+            EmitResourceBearingDrop(temp, payload, visiting);
+            return;
+        }
+
         var key = Pretty(named);
         if (!visiting.Add(key))
         {
@@ -1578,7 +1588,7 @@ public sealed partial class Lowering
     /// </summary>
     private bool CanArenaReset(TypeRef type)
     {
-        var pruned = Prune(type);
+        TypeRef pruned = EraseZeroCostTypeRepresentation(type);
         return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool;
     }
 

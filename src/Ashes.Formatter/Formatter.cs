@@ -372,6 +372,12 @@ public static class Formatter
             case TopLevelItem.Type t:
                 WriteTypeDecl(sb, t.Decl, options);
                 return;
+            case TopLevelItem.TypeAlias alias:
+                WriteTypeAliasDecl(sb, alias.Decl);
+                return;
+            case TopLevelItem.ZeroCostType zeroCostType:
+                WriteZeroCostTypeDecl(sb, zeroCostType.Decl);
+                return;
             case TopLevelItem.External e:
                 WriteExternalDecl(sb, e.Decl);
                 return;
@@ -393,6 +399,34 @@ public static class Formatter
             case TopLevelItem.RecursiveGroup group:
                 WriteRecursiveGroup(sb, group, preferPipelines, options);
                 return;
+        }
+    }
+
+    private static void WriteTypeAliasDecl(StringBuilder sb, TypeAliasDecl declaration)
+    {
+        sb.Append("type alias ").Append(declaration.Name);
+        if (declaration.TypeParameters.Count > 0)
+        {
+            WriteTypeParameters(sb, declaration.TypeParameters);
+        }
+        sb.Append(" = ");
+        WriteTypeExpr(sb, declaration.Target);
+        sb.Append('\n');
+    }
+
+    private static void WriteZeroCostTypeDecl(StringBuilder sb, ZeroCostTypeDecl declaration)
+    {
+        sb.Append("type ").Append(declaration.Name);
+        if (declaration.TypeParameters.Count > 0)
+        {
+            WriteTypeParameters(sb, declaration.TypeParameters);
+        }
+        sb.Append(" = ").Append(declaration.Constructor.Name).Append('(');
+        WriteTypeExpr(sb, declaration.Constructor.Parameters[0]);
+        sb.Append(")\n");
+        if (declaration.Deriving.Count > 0)
+        {
+            sb.Append("    deriving {").Append(string.Join(", ", declaration.Deriving)).Append("}\n");
         }
     }
 

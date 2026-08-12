@@ -28,6 +28,8 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<Expr.Lambda, SpanBox> LambdaParameterSpans = new();
     private static readonly ConditionalWeakTable<Pattern, SpanBox> PatternSpans = new();
     private static readonly ConditionalWeakTable<TypeDecl, SpanBox> TypeDeclSpans = new();
+    private static readonly ConditionalWeakTable<TypeAliasDecl, SpanBox> TypeAliasDeclSpans = new();
+    private static readonly ConditionalWeakTable<ZeroCostTypeDecl, SpanBox> ZeroCostTypeDeclSpans = new();
     private static readonly ConditionalWeakTable<ExportDecl, SpanBox> ExportDeclSpans = new();
     private static readonly ConditionalWeakTable<TypeConstructor, SpanBox> TypeConstructorSpans = new();
     private static readonly ConditionalWeakTable<ExternalDecl, SpanBox> ExternalDeclSpans = new();
@@ -91,6 +93,20 @@ public static class AstSpans
     {
         TypeDeclSpans.Remove(typeDecl);
         TypeDeclSpans.Add(typeDecl, new SpanBox(span));
+    }
+
+    /// <summary>Records the source span of a transparent type alias.</summary>
+    public static void Set(TypeAliasDecl typeAliasDecl, TextSpan span)
+    {
+        TypeAliasDeclSpans.Remove(typeAliasDecl);
+        TypeAliasDeclSpans.Add(typeAliasDecl, new SpanBox(span));
+    }
+
+    /// <summary>Records the source span of a zero-cost nominal type declaration.</summary>
+    public static void Set(ZeroCostTypeDecl declaration, TextSpan span)
+    {
+        ZeroCostTypeDeclSpans.Remove(declaration);
+        ZeroCostTypeDeclSpans.Add(declaration, new SpanBox(span));
     }
 
     /// <summary>Records the source span of an <c>export</c> declaration.</summary>
@@ -198,6 +214,18 @@ public static class AstSpans
     public static TextSpan GetOrDefault(TypeDecl typeDecl)
     {
         return TypeDeclSpans.TryGetValue(typeDecl, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the recorded span of a transparent type alias, or the default if unset.</summary>
+    public static TextSpan GetOrDefault(TypeAliasDecl typeAliasDecl)
+    {
+        return TypeAliasDeclSpans.TryGetValue(typeAliasDecl, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the recorded span of a zero-cost nominal type, or the default if unset.</summary>
+    public static TextSpan GetOrDefault(ZeroCostTypeDecl declaration)
+    {
+        return ZeroCostTypeDeclSpans.TryGetValue(declaration, out var spanBox) ? spanBox.Span : default;
     }
 
     /// <summary>Returns the recorded span of an <c>export</c> declaration, or the default if unset.</summary>

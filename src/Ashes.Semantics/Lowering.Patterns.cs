@@ -1756,7 +1756,13 @@ public sealed partial class Lowering
             return;
         }
 
-        // All constructors are tagged heap allocations: [ctorTag, ...payloads].
+        if (ctorSym.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
+        {
+            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes);
+            return;
+        }
+
+        // Ordinary ADT constructors are tagged heap allocations: [ctorTag, ...payloads].
         // Check ptr != null, then check the tag matches this constructor.
         EmitRequireNonZero(valueTemp, failLabel);
         EmitRequireTagMatch(valueTemp, GetConstructorTag(ctorSym), failLabel);
@@ -1771,6 +1777,12 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitConstructorFieldBindings(ConstructorSymbol ctorSym, Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
     {
+        if (ctorSym.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
+        {
+            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes);
+            return;
+        }
+
         for (int i = 0; i < ctorSym.Arity && i < ctor.Patterns.Count; i++)
         {
             // Extract payload at each field index and bind sub-patterns.

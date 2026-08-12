@@ -2349,6 +2349,13 @@ public static class ProjectSupport
                 names.Add(typeDecl.Decl.Name);
                 constructors.UnionWith(typeDecl.Decl.Constructors.Select(constructor => constructor.Name));
                 break;
+            case TopLevelItem.TypeAlias aliasDecl:
+                names.Add(aliasDecl.Decl.Name);
+                break;
+            case TopLevelItem.ZeroCostType zeroCostType:
+                names.Add(zeroCostType.Decl.Name);
+                constructors.Add(zeroCostType.Decl.Constructor.Name);
+                break;
             case TopLevelItem.Trait traitDecl:
                 names.Add(traitDecl.Decl.Name);
                 break;
@@ -2373,9 +2380,7 @@ public static class ProjectSupport
 
         var exportedNames = new HashSet<string>(StringComparer.Ordinal);
         var exportedConstructors = new HashSet<string>(StringComparer.Ordinal);
-        IReadOnlyDictionary<string, TypeDecl> declaredTypes = program.Items
-            .OfType<TopLevelItem.Type>()
-            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        IReadOnlyDictionary<string, TypeDecl> declaredTypes = CollectDeclaredTypeShapes(program);
         foreach (ExportItem export in explicitInterface.Items)
         {
             CollectExplicitExport(export, declaredTypes, exportedNames, exportedConstructors);
@@ -2384,6 +2389,34 @@ public static class ProjectSupport
         names = exportedNames;
         constructors = exportedConstructors;
         return true;
+    }
+
+    private static IReadOnlyDictionary<string, TypeDecl> CollectDeclaredTypeShapes(Program program)
+    {
+        var declarations = new Dictionary<string, TypeDecl>(StringComparer.Ordinal);
+        foreach (TopLevelItem item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.Type type:
+                    declarations[type.Decl.Name] = type.Decl;
+                    break;
+                case TopLevelItem.TypeAlias alias:
+                    declarations[alias.Decl.Name] = new TypeDecl(
+                        alias.Decl.Name,
+                        alias.Decl.TypeParameters,
+                        []);
+                    break;
+                case TopLevelItem.ZeroCostType zeroCostType:
+                    declarations[zeroCostType.Decl.Name] = new TypeDecl(
+                        zeroCostType.Decl.Name,
+                        zeroCostType.Decl.TypeParameters,
+                        [zeroCostType.Decl.Constructor]);
+                    break;
+            }
+        }
+
+        return declarations;
     }
 
     private static void CollectExplicitExport(
@@ -3027,21 +3060,33 @@ public static class ProjectSupport
         }
 
         ExportDecl declaration = declarations[0].Decl;
-        CollectExportableDeclarations(program, out HashSet<string> declaredValues, out Dictionary<string, TypeDecl> declaredTypes);
+        CollectExportableDeclarations(
+            program,
+            out HashSet<string> declaredValues,
+            out Dictionary<string, TypeDecl> declaredTypes,
+            out HashSet<string> zeroCostTypeNames);
         ModuleExportPolicy policy = BuildExportPolicy(
             moduleName, declaration, declaredValues, declaredTypes, directModules);
         TextSpan span = AstSpans.GetOrDefault(declaration);
         string withoutDeclaration = BlankSpans(source, [(span.Start, span.End)]);
-        return (RenamePrivateModuleMembers(withoutDeclaration, moduleName, declaredValues, declaredTypes, policy), policy);
+        return (RenamePrivateModuleMembers(
+            withoutDeclaration,
+            moduleName,
+            declaredValues,
+            declaredTypes,
+            zeroCostTypeNames,
+            policy), policy);
     }
 
     private static void CollectExportableDeclarations(
         Program program,
         out HashSet<string> declaredValues,
-        out Dictionary<string, TypeDecl> declaredTypes)
+        out Dictionary<string, TypeDecl> declaredTypes,
+        out HashSet<string> zeroCostTypeNames)
     {
         declaredValues = new HashSet<string>(StringComparer.Ordinal);
         declaredTypes = new Dictionary<string, TypeDecl>(StringComparer.Ordinal);
+        zeroCostTypeNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (TopLevelItem item in program.Items)
         {
             switch (item)
@@ -3057,6 +3102,19 @@ public static class ProjectSupport
                     break;
                 case TopLevelItem.Type type:
                     declaredTypes[type.Decl.Name] = type.Decl;
+                    break;
+                case TopLevelItem.TypeAlias alias:
+                    declaredTypes[alias.Decl.Name] = new TypeDecl(
+                        alias.Decl.Name,
+                        alias.Decl.TypeParameters,
+                        []);
+                    break;
+                case TopLevelItem.ZeroCostType zeroCostType:
+                    zeroCostTypeNames.Add(zeroCostType.Decl.Name);
+                    declaredTypes[zeroCostType.Decl.Name] = new TypeDecl(
+                        zeroCostType.Decl.Name,
+                        zeroCostType.Decl.TypeParameters,
+                        [zeroCostType.Decl.Constructor]);
                     break;
             }
         }
@@ -3089,9 +3147,11 @@ public static class ProjectSupport
         string moduleName,
         IReadOnlySet<string> declaredValues,
         IReadOnlyDictionary<string, TypeDecl> declaredTypes,
+        IReadOnlySet<string> zeroCostTypeNames,
         ModuleExportPolicy policy)
     {
         var renames = new List<KeyValuePair<string, string>>();
+        var publicAbstractAliases = new List<string>();
         string sanitized = SanitizeModuleBindingName(moduleName);
         foreach (string value in declaredValues.Where(name => !policy.Values.Contains(name)))
         {
@@ -3100,22 +3160,46 @@ public static class ProjectSupport
 
         foreach ((string typeName, TypeDecl typeDecl) in declaredTypes)
         {
+            string privateTypeName = $"{PrivateTypePrefix}{sanitized}_{typeName}";
             if (!policy.Types.Contains(typeName))
             {
-                renames.Add(new(typeName, $"{PrivateTypePrefix}{sanitized}_{typeName}"));
+                renames.Add(new(typeName, privateTypeName));
+            }
+            else if (zeroCostTypeNames.Contains(typeName)
+                && typeDecl.Constructors.Any(constructor =>
+                string.Equals(constructor.Name, typeName, StringComparison.Ordinal)
+                && !policy.Constructors.Contains(constructor.Name)))
+            {
+                // A type and its sole constructor may deliberately share one spelling (records and
+                // zero-cost nominal types). Identifier-wide private-constructor renaming cannot
+                // separate those namespaces in stitched source, so rename the nominal declaration
+                // and publish a transparent alias back to its exported type name. The constructor
+                // stays private while annotations retain the public nominal identity.
+                renames.Add(new(typeName, privateTypeName));
+                string parameters = typeDecl.TypeParameters.Count == 0
+                    ? string.Empty
+                    : $"({string.Join(", ", typeDecl.TypeParameters.Select(parameter => parameter.Name))})";
+                string arguments = typeDecl.TypeParameters.Count == 0
+                    ? string.Empty
+                    : $"({string.Join(", ", typeDecl.TypeParameters.Select(parameter => parameter.Name))})";
+                publicAbstractAliases.Add(
+                    $"type alias {typeName}{parameters} = {privateTypeName}{arguments}");
             }
 
             foreach (TypeConstructor constructor in typeDecl.Constructors)
             {
                 if (!policy.Constructors.Contains(constructor.Name)
-                    && (!policy.Types.Contains(typeName) || !string.Equals(typeName, constructor.Name, StringComparison.Ordinal)))
+                    && !string.Equals(typeName, constructor.Name, StringComparison.Ordinal))
                 {
                     renames.Add(new(constructor.Name, $"{PrivateConstructorPrefix}{sanitized}_{constructor.Name}"));
                 }
             }
         }
 
-        return RenameIdentifiers(source, renames);
+        string renamed = RenameIdentifiers(source, renames);
+        return publicAbstractAliases.Count == 0
+            ? renamed
+            : renamed.TrimEnd() + "\n" + string.Join("\n", publicAbstractAliases) + "\n";
     }
 
     private static void ValidateExportItem(
@@ -3333,6 +3417,16 @@ public static class ProjectSupport
             case TopLevelItem.Type typeItem:
                 return TryHoistDeclarationSpan(
                     source, AstSpans.GetOrDefault(typeItem.Decl),
+                    typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
+
+            case TopLevelItem.TypeAlias aliasItem:
+                return TryHoistDeclarationSpan(
+                    source, AstSpans.GetOrDefault(aliasItem.Decl),
+                    typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
+
+            case TopLevelItem.ZeroCostType zeroCostTypeItem:
+                return TryHoistDeclarationSpan(
+                    source, AstSpans.GetOrDefault(zeroCostTypeItem.Decl),
                     typeDeclarations, typeDeclFragments, hoistedSpans, ref cursor);
 
             case TopLevelItem.Capability capabilityItem:
@@ -3901,6 +3995,16 @@ public static class ProjectSupport
 
     private static int FindExpressionBodyStart(string source)
     {
+        int parsedPrefixEnd = FindParsedTypePrefixEnd(source);
+        if (parsedPrefixEnd > 0)
+        {
+            var remainderDiagnostics = new Diagnostics();
+            Token firstBodyToken = new Lexer(source[parsedPrefixEnd..], remainderDiagnostics).Next();
+            return firstBodyToken.Kind == TokenKind.EOF
+                ? source.Length
+                : parsedPrefixEnd + firstBodyToken.Position;
+        }
+
         var diag = new Diagnostics();
         var lexer = new Lexer(source, diag);
         var tok = lexer.Next();
@@ -3938,6 +4042,32 @@ public static class ProjectSupport
         }
 
         return tok.Kind == TokenKind.EOF ? source.Length : tok.Position;
+    }
+
+    private static int FindParsedTypePrefixEnd(string source)
+    {
+        var parserDiagnostics = new Diagnostics();
+        Program parsed = new Parser(source, parserDiagnostics).ParseProgram();
+        int parsedPrefixEnd = 0;
+        if (parserDiagnostics.StructuredErrors.Count == 0)
+        {
+            foreach (TopLevelItem item in parsed.Items)
+            {
+                TextSpan span = item switch
+                {
+                    TopLevelItem.Type type => AstSpans.GetOrDefault(type.Decl),
+                    TopLevelItem.TypeAlias alias => AstSpans.GetOrDefault(alias.Decl),
+                    TopLevelItem.ZeroCostType zeroCostType => AstSpans.GetOrDefault(zeroCostType.Decl),
+                    _ => default,
+                };
+                if (span.Length == 0)
+                {
+                    break;
+                }
+                parsedPrefixEnd = span.End;
+            }
+        }
+        return parsedPrefixEnd;
     }
 
     private static Token AdvancePastBalancedParentheses(Lexer lexer)

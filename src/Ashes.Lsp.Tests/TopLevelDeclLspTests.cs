@@ -114,6 +114,41 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Alias_and_zero_cost_type_support_hover_completion_definition_and_semantic_tokens()
+    {
+        const string source =
+            "type alias Identifier(a) = a\n" +
+            "type UserId = UserId(Identifier(Int))\n" +
+            "UserId(42)";
+
+        DocumentService.Analyze(source).ShouldBeEmpty();
+        IReadOnlyList<string> completions = DocumentService.GetCompletions(source, source.Length);
+        completions.ShouldContain("Identifier");
+        completions.ShouldContain("UserId");
+
+        int aliasReference = source.LastIndexOf("Identifier", StringComparison.Ordinal);
+        DocumentService.HoverItem? aliasHover = DocumentService.GetHover(source, aliasReference);
+        aliasHover.ShouldNotBeNull();
+        aliasHover.Value.Contents.ShouldContain("type alias Identifier(a) = a");
+        aliasHover.Value.Contents.ShouldContain("*type alias*");
+
+        DocumentService.DefinitionItem? aliasDefinition = DocumentService.GetDefinition(source, aliasReference);
+        aliasDefinition.ShouldNotBeNull();
+        aliasDefinition.Value.Start.ShouldBe(0);
+
+        IReadOnlyList<DocumentService.SemanticTokenItem> tokens = DocumentService.GetSemanticTokens(source);
+        tokens.ShouldContain(token => token.Line == 0
+            && token.Character == "type alias ".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+        tokens.ShouldContain(token => token.Line == 0
+            && token.Character == "type alias Identifier(".Length
+            && token.TokenType == DocumentService.TokenTypeTypeParameter);
+        tokens.ShouldContain(token => token.Line == 1
+            && token.Character == "type ".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

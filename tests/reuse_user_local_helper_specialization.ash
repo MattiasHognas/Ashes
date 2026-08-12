@@ -9,10 +9,12 @@
 // bounded 50-key space (each key updated on hit) and reads back every key: totalSum = n(n-1)/2 and
 // totalCt = n are shape-independent invariants, so a reuse use-after-free would change them.
 import Ashes.IO
-import Ashes.Collection.Map
-import Ashes.Collection.Map.MapTree
 import Ashes.Text
 import Ashes.Text
+type MapTree(K, V) =
+    | Empty
+    | Node(Int, MapTree, K, V, MapTree)
+
 let hgt t =
     match t with
         | Empty -> 0
@@ -56,6 +58,26 @@ let upd newKey tenths =
                         else mkNode(left)(key)(value)(go(right))
     in go)
 
+let getStr wanted map =
+    (let recursive go current =
+        match current with
+            | Empty -> None
+            | Node(_height, left, key, value, right) ->
+                let ordering = Ashes.Byte.compare(Ashes.Byte.fromText(wanted))(Ashes.Byte.fromText(key))
+                in
+                    if ordering == 0
+                    then Some(value)
+                    else
+                        if ordering <= -1
+                        then go(left)
+                        else go(right)
+    in go(map))
+
+let recursive size map =
+    match map with
+        | Empty -> 0
+        | Node(_height, left, _key, _value, right) -> 1 + size(left) + size(right)
+
 let recursive loop i n map =
     if i >= n
     then map
@@ -67,7 +89,7 @@ let recursive readAll j m sumAcc ctAcc =
     if j >= 50
     then (sumAcc, ctAcc)
     else
-        match Ashes.Collection.Map.getStr("k" + Ashes.Text.fromInt(j))(m) with
+        match getStr("k" + Ashes.Text.fromInt(j))(m) with
             | Some((_mn, _mx, sm, ct)) -> readAll(j + 1)(m)(sumAcc + sm)(ctAcc + ct)
             | None -> readAll(j + 1)(m)(sumAcc)(ctAcc)
 
@@ -76,4 +98,4 @@ let n = 500000
 let final = loop(0)(n)(Empty)
 in
     match readAll(0)(final)(0)(0) with
-        | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(Ashes.Collection.Map.size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))
+        | (totalSum, totalCt) -> Ashes.IO.print(Ashes.Text.fromInt(size(final)) + "|" + Ashes.Text.fromInt(totalSum) + "|" + Ashes.Text.fromInt(totalCt))

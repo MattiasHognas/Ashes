@@ -182,6 +182,16 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
   module, or constructor that the declaring module does not define, or lists a constructor under a
   type that does not declare it.
 
+## Alias and zero-cost type diagnostics
+
+- `ASH039` — **Recursive type alias.** Expanding a transparent alias reaches the same alias again.
+  The diagnostic includes the complete cycle, for example:
+  `Recursive type alias cycle: A -> B -> A.`
+
+- `ASH040` — **Invalid zero-cost type declaration.** A `type Name = Constructor(...)` declaration
+  does not contain exactly one constructor payload. Ordinary algebraic types continue to use `|`
+  before every constructor. Message: `Type 'Name' must have exactly one constructor payload.`
+
 ## Record diagnostics
 
 Records use the brace-free syntax described in

@@ -839,9 +839,10 @@ public sealed partial class Lowering
         };
     }
 
-    private static LoweredTempLayoutKind LayoutForType(TypeRef? type)
+    private LoweredTempLayoutKind LayoutForType(TypeRef? type)
     {
-        return type switch
+        TypeRef? represented = type is null ? null : EraseZeroCostTypeRepresentation(type);
+        return represented switch
         {
             TypeRef.TBigInt => LoweredTempLayoutKind.BigInt,
             TypeRef.TStr => LoweredTempLayoutKind.String,

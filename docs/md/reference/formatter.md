@@ -134,6 +134,10 @@ Type declarations
 
 - `type Name =` starts the declaration.
 - Each constructor appears on its own line, indented one level, prefixed with `|`.
+- A transparent alias stays on one line: `type alias Name(a) = Target(a)`.
+- A zero-cost nominal type stays on one line without `|`:
+  `type Name(a) = Constructor(Payload(a))`. A following `deriving` clause is indented one level on
+  its own line, as for an ordinary type declaration.
 
 Example:
 

@@ -652,7 +652,58 @@ Rules:
   expression (a name, a parameterized type, a function type, or a tuple).
 - Type declarations appear before the expression body of the program.
 
-### 4.1 Record Types
+### 4.1 Transparent Type Aliases
+
+A transparent alias gives a reusable name to a type expression without introducing a new type:
+
+```ash
+type alias Identifier(a) = a
+type alias Handler(E, A) = E -> Task(E, A)
+```
+
+`alias` is contextual after `type`, not a reserved keyword; it remains available as an ordinary
+identifier everywhere else.
+
+Alias parameters are in scope only in the right-hand type expression. An application must supply
+exactly the declared number of arguments. During type checking an alias application expands to its
+right-hand side with those arguments substituted, so `Identifier(Int)` and `Int` are the same type.
+An alias introduces no constructor, value, runtime symbol, allocation, layout, or ABI distinction.
+Diagnostics and editor hovers may show both the written alias and its expansion when that makes an
+error clearer.
+
+Aliases may refer to aliases declared later in the same compilation unit, but the expansion graph
+must be acyclic. A direct cycle (`type alias Loop = Loop`) or indirect cycle is rejected with
+`ASH039`, including the complete cycle path. Alias expansion is shared by annotations, constructor
+fields, trait constraints, external signatures, and imported signatures.
+
+### 4.2 Zero-Cost Nominal Types
+
+A zero-cost nominal type uses `type` without an alternative marker and introduces exactly one
+constructor with exactly one payload:
+
+```ash
+type UserId = UserId(Int)
+type Tagged(a) = Tagged(a) deriving {Eq, Show}
+```
+
+This is syntactically distinct from an ordinary algebraic type, whose constructors each begin with
+`|`: `type Box(a) = | Box(a)` remains a one-constructor ADT with a tag and wrapper allocation, while
+`type Box(a) = Box(a)` is a zero-cost nominal type.
+
+`UserId`, `Int`, and any other zero-cost type over `Int` remain distinct during type checking. Conversion is
+explicit: construction wraps (`UserId(42)`) and a single-constructor pattern unwraps
+(`match id with | UserId(value) -> value`). Zero-cost types support explicit `deriving`, trait
+implementations, and the same constructor export controls as ordinary algebraic types. An invalid
+shape is rejected with `ASH040`.
+
+After semantic checking, a zero-cost type is represented exactly as its payload: construction and matching
+emit no tag, wrapper allocation, or field access. Its size, alignment, calling convention, ownership
+capability, and FFI representation are the payload's. Consequently a zero-cost type whose payload is or
+contains a resource is affine and follows the payload's deterministic cleanup rules. Nominality is
+still enforced at every source-level boundary; representation erasure never permits an implicit
+coercion.
+
+### 4.3 Record Types
 
 Record types are single-constructor ADTs with named fields. Records use a
 brace-free syntax that mirrors ADT declarations and ordinary constructor calls;

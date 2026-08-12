@@ -546,6 +546,9 @@ public sealed partial class Lowering
 
     // Registered type and constructor symbols
     private readonly Dictionary<string, TypeSymbol> _typeSymbols = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TypeAliasDecl> _typeAliases = new(StringComparer.Ordinal);
+    private readonly List<string> _typeAliasExpansionStack = [];
+    private readonly HashSet<string> _reportedTypeAliasCycles = new(StringComparer.Ordinal);
     // Keyed by TypeSymbol reference identity, not name: two packages may each declare a type with
     // the same simple name (e.g. both a "Point"), and the orphan rule (ValidateOrphanRule) must not
     // confuse one package's outer-type ownership for the other's just because the unqualified name
@@ -713,8 +716,9 @@ public sealed partial class Lowering
 
         // External opaque names must be known before constructor fields are resolved, so an ADT field
         // naming an external handle remains concrete instead of being inferred as a type parameter.
-        RegisterExternalDeclarations(program.ExternalDecls);
-        RegisterTypeDeclarations(program.TypeDecls);
+        RegisterExternalOpaqueTypes(program.ExternalDecls);
+        RegisterTypeDeclarations(program.TypeDecls, program.TypeAliasDecls, program.ZeroCostTypeDecls);
+        RegisterExternalFunctions(program.ExternalDecls);
         RegisterCapabilityDeclarations(program.Items);
         RegisterProviderDeclarations(program.Items);
         program = ExpandDerivedImplementations(program);
@@ -7956,7 +7960,11 @@ public sealed partial class Lowering
         if (Lookup(variable.Name) is Binding.ExternalFunction externalFunction)
         {
             RecordHoverType(GetSpan(rootExpression), variable.Name, externalFunction.Type);
-            return LowerExternalCall(rootExpression, externalFunction.Function, arguments);
+            return LowerExternalCall(
+                rootExpression,
+                externalFunction.Function,
+                externalFunction.Type,
+                arguments);
         }
         return null;
     }
@@ -10125,7 +10133,11 @@ public sealed partial class Lowering
         return copyDest;
     }
 
-    private (int, TypeRef) LowerExternalCall(Expr rootExpr, IrExternalFunction externalFunction, List<Expr> args)
+    private (int, TypeRef) LowerExternalCall(
+        Expr rootExpr,
+        IrExternalFunction externalFunction,
+        TypeRef sourceFunctionType,
+        List<Expr> args)
     {
         if (externalFunction.ParameterTypes.Count == 0
             && args.Count == 1
@@ -10140,10 +10152,13 @@ public sealed partial class Lowering
         }
 
         var loweredArgTemps = new List<int>(args.Count);
+        TypeRef sourceCursor = sourceFunctionType;
         for (int i = 0; i < args.Count; i++)
         {
             var (argTemp, argType) = LowerExpr(args[i]);
-            var expectedType = FromFfiType(externalFunction.ParameterTypes[i]);
+            TypeRef.TFun sourceFunction = (TypeRef.TFun)Prune(sourceCursor);
+            TypeRef expectedType = sourceFunction.Arg;
+            sourceCursor = sourceFunction.Ret;
             using (PushDiagnosticContext($"in argument #{i + 1} of external call to '{externalFunction.Name}'"))
             {
                 Unify(expectedType, argType);
@@ -10168,7 +10183,7 @@ public sealed partial class Lowering
             return LowerUnitValue();
         }
 
-        return (target, FromFfiType(externalFunction.ReturnType));
+        return (target, Prune(sourceCursor));
     }
 
     /// <summary>

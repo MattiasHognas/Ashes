@@ -301,6 +301,22 @@ public sealed record TypeDecl(string Name, IReadOnlyList<TypeParameter> TypePara
     public IReadOnlyList<string> Deriving { get; init; } = [];
 }
 
+/// <summary>A transparent <c>type alias</c> declaration.</summary>
+public sealed record TypeAliasDecl(
+    string Name,
+    IReadOnlyList<TypeParameter> TypeParameters,
+    TypeExpr Target);
+
+/// <summary>A zero-cost nominal <c>type</c> declaration.</summary>
+public sealed record ZeroCostTypeDecl(
+    string Name,
+    IReadOnlyList<TypeParameter> TypeParameters,
+    TypeConstructor Constructor)
+{
+    /// <summary>The traits requested by a trailing <c>deriving</c> clause.</summary>
+    public IReadOnlyList<string> Deriving { get; init; } = [];
+}
+
 /// <summary>One operation of a <c>capability</c> declaration: <c>| now : Unit -> Int</c> or a bare <c>| log</c>.</summary>
 public sealed record CapabilityOperation(string Name, TypeExpr? Signature);
 
@@ -432,6 +448,10 @@ public abstract record TopLevelItem
 
     /// <summary>A top-level <c>type</c> declaration.</summary>
     public sealed record Type(TypeDecl Decl) : TopLevelItem;
+    /// <summary>A transparent type-alias declaration.</summary>
+    public sealed record TypeAlias(TypeAliasDecl Decl) : TopLevelItem;
+    /// <summary>A zero-cost nominal type declaration.</summary>
+    public sealed record ZeroCostType(ZeroCostTypeDecl Decl) : TopLevelItem;
 
     /// <summary>A top-level <c>external</c> declaration.</summary>
     public sealed record External(ExternalDecl Decl) : TopLevelItem;
@@ -555,6 +575,14 @@ public sealed record Program
     /// <summary>The <c>type</c> declarations in source order, derived from <see cref="Items"/>.</summary>
     public IReadOnlyList<TypeDecl> TypeDecls =>
         Items.OfType<TopLevelItem.Type>().Select(item => item.Decl).ToList();
+
+    /// <summary>The transparent type aliases in source order.</summary>
+    public IReadOnlyList<TypeAliasDecl> TypeAliasDecls =>
+        Items.OfType<TopLevelItem.TypeAlias>().Select(item => item.Decl).ToList();
+
+    /// <summary>The zero-cost nominal type declarations in source order.</summary>
+    public IReadOnlyList<ZeroCostTypeDecl> ZeroCostTypeDecls =>
+        Items.OfType<TopLevelItem.ZeroCostType>().Select(item => item.Decl).ToList();
 
     /// <summary>The <c>external</c> declarations in source order, derived from <see cref="Items"/>.</summary>
     public IReadOnlyList<ExternalDecl> ExternalDecls =>
