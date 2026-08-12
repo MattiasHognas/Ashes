@@ -47,6 +47,9 @@ internal enum GeneratedFeature
     AmbientAuthority,
     TypeAlias,
     ZeroCostType,
+    StructuredScope,
+    Fork,
+    Join,
 }
 
 internal enum OwnershipInterest

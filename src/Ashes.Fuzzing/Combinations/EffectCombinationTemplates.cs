@@ -106,6 +106,70 @@ internal sealed class AsyncSpawnSharedValueTemplate : ICombinationTemplate
         prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
 
+internal sealed class StructuredConcurrencyTemplate : ICombinationTemplate
+{
+    public string Id => "async.structured-fork-join";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.Await,
+        GeneratedFeature.Fork,
+        GeneratedFeature.Join,
+        GeneratedFeature.Match,
+        GeneratedFeature.StructuredScope,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        context.Allows(GenerationFlags.SuspensionAllowed) && budget.RemainingNodes >= 20;
+
+    public GenerationResult<Expr> Generate(
+        AshesType resultType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        GenerationResult<Expr> childValue = expressions.Generate(resultType, context, budget.Descend(15), random);
+        GenerationResult<Expr> fallback = expressions.Generate(resultType, context, budget.Descend(15), random);
+        string handleName = Name("joinHandle", random);
+        string joinedName = Name("joinedValue", random);
+        Expr fork = new Expr.Await(new Expr.Call(
+            new Expr.QualifiedVar("Ashes.Task", "fork"),
+            new Expr.Call(new Expr.Var("async"), childValue.Value)));
+        Expr join = new Expr.Await(new Expr.Call(
+            new Expr.QualifiedVar("Ashes.Task", "join"),
+            new Expr.Var(handleName)));
+        Expr body = new Expr.Match(fork,
+        [
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), fallback.Value),
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Var(handleName)]), new Expr.Match(join,
+            [
+                new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), fallback.Value),
+                new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Var(joinedName)]), new Expr.Var(joinedName)),
+            ])),
+        ]);
+        Expr run = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.Task", "run"),
+            new Expr.Call(new Expr.Var("async"), body));
+        Expr observed = new Expr.Match(run,
+        [
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), fallback.Value),
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Var(joinedName)]), new Expr.Var(joinedName)),
+        ]);
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(childValue.Features);
+        features.UnionWith(fallback.Features);
+        return new GenerationResult<Expr>(
+            observed,
+            resultType,
+            features,
+            GenerationTrace.Merge($"async:structured-fork-join:{resultType}", childValue.Trace, fallback.Trace),
+            childValue.NodeCount + fallback.NodeCount + 20);
+    }
+
+    private static string Name(string prefix, FuzzRandom random) =>
+        prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+
 internal sealed class AsyncClosureMatchAcrossAwaitTemplate : ICombinationTemplate
 {
     public string Id => "async.closure-match-across-await";

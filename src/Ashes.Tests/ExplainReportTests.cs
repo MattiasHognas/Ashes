@@ -352,6 +352,26 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void Concurrency_reports_structured_and_detached_operations()
+    {
+        CompilationExplainReport report = Report("""
+            Ashes.Task.run(async(match await Ashes.Task.fork(async 1) with
+                | Error(_) -> 0
+                | Ok(joiner) ->
+                    let _ = Ashes.Task.spawn(async 2)
+                    in
+                        match await Ashes.Task.join(joiner) with
+                            | Error(_) -> 0
+                            | Ok(value) -> value))
+            """, ExplainKind.Concurrency, filter: null);
+
+        report.Concurrency.Sum(item => item.Scopes).ShouldBeGreaterThan(0);
+        report.Concurrency.Sum(item => item.Forks).ShouldBe(1);
+        report.Concurrency.Sum(item => item.Joins).ShouldBe(1);
+        report.Concurrency.Sum(item => item.DetachedSpawns).ShouldBe(1);
+    }
+
+    [Test]
     public void Formatting_is_stable_across_repeated_builds()
     {
         const string source = """

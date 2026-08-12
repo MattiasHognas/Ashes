@@ -71,6 +71,8 @@ public static class DiagnosticCodes
     public const string InvalidExternalResourceDestructor = "ASH041";
     /// <summary>An external parameter has a missing or invalid resource ownership marker.</summary>
     public const string InvalidExternalOwnershipMarker = "ASH042";
+    /// <summary>A join handle escapes its structured lifetime.</summary>
+    public const string StructuredTaskEscape = "ASH043";
 }
 
 /// <summary>

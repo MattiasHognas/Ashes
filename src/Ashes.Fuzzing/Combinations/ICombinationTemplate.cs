@@ -44,6 +44,7 @@ internal sealed class CombinationRegistry
         registry.Register(new AsyncClosureMatchAcrossAwaitTemplate());
         registry.Register(new AsyncSpawnSharedValueTemplate());
         registry.Register(new AsyncTaskResultReuseTemplate());
+        registry.Register(new StructuredConcurrencyTemplate());
         registry.Register(new EscapingClosureTemplate());
         registry.Register(new MultipleClosuresTemplate());
         registry.Register(new ListHeadSharingTemplate());

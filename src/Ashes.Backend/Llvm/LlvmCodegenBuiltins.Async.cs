@@ -320,6 +320,10 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, afterCloseBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, afterCloseBlock);
+        if (state.UsesStructuredConcurrency)
+        {
+            EmitCancelStructuredScopeChildren(state, taskPtr, stateIdx);
+        }
         LlvmValueHandle awaited = LoadMemory(state, taskPtr, TaskStructLayout.AwaitedTask, "cancel_awaited_value");
         LlvmValueHandle hasAwaited = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, awaited, LlvmApi.ConstInt(state.I64, 0, 0), "cancel_has_awaited");
         LlvmApi.BuildCondBr(builder, hasAwaited, cancelAwaitedBlock, afterAwaitedBlock);
@@ -341,6 +345,45 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
         return LlvmApi.ConstInt(state.I64, 0, 0);
+    }
+
+    private static void EmitCancelStructuredScopeChildren(
+        LlvmCodegenState state,
+        LlvmValueHandle taskPtr,
+        LlvmValueHandle stateIdx)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmBasicBlockHandle initBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_scope_init");
+        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_scope_loop");
+        LlvmBasicBlockHandle bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_scope_child");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cancel_scope_done");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx,
+                LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateScopeComposite), 1),
+                "cancel_is_scope"),
+            initBlock,
+            doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, initBlock);
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "cancel_scope_cursor");
+        LlvmValueHandle scope = LoadMemory(state, taskPtr, TaskStructLayout.IoArg1, "cancel_scope_token");
+        LlvmApi.BuildStore(builder, LoadMemory(state, scope, 0, "cancel_scope_head"), cursorSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle node = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "cancel_scope_node");
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, node, zero, "cancel_scope_empty"),
+            doneBlock,
+            bodyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, bodyBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [LoadMemory(state, node, 0, "cancel_scope_child_task")], "cancel_scope_recurse");
+        LlvmApi.BuildStore(builder, LoadMemory(state, node, 16, "cancel_scope_next"), cursorSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
     }
 
     private static LlvmValueHandle EmitPendingLeafTask(LlvmCodegenState state, LlvmValueHandle taskPtr, long waitKind, LlvmValueHandle waitHandle, string prefix)

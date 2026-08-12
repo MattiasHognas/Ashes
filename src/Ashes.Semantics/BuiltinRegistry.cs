@@ -145,6 +145,12 @@ public static class BuiltinRegistry
         AsyncSpawn,
         /// <summary>Awaits several tasks and yields the first to complete.</summary>
         AsyncRace,
+        /// <summary>Runs a task callback inside a structured child-task scope.</summary>
+        AsyncScope,
+        /// <summary>Registers a child task with a structured task scope.</summary>
+        AsyncFork,
+        /// <summary>Consumes a structured join handle and returns its child task.</summary>
+        AsyncJoin,
         /// <summary>The empty byte sequence.</summary>
         BytesEmpty,
         /// <summary>A single-byte sequence.</summary>
@@ -652,7 +658,10 @@ public static class BuiltinRegistry
                     ["sleep"] = new("sleep", BuiltinValueKind.AsyncSleep, IsCallable: true, Arity: 1),
                     ["all"] = new("all", BuiltinValueKind.AsyncAll, IsCallable: true, Arity: 1),
                     ["spawn"] = new("spawn", BuiltinValueKind.AsyncSpawn, IsCallable: true, Arity: 1),
-                    ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1)
+                    ["race"] = new("race", BuiltinValueKind.AsyncRace, IsCallable: true, Arity: 1),
+                    ["scope"] = new("scope", BuiltinValueKind.AsyncScope, IsCallable: true, Arity: 1),
+                    ["fork"] = new("fork", BuiltinValueKind.AsyncFork, IsCallable: true, Arity: 1),
+                    ["join"] = new("join", BuiltinValueKind.AsyncJoin, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.IO.Process"] = new(
                 "Ashes.IO.Process",
@@ -704,7 +713,8 @@ public static class BuiltinRegistry
         "Socket",
         "TlsSocket",
         "Process",
-        "FileHandle"
+        "FileHandle",
+        "JoinHandle"
     };
 
     private static readonly IReadOnlyDictionary<string, BuiltinType> TypesByName = CreateBuiltinTypes();
@@ -1018,6 +1028,7 @@ public static class BuiltinRegistry
             ["Socket"] = CreateSocketBuiltinType(),
             ["TlsSocket"] = CreateTlsSocketBuiltinType(),
             ["Task"] = CreateTaskBuiltinType(),
+            ["JoinHandle"] = CreateJoinHandleBuiltinType(),
             ["Process"] = CreateProcessBuiltinType(),
             ["FileHandle"] = CreateFileHandleBuiltinType()
         };
@@ -1169,6 +1180,20 @@ public static class BuiltinRegistry
             taskTypeParameters,
             [],
             taskDecl);
+    }
+
+    private static BuiltinType CreateJoinHandleBuiltinType()
+    {
+        var parameters = new[]
+        {
+            new TypeParameterSymbol("E"),
+            new TypeParameterSymbol("A")
+        };
+        var declaration = new TypeDecl(
+            "JoinHandle",
+            [new TypeParameter("E"), new TypeParameter("A")],
+            []);
+        return new BuiltinType("JoinHandle", parameters, [], declaration);
     }
 
     private static BuiltinType CreateProcessBuiltinType()
