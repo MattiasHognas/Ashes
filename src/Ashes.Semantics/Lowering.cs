@@ -5727,7 +5727,7 @@ public sealed partial class Lowering
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
 
-        Unify(bodyType, retTy);
+        bodyTemp = FinalizeLambdaBodyOwnership(lam.Body, bodyTemp, bodyType, retTy);
         RecordReturnedClosureLabel(label, bodyTemp);
         // Accurate regardless of *why* the result is RuntimeManaged (fresh construction, TCO accumulator
         // representation, closure capture — see _bodyRuntimeManagedByLabel's own doc). Threaded to this
@@ -5747,6 +5747,42 @@ public sealed partial class Lowering
             LowerLambdaCoreMakeClosure(
                 label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged, request),
             funTy);
+    }
+
+    private int FinalizeLambdaBodyOwnership(
+        Expr body,
+        int bodyTemp,
+        TypeRef bodyType,
+        TypeRef resultType)
+    {
+        Unify(bodyType, resultType);
+        return RetainDirectCapturedRuntimeManagedLambdaResult(body, bodyTemp);
+    }
+
+    private int RetainDirectCapturedRuntimeManagedLambdaResult(Expr body, int bodyTemp)
+    {
+        Expr result = body;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        if (result is not Expr.Var variable
+            || Lookup(variable.Name) is not (Binding.Env or Binding.EnvScheme)
+            || LookupOwnedValue(variable.Name) is not
+            { IsDropped: false, RuntimeManaged: true } owner)
+        {
+            return bodyTemp;
+        }
+
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(
+            retainedTemp,
+            bodyTemp,
+            RuntimeManaged: true,
+            MayBeEmpty: owner.Type is TypeRef.TList));
+        MarkRuntimeManagedTemp(retainedTemp);
+        return retainedTemp;
     }
 
     private readonly record struct LambdaFunctionPlacementFrame(

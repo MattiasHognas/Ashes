@@ -1278,38 +1278,86 @@ public sealed partial class Lowering
         if (result is Expr.Var variable
             && LookupOwnedValue(variable.Name) is { IsDropped: false } owner)
         {
-            // A captured binding is owned by the current closure environment, not by the outer
-            // function's local slot retained in ownership provenance. Returning it from a match arm
-            // must retain the captured value; attempting the ordinary local-parent transfer would
-            // emit the enclosing frame's slot number into this lifted function.
-            if (Lookup(variable.Name) is Binding.Env or Binding.EnvScheme)
-            {
-                if (!owner.RuntimeManaged)
-                {
-                    return bodyTemp;
-                }
+            return TransferVariableRuntimeManagedMatchResult(variable, bodyTemp, owner);
+        }
 
-                int duplicatedTemp = NewTemp();
-                Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp, RuntimeManaged: true));
-                return duplicatedTemp;
-            }
+        return bodyTemp;
+    }
 
-            if (owner.PerceusPatternOwner)
-            {
-                int duplicatedTemp = NewTemp();
-                Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp));
-                return duplicatedTemp;
-            }
-
+    private int TransferVariableRuntimeManagedMatchResult(
+        Expr.Var variable,
+        int bodyTemp,
+        OwnershipInfo owner)
+    {
+        // Returning the owner binding itself transfers its one reference into the match result.
+        // EmitRuntimeManagedParentFieldTransfer is only for an extracted child whose protective
+        // parent must still be released. Treating the root as its own child drops the unique cell
+        // and leaves the match join holding a dangling pointer.
+        Binding? resultBinding = Lookup(variable.Name);
+        int resultSlot = resultBinding switch
+        {
+            Binding.Local local => local.Slot,
+            Binding.Scheme scheme => scheme.Slot,
+            _ => -1,
+        };
+        if (resultSlot == owner.Slot)
+        {
             if (!owner.RuntimeManaged)
             {
                 return bodyTemp;
             }
 
-            return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
+            int duplicatedTemp = DuplicateRuntimeManagedMatchResult(bodyTemp, owner);
+            Emit(new IrInst.RcDrop(
+                bodyTemp,
+                owner.TypeName,
+                owner.Slot,
+                RuntimeManaged: true,
+                MayBeEmpty: owner.Type is TypeRef.TList));
+            owner.ReleaseKind = ResourceReleaseKind.AutoDropped;
+            return duplicatedTemp;
         }
 
-        return bodyTemp;
+        // A captured binding is owned by the current closure environment, not by the outer
+        // function's local slot retained in ownership provenance. Returning it from a match arm
+        // must retain the captured value; attempting the ordinary local-parent transfer would
+        // emit the enclosing frame's slot number into this lifted function.
+        if (Lookup(variable.Name) is Binding.Env or Binding.EnvScheme)
+        {
+            if (!owner.RuntimeManaged)
+            {
+                return bodyTemp;
+            }
+
+            int duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp, RuntimeManaged: true));
+            return duplicatedTemp;
+        }
+
+        if (owner.PerceusPatternOwner)
+        {
+            int duplicatedTemp = NewTemp();
+            Emit(new IrInst.RcDup(duplicatedTemp, bodyTemp));
+            return duplicatedTemp;
+        }
+
+        if (!owner.RuntimeManaged)
+        {
+            return bodyTemp;
+        }
+
+        return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
+    }
+
+    private int DuplicateRuntimeManagedMatchResult(int bodyTemp, OwnershipInfo owner)
+    {
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(
+            duplicatedTemp,
+            bodyTemp,
+            RuntimeManaged: true,
+            MayBeEmpty: owner.Type is TypeRef.TList));
+        return duplicatedTemp;
     }
 
     /// <summary>
