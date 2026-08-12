@@ -49,6 +49,79 @@ public sealed class AsyncCoroutinePathTests
     }
 
     [Test]
+    public void SpawnedCompletedTaskBorrow_DoesNotDropTailForwardedParentListBeforeItsUse()
+    {
+        const string source = """
+            let recursive render : List(Int) -> Str =
+                given (items: List(Int)) ->
+                    match items with
+                        | [] -> "]"
+                        | head :: tail ->
+                            Ashes.Text.fromInt(head) + (match tail with
+                                | [] -> "]"
+                                | _ -> "," + render(tail))
+            in
+                "[" + render(let shared =
+                    let head = 3
+                    in
+                        let tail = []
+                        in head :: tail
+                in
+                    let _spawned = Ashes.Task.spawn(async(shared))
+                    in shared)
+            """;
+
+        IrFunction entry = LowerProgram(source).EntryFunction;
+        int spawnIndex = entry.Instructions.FindIndex(instruction => instruction is IrInst.SpawnTask);
+        int renderCallIndex = entry.Instructions.FindIndex(
+            spawnIndex + 1,
+            instruction => instruction is IrInst.CallClosure);
+
+        spawnIndex.ShouldBeGreaterThan(-1);
+        renderCallIndex.ShouldBeGreaterThan(spawnIndex);
+        bool droppedBeforeRender = entry.Instructions
+            .Skip(spawnIndex + 1)
+            .Take(renderCallIndex - spawnIndex - 1)
+            .Any(instruction => instruction is IrInst.RcDrop { TypeName: "List" });
+        bool droppedAfterRender = entry.Instructions
+            .Skip(renderCallIndex + 1)
+            .Any(instruction => instruction is IrInst.RcDrop { TypeName: "List" });
+        droppedBeforeRender.ShouldBeFalse();
+        droppedAfterRender.ShouldBeTrue();
+    }
+
+    [Test]
+    public void TailForwarding_DoesNotCrossAShadowingLet()
+    {
+        const string source = """
+            let recursive render : List(Int) -> Str =
+                given (items: List(Int)) ->
+                    match items with
+                        | [] -> "]"
+                        | head :: tail -> Ashes.Text.fromInt(head) + render(tail)
+            in
+                render(let shared =
+                    let head = 3
+                    in
+                        let tail = []
+                        in head :: tail
+                in
+                    let shared = []
+                    in shared)
+            """;
+
+        IrFunction entry = LowerProgram(source).EntryFunction;
+        int renderCallIndex = entry.Instructions.FindLastIndex(
+            instruction => instruction is IrInst.CallClosure);
+        renderCallIndex.ShouldBeGreaterThan(-1);
+        bool droppedShadowedOuterList = entry.Instructions
+            .Take(renderCallIndex)
+            .Any(instruction => instruction is IrInst.RcDrop { TypeName: "List" });
+
+        droppedShadowedOuterList.ShouldBeTrue();
+    }
+
+    [Test]
     public void CapabilityDictionaryRewrite_PreservesCoroutineGenerationLocation()
     {
         const string source = """

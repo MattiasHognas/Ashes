@@ -3416,6 +3416,23 @@ public sealed partial class Lowering
             && string.Equals(variable.Name, bindingName, StringComparison.Ordinal);
     }
 
+    private static bool IsTailForwardedBindingResult(Expr body, string bindingName)
+    {
+        // A tail-position let chain still transfers the same binding out of its scope. The
+        // intervening values may borrow it (for example spawn(async(shared))), but they do not turn
+        // the final `in shared` into a new owner. Stop at a rebinding so lexical shadowing cannot
+        // transfer the outer value by source name.
+        return body switch
+        {
+            Expr.Var variable => string.Equals(variable.Name, bindingName, StringComparison.Ordinal),
+            Expr.Let nested when !string.Equals(nested.Name, bindingName, StringComparison.Ordinal) =>
+                IsTailForwardedBindingResult(nested.Body, bindingName),
+            Expr.LetRecursive nested when !string.Equals(nested.Name, bindingName, StringComparison.Ordinal) =>
+                IsTailForwardedBindingResult(nested.Body, bindingName),
+            _ => false,
+        };
+    }
+
     private bool TryLowerRuntimeRcBytesLet(
         Expr.Let let,
         LoweredValueRequest request,
@@ -4840,7 +4857,7 @@ public sealed partial class Lowering
                     runtimeManaged,
                     runtimeConstructor,
                     runtimeDeepUnique);
-                if (runtimeManaged && IsDirectBindingResult(let.Body, let.Name))
+                if (runtimeManaged && IsTailForwardedBindingResult(let.Body, let.Name))
                 {
                     LookupOwnedValue(let.Name)!.ReleaseKind = ResourceReleaseKind.Moved;
                 }
