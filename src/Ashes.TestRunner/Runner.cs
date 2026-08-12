@@ -48,6 +48,17 @@ public static class Runner
         set => _testProcessTimeout.Value = value;
     }
 
+    /// <summary>Selects which Ashes semantic IR pipeline the test runner exercises.</summary>
+    public enum TestPipeline
+    {
+        /// <summary>Run the normal semantic optimizer before LLVM code generation.</summary>
+        Optimized,
+        /// <summary>Pass raw lowered IR directly to LLVM code generation.</summary>
+        Lowered,
+        /// <summary>Run each executable test through both semantic pipelines.</summary>
+        Both,
+    }
+
     /// <summary>A file the test program expects to exist on disk, declared by a <c>// file:</c> or
     /// <c>// file-bytes:</c> directive and materialized before the program runs.</summary>
     /// <param name="RelativePath">Path of the fixture file relative to the program's working directory.</param>
@@ -120,6 +131,20 @@ public static class Runner
         TlsServerFixture TlsServer,
         IReadOnlyList<string> SkipOnTargets);
 
+    /// <summary>The outcome from one semantic pipeline for a test file.</summary>
+    /// <param name="Pipeline">The semantic pipeline used to compile the test.</param>
+    /// <param name="Passed">Whether this pipeline's result satisfied the test directives.</param>
+    /// <param name="Actual">The actual stdout or compiler output.</param>
+    /// <param name="ExitCode">The actual process or compiler exit code.</param>
+    /// <param name="ExecutionElapsed">Native child-process lifetime, or <see langword="null"/>
+    /// when no program executed.</param>
+    public sealed record TestPipelineExecution(
+        TestPipeline Pipeline,
+        bool Passed,
+        string Actual,
+        int ExitCode,
+        TimeSpan? ExecutionElapsed);
+
     /// <summary>The outcome of running one test file: whether it passed, plus the compared values for
     /// reporting.</summary>
     /// <param name="Path">The test file path.</param>
@@ -129,8 +154,21 @@ public static class Runner
     /// <param name="ExitCode">The actual process exit code.</param>
     /// <param name="ExpectedExitCode">The expected exit code.</param>
     /// <param name="HasExpected">Whether the test declared an expected output.</param>
-    /// <param name="ElapsedMs">Wall-clock time the test took, in milliseconds.</param>
-    public sealed record TestResult(string Path, bool Passed, string Expected, string Actual, int ExitCode, int ExpectedExitCode, bool HasExpected = true, long ElapsedMs = 0);
+    /// <param name="ElapsedMs">Complete compile-and-run wall-clock time, used for the suite summary.</param>
+    /// <param name="ExecutionElapsed">Native child-process lifetime, or <see langword="null"/> when
+    /// the test did not execute a program.</param>
+    /// <param name="PipelineExecutions">The result for each semantic pipeline exercised.</param>
+    public sealed record TestResult(
+        string Path,
+        bool Passed,
+        string Expected,
+        string Actual,
+        int ExitCode,
+        int ExpectedExitCode,
+        bool HasExpected = true,
+        long ElapsedMs = 0,
+        TimeSpan? ExecutionElapsed = null,
+        IReadOnlyList<TestPipelineExecution>? PipelineExecutions = null);
 
     // The requested compiler reports for this run. Held here rather than threaded through every
     // compilation helper because it is constant for a run and read only where a program is compiled.
@@ -142,9 +180,10 @@ public static class Runner
     /// per-test results to <paramref name="console"/>, and returns a process exit code that is zero
     /// only when every test passed. <paramref name="project"/> supplies project-mode discovery,
     /// <paramref name="backendOptions"/> overrides the backend compile settings, and
-    /// <paramref name="explain"/> requests compiler reports on stderr.
+    /// <paramref name="explain"/> requests compiler reports on stderr, and
+    /// <paramref name="pipeline"/> selects the semantic optimizer path to exercise.
     /// </summary>
-    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null, ExplainRequest? explain = null)
+    public static int RunTests(IEnumerable<string> paths, string? targetId, IAnsiConsole console, AshesProject? project = null, BackendCompileOptions? backendOptions = null, ExplainRequest? explain = null, TestPipeline pipeline = TestPipeline.Optimized)
     {
         targetId ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
         backendOptions ??= BackendCompileOptions.Default;
@@ -163,7 +202,7 @@ public static class Runner
 
         foreach (var file in files)
         {
-            results.Add(RunSingleTestFile(file, targetId, backendOptions, project, console));
+            results.Add(RunSingleTestFile(file, targetId, backendOptions, project, console, pipeline));
         }
 
         RenderResults(results, console);
@@ -171,7 +210,7 @@ public static class Runner
         return results.Any(r => !r.Passed && r.HasExpected) ? 1 : 0;
     }
 
-    private static TestResult RunSingleTestFile(string file, string targetId, BackendCompileOptions backendOptions, AshesProject? project, IAnsiConsole console)
+    private static TestResult RunSingleTestFile(string file, string targetId, BackendCompileOptions backendOptions, AshesProject? project, IAnsiConsole console, TestPipeline pipeline)
     {
         var rawSource = File.ReadAllText(file);
         var effectiveProject = ResolveProjectForTestFile(file, project);
@@ -193,52 +232,91 @@ public static class Runner
         }
 
         var sw = Stopwatch.StartNew();
-        var (exit, actual, stderr) = ExecuteTestRun(file, targetId, backendOptions, effectiveProject, directives, rawSource);
+        var exp = expected.TrimEnd();
+        List<TestPipelineExecution> pipelineExecutions = ExecuteTestPipelines(
+            file, targetId, backendOptions, effectiveProject, directives, rawSource, pipeline, exp);
         sw.Stop();
 
-        var exp = expected.TrimEnd();
-        var passed = exit == expectedExitCode && (isCompileError
-            ? actual.Contains(exp, StringComparison.Ordinal)
-            : string.Equals(actual, exp, StringComparison.Ordinal));
-
-        // If stderr present, append for diagnostics in 'Actual' when the test fails
-        if (!string.IsNullOrWhiteSpace(stderr) && !passed)
-        {
-            actual = actual + "\n[stderr]\n" + stderr.TrimEnd();
-        }
-
-        console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")} [grey]{FormatElapsed(sw.ElapsedMilliseconds)}[/]");
-        return new TestResult(file, passed, exp, actual, exit, expectedExitCode, ElapsedMs: sw.ElapsedMilliseconds);
+        bool passed = pipelineExecutions.All(execution => execution.Passed);
+        TestPipelineExecution primaryExecution = pipelineExecutions.FirstOrDefault(execution => !execution.Passed) ?? pipelineExecutions[0];
+        string formattedTimes = FormatPipelineExecutionTimes(pipelineExecutions);
+        string executionSuffix = formattedTimes.Length > 0
+            ? $" [grey]{formattedTimes}[/]"
+            : "";
+        console.MarkupLine($"[grey]{Markup.Escape(Path.GetFileName(file))}[/] {(passed ? "[green]PASS[/]" : "[red]FAIL[/]")}{executionSuffix}");
+        return new TestResult(
+            file,
+            passed,
+            exp,
+            primaryExecution.Actual,
+            primaryExecution.ExitCode,
+            expectedExitCode,
+            ElapsedMs: sw.ElapsedMilliseconds,
+            ExecutionElapsed: primaryExecution.ExecutionElapsed,
+            PipelineExecutions: pipelineExecutions);
     }
 
-    private static (int Exit, string Actual, string Stderr) ExecuteTestRun(string file, string targetId, BackendCompileOptions backendOptions, AshesProject? effectiveProject, TestDirectives directives, string rawSource)
+    private static List<TestPipelineExecution> ExecuteTestPipelines(
+        string file,
+        string targetId,
+        BackendCompileOptions backendOptions,
+        AshesProject? effectiveProject,
+        TestDirectives directives,
+        string rawSource,
+        TestPipeline pipeline,
+        string expected)
+    {
+        TestPipeline[] pipelines = pipeline == TestPipeline.Both && !directives.IsCompileError
+            ? [TestPipeline.Optimized, TestPipeline.Lowered]
+            : [pipeline == TestPipeline.Both ? TestPipeline.Optimized : pipeline];
+        var executions = new List<TestPipelineExecution>(pipelines.Length);
+        foreach (TestPipeline selectedPipeline in pipelines)
+        {
+            var (exit, actualOutput, stderr, executionElapsed) = ExecuteTestRun(
+                file, targetId, backendOptions, effectiveProject, directives, rawSource, selectedPipeline);
+            bool passed = exit == directives.ExpectedExitCode && (directives.IsCompileError
+                ? actualOutput.Contains(expected, StringComparison.Ordinal)
+                : string.Equals(actualOutput, expected, StringComparison.Ordinal));
+            string actual = !string.IsNullOrWhiteSpace(stderr) && !passed
+                ? actualOutput + "\n[stderr]\n" + stderr.TrimEnd()
+                : actualOutput;
+            executions.Add(new TestPipelineExecution(selectedPipeline, passed, actual, exit, executionElapsed));
+        }
+        return executions;
+    }
+
+    private static (int Exit, string Actual, string Stderr, TimeSpan? ExecutionElapsed) ExecuteTestRun(
+        string file,
+        string targetId,
+        BackendCompileOptions backendOptions,
+        AshesProject? effectiveProject,
+        TestDirectives directives,
+        string rawSource,
+        TestPipeline pipeline)
     {
         int exit;
         string actual;
         string stderr = "";
+        TimeSpan? executionElapsed = null;
         LoopbackServerInstance? loopbackServer = null;
         try
         {
-            string? sourceOverride = null;
-            IReadOnlyDictionary<string, string>? environmentVariables = null;
-            if (directives.TcpServer.Enabled)
-            {
-                loopbackServer = TcpServerInstance.Start(directives.TcpServer);
-                sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
-            }
-            else if (directives.TlsServer.Enabled)
-            {
-                loopbackServer = TlsServerInstance.Start(directives.TlsServer);
-                sourceOverride = ReplacePortPlaceholders(rawSource, loopbackServer.Port);
-                environmentVariables = loopbackServer.GetEnvironmentVariables();
-            }
+            string? sourceOverride;
+            IReadOnlyDictionary<string, string>? environmentVariables;
+            (loopbackServer, sourceOverride, environmentVariables) = PrepareLoopbackServer(directives, rawSource);
 
-            var image = CompileFileToImage(file, targetId, backendOptions, effectiveProject, sourceOverride);
+            var image = CompileFileToImage(file, targetId, backendOptions, pipeline, effectiveProject, sourceOverride);
             loopbackServer?.StartAccepting();
-            var (runExit, stdout, runStderr) = RunImageCapture(image, targetId, directives.Stdin, directives.FileFixtures, environmentVariables);
+            var (runExit, stdout, runStderr, runElapsed) = RunImageCapture(
+                image,
+                targetId,
+                directives.Stdin,
+                directives.FileFixtures,
+                environmentVariables);
             exit = runExit;
             actual = (stdout ?? "").TrimEnd();
             stderr = runStderr ?? "";
+            executionElapsed = runElapsed;
             if (loopbackServer is not null)
             {
                 var fixtureError = loopbackServer.Complete();
@@ -270,7 +348,23 @@ public static class Runner
             loopbackServer?.Dispose();
         }
 
-        return (exit, actual, stderr);
+        return (exit, actual, stderr, executionElapsed);
+    }
+
+    private static (LoopbackServerInstance? Server, string? SourceOverride, IReadOnlyDictionary<string, string>? EnvironmentVariables)
+        PrepareLoopbackServer(TestDirectives directives, string rawSource)
+    {
+        if (directives.TcpServer.Enabled)
+        {
+            LoopbackServerInstance server = TcpServerInstance.Start(directives.TcpServer);
+            return (server, ReplacePortPlaceholders(rawSource, server.Port), null);
+        }
+        if (directives.TlsServer.Enabled)
+        {
+            LoopbackServerInstance server = TlsServerInstance.Start(directives.TlsServer);
+            return (server, ReplacePortPlaceholders(rawSource, server.Port), server.GetEnvironmentVariables());
+        }
+        return (null, null, null);
     }
 
     private static AshesProject? ResolveProjectForTestFile(string filePath, AshesProject? project)
@@ -786,18 +880,18 @@ public static class Runner
         return false;
     }
 
-    private static byte[] CompileFileToImage(string filePath, string targetId, BackendCompileOptions backendOptions, AshesProject? project = null, string? sourceOverride = null)
+    private static byte[] CompileFileToImage(string filePath, string targetId, BackendCompileOptions backendOptions, TestPipeline pipeline, AshesProject? project = null, string? sourceOverride = null)
     {
         var source = sourceOverride ?? File.ReadAllText(filePath);
 
         if (project is not null)
         {
-            return CompileProjectTestImage(filePath, targetId, backendOptions, project, source, sourceOverride);
+            return CompileProjectTestImage(filePath, targetId, backendOptions, pipeline, project, source, sourceOverride);
         }
 
         if (HasImports(source))
         {
-            return CompileImportsTestImage(filePath, targetId, backendOptions, source, sourceOverride);
+            return CompileImportsTestImage(filePath, targetId, backendOptions, pipeline, source, sourceOverride);
         }
 
         // A file with inline `module` blocks but no imports still needs the stitching layout so the
@@ -806,13 +900,13 @@ public static class Runner
         {
             var parsed = ProjectSupport.ParseImportHeader(source, filePath);
             var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, filePath, parsed.ImportSelectors);
-            return CompileToImage(layout.Source, targetId, backendOptions, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
+            return CompileToImage(layout.Source, targetId, backendOptions, pipeline, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
         }
 
-        return CompileToImage(source, targetId, backendOptions);
+        return CompileToImage(source, targetId, backendOptions, pipeline);
     }
 
-    private static byte[] CompileProjectTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, AshesProject project, string source, string? sourceOverride)
+    private static byte[] CompileProjectTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, TestPipeline pipeline, AshesProject project, string source, string? sourceOverride)
     {
         var testProject = new AshesProject(
             ProjectFilePath: project.ProjectFilePath,
@@ -829,7 +923,7 @@ public static class Runner
         if (sourceOverride is null)
         {
             var compilationLayout = ProjectSupport.BuildCompilationLayout(plan);
-            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
+            return CompileToImage(compilationLayout.Source, targetId, backendOptions, pipeline, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
         }
 
         var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -848,10 +942,10 @@ public static class Runner
 
             mergedAliases.TryAdd(alias, moduleName);
         }
-        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases, layout.ConstructorModules, layout);
+        return CompileToImage(layout.Source, targetId, backendOptions, pipeline, importedStdModules.Count == 0 ? null : importedStdModules, mergedAliases.Count == 0 ? null : mergedAliases, layout.ConstructorModules, layout);
     }
 
-    private static byte[] CompileImportsTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, string source, string? sourceOverride)
+    private static byte[] CompileImportsTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, TestPipeline pipeline, string source, string? sourceOverride)
     {
         if (sourceOverride is null)
         {
@@ -870,7 +964,7 @@ public static class Runner
             );
             var plan = ProjectSupport.BuildCompilationPlan(standaloneProject);
             var compilationLayout = ProjectSupport.BuildCompilationLayout(plan);
-            return CompileToImage(compilationLayout.Source, targetId, backendOptions, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
+            return CompileToImage(compilationLayout.Source, targetId, backendOptions, pipeline, plan.ImportedStdModules, plan.MergedAliases.Count == 0 ? null : plan.MergedAliases, compilationLayout.ConstructorModules, compilationLayout);
         }
 
         var parsed = ProjectSupport.ParseImportHeader(source, filePath);
@@ -885,13 +979,14 @@ public static class Runner
                 .Select(provenance => provenance.ModuleName)
                 .Where(ProjectSupport.IsStdModule));
         }
-        return CompileToImage(layout.Source, targetId, backendOptions, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
+        return CompileToImage(layout.Source, targetId, backendOptions, pipeline, importedStdModules, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
     }
 
     private static byte[] CompileToImage(
         string source,
         string targetId,
         BackendCompileOptions backendOptions,
+        TestPipeline pipeline,
         IReadOnlySet<string>? importedStdModules = null,
         IReadOnlyDictionary<string, string>? moduleAliases = null,
         IReadOnlyDictionary<string, IReadOnlySet<string>>? constructorModulesByName = null,
@@ -910,14 +1005,16 @@ public static class Runner
         {
             lowering.SetSourceContext(layout);
         }
-        var ir = lowering.Lower(program);
+        var loweredIr = lowering.Lower(program);
         diag.ThrowIfAny();
 
-        // The test runner hands the backend the IR exactly as lowered, with no optimization pass, so
-        // this is that path's final IR -- the same invariant the report promises, at a different point.
+        var finalIr = pipeline == TestPipeline.Optimized
+            ? IrOptimizer.Optimize(loweredIr)
+            : loweredIr;
+
         if (!_explain.IsEmpty)
         {
-            var report = IrExplainReporter.Build(lowering.GetDecisionSnapshot(), ir, _explain);
+            var report = IrExplainReporter.Build(lowering.GetDecisionSnapshot(), finalIr, _explain);
             foreach (var line in ExplainReportFormatter.Format(report, _explain))
             {
                 Console.Error.WriteLine(line);
@@ -925,10 +1022,10 @@ public static class Runner
         }
 
         var backend = BackendFactory.Create(targetId);
-        return backend.Compile(ir, backendOptions);
+        return backend.Compile(finalIr, backendOptions);
     }
 
-    private static (int ExitCode, string Stdout, string Stderr) RunImageCapture(
+    private static (int ExitCode, string Stdout, string Stderr, TimeSpan ExecutionElapsed) RunImageCapture(
         byte[] image,
         string targetId,
         string? stdin = null,
@@ -1032,9 +1129,10 @@ public static class Runner
         return psi;
     }
 
-    private static (int ExitCode, string Stdout, string Stderr) RunProcessCaptureOutput(ProcessStartInfo psi, string? stdin)
+    private static (int ExitCode, string Stdout, string Stderr, TimeSpan ExecutionElapsed) RunProcessCaptureOutput(ProcessStartInfo psi, string? stdin)
     {
-        using var p = StartProcessWithRetry(psi);
+        Stopwatch executionStopwatch = Stopwatch.StartNew();
+        using Process p = StartProcessWithRetry(psi);
         if (stdin is not null)
         {
             p.StandardInput.Write(stdin);
@@ -1043,26 +1141,9 @@ public static class Runner
 
         var stdoutTask = p.StandardOutput.ReadToEndAsync();
         var stderrTask = p.StandardError.ReadToEndAsync();
-        var timeout = TestProcessTimeout;
-        var timedOut = false;
-        if (timeout > TimeSpan.Zero && !p.WaitForExit((int)timeout.TotalMilliseconds))
-        {
-            timedOut = true;
-            try
-            {
-                p.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-            }
-            try
-            {
-                p.WaitForExit(5000);
-            }
-            catch
-            {
-            }
-        }
+        TimeSpan timeout = TestProcessTimeout;
+        bool timedOut = WaitForTestProcess(p, timeout);
+        executionStopwatch.Stop();
 
         // Exited-on-its-own closes the pipes, so the read tasks complete; wait unconditionally to
         // avoid truncating output under a saturated thread pool. Bound the wait only after a kill,
@@ -1088,9 +1169,37 @@ public static class Runner
         {
             var notice = $"test process timed out after {(long)timeout.TotalMilliseconds} ms and was killed";
             stderr = string.IsNullOrEmpty(stderr) ? notice : stderr.TrimEnd() + "\n" + notice;
-            return (1, stdout, stderr);
+            return (1, stdout, stderr, executionStopwatch.Elapsed);
         }
-        return (p.ExitCode, stdout, stderr);
+        return (p.ExitCode, stdout, stderr, executionStopwatch.Elapsed);
+    }
+
+    private static bool WaitForTestProcess(Process process, TimeSpan timeout)
+    {
+        if (timeout <= TimeSpan.Zero)
+        {
+            process.WaitForExit();
+            return false;
+        }
+        if (process.WaitForExit((int)timeout.TotalMilliseconds))
+        {
+            return false;
+        }
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
+        try
+        {
+            process.WaitForExit(5000);
+        }
+        catch
+        {
+        }
+        return true;
     }
 
     private static void RenderResults(List<TestResult> results, IAnsiConsole console)
@@ -1112,7 +1221,15 @@ public static class Runner
                 continue;
             }
 
-            var time = FormatElapsed(r.ElapsedMs);
+            string time = r.PipelineExecutions is { Count: > 0 } pipelineExecutions
+                ? FormatPipelineExecutionTimes(pipelineExecutions)
+                : r.ExecutionElapsed is TimeSpan executionElapsed
+                    ? FormatExecutionElapsed(executionElapsed)
+                    : "—";
+            if (time.Length == 0)
+            {
+                time = "—";
+            }
             if (r.Passed)
             {
                 pass++;
@@ -1133,20 +1250,60 @@ public static class Runner
 
         if (fail > 0)
         {
-            console.WriteLine();
-            foreach (var r in results.Where(x => x.HasExpected && !x.Passed))
+            RenderFailures(results, console);
+        }
+    }
+
+    private static void RenderFailures(List<TestResult> results, IAnsiConsole console)
+    {
+        console.WriteLine();
+        foreach (TestResult result in results.Where(item => item.HasExpected && !item.Passed))
+        {
+            console.Write(new Rule(Path.GetFileName(result.Path)).RuleStyle("red").LeftJustified());
+            IReadOnlyList<TestPipelineExecution> failedExecutions = result.PipelineExecutions?
+                .Where(execution => !execution.Passed)
+                .ToList()
+                ?? [new TestPipelineExecution(TestPipeline.Optimized, false, result.Actual, result.ExitCode, result.ExecutionElapsed)];
+            foreach (TestPipelineExecution execution in failedExecutions)
             {
-                console.Write(new Rule(Path.GetFileName(r.Path)).RuleStyle("red").LeftJustified());
-                console.MarkupLine($"[grey]Expected exit:[/] {r.ExpectedExitCode}");
-                console.MarkupLine($"[grey]Actual exit:[/] {r.ExitCode}");
+                if ((result.PipelineExecutions?.Count ?? 0) > 1)
+                {
+                    console.MarkupLine($"[grey]Pipeline:[/] {FormatPipelineName(execution.Pipeline)}");
+                }
+                console.MarkupLine($"[grey]Expected exit:[/] {result.ExpectedExitCode}");
+                console.MarkupLine($"[grey]Actual exit:[/] {execution.ExitCode}");
                 console.MarkupLine("[grey]Expected:[/]");
-                console.WriteLine(string.IsNullOrEmpty(r.Expected) ? "(empty)" : r.Expected);
+                console.WriteLine(string.IsNullOrEmpty(result.Expected) ? "(empty)" : result.Expected);
                 console.MarkupLine("[grey]Actual:[/]");
-                console.WriteLine(string.IsNullOrEmpty(r.Actual) ? "(empty)" : r.Actual);
+                console.WriteLine(string.IsNullOrEmpty(execution.Actual) ? "(empty)" : execution.Actual);
                 console.WriteLine();
             }
         }
     }
+
+    private static string FormatPipelineExecutionTimes(IReadOnlyList<TestPipelineExecution> executions)
+    {
+        bool includeNames = executions.Count > 1;
+        return string.Join(
+            " ",
+            executions
+                .Where(execution => execution.ExecutionElapsed.HasValue)
+                .Select(execution => includeNames
+                    ? $"{FormatPipelineTimingName(execution.Pipeline)}={FormatExecutionElapsed(execution.ExecutionElapsed!.Value)}"
+                    : FormatExecutionElapsed(execution.ExecutionElapsed!.Value)));
+    }
+
+    private static string FormatPipelineTimingName(TestPipeline pipeline) => pipeline == TestPipeline.Optimized
+        ? "opt"
+        : FormatPipelineName(pipeline);
+
+    private static string FormatPipelineName(TestPipeline pipeline) => pipeline switch
+    {
+        TestPipeline.Optimized => "optimized",
+        TestPipeline.Lowered => "lowered",
+        TestPipeline.Both => "both",
+        _ => throw new InvalidEnumArgumentException(nameof(pipeline), (int)pipeline, typeof(TestPipeline)),
+    };
 
     /// <summary>Renders a duration of <paramref name="ms"/> milliseconds as a compact human-readable
     /// string, scaling to <c>ms</c>, seconds, or minutes as appropriate.</summary>
@@ -1161,6 +1318,31 @@ public static class Runner
         return seconds < 60
             ? seconds.ToString("F2", CultureInfo.InvariantCulture) + "s"
             : (seconds / 60.0).ToString("F2", CultureInfo.InvariantCulture) + "min";
+    }
+
+    /// <summary>Renders native process execution time with microsecond precision below one
+    /// millisecond, millisecond precision below one second, and the ordinary elapsed formatter for
+    /// longer executions.</summary>
+    public static string FormatExecutionElapsed(TimeSpan elapsed)
+    {
+        double microseconds = elapsed.TotalMicroseconds;
+        if (microseconds <= 0)
+        {
+            return "0µs";
+        }
+        if (microseconds < 1)
+        {
+            return microseconds.ToString("F1", CultureInfo.InvariantCulture) + "µs";
+        }
+        if (microseconds < 1_000)
+        {
+            return microseconds.ToString("F0", CultureInfo.InvariantCulture) + "µs";
+        }
+        if (elapsed.TotalMilliseconds < 1_000)
+        {
+            return elapsed.TotalMilliseconds.ToString("F2", CultureInfo.InvariantCulture) + "ms";
+        }
+        return FormatElapsed((long)Math.Round(elapsed.TotalMilliseconds));
     }
 
     private abstract class LoopbackServerInstance : IDisposable

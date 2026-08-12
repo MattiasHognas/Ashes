@@ -16,7 +16,7 @@ static int Usage(int exitCode = 2)
     AnsiConsole.MarkupLine("  [bold]ashes compile[/] [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-o <output>]]");
     AnsiConsole.MarkupLine("  [bold]ashes run[/]     [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--debug|-g]] [[--explain <kind>]] [[--emit-ir <lowered|final>]] <input.ash | --expr \"...\" > [[-- <args...>]]");
     AnsiConsole.MarkupLine("  [bold]ashes repl[/]    [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]]");
-    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|traits|memory>]] [[paths...]]");
+    AnsiConsole.MarkupLine("  [bold]ashes test[/]    [[--project <project.json>]] [[--target linux-x64|linux-arm64|win-x64|win-arm64]] [[-O0|-O1|-O2|-O3]] [[--pipeline optimized|lowered|both]] [[--target-cpu <cpu>]] [[--explain <ownership|rc|reuse|traits|memory>]] [[paths...]]");
     AnsiConsole.MarkupLine("  [bold]ashes fmt[/]     <file|dir> [[-w]]");
     AnsiConsole.MarkupLine("  [bold]ashes init[/]");
     AnsiConsole.MarkupLine("  [bold]ashes add[/]     <package> [[--project <project.json>]] [[--path <dir>]] [[--dev]]");
@@ -34,7 +34,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]--project[/]", "Use a specific project manifest.");
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
-    table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select optimization level.");
+    table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select LLVM optimization level. Test semantic pipelines use --pipeline optimized|lowered|both.");
     table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
@@ -1171,9 +1171,10 @@ async Task<int> RunTest(string[] a)
         return Usage(0);
     }
 
-    // ashes test [--project ...] [--target ...] [paths...]
+    // ashes test [--project ...] [--target ...] [--pipeline ...] [paths...]
     string? target = null;
     BackendOptimizationLevel optimizationLevel = BackendCompileOptions.Default.OptimizationLevel;
+    Runner.TestPipeline pipeline = Runner.TestPipeline.Optimized;
     string? projectPath = null;
     string? targetCpu = null;
     long? parallelStackBytes = null;
@@ -1189,6 +1190,7 @@ async Task<int> RunTest(string[] a)
         if (string.Equals(arg, "--parallel-stack-size", StringComparison.Ordinal) && i + 1 < a.Length) { parallelStackBytes = ParseParallelStackSize(a[++i]); continue; }
         if (string.Equals(arg, "--parallel-workers", StringComparison.Ordinal) && i + 1 < a.Length) { parallelWorkers = ParseParallelWorkers(a[++i]); continue; }
         if (string.Equals(arg, "--project", StringComparison.Ordinal) && i + 1 < a.Length) { projectPath = a[++i]; continue; }
+        if (TryParseTestPipelineOption(a, ref i, ref pipeline)) { continue; }
         if (TryParseCompilerReportOption(a, ref i, reports)) { continue; }
         if (TryParseOptimizationFlag(arg, out var parsedOptimizationLevel)) { optimizationLevel = parsedOptimizationLevel; continue; }
         if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -1199,12 +1201,52 @@ async Task<int> RunTest(string[] a)
         paths.Add(arg);
     }
 
-    await AutoRestoreProjectAsync(projectPath, null, null).ConfigureAwait(false);
-    var project = ResolveProject(projectPath, null, null);
-    target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
-    var backendOptions = new BackendCompileOptions(optimizationLevel, TargetCpu: targetCpu, ParallelWorkerStackBytes: parallelStackBytes, ParallelWorkerCap: parallelWorkers);
+    return await ExecuteTestsAsync(
+        paths, target, projectPath, optimizationLevel, targetCpu, parallelStackBytes, parallelWorkers,
+        reports.ToExplainRequest(), pipeline).ConfigureAwait(false);
+}
 
-    return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions, reports.ToExplainRequest());
+static async Task<int> ExecuteTestsAsync(
+    List<string> paths,
+    string? target,
+    string? projectPath,
+    BackendOptimizationLevel optimizationLevel,
+    string? targetCpu,
+    long? parallelStackBytes,
+    long? parallelWorkers,
+    ExplainRequest explain,
+    Runner.TestPipeline pipeline)
+{
+    await AutoRestoreProjectAsync(projectPath, null, null).ConfigureAwait(false);
+    AshesProject? project = ResolveProject(projectPath, null, null);
+    target ??= project?.Target ?? BackendFactory.DefaultForCurrentOS();
+    var backendOptions = new BackendCompileOptions(
+        optimizationLevel,
+        TargetCpu: targetCpu,
+        ParallelWorkerStackBytes: parallelStackBytes,
+        ParallelWorkerCap: parallelWorkers);
+    return Runner.RunTests(paths, target, AnsiConsole.Console, project, backendOptions, explain, pipeline);
+}
+
+static bool TryParseTestPipelineOption(string[] args, ref int index, ref Runner.TestPipeline pipeline)
+{
+    if (!string.Equals(args[index], "--pipeline", StringComparison.Ordinal))
+    {
+        return false;
+    }
+    if (index + 1 >= args.Length)
+    {
+        throw new CliUsageException("--pipeline requires optimized, lowered, or both.");
+    }
+
+    pipeline = args[++index] switch
+    {
+        "optimized" => Runner.TestPipeline.Optimized,
+        "lowered" => Runner.TestPipeline.Lowered,
+        "both" => Runner.TestPipeline.Both,
+        _ => throw new CliUsageException("--pipeline must be optimized, lowered, or both."),
+    };
+    return true;
 }
 
 async Task<int> RunFmtAsync(string[] a)

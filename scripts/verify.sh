@@ -116,13 +116,13 @@ done
 
 ## Run tests.
 echo "--- Running tests..."
-"$ashesCli" test tests/*.ash
+"$ashesCli" test --pipeline both tests/*.ash
 
 ### Run test projects.
 echo "--- Running test projects..."
 for project in tests/**/*.json; do
   pushd "$(dirname "$project")" > /dev/null
-  "$ashesCli" test --project "$(basename "$project")"
+  "$ashesCli" test --pipeline both --project "$(basename "$project")"
   popd > /dev/null
 done
 
