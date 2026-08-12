@@ -39,6 +39,8 @@ needed by scoped concurrency; and capability coverage makes the authority of tho
 
 ## Milestone 1: Explicit exports and opaque constructors
 
+Status: completed in [PR #418](https://github.com/MattiasHognas/Ashes/pull/418) on 2026-08-12.
+
 ### Current limitation
 
 An imported file exports every top-level `let`, every top-level `type`, and all of that type's
