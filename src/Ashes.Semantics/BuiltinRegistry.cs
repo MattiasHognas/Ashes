@@ -491,6 +491,17 @@ public static class BuiltinRegistry
                     // produces an independent deep copy. Semantically identity for immutable values.
                     ["deepCopy"] = new("deepCopy", BuiltinValueKind.InternalDeepCopy, IsCallable: true, Arity: 1)
                 }),
+            ["Ashes.Internal.Regex"] = new(
+                "Ashes.Internal.Regex",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["compileRaw"] = new("compileRaw", BuiltinValueKind.RegexCompile, IsCallable: true, Arity: 1),
+                    ["compileError"] = new("compileError", BuiltinValueKind.RegexCompileError, IsCallable: true, Arity: 1),
+                    ["findFrom"] = new("findFrom", BuiltinValueKind.RegexFind, IsCallable: true, Arity: 3),
+                    ["capturesFrom"] = new("capturesFrom", BuiltinValueKind.RegexCaptures, IsCallable: true, Arity: 3),
+                    ["substituteAll"] = new("substituteAll", BuiltinValueKind.RegexSubstitute, IsCallable: true, Arity: 3)
+                }),
             ["Ashes.IO.File"] = new(
                 "Ashes.IO.File",
                 null,
@@ -680,14 +691,7 @@ public static class BuiltinRegistry
             ["Ashes.Text.Regex"] = new(
                 "Ashes.Text.Regex",
                 "Ashes.Semantics.StdLib.Ashes.Text.Regex.ash",
-                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
-                {
-                    ["compileRaw"] = new("compileRaw", BuiltinValueKind.RegexCompile, IsCallable: true, Arity: 1),
-                    ["compileError"] = new("compileError", BuiltinValueKind.RegexCompileError, IsCallable: true, Arity: 1),
-                    ["findFrom"] = new("findFrom", BuiltinValueKind.RegexFind, IsCallable: true, Arity: 3),
-                    ["capturesFrom"] = new("capturesFrom", BuiltinValueKind.RegexCaptures, IsCallable: true, Arity: 3),
-                    ["substituteAll"] = new("substituteAll", BuiltinValueKind.RegexSubstitute, IsCallable: true, Arity: 3)
-                })
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal))
         };
 
     /// <summary>
@@ -915,6 +919,11 @@ public static class BuiltinRegistry
             return;
         }
 
+        if (TryCollectExplicitResourceExports(program, exports))
+        {
+            return;
+        }
+
         // Model-A top-level declarations: a module exports its top-level `let`/`type` items only.
         foreach (var item in program.Items)
         {
@@ -956,6 +965,33 @@ public static class BuiltinRegistry
                     break;
             }
         }
+    }
+
+    private static bool TryCollectExplicitResourceExports(Program program, HashSet<string> exports)
+    {
+        ExportDecl? explicitInterface = program.Items
+            .OfType<TopLevelItem.Export>()
+            .Select(item => item.Decl)
+            .SingleOrDefault();
+        if (explicitInterface is null)
+        {
+            return false;
+        }
+
+        exports.Clear();
+        foreach (ExportItem item in explicitInterface.Items)
+        {
+            string name = item switch
+            {
+                ExportItem.Value value => value.Name,
+                ExportItem.Type type => type.Name,
+                ExportItem.Module module => module.Name,
+                _ => throw new InvalidOperationException("Unknown export item."),
+            };
+            exports.Add(name);
+        }
+
+        return true;
     }
 
     private static string? LoadEmbeddedResource(string resourceName)

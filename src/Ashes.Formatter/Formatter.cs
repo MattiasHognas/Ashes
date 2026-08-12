@@ -366,6 +366,9 @@ public static class Formatter
     {
         switch (item)
         {
+            case TopLevelItem.Export export:
+                WriteExportDecl(sb, export.Decl, options);
+                return;
             case TopLevelItem.Type t:
                 WriteTypeDecl(sb, t.Decl, options);
                 return;
@@ -391,6 +394,40 @@ public static class Formatter
                 WriteRecursiveGroup(sb, group, preferPipelines, options);
                 return;
         }
+    }
+
+    private static void WriteExportDecl(StringBuilder sb, ExportDecl declaration, FormattingOptions options)
+    {
+        sb.Append("export (\n");
+        foreach (ExportItem item in declaration.Items)
+        {
+            WriteIndent(sb, options.IndentSize, options);
+            switch (item)
+            {
+                case ExportItem.Value value:
+                    sb.Append("value ").Append(value.Name);
+                    break;
+                case ExportItem.Module module:
+                    sb.Append("module ").Append(module.Name);
+                    break;
+                case ExportItem.Type type:
+                    sb.Append("type ").Append(type.Name);
+                    switch (type.Constructors)
+                    {
+                        case ExportConstructors.All:
+                            sb.Append("(..)");
+                            break;
+                        case ExportConstructors.Selected selected:
+                            sb.Append('(').Append(string.Join(", ", selected.Names)).Append(')');
+                            break;
+                    }
+                    break;
+            }
+
+            sb.Append(",\n");
+        }
+
+        sb.Append(")\n");
     }
 
     private static void WriteLetDecl(StringBuilder sb, TopLevelItem.LetDecl decl, bool preferPipelines, FormattingOptions options)

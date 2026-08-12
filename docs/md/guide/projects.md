@@ -201,12 +201,15 @@ Import cycles are not allowed.
 
 ### 4.6 Exported values and imported names
 
-Project modules are single-value modules.
+Project modules export their top-level values and types. By default this is the compatibility
+export-all interface; a leading `export (...)` declaration restricts the public surface and may
+expose a type abstractly, with selected constructors, or with every constructor. It also controls
+which direct inline modules are public. See [Language Reference](../reference/language.md#module-exports)
+for the grammar and complete rules.
 
-- A module exports the final value produced by its body.
-- When a module body has the shape `let name = expr in name` or `let recursive name = expr in name`,
-  `import Module` also brings `name` into local scope for the importing module.
-- Qualified access `Module.name` resolves to that exported name.
+- `import Module` brings the module's exported names into local scope.
+- Qualified access `Module.name` resolves only exported names.
+- Hidden values and constructors remain available inside their declaring module.
 - For multi-segment imports such as `import Foo.Bar`, short qualification `Bar.name`
   also resolves when `Bar` is the unique imported leaf module qualifier.
 - If two imported modules would introduce the same unqualified exported name,

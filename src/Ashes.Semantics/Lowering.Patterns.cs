@@ -1985,17 +1985,31 @@ public sealed partial class Lowering
     {
         const int DisplayLimit = 5;
         const int TruncateShowCount = 3;
+        bool hasHiddenConstructors = missing.Any(name =>
+            name.StartsWith(ProjectSupport.PrivateConstructorPrefix, StringComparison.Ordinal));
+        string[] visibleMissing = missing
+            .Where(name => !name.StartsWith(ProjectSupport.PrivateConstructorPrefix, StringComparison.Ordinal))
+            .ToArray();
+        if (visibleMissing.Length == 0)
+        {
+            return "Non-exhaustive match expression. Abstract or partially exported types require a catch-all pattern.";
+        }
 
-        IEnumerable<string> shown = missing.Count <= DisplayLimit
-            ? missing
-            : missing.Take(TruncateShowCount);
+        IEnumerable<string> shown = visibleMissing.Length <= DisplayLimit
+            ? visibleMissing
+            : visibleMissing.Take(TruncateShowCount);
 
         var listed = string.Join(", ", shown.Select(name => $"'{name}'"));
 
-        if (missing.Count > DisplayLimit)
+        if (visibleMissing.Length > DisplayLimit)
         {
-            int remainder = missing.Count - TruncateShowCount;
+            int remainder = visibleMissing.Length - TruncateShowCount;
             listed += $", ... and {remainder} more";
+        }
+
+        if (hasHiddenConstructors)
+        {
+            listed += ", plus hidden constructor case(s) requiring a catch-all pattern";
         }
 
         return $"Non-exhaustive match expression. Missing constructor(s): {listed}.";

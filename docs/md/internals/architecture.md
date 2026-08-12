@@ -120,6 +120,12 @@ Ashes has **no separate compilation and no binary artifacts**: `ProjectSupport.B
 resolves imports across directories and stitches every module into one source string that is
 type-inferred, monomorphized, and lowered as a unit. Three consequences shape the whole package model:
 
+Before stitching, each source module's optional explicit export interface is validated and converted
+to one shared value/type/constructor/submodule surface. The stitcher uses that surface for whole-module
+imports, selectors, aliases, and constructor qualification; the LSP reads the same source interface
+for completion and definition lookup. Hidden declarations remain in the stitched unit for internal
+calls, while their compiler names are private to prevent the global combined source from exposing them.
+
 - **A package is a source tree** — nothing to build or version by ABI. The global cache is
   content-addressed *source*; "installing" a cached package makes its roots visible to resolution rather
   than compiling it (so a cached `ashes add` is instant).

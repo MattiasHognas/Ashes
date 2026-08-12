@@ -19,7 +19,7 @@ Line endings
 
 Top-level declarations
 
-- A file is a sequence of imports, then top-level declarations, then an optional
+- A file is a sequence of imports, an optional export declaration, then top-level declarations, then an optional
   trailing expression (see [Language Reference](language.md) §1.1).
 - Exactly one blank line separates adjacent top-level declarations, and one blank
   line separates the last declaration from the trailing expression.
@@ -33,6 +33,8 @@ Top-level declarations
   module alias, and an `as` alias is never dropped.
 - Top-level `let` / `let recursive` declarations have no trailing `in`; they are formatted
   like a `let` binding without the `in` line.
+- An `export` declaration uses one item per line, indented 4 spaces. Every item receives a trailing
+  comma, and the closing `)` is unindented.
 
 Example:
 

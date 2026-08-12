@@ -62,15 +62,33 @@ public sealed partial class Lowering
             return resolvedCtorReference;
         }
 
-        // User module: resolve to the sanitized module binding if it exists.
-        var binding = Lookup(resolvedModule) ?? Lookup(sanitizedModuleName);
+        return LowerRemainingQualifiedVar(qv, resolvedModule, sanitizedModuleName);
+    }
+
+    private (int, TypeRef) LowerRemainingQualifiedVar(
+        Expr.QualifiedVar reference,
+        string resolvedModule,
+        string sanitizedModuleName)
+    {
+        if (_constructorModulesByName.ContainsKey(resolvedModule))
+        {
+            return ReportUnknownModuleExport(reference, resolvedModule);
+        }
+
+        Binding? binding = Lookup(resolvedModule) ?? Lookup(sanitizedModuleName);
         if (binding is null)
         {
-            ReportDiagnostic(GetSpan(qv), $"Unknown module '{qv.Module}'.");
+            ReportDiagnostic(GetSpan(reference), $"Unknown module '{reference.Module}'.");
             return ReturnNeverWithDummyTemp();
         }
 
-        return LowerRecordFieldAccessFallback(qv, binding);
+        return LowerRecordFieldAccessFallback(reference, binding);
+    }
+
+    private (int, TypeRef) ReportUnknownModuleExport(Expr.QualifiedVar reference, string moduleName)
+    {
+        ReportDiagnostic(GetSpan(reference), $"Module '{moduleName}' does not export '{reference.Name}'.");
+        return ReturnNeverWithDummyTemp();
     }
 
     private (int, TypeRef) LowerExportedQualifiedBinding(

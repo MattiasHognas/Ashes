@@ -427,6 +427,9 @@ public abstract record ExternalDecl
 /// </summary>
 public abstract record TopLevelItem
 {
+    /// <summary>A leading module export interface.</summary>
+    public sealed record Export(ExportDecl Decl) : TopLevelItem;
+
     /// <summary>A top-level <c>type</c> declaration.</summary>
     public sealed record Type(TypeDecl Decl) : TopLevelItem;
 
@@ -479,6 +482,36 @@ public abstract record TopLevelItem
         /// <summary>Written trait constraints for each binding, parallel to <see cref="Bindings"/>.</summary>
         public IReadOnlyList<IReadOnlyList<TraitConstraintSyntax>> Requires { get; init; } = [];
     }
+}
+
+/// <summary>A module's explicit public interface.</summary>
+public sealed record ExportDecl(IReadOnlyList<ExportItem> Items);
+
+/// <summary>One entry in an explicit module export interface.</summary>
+public abstract record ExportItem
+{
+    /// <summary>Exports one top-level value binding.</summary>
+    /// <param name="Name">The binding name.</param>
+    public sealed record Value(string Name) : ExportItem;
+    /// <summary>Exports a type with the requested constructor visibility.</summary>
+    /// <param name="Name">The type name.</param>
+    /// <param name="Constructors">The constructor visibility.</param>
+    public sealed record Type(string Name, ExportConstructors Constructors) : ExportItem;
+    /// <summary>Exports one direct nested module.</summary>
+    /// <param name="Name">The nested module name.</param>
+    public sealed record Module(string Name) : ExportItem;
+}
+
+/// <summary>Constructor visibility for an exported type.</summary>
+public abstract record ExportConstructors
+{
+    /// <summary>The type is abstract and none of its constructors are exported.</summary>
+    public sealed record Hidden : ExportConstructors;
+    /// <summary>Every constructor declared by the type is exported.</summary>
+    public sealed record All : ExportConstructors;
+    /// <summary>Only the named constructors are exported.</summary>
+    /// <param name="Names">The selected constructor names.</param>
+    public sealed record Selected(IReadOnlyList<string> Names) : ExportConstructors;
 }
 
 /// <summary>

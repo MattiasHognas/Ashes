@@ -45,6 +45,8 @@ Current codes:
 | `ASH034` | Content-hash mismatch against the lock file                    |
 | `ASH035` | Dependency graph contains a cycle                             |
 | `ASH036` | Missing or otherwise unresolvable concrete trait implementation |
+| `ASH037` | Duplicate module export entry                                  |
+| `ASH038` | Unknown or invalid module export entry                          |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -170,6 +172,15 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
 - `ASH024` — **Duplicate inline module.** Two inline modules with the same name are declared in
   the same scope (the same file level, or the same enclosing module).
   Message: `Duplicate inline module 'Name' in this scope.`
+
+## Module export diagnostics
+
+- `ASH037` — **Duplicate module export.** One export interface lists the same value, type, module,
+  or constructor more than once.
+
+- `ASH038` — **Unknown module export.** An export interface names a value, type, direct nested
+  module, or constructor that the declaring module does not define, or lists a constructor under a
+  type that does not declare it.
 
 ## Record diagnostics
 

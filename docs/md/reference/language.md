@@ -108,16 +108,22 @@ The reserved `Ashes` namespace is a module root, not a direct alias surface for
 
 ### 1.1 File Structure and Top-Level Declarations
 
-A source file is a flat sequence of imports, then top-level declarations, then an
+A source file is a flat sequence of imports, an optional export declaration, then top-level declarations, then an
 optional trailing expression:
 
 ```text
-file        ::= import* declaration* expr?
+file        ::= import* export-declaration? declaration* expr?
+export-declaration ::= "export" "(" export-item ("," export-item)* ","? ")"
+export-item ::= "value" ident
+              | "type" upper-ident
+              | "type" upper-ident "(" ".." ")"
+              | "type" upper-ident "(" upper-ident ("," upper-ident)* ")"
+              | "module" upper-ident
 declaration ::= let | letrec | type | external | capability | provide | trait | implement
 letrec      ::= "let" "recursive" binding ("and" binding)*
 ```
 
-- `import` lines come first (see §13.1).
+- `import` lines come first (see §13.1), followed by at most one `export` declaration.
 - `declaration` is a top-level `let`, a `let recursive ... and ...` group, a `type`
   declaration, an `external` declaration, a capability/provider declaration, or a trait/implementation
   declaration. Top-level `let`/`let recursive` declarations
@@ -1658,7 +1664,36 @@ selectors are checked against that set. For example `import Ashes.IO.print` and
 
 #### Module Exports
 
-When a file is imported as a module, its exports are:
+An optional export declaration defines a module's complete public interface. It follows imports and
+precedes every other declaration:
+
+```ash
+export (
+    value empty,
+    value insert,
+    type Map,
+    type Color(Red, Green),
+    type Maybe(..),
+    module InternalApi,
+)
+```
+
+- `value name` exports one top-level `let` or member of a top-level recursive group.
+- `type Name` exports a type abstractly. Importers may use the nominal type in annotations,
+  signatures, constraints, and implementations, but cannot construct or pattern-match it.
+- `type Name(..)` exports a type and every constructor. `type Name(C1, C2)` exports only the listed
+  constructors. A record constructor is governed by the same rule as an ordinary ADT constructor.
+- `module Name` exports a direct nested inline module. Nested members are then governed by that
+  module's own export declaration (or its compatibility export-all interface).
+
+An export declaration may contain a trailing comma. Each value, type, module, and constructor may be
+listed at most once. Every entry must name a declaration in that module; constructors must belong to
+the named type. Duplicate and unknown entries are compile-time errors (`ASH037` and `ASH038`). The
+declaration is an interface only: code inside the module retains access to every local declaration and
+constructor. Hidden names are reported to importers with the same unknown-export diagnostic as names
+that do not exist, so the interface does not reveal private implementation details.
+
+When a file has no export declaration, its compatibility interface exports:
 
 - all top-level `let` bindings,
 - all bindings of top-level `let recursive ... and ...` groups, and
@@ -1695,7 +1730,7 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   the same column rule the parser uses to find the next top-level item. A trailing
   line comment (`// …`) after the `=` is permitted. `module` is recognized only in
   this declaration position; it remains an ordinary identifier elsewhere.
-- **Members.** `let`, `let recursive ... and ...`, `type`, and nested `module`
+- **Members.** An optional leading `export` declaration, followed by `let`, `let recursive ... and ...`, `type`, and nested `module`
   declarations — the same forms a file may contain. A `module` block may **not**
   contain a trailing expression or an `external` declaration.
 - **Identity.** An inline module is an **exported submodule** of its file:
@@ -1703,10 +1738,9 @@ Ashes.IO.print(Ashes.Text.fromFloat(Geometry.area(2.0)))
   inline module to its own file (`File/Inner.ash`) leaves every `import` and call
   site unchanged. A separate inline module and a file that resolve to the *same*
   path are a compile-time ambiguity error.
-- **Exports.** Identical to file modules (above): all top-level `let` bindings,
-  all `let recursive ... and ...` groups, and all `type` declarations with their
-  constructors are exported; nested modules are exported as submodules. No
-  implicit re-export.
+- **Exports.** Identical to file modules (above): an explicit interface is honored when present;
+  otherwise all top-level bindings and types with their constructors, plus nested modules, are
+  exported. No implicit re-export.
 - **Scoping (Model A).** Inside a block the same sequential rule as the top level
   holds: a declaration sees earlier declarations in the block, never later ones;
   self-recursion needs `let recursive`, mutual recursion `let recursive ... and`.

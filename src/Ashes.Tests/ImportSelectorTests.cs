@@ -182,7 +182,7 @@ public sealed class ImportSelectorTests
         var ex = await Should.ThrowAsync<Exception>(() => RunAsync(
             "import Boxes as box\nimport Shapes.name\nAshes.IO.print(name(box.Green))\n",
             modules)).ConfigureAwait(false);
-        ex.Message.ShouldContain("Unknown module 'box'");
+        ex.Message.ShouldContain("Module 'Boxes' does not export 'Green'");
     }
 
     [Test]

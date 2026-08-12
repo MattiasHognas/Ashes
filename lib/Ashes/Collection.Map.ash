@@ -1,3 +1,25 @@
+export (
+    value empty,
+    value isEmpty,
+    value get,
+    value getWith,
+    value getStr,
+    value contains,
+    value containsWith,
+    value set,
+    value setWith,
+    value setStr,
+    value upsertStr,
+    value insert,
+    value insertWith,
+    value size,
+    value foldLeft,
+    value toList,
+    value fromList,
+    value fromListWith,
+    type MapTree,
+)
+
 type MapTree(K, V) =
     | Empty
     | Node(Int, MapTree, K, V, MapTree)
