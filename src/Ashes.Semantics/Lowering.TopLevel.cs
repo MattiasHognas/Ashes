@@ -514,6 +514,7 @@ public sealed partial class Lowering
         RecursiveGroupExpr group,
         LoweredValueRequest request)
     {
+        RegisterRecursiveGroupHoverParameterNames(group);
         var evidence = PrepareRecursiveGroupTraitEvidence(group);
         var bindings = evidence.Bindings;
         var groupNames = new HashSet<string>(bindings.Select(b => b.Name), StringComparer.Ordinal);
@@ -572,6 +573,18 @@ public sealed partial class Lowering
         var (bodyTemp, bodyType) = LowerExpr(group.Body, request);
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private void RegisterRecursiveGroupHoverParameterNames(RecursiveGroupExpr group)
+    {
+        for (int index = 0; index < group.Bindings.Count; index++)
+        {
+            TextSpan nameSpan = index < group.BindingNameSpans.Count
+                ? group.BindingNameSpans[index]
+                : GetSpan(group.Bindings[index].Value);
+            RegisterHoverParameterNames(nameSpan, group.Bindings[index].Value);
+            RegisterHoverParameterNames(GetSpan(group.Bindings[index].Value), group.Bindings[index].Value);
+        }
     }
 
     private static void ReplaceRecursiveGroupEvidenceRequirements(
@@ -718,7 +731,8 @@ public sealed partial class Lowering
                     ? group.BindingNameSpans[i]
                     : GetSpan(group.Bindings[i].Value),
                 group.Bindings[i].Name,
-                schemes[i]);
+                schemes[i],
+                GetDeclaredHoverParameterNames(group.Bindings[i].Value));
         }
         return schemes;
     }

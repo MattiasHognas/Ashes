@@ -39,13 +39,11 @@ public sealed partial class Lowering
         // scope chain. Membership in the lowered top-level function references proves the binding was
         // already emitted, so resolve it the same way an unqualified backward reference resolves
         // there rather than reporting the module as unknown.
-        if (Lookup(exportedBindingName) is not null || _topLevelFunctionRefs.ContainsKey(exportedBindingName))
+        Binding? exportedBinding = Lookup(exportedBindingName);
+        if (exportedBinding is not null || _topLevelFunctionRefs.ContainsKey(exportedBindingName))
         {
-            var resolvedQualifiedBinding = LowerVar(
-                new Expr.Var(exportedBindingName),
-                request);
-            RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", resolvedQualifiedBinding.Item2);
-            return resolvedQualifiedBinding;
+            return LowerExportedQualifiedBinding(
+                qv, resolvedModule, exportedBindingName, exportedBinding, request);
         }
 
         // A data constructor declared by the aliased module (e.g. `json.JsonInt` where `json` is
@@ -75,6 +73,22 @@ public sealed partial class Lowering
         return LowerRecordFieldAccessFallback(qv, binding);
     }
 
+    private (int, TypeRef) LowerExportedQualifiedBinding(
+        Expr.QualifiedVar reference,
+        string resolvedModule,
+        string exportedBindingName,
+        Binding? exportedBinding,
+        LoweredValueRequest request)
+    {
+        (int, TypeRef) lowered = LowerVar(new Expr.Var(exportedBindingName), request);
+        RecordHoverType(
+            GetSpan(reference),
+            $"{resolvedModule}.{reference.Name}",
+            lowered.Item2,
+            GetHoverParameterNames(exportedBinding));
+        return lowered;
+    }
+
     /// <summary>
     /// Resolves a member of a built-in module. A resource module may also expose non-member names,
     /// so only a non-resource module turns an unknown member into a diagnostic here.
@@ -90,9 +104,13 @@ public sealed partial class Lowering
             return false;
         }
 
-        if (builtinModule.Members.ContainsKey(qv.Name))
+        if (builtinModule.Members.TryGetValue(qv.Name, out BuiltinRegistry.BuiltinModuleMember? member))
         {
             lowered = ResolveBuiltinModuleMember(builtinModule, qv.Name);
+            if (member.IsCallable)
+            {
+                lowered = LowerBareQualifiedBuiltinFunctionReference(qv.Name, lowered.Item2);
+            }
             RecordHoverType(GetSpan(qv), $"{resolvedModule}.{qv.Name}", lowered.Item2);
             return true;
         }
@@ -448,6 +466,11 @@ public sealed partial class Lowering
     }
 
     private (int, TypeRef) LowerQualifiedBuiltinFunctionReference(string name, TypeRef type)
+    {
+        return (0, type);
+    }
+
+    private (int, TypeRef) LowerBareQualifiedBuiltinFunctionReference(string name, TypeRef type)
     {
         var temp = NewTemp();
         ReportDiagnostic(0, $"Intrinsic '{name}' must be called directly.");

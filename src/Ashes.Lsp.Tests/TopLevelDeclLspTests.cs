@@ -72,7 +72,7 @@ public sealed class TopLevelDeclLspTests
         var hover = DocumentService.GetHover(source, source.LastIndexOf("answer", StringComparison.Ordinal));
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("answer : Int");
+        hover.Value.Contents.ShouldBe("```ashes\nanswer : Int\n```\n\n*value*");
     }
 
     [Test]
@@ -85,7 +85,8 @@ public sealed class TopLevelDeclLspTests
         var hover = DocumentService.GetHover(source, source.IndexOf("isOdd", StringComparison.Ordinal));
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("isOdd : Int -> Bool");
+        hover.Value.Contents.ShouldContain("```ashes\nisOdd : Int -> Bool\n```");
+        hover.Value.Contents.ShouldContain("- `n` : `Int`");
     }
 
     [Test]

@@ -451,20 +451,89 @@ public sealed partial class Lowering
         RecordHoverType(GetSpan(expr), null, type);
     }
 
-    private void RecordHoverType(TextSpan span, string? name, TypeRef type)
+    private void RecordHoverType(
+        TextSpan span,
+        string? name,
+        TypeRef type,
+        IReadOnlyList<string>? parameterNames = null,
+        bool isParameter = false)
     {
-        RecordHoverScheme(span, name, new TypeScheme([], type));
+        RecordHoverScheme(span, name, new TypeScheme([], type), parameterNames, isParameter);
     }
 
-    private void RecordHoverScheme(TextSpan span, string? name, TypeScheme scheme)
+    private void RecordHoverScheme(
+        TextSpan span,
+        string? name,
+        TypeScheme scheme,
+        IReadOnlyList<string>? parameterNames = null,
+        bool isParameter = false)
     {
         if (!IsValidSpan(span))
         {
             return;
         }
 
-        _hoverTypes.Add(new HoverTypeInfo(span, name, scheme.Body, scheme.Constraints));
+        if (parameterNames is { Count: > 0 })
+        {
+            _hoverParameterNamesByDefinitionStart[span.Start] = parameterNames;
+        }
+        if (isParameter)
+        {
+            _hoverParameterDefinitionStarts.Add(span.Start);
+        }
+
+        _hoverTypes.Add(new HoverTypeInfo(
+            span,
+            name,
+            scheme.Body,
+            scheme.Constraints,
+            parameterNames,
+            isParameter));
     }
+
+    private static IReadOnlyList<string>? GetDeclaredHoverParameterNames(Expr value)
+    {
+        while (value is Expr.Let alias)
+        {
+            value = alias.Body;
+        }
+
+        if (value is not Expr.Lambda)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        while (value is Expr.Lambda lambda)
+        {
+            names.Add(lambda.ParamName);
+            value = lambda.Body;
+        }
+
+        return names;
+    }
+
+    private void RegisterHoverParameterNames(TextSpan definitionSpan, Expr value)
+    {
+        if (GetDeclaredHoverParameterNames(value) is { Count: > 0 } parameterNames)
+        {
+            _hoverParameterNamesByDefinitionStart[definitionSpan.Start] = parameterNames;
+        }
+    }
+
+    private IReadOnlyList<string>? GetHoverParameterNames(Binding? binding)
+    {
+        return binding?.DefinitionSpan is { } definitionSpan
+            && _hoverParameterNamesByDefinitionStart.TryGetValue(
+                definitionSpan.Start,
+                out IReadOnlyList<string>? parameterNames)
+                    ? parameterNames
+                    : null;
+    }
+
+    private bool GetHoverIsParameter(Binding? binding) =>
+        binding?.DefinitionSpan is { } definitionSpan
+        && _hoverParameterDefinitionStarts.Contains(definitionSpan.Start);
 
     private static bool IsValidSpan(TextSpan span)
     {

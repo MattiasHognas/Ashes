@@ -38,13 +38,13 @@ public sealed class TraitLspTests
         DocumentService.HoverItem? implementationMethod = DocumentService.GetHover(Source, implementationMethodPosition);
 
         trait.ShouldNotBeNull();
-        trait.Value.Contents.ShouldBe("trait Render(a)");
+        trait.Value.Contents.ShouldBe("```ashes\ntrait Render(a)\n```\n\n*trait*");
         method.ShouldNotBeNull();
-        method.Value.Contents.ShouldBe("Render.render : a -> Str requires {Render(a)}");
+        method.Value.Contents.ShouldBe("```ashes\nRender.render : a -> Str requires {Render(a)}\n```\n\n*trait method*");
         requirement.ShouldNotBeNull();
-        requirement.Value.Contents.ShouldBe("trait Render(a)");
+        requirement.Value.Contents.ShouldBe("```ashes\ntrait Render(a)\n```\n\n*trait*");
         implementationMethod.ShouldNotBeNull();
-        implementationMethod.Value.Contents.ShouldBe("Render.render : a -> Str requires {Render(a)}");
+        implementationMethod.Value.Contents.ShouldBe("```ashes\nRender.render : a -> Str requires {Render(a)}\n```\n\n*trait method*");
     }
 
     [Test]

@@ -11,7 +11,7 @@ Or review the [source here](https://github.com/MattiasHognas/Ashes).
 - **Syntax highlighting** — TextMate grammar for `.ash` files
 - **Diagnostics** — real-time error and warning squiggles from the Ashes language server
 - **Formatting** — auto-format on save using the canonical Ashes formatter
-- **Hover** — type information and documentation on hover
+- **Hover** — compiler-inferred signatures, parameter and return types, plus embedded standard-library documentation and reference links
 - **Go to Definition** — jump to function and binding definitions
 - **Completions** — context-aware IntelliSense suggestions
 - **Semantic tokens** — rich token-level highlighting

@@ -11,11 +11,15 @@ public sealed partial class Lowering
     /// <param name="Name">The bound name at the span, when the span is a named binding or reference; otherwise null.</param>
     /// <param name="Type">The inferred type of the expression occupying the span.</param>
     /// <param name="Constraints"></param>
+    /// <param name="ParameterNames">Source parameter names for a directly declared function, in curried order.</param>
+    /// <param name="IsParameter">Whether the named span declares or references a function parameter.</param>
     public readonly record struct HoverTypeInfo(
         TextSpan Span,
         string? Name,
         TypeRef Type,
-        IReadOnlyList<TraitConstraint>? Constraints = null);
+        IReadOnlyList<TraitConstraint>? Constraints = null,
+        IReadOnlyList<string>? ParameterNames = null,
+        bool IsParameter = false);
 
     private readonly Diagnostics _diag;
     private readonly LoweringConfiguration _configuration;
@@ -57,6 +61,8 @@ public sealed partial class Lowering
     // scope so a function body can itself build a task with `async(E)`.
     private Binding.Intrinsic? _asyncBinding;
     private readonly List<HoverTypeInfo> _hoverTypes = [];
+    private readonly Dictionary<int, IReadOnlyList<string>> _hoverParameterNamesByDefinitionStart = [];
+    private readonly HashSet<int> _hoverParameterDefinitionStarts = [];
 
     // Source location tracking for debug info
     private string? _currentFilePath;
@@ -590,6 +596,15 @@ public sealed partial class Lowering
     public string FormatType(TypeRef type)
     {
         return Pretty(type);
+    }
+
+    /// <summary>Renders related types with one shared type-variable naming context.</summary>
+    public IReadOnlyList<string> FormatTypes(IReadOnlyList<TypeRef> types)
+    {
+        Dictionary<int, string> typeVariableNames = [];
+        return types
+            .Select(type => Pretty(type, typeVariableNames, parentPrecedence: 0))
+            .ToArray();
     }
 
     /// <summary>Renders a constrained scheme with a canonical <c>requires</c> suffix.</summary>
@@ -2489,7 +2504,12 @@ public sealed partial class Lowering
 
         var result = LowerVarBound(v, b);
 
-        RecordHoverType(GetSpan(v), v.Name, result.Type);
+        RecordHoverType(
+            GetSpan(v),
+            v.Name,
+            result.Type,
+            GetHoverParameterNames(b),
+            GetHoverIsParameter(b));
 
         // Compiler-inferred borrowing.
         // When an owned binding is accessed, emit a Borrow instruction.
@@ -2907,7 +2927,11 @@ public sealed partial class Lowering
         ValidateBindingConstraintBoundary(
             scheme,
             GetSpan(binding));
-        RecordHoverScheme(AstSpans.GetLetNameOrDefault(binding), binding.Name, scheme);
+        RecordHoverScheme(
+            AstSpans.GetLetNameOrDefault(binding),
+            binding.Name,
+            scheme,
+            GetDeclaredHoverParameterNames(binding.Value));
         return scheme;
     }
 
@@ -4983,6 +5007,7 @@ public sealed partial class Lowering
         Expr.LetRecursive letRecursive,
         LoweredValueRequest request)
     {
+        RegisterHoverParameterNames(AstSpans.GetLetRecursiveNameOrDefault(letRecursive), letRecursive.Value);
         RecursiveTraitEvidenceElaboration evidence = PrepareRecursiveTraitEvidence(letRecursive);
         ResolvedBindingSignature signature = ResolveRecursiveTraitSignature(letRecursive, evidence);
         bool usesTraitDictionary = evidence.UsesDictionary;
@@ -5467,7 +5492,8 @@ public sealed partial class Lowering
         RecordHoverScheme(
             AstSpans.GetLetRecursiveNameOrDefault(letRecursive),
             letRecursive.Name,
-            recursiveScheme);
+            recursiveScheme,
+            GetDeclaredHoverParameterNames(letRecursive.Value));
         Emit(new IrInst.StoreLocal(slot, valueAndType.valTemp));
         RegisterLoweredRecursiveFunctionIdentity(letRecursive, slot, recursiveScheme);
     }
@@ -6698,7 +6724,7 @@ public sealed partial class Lowering
             AddStdIOBindings(scope);
         }
         var paramSpan = AstSpans.GetLambdaParameterOrDefault(lam);
-        RecordHoverType(paramSpan, lam.ParamName, paramTy);
+        RecordHoverType(paramSpan, lam.ParamName, paramTy, isParameter: true);
         scope[lam.ParamName] = new Binding.Local(argSlot, paramTy, paramSpan);
         // Reuse specialization: treat this parameter as a linear reuse root so a match-then-rebuild
         // on it overwrites the node in place. Consume the request so nested lambdas don't inherit it.
@@ -7897,14 +7923,9 @@ public sealed partial class Lowering
             return helperResult;
         }
 
-        if (rootExpr is Expr.Var varFunc && Lookup(varFunc.Name) is Binding.Intrinsic intrinsic)
+        if (LowerCallDirectNamedBinding(rootExpr, collectedArgs, request) is { } namedBindingResult)
         {
-            return LowerCallIntrinsic(rootExpr, intrinsic, collectedArgs, request);
-        }
-
-        if (rootExpr is Expr.Var externalVar && Lookup(externalVar.Name) is Binding.ExternalFunction externalFunction)
-        {
-            return LowerExternalCall(rootExpr, externalFunction.Function, collectedArgs);
+            return namedBindingResult;
         }
 
         // Qualified intrinsic call: Ashes.IO.print(...), Ashes.IO.panic(...)
@@ -7915,6 +7936,29 @@ public sealed partial class Lowering
         }
 
         return LowerCallGeneral(call, rootExpr, collectedArgs, request);
+    }
+
+    private (int, TypeRef)? LowerCallDirectNamedBinding(
+        Expr rootExpression,
+        List<Expr> arguments,
+        LoweredValueRequest request)
+    {
+        if (rootExpression is not Expr.Var variable)
+        {
+            return null;
+        }
+
+        if (Lookup(variable.Name) is Binding.Intrinsic intrinsic)
+        {
+            RecordHoverScheme(GetSpan(rootExpression), variable.Name, intrinsic.S);
+            return LowerCallIntrinsic(rootExpression, intrinsic, arguments, request);
+        }
+        if (Lookup(variable.Name) is Binding.ExternalFunction externalFunction)
+        {
+            RecordHoverType(GetSpan(rootExpression), variable.Name, externalFunction.Type);
+            return LowerExternalCall(rootExpression, externalFunction.Function, arguments);
+        }
+        return null;
     }
 
     private (int Temp, TypeRef Type)? TryLowerTcoSelfCall(
@@ -9005,6 +9049,12 @@ public sealed partial class Lowering
         {
             return ReportArityMismatch(rootExpr, builtinMember.Arity, collectedArgs.Count);
         }
+
+        TypeRef functionType = ResolveBuiltinModuleMember(builtinModule, qv.Name).Item2;
+        RecordHoverType(
+            GetSpan(qv),
+            $"{resolvedModule}.{qv.Name}",
+            functionType);
 
         // The dispatch is split into ordered groups; each group falls through (null) to the next.
         return LowerCallBuiltinIoText(builtinMember.Kind, collectedArgs, request)

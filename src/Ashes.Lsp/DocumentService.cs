@@ -65,7 +65,7 @@ public static partial class DocumentService
     /// <param name="TokenModifiers">Bitset of token modifiers applied to the token.</param>
     public readonly record struct SemanticTokenItem(int Line, int Character, int Length, int TokenType, int TokenModifiers);
 
-    private readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Selector, string? Alias)
+    internal readonly record struct ImportItem(TextSpan Span, string ModuleName, string? Selector, string? Alias)
     {
         /// <summary>
         /// The unqualified name this import binds: the alias when present, otherwise the selected
@@ -557,7 +557,7 @@ public static partial class DocumentService
         _ = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules).Lower(program);
 
         return diag.StructuredErrors
-            .Select(d => (Diagnostic: d, MappedSpan: MapToOriginalSpan(d.Start, d.End, context.EntryOffset, context.BodyStart, context.StrippedSource.Length)))
+            .Select(d => (Diagnostic: d, MappedSpan: MapToOriginalSpan(d.Start, d.End, context)))
             .Where(x => x.MappedSpan is not null)
             .Select(x => new DiagnosticItem(
                 x.MappedSpan!.Value.Start + context.HeaderOffset,
@@ -1272,6 +1272,7 @@ public static partial class DocumentService
     /// </summary>
     public static HoverItem? GetHover(string source, int position, string? filePath = null)
     {
+        ImportHeaderInfo hoverHeader = StripImportHeader(source);
         var context = PrepareAnalysisContext(source, filePath);
         if (context.Diagnostics.Count > 0)
         {
@@ -1304,9 +1305,7 @@ public static partial class DocumentService
         var mappedSpan = MapToOriginalSpan(
             hover.Value.Span.Start,
             hover.Value.Span.End,
-            context.EntryOffset,
-            context.BodyStart,
-            context.StrippedSource.Length);
+            context);
         if (mappedSpan is null)
         {
             return null;
@@ -1314,14 +1313,112 @@ public static partial class DocumentService
 
         TypeScheme hoverScheme = new([], hover.Value.Type, hover.Value.Constraints ?? []);
         string formattedType = lowering.FormatTypeScheme(hoverScheme);
-        var displayText = string.IsNullOrEmpty(hover.Value.Name)
-            ? formattedType
-            : $"{hover.Value.Name} : {formattedType}";
+        string? canonicalName = ResolveCanonicalHoverName(hover.Value.Name, hoverHeader.Imports);
+        string displayText = FormatHoverMarkdown(lowering, hover.Value, formattedType, canonicalName);
 
         return new HoverItem(
             mappedSpan.Value.Start + context.HeaderOffset,
             mappedSpan.Value.End + context.HeaderOffset,
             displayText);
+    }
+
+    private static string? ResolveCanonicalHoverName(
+        string? name,
+        IReadOnlyList<ImportItem> imports)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return null;
+        }
+        if (name.StartsWith("Ashes.", StringComparison.Ordinal))
+        {
+            return name;
+        }
+
+        foreach (ImportItem import in imports)
+        {
+            if (import.Selector is not null
+                && string.Equals(import.LocalName, name, StringComparison.Ordinal))
+            {
+                return $"{import.ModuleName}.{import.Selector}";
+            }
+        }
+
+        return StandardLibraryDocumentation.ResolveUnqualified(name, imports) ?? name;
+    }
+
+    private static string FormatHoverMarkdown(
+        Lowering lowering,
+        Lowering.HoverTypeInfo hover,
+        string formattedType,
+        string? canonicalName)
+    {
+        string? displayName = canonicalName ?? hover.Name;
+        bool isFunction = hover.Type is TypeRef.TFun;
+        string signature = string.IsNullOrEmpty(displayName)
+            ? formattedType
+            : $"{displayName} : {formattedType}";
+        var markdown = new StringBuilder();
+        markdown.Append("```ashes\n");
+        markdown.Append(signature);
+        markdown.Append("\n```");
+        string kind = hover.IsParameter
+            ? "parameter"
+            : isFunction
+                ? "function"
+                : string.IsNullOrEmpty(displayName) ? "expression" : "value";
+        markdown.Append($"\n\n*{kind}*");
+
+        AppendParameterDetails(markdown, lowering, hover);
+
+        if (displayName is not null
+            && StandardLibraryDocumentation.TryGet(displayName, out StandardLibraryDocumentation.Entry documentation))
+        {
+            markdown.Append("\n\n---\n\n");
+            markdown.Append(documentation.Summary);
+            markdown.Append("\n\n[Open standard-library documentation](");
+            markdown.Append(documentation.Url);
+            markdown.Append(')');
+        }
+
+        return markdown.ToString();
+    }
+
+    private static void AppendParameterDetails(
+        StringBuilder markdown,
+        Lowering lowering,
+        Lowering.HoverTypeInfo hover)
+    {
+        if (hover.ParameterNames is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var parameterTypes = new List<TypeRef>();
+        TypeRef returnType = hover.Type;
+        foreach (string _ in hover.ParameterNames)
+        {
+            if (returnType is not TypeRef.TFun function)
+            {
+                return;
+            }
+            parameterTypes.Add(function.Arg);
+            returnType = function.Ret;
+        }
+
+        IReadOnlyList<string> formattedParts = lowering.FormatTypes([.. parameterTypes, returnType]);
+        markdown.Append("\n\n**Parameters**\n");
+        for (int index = 0; index < hover.ParameterNames.Count; index++)
+        {
+            markdown.Append("\n- `");
+            markdown.Append(hover.ParameterNames[index]);
+            markdown.Append("` : `");
+            markdown.Append(formattedParts[index]);
+            markdown.Append('`');
+        }
+        markdown.Append("\n\n**Returns:** `");
+        markdown.Append(formattedParts[^1]);
+        markdown.Append('`');
     }
 
     private static HoverItem? GetMappedTraitHover(
@@ -1344,7 +1441,15 @@ public static partial class DocumentService
         return new HoverItem(
             hover.Value.Span.Start + context.HeaderOffset,
             hover.Value.Span.End + context.HeaderOffset,
-            hover.Value.Name ?? string.Empty);
+            FormatNamedDeclarationHover(hover.Value.Name ?? string.Empty));
+    }
+
+    private static string FormatNamedDeclarationHover(string declaration)
+    {
+        string kind = declaration.StartsWith("trait ", StringComparison.Ordinal)
+            ? "trait"
+            : "trait method";
+        return $"```ashes\n{declaration}\n```\n\n*{kind}*";
     }
 
     private static Lowering.HoverTypeInfo? TryGetTraitHover(
@@ -1664,42 +1769,34 @@ public static partial class DocumentService
     }
 
     /// <summary>
-    /// Maps a position in the combined source back to a position within strippedSource, or returns
-    /// null if the position falls in the imported-module portion (which should be filtered out).
-    /// <list type="bullet">
-    ///   <item>When <paramref name="entryOffset"/> is 0 (standalone analysis), all positions are included
-    ///     and returned unchanged.</item>
-    ///   <item>When type declarations are hoisted (<paramref name="bodyStart"/> &gt; 0), positions in
-    ///     [0, bodyStart) map directly (same text), and positions in [entryOffset, …) map to
-    ///     bodyStart + (p - entryOffset).</item>
-    ///   <item>Without hoisting (<paramref name="bodyStart"/> == 0), positions in [entryOffset, …) map
-    ///     to p - entryOffset.</item>
-    /// </list>
+    /// Maps a span in the combined source back to the import-stripped entry source, or returns null
+    /// for stitched-module content. The entry region is line/column preserving even when its type
+    /// declarations were replaced by blank lines or import aliases, so body spans map by line and
+    /// character rather than by subtracting the hoisted declaration length.
     /// </summary>
-    private static TextSpan? MapToOriginalSpan(int start, int end, int entryOffset, int bodyStart, int strippedLength)
+    private static TextSpan? MapToOriginalSpan(int start, int end, AnalysisContext context)
     {
-        if (entryOffset == 0)
+        if (context.EntryOffset == 0)
         {
             return TextSpan.FromBounds(start, end);
         }
 
-        if (bodyStart > 0 && start <= bodyStart && end <= bodyStart)
+        if (context.BodyStart > 0 && start <= context.BodyStart && end <= context.BodyStart)
         {
             return TextSpan.FromBounds(start, end);
         }
 
-        var bodyLength = strippedLength - bodyStart;
-        var bodyEnd = entryOffset + bodyLength;
-        if (start >= entryOffset && end <= bodyEnd)
+        if (start >= context.EntryOffset && end <= context.AnalysisSource.Length)
         {
             return TextSpan.FromBounds(
-                bodyStart + (start - entryOffset),
-                bodyStart + (end - entryOffset));
-        }
-
-        if (start == bodyEnd && end >= bodyEnd)
-        {
-            return TextSpan.FromBounds(strippedLength, strippedLength);
+                MapPositionByLineAndCharacter(
+                    context.AnalysisSource[context.EntryOffset..],
+                    start - context.EntryOffset,
+                    context.StrippedSource),
+                MapPositionByLineAndCharacter(
+                    context.AnalysisSource[context.EntryOffset..],
+                    end - context.EntryOffset,
+                    context.StrippedSource));
         }
 
         return null;
@@ -1723,7 +1820,28 @@ public static partial class DocumentService
             return strippedPosition;
         }
 
-        return context.EntryOffset + (strippedPosition - context.BodyStart);
+        return context.EntryOffset + MapPositionByLineAndCharacter(
+            context.StrippedSource,
+            strippedPosition,
+            context.AnalysisSource[context.EntryOffset..]);
+    }
+
+    private static int MapPositionByLineAndCharacter(
+        string source,
+        int sourcePosition,
+        string target)
+    {
+        int[] sourceLineStarts = LspTextUtils.GetLineStarts(source);
+        (int line, int character) = LspTextUtils.ToLineCharacter(
+            sourceLineStarts,
+            source.Length,
+            sourcePosition);
+        int[] targetLineStarts = LspTextUtils.GetLineStarts(target);
+        return LspTextUtils.FromLineCharacter(
+            targetLineStarts,
+            target.Length,
+            line,
+            character);
     }
 
     private static DefinitionLocation? ResolveDefinitionInProgram(
