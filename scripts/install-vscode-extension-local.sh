@@ -307,6 +307,7 @@ invoke_step "Packaging local VSIX" \
     --no-dependencies \
     --allow-missing-repository \
     --skip-license \
+    --ignoreFile "${extensionRoot}/.vscodeignore.local" \
     --out "$vsixPath"
 
 if [[ "$skipInstall" == "false" ]]; then

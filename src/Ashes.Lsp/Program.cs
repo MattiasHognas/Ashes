@@ -360,7 +360,11 @@ internal static class Program
         var (endLine, endCharacter) = LspTextUtils.ToLineCharacter(lineStarts, source.Length, hover.Value.End);
         SendResponse(output, id, new
         {
-            contents = hover.Value.Contents,
+            contents = new
+            {
+                kind = "markdown",
+                value = hover.Value.Contents
+            },
             range = new
             {
                 start = new { line = startLine, character = startCharacter },

@@ -459,7 +459,8 @@ public sealed class LspDocumentServiceTests
         hover.ShouldNotBeNull();
         hover.Value.Start.ShouldBe(source.IndexOf("id", StringComparison.Ordinal));
         hover.Value.End.ShouldBe(source.IndexOf("id", StringComparison.Ordinal) + 2);
-        hover.Value.Contents.ShouldBe("id : a -> a");
+        hover.Value.Contents.ShouldBe(
+            "```ashes\nid : a -> a\n```\n\n*function*\n\n**Parameters**\n\n- `x` : `a`\n\n**Returns:** `a`");
     }
 
     [Test]
@@ -473,7 +474,7 @@ public sealed class LspDocumentServiceTests
         hover.ShouldNotBeNull();
         hover.Value.Start.ShouldBe(parameterPosition);
         hover.Value.End.ShouldBe(parameterPosition + 1);
-        hover.Value.Contents.ShouldBe("x : a");
+        hover.Value.Contents.ShouldBe("```ashes\nx : a\n```\n\n*parameter*");
     }
 
     [Test]
@@ -488,7 +489,7 @@ public sealed class LspDocumentServiceTests
         hover.ShouldNotBeNull();
         hover.Value.Start.ShouldBe(callStart);
         hover.Value.End.ShouldBe(callEnd);
-        hover.Value.Contents.ShouldBe("Int");
+        hover.Value.Contents.ShouldBe("```ashes\nInt\n```\n\n*expression*");
     }
 
     [Test]
@@ -498,7 +499,7 @@ public sealed class LspDocumentServiceTests
         var hover = DocumentService.GetHover(source, source.IndexOf("1.5", StringComparison.Ordinal) + 1);
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("Float");
+        hover.Value.Contents.ShouldBe("```ashes\nFloat\n```\n\n*expression*");
     }
 
     [Test]
@@ -510,7 +511,21 @@ public sealed class LspDocumentServiceTests
         var hover = DocumentService.GetHover(source, printPosition);
 
         hover.ShouldNotBeNull();
-        hover.Value.Contents.ShouldBe("print : a -> Unit");
+        hover.Value.Contents.ShouldContain("Ashes.IO.print : a -> Unit");
+        hover.Value.Contents.ShouldContain("Write a printable scalar");
+    }
+
+    [Test]
+    public void GetHover_should_return_function_type_for_qualified_intrinsic_call_target()
+    {
+        const string source = "let getOrDefault res def = match res with | Ok(x) -> x | Error(_) -> def in Ashes.IO.print(getOrDefault(Ok(1))(0))";
+        var printPosition = source.IndexOf("print", StringComparison.Ordinal);
+
+        var hover = DocumentService.GetHover(source, printPosition);
+
+        hover.ShouldNotBeNull();
+        hover.Value.Contents.ShouldContain("Ashes.IO.print : a -> Unit");
+        hover.Value.Contents.ShouldContain("Write a printable scalar");
     }
 
     [Test]

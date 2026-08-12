@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="..\..\docs\md\reference\standard-library.md"
+      LogicalName="Ashes.Lsp.Documentation.standard-library.md" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>Ashes.Lsp.Tests</_Parameter1>
     </AssemblyAttribute>
