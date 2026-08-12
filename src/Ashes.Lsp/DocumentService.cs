@@ -637,6 +637,7 @@ public static partial class DocumentService
         lowering.Lower(program);
 
         var typeNames = lowering.TypeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
+        typeNames.UnionWith(program.TypeAliasDecls.Select(declaration => declaration.Name));
         var ctorNames = lowering.ConstructorSymbols.Keys.ToHashSet(StringComparer.Ordinal);
         var traitNames = lowering.TraitSymbols.Values
             .SelectMany(trait => new[] { trait.Name, trait.QualifiedName })
@@ -648,6 +649,11 @@ public static partial class DocumentService
         var typeParamNames = program.TypeDecls
             .SelectMany(d => d.TypeParameters.Select(tp => tp.Name)
                 .Concat(d.Constructors.SelectMany(c => c.Parameters).SelectMany(fieldType => fieldType.MentionedNames())))
+            .Concat(program.TypeAliasDecls.SelectMany(declaration =>
+                declaration.TypeParameters.Select(parameter => parameter.Name)))
+            .Concat(program.ZeroCostTypeDecls.SelectMany(declaration =>
+                declaration.TypeParameters.Select(parameter => parameter.Name)
+                    .Concat(declaration.Constructor.Parameters.SelectMany(type => type.MentionedNames()))))
             .Concat(program.Items.OfType<TopLevelItem.Trait>()
                 .SelectMany(item => item.Decl.TypeParameters.Select(parameter => parameter.Name)))
             .ToHashSet(StringComparer.Ordinal);
@@ -820,6 +826,12 @@ public static partial class DocumentService
 
                 case TopLevelItem.Type type:
                     yield return type.Decl.Name;
+                    break;
+                case TopLevelItem.TypeAlias alias:
+                    yield return alias.Decl.Name;
+                    break;
+                case TopLevelItem.ZeroCostType zeroCostType:
+                    yield return zeroCostType.Decl.Name;
                     break;
             }
         }
@@ -1345,13 +1357,14 @@ public static partial class DocumentService
                 TopLevelItem.LetDecl letDecl => [letDecl.Name],
                 TopLevelItem.RecursiveGroup group => group.Bindings.Select(binding => binding.Name),
                 TopLevelItem.Type type => new[] { type.Decl.Name }.Concat(type.Decl.Constructors.Select(constructor => constructor.Name)),
+                TopLevelItem.TypeAlias alias => [alias.Decl.Name],
+                TopLevelItem.ZeroCostType zeroCostType => [zeroCostType.Decl.Name, zeroCostType.Decl.Constructor.Name],
                 _ => [],
             }).Distinct(StringComparer.Ordinal).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         }
 
         var names = new HashSet<string>(StringComparer.Ordinal);
-        IReadOnlyDictionary<string, TypeDecl> types = program.Items.OfType<TopLevelItem.Type>()
-            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        IReadOnlyDictionary<string, TypeDecl> types = CollectLspTypeShapes(program);
         foreach (ExportItem item in declaration.Items)
         {
             switch (item)
@@ -1413,6 +1426,12 @@ public static partial class DocumentService
         var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
+        HoverItem? typeDeclarationHover = GetMappedTypeDeclarationHover(context, position, program);
+        if (typeDeclarationHover is not null)
+        {
+            return typeDeclarationHover;
+        }
+
         HoverItem? traitHover = GetMappedTraitHover(context, position, lowering);
         if (traitHover is not null)
         {
@@ -1443,6 +1462,58 @@ public static partial class DocumentService
             mappedSpan.Value.Start + context.HeaderOffset,
             mappedSpan.Value.End + context.HeaderOffset,
             displayText);
+    }
+
+    private static HoverItem? GetMappedTypeDeclarationHover(
+        AnalysisContext context,
+        int originalPosition,
+        Frontend.Program program)
+    {
+        int? analysisPosition = MapOriginalPositionToAnalysis(originalPosition, context);
+        if (analysisPosition is null)
+        {
+            return null;
+        }
+        (Token Token, TextSpan Span)? identifier = FindIdentifierAtPosition(
+            context.AnalysisSource,
+            analysisPosition.Value);
+        if (identifier is null)
+        {
+            return null;
+        }
+
+        string? declaration = null;
+        string? kind = null;
+        TypeAliasDecl? alias = program.TypeAliasDecls.FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
+        if (alias is not null)
+        {
+            declaration = Ashes.Formatter.Formatter.Format(
+                new Frontend.Program([new TopLevelItem.TypeAlias(alias)], null)).Trim();
+            kind = "type alias";
+        }
+        else
+        {
+            ZeroCostTypeDecl? zeroCostType = program.ZeroCostTypeDecls.FirstOrDefault(candidate =>
+                string.Equals(candidate.Name, identifier.Value.Token.Text, StringComparison.Ordinal)
+                || string.Equals(candidate.Constructor.Name, identifier.Value.Token.Text, StringComparison.Ordinal));
+            if (zeroCostType is not null)
+            {
+                declaration = Ashes.Formatter.Formatter.Format(
+                    new Frontend.Program([new TopLevelItem.ZeroCostType(zeroCostType)], null)).Trim();
+                kind = "zero-cost nominal type";
+            }
+        }
+
+        TextSpan? mapped = declaration is null
+            ? null
+            : MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context);
+        return mapped is null
+            ? null
+            : new HoverItem(
+                mapped.Value.Start + context.HeaderOffset,
+                mapped.Value.End + context.HeaderOffset,
+                $"```ashes\n{declaration}\n```\n\n*{kind}*");
     }
 
     private static string? ResolveCanonicalHoverName(
@@ -1936,9 +2007,7 @@ public static partial class DocumentService
             return true;
         }
 
-        IReadOnlyDictionary<string, TypeDecl> types = program.Items
-            .OfType<TopLevelItem.Type>()
-            .ToDictionary(item => item.Decl.Name, item => item.Decl, StringComparer.Ordinal);
+        IReadOnlyDictionary<string, TypeDecl> types = CollectLspTypeShapes(program);
         foreach (ExportItem item in declaration.Items)
         {
             if (item is ExportItem.Value value && string.Equals(value.Name, name, StringComparison.Ordinal)
@@ -2020,15 +2089,12 @@ public static partial class DocumentService
         string? currentFilePath,
         IReadOnlyList<ImportItem> imports)
     {
-        DefinitionLocation? traitDefinition = ResolveTraitDefinitionInProgram(
-            program,
-            source,
-            position,
-            currentFilePath,
-            imports);
-        if (traitDefinition is not null)
+        DefinitionLocation? namedDefinition = ResolveTraitDefinitionInProgram(
+                program, source, position, currentFilePath, imports)
+            ?? ResolveTypeDefinitionInProgram(program, source, position, currentFilePath);
+        if (namedDefinition is not null)
         {
-            return traitDefinition;
+            return namedDefinition;
         }
 
         // Resolve through the top-level items first (Model-A): a binding declared earlier is visible
@@ -2076,6 +2142,46 @@ public static partial class DocumentService
 
         Expr? body = program.Body;
         return body is null ? null : ResolveDefinitionInExpr(body, position, currentFilePath, imports, scope);
+    }
+
+    private static DefinitionLocation? ResolveTypeDefinitionInProgram(
+        Frontend.Program program,
+        string source,
+        int position,
+        string? currentFilePath)
+    {
+        (Token Token, TextSpan Span)? identifier = FindIdentifierAtPosition(source, position);
+        if (identifier is null)
+        {
+            return null;
+        }
+        string name = identifier.Value.Token.Text;
+        foreach (TopLevelItem item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.Type type when string.Equals(type.Decl.Name, name, StringComparison.Ordinal):
+                    return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(type.Decl));
+                case TopLevelItem.Type type:
+                    TypeConstructor? constructor = type.Decl.Constructors.FirstOrDefault(candidate =>
+                        string.Equals(candidate.Name, name, StringComparison.Ordinal));
+                    if (constructor is not null)
+                    {
+                        return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(constructor));
+                    }
+                    break;
+                case TopLevelItem.TypeAlias alias when string.Equals(alias.Decl.Name, name, StringComparison.Ordinal):
+                    return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(alias.Decl));
+                case TopLevelItem.ZeroCostType zeroCostType
+                    when string.Equals(zeroCostType.Decl.Name, name, StringComparison.Ordinal):
+                    return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(zeroCostType.Decl));
+                case TopLevelItem.ZeroCostType zeroCostType
+                    when string.Equals(zeroCostType.Decl.Constructor.Name, name, StringComparison.Ordinal):
+                    return new DefinitionLocation(currentFilePath, AstSpans.GetOrDefault(zeroCostType.Decl.Constructor));
+            }
+        }
+
+        return null;
     }
 
     private static DefinitionLocation? ResolveTraitDefinitionInProgram(
@@ -2826,6 +2932,20 @@ public static partial class DocumentService
                     }
                     break;
 
+                case TopLevelItem.TypeAlias alias when string.Equals(alias.Decl.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(alias.Decl));
+                    return true;
+
+                case TopLevelItem.ZeroCostType zeroCostType
+                    when string.Equals(zeroCostType.Decl.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(zeroCostType.Decl));
+                    return true;
+
+                case TopLevelItem.ZeroCostType zeroCostType
+                    when string.Equals(zeroCostType.Decl.Constructor.Name, exportName, StringComparison.Ordinal):
+                    definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(zeroCostType.Decl.Constructor));
+                    return true;
+
                 case TopLevelItem.Trait trait when string.Equals(trait.Decl.Name, exportName, StringComparison.Ordinal):
                     definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(trait.Decl));
                     return true;
@@ -2834,6 +2954,31 @@ public static partial class DocumentService
 
         definition = default;
         return false;
+    }
+
+    private static IReadOnlyDictionary<string, TypeDecl> CollectLspTypeShapes(Frontend.Program program)
+    {
+        var types = new Dictionary<string, TypeDecl>(StringComparer.Ordinal);
+        foreach (TopLevelItem item in program.Items)
+        {
+            switch (item)
+            {
+                case TopLevelItem.Type type:
+                    types[type.Decl.Name] = type.Decl;
+                    break;
+                case TopLevelItem.TypeAlias alias:
+                    types[alias.Decl.Name] = new TypeDecl(alias.Decl.Name, alias.Decl.TypeParameters, []);
+                    break;
+                case TopLevelItem.ZeroCostType zeroCostType:
+                    types[zeroCostType.Decl.Name] = new TypeDecl(
+                        zeroCostType.Decl.Name,
+                        zeroCostType.Decl.TypeParameters,
+                        [zeroCostType.Decl.Constructor]);
+                    break;
+            }
+        }
+
+        return types;
     }
 
     private static bool TryFindBindingDefinition(Expr expr, string name, string? filePath, out DefinitionLocation definition)

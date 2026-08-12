@@ -4,7 +4,7 @@ public sealed partial class Lowering
 {
     private OrdinaryHeapLayoutCapability GetOrdinaryHeapLayoutCapability(TypeRef type)
     {
-        TypeRef resolved = Prune(type);
+        TypeRef resolved = EraseZeroCostTypeRepresentation(type);
         OrdinaryHeapStructuralCopyKind structuralCopy = GetStructuralCopyKind(
             resolved,
             out int? staticCopySizeBytes);

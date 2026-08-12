@@ -313,6 +313,53 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_distinguish_alias_zero_cost_type_and_adt()
+    {
+        var program = ParseProgram(
+            "type alias Identifier(a) = a\n" +
+            "type UserId = UserId(Int)\n" +
+            "type Box(a) = | Box(a)\n" +
+            "print(1)");
+
+        TypeAliasDecl alias = program.TypeAliasDecls.ShouldHaveSingleItem();
+        alias.Name.ShouldBe("Identifier");
+        alias.TypeParameters.Select(parameter => parameter.Name).ShouldBe(["a"]);
+        alias.Target.ShouldBe(new TypeExpr.Named("a"));
+
+        ZeroCostTypeDecl zeroCostType = program.ZeroCostTypeDecls.ShouldHaveSingleItem();
+        zeroCostType.Name.ShouldBe("UserId");
+        zeroCostType.Constructor.Name.ShouldBe("UserId");
+        zeroCostType.Constructor.Parameters.ShouldBe([new TypeExpr.Named("Int")]);
+
+        TypeDecl adt = program.TypeDecls.ShouldHaveSingleItem();
+        adt.Name.ShouldBe("Box");
+        adt.Constructors.ShouldHaveSingleItem().Name.ShouldBe("Box");
+    }
+
+    [Test]
+    public void ParseProgram_should_report_invalid_zero_cost_type_shape()
+    {
+        var diagnostics = new Diagnostics();
+        _ = new Parser("type Empty = Empty()\n0", diagnostics).ParseProgram();
+
+        DiagnosticEntry error = diagnostics.StructuredErrors.ShouldHaveSingleItem();
+        error.Code.ShouldBe(DiagnosticCodes.InvalidZeroCostTypeDeclaration);
+        error.Message.ShouldBe("Type 'Empty' must have exactly one constructor payload.");
+    }
+
+    [Test]
+    public void Zero_cost_type_span_should_include_constructor_and_deriving_clause()
+    {
+        const string source = "type UserId = UserId(Int)\n    deriving {Show}\n0";
+        Ashes.Frontend.Program program = ParseProgram(source);
+        ZeroCostTypeDecl declaration = program.ZeroCostTypeDecls.ShouldHaveSingleItem();
+        TextSpan span = AstSpans.GetOrDefault(declaration);
+
+        source[span.Start..span.End].ShouldBe(
+            "type UserId = UserId(Int)\n    deriving {Show}");
+    }
+
+    [Test]
     public void ParseProgram_should_parse_multiple_type_declarations()
     {
         var program = ParseProgram("type A = | X\ntype B = | Y(T1, T2)\nprint(1)");
@@ -411,7 +458,7 @@ public sealed class ParserTests
     public void ParseTypeDecl_with_no_constructors_should_report_diagnostic()
     {
         var diag = new Diagnostics();
-        _ = new Parser("type Empty = print(1)", diag).ParseProgram();
+        _ = new Parser("type Empty =", diag).ParseProgram();
         diag.Errors.ShouldContain(x => x.Contains("must have at least one constructor", StringComparison.Ordinal));
     }
 

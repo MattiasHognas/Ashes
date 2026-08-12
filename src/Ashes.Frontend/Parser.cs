@@ -126,7 +126,7 @@ public sealed class Parser
 
     private TopLevelItem ParseNonLetTopLevelItem() => _current.Kind switch
     {
-        TokenKind.Type => new TopLevelItem.Type(ParseTypeDecl()),
+        TokenKind.Type => ParseTypeTopLevelItem(),
         TokenKind.External => new TopLevelItem.External(ParseExternalDecl()),
         TokenKind.Capability => new TopLevelItem.Capability(ParseCapabilityDecl()),
         TokenKind.Provide => new TopLevelItem.Provide(ParseProvideDecl()),
@@ -369,14 +369,29 @@ public sealed class Parser
         return ParseMatch();
     }
 
-    private TypeDecl ParseTypeDecl()
+    private TopLevelItem ParseTypeTopLevelItem()
     {
-        var start = _current.Position;
+        int start = _current.Position;
         Consume(TokenKind.Type);
-        var name = Consume(TokenKind.Ident).Text;
-        var typeParameters = ParseTypeParameters();
-        Consume(TokenKind.Equals);
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "alias", StringComparison.Ordinal))
+        {
+            return new TopLevelItem.TypeAlias(ParseTypeAliasDecl(start));
+        }
 
+        string name = Consume(TokenKind.Ident).Text;
+        IReadOnlyList<TypeParameter> typeParameters = ParseTypeParameters();
+        Consume(TokenKind.Equals);
+        return _current.Kind == TokenKind.Ident
+            ? new TopLevelItem.ZeroCostType(ParseZeroCostTypeDecl(start, name, typeParameters))
+            : new TopLevelItem.Type(ParseTypeDecl(start, name, typeParameters));
+    }
+
+    private TypeDecl ParseTypeDecl(
+        int start,
+        string name,
+        IReadOnlyList<TypeParameter> typeParameters)
+    {
         // Records are declared with brace-free field alternatives (`type Point = | x: Int | y: Int`);
         // a `{` here is the brace record form used by other ML languages, caught to guide the author.
         if (_current.Kind == TokenKind.LBrace)
@@ -419,6 +434,61 @@ public sealed class Parser
             },
             start,
             LastConsumedEnd);
+    }
+
+    private TypeAliasDecl ParseTypeAliasDecl(int start)
+    {
+        Consume(TokenKind.Ident);
+        string name = Consume(TokenKind.Ident).Text;
+        IReadOnlyList<TypeParameter> typeParameters = ParseTypeParameters();
+        Consume(TokenKind.Equals);
+        TypeExpr target = ParseTypeExpr();
+        var declaration = new TypeAliasDecl(name, typeParameters, target);
+        AstSpans.Set(declaration, TextSpan.FromBounds(start, LastConsumedEnd));
+        return declaration;
+    }
+
+    private ZeroCostTypeDecl ParseZeroCostTypeDecl(
+        int start,
+        string name,
+        IReadOnlyList<TypeParameter> typeParameters)
+    {
+        string constructorName = Consume(TokenKind.Ident).Text;
+        int constructorStart = _previous.Position;
+        var payloads = new List<TypeExpr>();
+        if (_current.Kind == TokenKind.LParen)
+        {
+            Consume(TokenKind.LParen);
+            if (_current.Kind != TokenKind.RParen)
+            {
+                payloads.Add(ParseTypeExpr());
+                while (_current.Kind == TokenKind.Comma)
+                {
+                    Consume(TokenKind.Comma);
+                    payloads.Add(ParseTypeExpr());
+                }
+            }
+            Consume(TokenKind.RParen);
+        }
+
+        if (payloads.Count != 1)
+        {
+            _diag.Error(
+                TextSpan.FromBounds(constructorStart, LastConsumedEnd),
+                $"Type '{name}' must have exactly one constructor payload.",
+                DiagnosticCodes.InvalidZeroCostTypeDeclaration);
+        }
+
+        TypeConstructor constructor = RegisterTypeConstructor(
+            new TypeConstructor(constructorName, payloads),
+            constructorStart,
+            LastConsumedEnd);
+        var declaration = new ZeroCostTypeDecl(name, typeParameters, constructor)
+        {
+            Deriving = ParseDerivingClause(),
+        };
+        AstSpans.Set(declaration, TextSpan.FromBounds(start, LastConsumedEnd));
+        return declaration;
     }
 
     private IReadOnlyList<string> ParseDerivingClause()

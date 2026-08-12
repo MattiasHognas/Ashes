@@ -150,12 +150,14 @@ public sealed record ConstructorSymbol(
 /// <param name="Constructors">The type's data constructors; empty for opaque or resource types.</param>
 /// <param name="DeclaringSyntax">The AST type declaration this symbol was resolved from.</param>
 /// <param name="IsBuiltin">True when the type is compiler-provided rather than declared in user source.</param>
+/// <param name="IsZeroCost">True when the nominal type erases to its sole constructor payload.</param>
 public sealed record TypeSymbol(
     string Name,
     IReadOnlyList<TypeParameterSymbol> TypeParameters,
     IReadOnlyList<ConstructorSymbol> Constructors,
     TypeDecl DeclaringSyntax,
-    bool IsBuiltin = false
+    bool IsBuiltin = false,
+    bool IsZeroCost = false
 );
 
 /// <summary>

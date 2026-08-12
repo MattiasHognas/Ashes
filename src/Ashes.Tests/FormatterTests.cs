@@ -434,6 +434,20 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_write_alias_and_zero_cost_type_distinctly()
+    {
+        const string source =
+            "type alias Identifier(a) = a\n\n" +
+            "type UserId = UserId(Int)\n\n" +
+            "print(1)\n";
+        var diagnostics = new Ashes.Frontend.Diagnostics();
+        var program = new Ashes.Frontend.Parser(source, diagnostics).ParseProgram();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(program).ShouldBe(source);
+    }
+
+    [Test]
     public void Format_should_write_multiline_match_with_four_space_indentation()
     {
         const string source = "type Result = | Ok(T) | Error(T)\nlet r1 = Ok(5) in let r2 = match r1 with | Ok(x) -> Ok(x + 1) | Error(e) -> Error(e) in match r2 with | Ok(_) -> print(\"ok\") | Error(_) -> print(\"error\")";

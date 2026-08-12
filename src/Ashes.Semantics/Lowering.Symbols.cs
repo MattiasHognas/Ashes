@@ -208,24 +208,79 @@ public sealed partial class Lowering
         return fieldTemps;
     }
 
-    private void RegisterTypeDeclarations(IReadOnlyList<TypeDecl> typeDecls)
+    private void RegisterTypeDeclarations(
+        IReadOnlyList<TypeDecl> typeDecls,
+        IReadOnlyList<TypeAliasDecl> typeAliasDecls,
+        IReadOnlyList<ZeroCostTypeDecl> zeroCostTypeDecls)
     {
         // Every name that denotes a concrete type — builtins registered already, all user types in
         // this program (so forward references resolve), and the primitives. A constructor field that
         // names something outside this set is an implicit type parameter.
         var knownTypeNames = new HashSet<string>(_typeSymbols.Keys, StringComparer.Ordinal);
         knownTypeNames.UnionWith(typeDecls.Select(d => d.Name));
+        knownTypeNames.UnionWith(typeAliasDecls.Select(declaration => declaration.Name));
+        knownTypeNames.UnionWith(zeroCostTypeDecls.Select(declaration => declaration.Name));
         knownTypeNames.UnionWith(_externalOpaqueTypes);
         knownTypeNames.UnionWith(PrimitivePayloadTypeNames);
         knownTypeNames.Add("Unit");
 
+        RegisterTypeAliases(typeAliasDecls);
+
         foreach (var decl in typeDecls)
         {
-            RegisterTypeDeclaration(decl, knownTypeNames);
+            RegisterTypeDeclaration(decl, knownTypeNames, isZeroCost: false);
+        }
+
+        foreach (ZeroCostTypeDecl declaration in zeroCostTypeDecls)
+        {
+            TypeDecl semanticDeclaration = new(
+                declaration.Name,
+                declaration.TypeParameters,
+                [declaration.Constructor])
+            {
+                Deriving = declaration.Deriving,
+            };
+            AstSpans.Set(semanticDeclaration, GetSpan(declaration));
+            RegisterTypeDeclaration(semanticDeclaration, knownTypeNames, isZeroCost: true);
+        }
+
+        foreach (TypeAliasDecl declaration in typeAliasDecls)
+        {
+            IReadOnlyList<TypeRef> parameters = declaration.TypeParameters
+                .Select(parameter => (TypeRef)new TypeRef.TTypeParam(new TypeParameterSymbol(parameter.Name)))
+                .ToList();
+            _ = ResolveTypeAlias(declaration.Name, parameters);
         }
     }
 
-    private void RegisterTypeDeclaration(TypeDecl decl, HashSet<string> knownTypeNames)
+    private void RegisterTypeAliases(IReadOnlyList<TypeAliasDecl> declarations)
+    {
+        foreach (TypeAliasDecl declaration in declarations)
+        {
+            if (BuiltinRegistry.IsReservedTypeName(declaration.Name))
+            {
+                ReportDiagnostic(GetSpan(declaration), "'Ashes' and built-in runtime types are reserved");
+                continue;
+            }
+
+            if (_typeAliases.ContainsKey(declaration.Name) || _typeSymbols.ContainsKey(declaration.Name))
+            {
+                ReportDiagnostic(GetSpan(declaration), $"Duplicate type name '{declaration.Name}'.");
+                continue;
+            }
+
+            HashSet<string> parameters = new(StringComparer.Ordinal);
+            if (declaration.TypeParameters.Any(parameter => !parameters.Add(parameter.Name)))
+            {
+                ReportDiagnostic(GetSpan(declaration), $"Duplicate type parameter in alias '{declaration.Name}'.");
+                continue;
+            }
+
+            _typeAliases[declaration.Name] = declaration;
+        }
+    }
+
+    private void RegisterTypeDeclaration(TypeDecl decl, HashSet<string> knownTypeNames, bool isZeroCost)
     {
         if (BuiltinRegistry.IsReservedTypeName(decl.Name))
         {
@@ -233,7 +288,7 @@ public sealed partial class Lowering
             return;
         }
 
-        if (_typeSymbols.ContainsKey(decl.Name))
+        if (_typeSymbols.ContainsKey(decl.Name) || _typeAliases.ContainsKey(decl.Name))
         {
             ReportDiagnostic(GetSpan(decl), $"Duplicate type name '{decl.Name}'.");
             return;
@@ -262,7 +317,8 @@ public sealed partial class Lowering
             Name: decl.Name,
             TypeParameters: typeParameterSymbols,
             Constructors: ctorSymbols,
-            DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters }
+            DeclaringSyntax: decl with { TypeParameters = declaredOrInferredTypeParameters },
+            IsZeroCost: isZeroCost
         );
         // Register the type symbol (and its resolved TNamedType) before resolving field types, so
         // a self-recursive field (`type Tree = | Node(Tree, Tree)`) resolves its own name. The
@@ -320,7 +376,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void RegisterExternalDeclarations(IReadOnlyList<ExternalDecl> externalDecls)
+    private void RegisterExternalOpaqueTypes(IReadOnlyList<ExternalDecl> externalDecls)
     {
         foreach (var opaqueType in externalDecls.OfType<ExternalDecl.OpaqueType>())
         {
@@ -329,7 +385,10 @@ public sealed partial class Lowering
                 ReportDiagnostic(GetSpan(opaqueType), $"Duplicate external type '{opaqueType.Name}'.");
             }
         }
+    }
 
+    private void RegisterExternalFunctions(IReadOnlyList<ExternalDecl> externalDecls)
+    {
         foreach (var function in externalDecls.OfType<ExternalDecl.Function>())
         {
             var parameterTypes = function.ParameterTypes.Select(t => ResolveExternalParsedType(function, t, allowVoid: false)).ToList();
@@ -393,9 +452,50 @@ public sealed partial class Lowering
             "void" when allowVoid => new ResolvedExternalType(_resolvedTypes["Unit"], new FfiType.Void()),
             "void" => ReportVoidParameterExternalType(externalDecl),
             _ when _externalOpaqueTypes.Contains(named.Name) => new ResolvedExternalType(new TypeRef.TOpaque(named.Name), new FfiType.Opaque(named.Name)),
-            _ => ReportUnsupportedExternalType(externalDecl, named.Name)
+            _ => ResolveDeclaredExternalType(externalDecl, named.Name)
         };
     }
+
+    private ResolvedExternalType? ResolveDeclaredExternalType(ExternalDecl declaration, string name)
+    {
+        TypeRef sourceType;
+        if (_typeAliases.ContainsKey(name))
+        {
+            sourceType = ResolveTypeAlias(name, []);
+        }
+        else if (_typeSymbols.TryGetValue(name, out TypeSymbol? symbol) && symbol.IsZeroCost)
+        {
+            if (symbol.TypeParameters.Count != 0)
+            {
+                return ReportUnsupportedExternalType(declaration, name);
+            }
+            sourceType = new TypeRef.TNamedType(symbol, []);
+        }
+        else
+        {
+            return ReportUnsupportedExternalType(declaration, name);
+        }
+
+        FfiType? ffiType = FfiTypeForRepresentation(EraseZeroCostTypeRepresentation(sourceType));
+        if (ffiType is null)
+        {
+            return ReportUnsupportedExternalType(declaration, name);
+        }
+        return new ResolvedExternalType(sourceType, ffiType);
+    }
+
+    private static FfiType? FfiTypeForRepresentation(TypeRef type) => type switch
+    {
+        TypeRef.TInt => new FfiType.Int(),
+        TypeRef.TUInt unsigned => new FfiType.UInt(unsigned.Bits),
+        TypeRef.TFloat => new FfiType.Float(),
+        TypeRef.TBool => new FfiType.Bool(),
+        TypeRef.TStr => new FfiType.Str(),
+        TypeRef.TOpaque opaque => new FfiType.Opaque(opaque.Name),
+        TypeRef.TPtr pointer when FfiTypeForRepresentation(pointer.Pointee) is { } pointee =>
+            new FfiType.Ptr(pointee),
+        _ => null,
+    };
 
     private ResolvedExternalType? ReportUnsupportedExternalType(ExternalDecl externalDecl, string name)
     {
@@ -580,6 +680,26 @@ public sealed partial class Lowering
         return result;
     }
 
+    private TypeRef GetZeroCostTypePayload(TypeRef.TNamedType named)
+    {
+        Debug.Assert(named.Symbol.IsZeroCost);
+        ConstructorSymbol constructor = named.Symbol.Constructors[0];
+        return Prune(InstantiateConstructorParameterType(constructor, 0, named));
+    }
+
+    private TypeRef EraseZeroCostTypeRepresentation(TypeRef type)
+    {
+        TypeRef current = Prune(type);
+        var seen = new HashSet<TypeSymbol>(ReferenceEqualityComparer.Instance);
+        while (current is TypeRef.TNamedType { Symbol.IsZeroCost: true } named
+            && seen.Add(named.Symbol))
+        {
+            current = Prune(GetZeroCostTypePayload(named));
+        }
+
+        return current;
+    }
+
     /// <summary>
     /// Resolves a written type name and optional type arguments to a <see cref="TypeRef"/>, handling
     /// built-in primitives, declared and built-in named types, and type parameters. Reports a
@@ -588,6 +708,10 @@ public sealed partial class Lowering
     public TypeRef ResolveTypeName(string name, IReadOnlyList<TypeRef>? typeArgs = null)
     {
         typeArgs ??= [];
+        if (_typeAliases.ContainsKey(name))
+        {
+            return ResolveTypeAlias(name, typeArgs);
+        }
         if (BuiltinRegistry.TryGetPrimitiveType(name, out var primitiveType))
         {
             if (typeArgs.Count != 0)
@@ -634,6 +758,51 @@ public sealed partial class Lowering
         }
 
         return new TypeRef.TNamedType(sym, typeArgs);
+    }
+
+    private TypeRef ResolveTypeAlias(string name, IReadOnlyList<TypeRef> typeArgs)
+    {
+        TypeAliasDecl declaration = _typeAliases[name];
+        if (typeArgs.Count != declaration.TypeParameters.Count)
+        {
+            ReportDiagnostic(
+                GetSpan(declaration),
+                $"Type alias '{name}' expects {declaration.TypeParameters.Count} type argument(s) but got {typeArgs.Count}.");
+            return new TypeRef.TNever();
+        }
+
+        int cycleStart = _typeAliasExpansionStack.IndexOf(name);
+        if (cycleStart >= 0)
+        {
+            List<string> cycle = _typeAliasExpansionStack.Skip(cycleStart).Append(name).ToList();
+            string cycleText = string.Join(" -> ", cycle);
+            string cycleKey = string.Join(
+                "\0",
+                cycle.Take(cycle.Count - 1).OrderBy(part => part, StringComparer.Ordinal));
+            if (_reportedTypeAliasCycles.Add(cycleKey))
+            {
+                ReportDiagnostic(
+                    GetSpan(declaration),
+                    $"Recursive type alias cycle: {cycleText}.",
+                    DiagnosticCodes.RecursiveTypeAlias);
+            }
+            return new TypeRef.TNever();
+        }
+
+        Dictionary<string, TypeRef>? savedScope = _typeExprParamScope;
+        _typeExprParamScope = declaration.TypeParameters
+            .Select((parameter, index) => (parameter.Name, Type: typeArgs[index]))
+            .ToDictionary(item => item.Name, item => item.Type, StringComparer.Ordinal);
+        _typeAliasExpansionStack.Add(name);
+        try
+        {
+            return ResolveTypeExpr(declaration.Target);
+        }
+        finally
+        {
+            _typeAliasExpansionStack.RemoveAt(_typeAliasExpansionStack.Count - 1);
+            _typeExprParamScope = savedScope;
+        }
     }
 
     private (int, TypeRef) LowerNullaryConstructor(
@@ -828,6 +997,11 @@ public sealed partial class Lowering
             resultType,
             runtimeManagedCandidate,
             request);
+        if (ctor.ParentType is { } parentType
+            && _typeSymbols[parentType].IsZeroCost)
+        {
+            return (argTemps[0], resultType);
+        }
         if (runtimeManagedCandidate)
         {
             PrepareRuntimeManagedAdtChildArguments(

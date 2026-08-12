@@ -41,7 +41,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 libx11-xcb1 \
         libsecret-1-0 \
-        libz3-4
+        libz3-4 \
+    && test -x /usr/bin/time
 
 # Node via NodeSource (resolves the latest within NODE_MAJOR). Node 25+ no longer
 # bundles corepack, so install it separately, then enable the pinned pnpm shim.

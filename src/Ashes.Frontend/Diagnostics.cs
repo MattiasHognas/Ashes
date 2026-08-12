@@ -63,6 +63,10 @@ public static class DiagnosticCodes
     public const string TraitCycle = "ASH025";
     /// <summary>A concrete trait requirement has no resolvable implementation.</summary>
     public const string TraitResolution = "ASH036";
+    /// <summary>A transparent type-alias expansion contains a direct or indirect cycle.</summary>
+    public const string RecursiveTypeAlias = "ASH039";
+    /// <summary>A zero-cost type declaration does not have exactly one constructor payload.</summary>
+    public const string InvalidZeroCostTypeDeclaration = "ASH040";
 }
 
 /// <summary>

@@ -24,22 +24,23 @@ capabilities, zero-cost abstraction, native executables, and no tracing garbage 
 ## Recommended order
 
 1. Explicit exports and opaque constructors.
-2. Transparent type aliases and zero-cost newtypes.
+2. Transparent type aliases and zero-cost nominal types.
 3. User-defined affine external resources.
 4. Ambient-authority capabilities for effectful builtins and FFI.
 5. Structured asynchronous concurrency.
 6. Unicode scalar values (`Rune`).
 7. Pattern-language completion.
 
-The order is intentional. Module abstraction is needed to hide newtype and resource representations;
-newtypes give later APIs precise domain types; user-defined resources establish the ownership contract
-needed by scoped concurrency; and capability coverage makes the authority of those APIs visible.
+The order is intentional. Module abstraction is needed to hide zero-cost type and resource
+representations; zero-cost types give later APIs precise domain types; user-defined resources
+establish the ownership contract needed by scoped concurrency; and capability coverage makes the
+authority of those APIs visible.
 
 ---
 
 ## Milestone 1: Explicit exports and opaque constructors
 
-Status: completed in [PR #418](https://github.com/MattiasHognas/Ashes/pull/418) on 2026-08-12.
+Status: completed.
 
 ### Current limitation
 
@@ -95,7 +96,9 @@ place.
 
 ---
 
-## Milestone 2: Transparent aliases and zero-cost newtypes
+## Milestone 2: Transparent aliases and zero-cost nominal types
+
+Status: completed.
 
 ### Current limitation
 
@@ -109,40 +112,43 @@ Provide two deliberately distinct declarations:
 
 - A **transparent type alias** names a type expression and expands during type checking. It introduces
   no new type identity, constructor, value, or runtime representation.
-- A **newtype** introduces a nominal type with exactly one field and one constructor. It is distinct
+- A **zero-cost nominal type** introduces exactly one field and one constructor. It is distinct
   during type checking but uses the payload's runtime representation with no tag or wrapper allocation.
 
 Aliases may be parameterized, may appear wherever the expanded type may appear, and must reject direct
 or indirect recursive alias cycles. Diagnostics and hovers should preserve a useful alias name while
 also showing its expansion when needed.
 
-Newtypes support ordinary construction and single-constructor pattern matching, explicit deriving,
-module abstraction, and coherent trait implementations. They do not implicitly coerce to or from the
-payload type. A newtype containing a resource has the same affine classification as that resource;
-otherwise its ownership/layout capability is exactly the payload capability.
+Zero-cost types support ordinary construction and single-constructor pattern matching, explicit
+deriving, module abstraction, and coherent trait implementations. They do not implicitly coerce to
+or from the payload type. A zero-cost type containing a resource has the same affine classification
+as that resource; otherwise its ownership/layout capability is exactly the payload capability.
 
-The spec change must select syntax that cannot be confused with existing ADTs. `type alias` and
-`newtype` are descriptive candidates, but this roadmap does not reserve their spelling.
+The selected syntax is `type alias Name(a) = ...` for transparent aliases and
+`type Name(a) = Constructor(payload)` for zero-cost nominal types. The absence of `|` distinguishes
+the zero-cost form from an ordinary one-constructor ADT
+(`type Name(a) = | Constructor(payload)`). No additional keyword is reserved.
 
 ### Work items
 
-1. Specify alias expansion, parameter scope, cycle detection, error rendering, and newtype nominality,
-   construction, matching, deriving, and representation erasure.
+1. Specify alias expansion, parameter scope, cycle detection, error rendering, zero-cost type
+   nominality, construction, matching, deriving, and representation erasure.
 2. Add distinct frontend nodes rather than encoding either feature as a special ordinary `TypeDecl`.
 3. Resolve aliases before ordinary unification while retaining display metadata; add cycle-safe
    expansion shared by annotations, externals, constraints, and imported signatures.
 4. Teach heap-layout, ownership, resource containment, trait deriving, and backend ABI lowering to
-   treat a newtype as its payload after semantic type checking.
+   treat a zero-cost type as its payload after semantic type checking.
 5. Add formatter, hover, completion, go-to-definition, and semantic-token support.
 
 ### Acceptance gates
 
 - Aliases are type-identical to their expansions and produce no IR or symbols of their own.
-- Newtypes reject accidental interchange with their payload or another same-payload newtype.
+- Zero-cost types reject accidental interchange with their payload or another same-payload zero-cost
+  type.
 - Emitted layout and calling convention are byte-for-byte identical to the payload representation on
   every target, including resource payloads and FFI-safe primitive payloads.
-- Recursive alias cycles, invalid newtype shapes, hidden constructors, and deriving failures have
-  stable diagnostics.
+- Recursive alias cycles, invalid zero-cost type shapes, hidden constructors, and deriving failures
+  have stable diagnostics.
 
 ---
 
@@ -420,7 +426,7 @@ These are useful after the foundational milestones but do not independently just
 
 - A pure deterministic PRNG value, with nondeterministic seeding behind `Entropy`.
 - Property-based testing built from pure generators, deterministic seeds, shrinking, and replay.
-- Zero-cost `Duration`, `Instant`, and `Path` domain types built as newtypes.
+- Zero-cost nominal `Duration`, `Instant`, and `Path` domain types.
 - A concurrent task-collection combinator implemented on structured task scopes, distinct from the
   current sequential `Task.all` contract.
 - `NonEmptyList` and validation combinators as ordinary library ADTs.

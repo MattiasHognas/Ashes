@@ -9,7 +9,8 @@ public sealed partial class Lowering
 
     private Program ExpandDerivedImplementations(Program program)
     {
-        if (!program.TypeDecls.Any(declaration => declaration.Deriving.Count > 0))
+        if (!program.TypeDecls.Any(declaration => declaration.Deriving.Count > 0)
+            && !program.ZeroCostTypeDecls.Any(declaration => declaration.Deriving.Count > 0))
         {
             return program;
         }
@@ -17,50 +18,86 @@ public sealed partial class Lowering
         List<TopLevelItem> items = [];
         foreach (TopLevelItem item in program.Items)
         {
-            if (item is not TopLevelItem.Type typeItem || typeItem.Decl.Deriving.Count == 0)
+            TypeDecl? sourceDeclaration = GetDerivableTypeDeclaration(item);
+            if (sourceDeclaration is null || sourceDeclaration.Deriving.Count == 0)
             {
                 items.Add(item);
                 continue;
             }
-
-            // Consume the source request in the elaborated program so discarded validation and
-            // inference passes can lower the result again without generating duplicate instances.
-            TypeDecl elaboratedType = typeItem.Decl with { Deriving = [] };
-            AstSpans.Set(elaboratedType, GetSpan(typeItem.Decl));
-            items.Add(new TopLevelItem.Type(elaboratedType));
-
-            HashSet<string> seen = new(StringComparer.Ordinal);
-            foreach (string writtenTraitName in typeItem.Decl.Deriving)
-            {
-                string traitName = writtenTraitName.Split('.').Last();
-                if (!SupportedDerivedTraits.Contains(traitName))
-                {
-                    ReportDiagnostic(
-                        GetSpan(typeItem.Decl),
-                        $"Trait '{writtenTraitName}' cannot be derived; supported traits are Eq, Ord, Show, and Hash.",
-                        InvalidTraitImplementationDeclarationCode);
-                    continue;
-                }
-                if (!seen.Add(traitName))
-                {
-                    ReportDiagnostic(
-                        GetSpan(typeItem.Decl),
-                        $"Trait '{traitName}' appears more than once in the deriving clause for '{typeItem.Decl.Name}'.",
-                        InvalidTraitImplementationDeclarationCode);
-                    continue;
-                }
-
-                TypeDecl declaration = ResolveDerivedTypeDeclaration(typeItem.Decl);
-                if (!ValidateDerivedFields(declaration, traitName))
-                {
-                    continue;
-                }
-                items.Add(new TopLevelItem.Implementation(
-                    CreateDerivedImplementation(declaration, traitName)));
-            }
+            AddTypeWithoutDeriving(item, items);
+            AddDerivedImplementations(sourceDeclaration, items);
         }
 
         return program with { Items = items };
+    }
+
+    private TypeDecl? GetDerivableTypeDeclaration(TopLevelItem item)
+    {
+        if (item is TopLevelItem.Type ordinaryType)
+        {
+            return ordinaryType.Decl;
+        }
+        if (item is not TopLevelItem.ZeroCostType zeroCostType)
+        {
+            return null;
+        }
+
+        TypeDecl declaration = new(
+            zeroCostType.Decl.Name,
+            zeroCostType.Decl.TypeParameters,
+            [zeroCostType.Decl.Constructor])
+        {
+            Deriving = zeroCostType.Decl.Deriving,
+        };
+        AstSpans.Set(declaration, GetSpan(zeroCostType.Decl));
+        return declaration;
+    }
+
+    private static void AddTypeWithoutDeriving(TopLevelItem item, List<TopLevelItem> items)
+    {
+        if (item is TopLevelItem.Type ordinaryType)
+        {
+            TypeDecl elaborated = ordinaryType.Decl with { Deriving = [] };
+            AstSpans.Set(elaborated, AstSpans.GetOrDefault(ordinaryType.Decl));
+            items.Add(new TopLevelItem.Type(elaborated));
+            return;
+        }
+
+        TopLevelItem.ZeroCostType zeroCostType = (TopLevelItem.ZeroCostType)item;
+        ZeroCostTypeDecl zeroCostElaborated = zeroCostType.Decl with { Deriving = [] };
+        AstSpans.Set(zeroCostElaborated, AstSpans.GetOrDefault(zeroCostType.Decl));
+        items.Add(new TopLevelItem.ZeroCostType(zeroCostElaborated));
+    }
+
+    private void AddDerivedImplementations(TypeDecl sourceDeclaration, List<TopLevelItem> items)
+    {
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        foreach (string writtenTraitName in sourceDeclaration.Deriving)
+        {
+            string traitName = writtenTraitName.Split('.').Last();
+            if (!SupportedDerivedTraits.Contains(traitName))
+            {
+                ReportDiagnostic(
+                    GetSpan(sourceDeclaration),
+                    $"Trait '{writtenTraitName}' cannot be derived; supported traits are Eq, Ord, Show, and Hash.",
+                    InvalidTraitImplementationDeclarationCode);
+                continue;
+            }
+            if (!seen.Add(traitName))
+            {
+                ReportDiagnostic(
+                    GetSpan(sourceDeclaration),
+                    $"Trait '{traitName}' appears more than once in the deriving clause for '{sourceDeclaration.Name}'.",
+                    InvalidTraitImplementationDeclarationCode);
+                continue;
+            }
+
+            TypeDecl declaration = ResolveDerivedTypeDeclaration(sourceDeclaration);
+            if (ValidateDerivedFields(declaration, traitName))
+            {
+                items.Add(new TopLevelItem.Implementation(CreateDerivedImplementation(declaration, traitName)));
+            }
+        }
     }
 
     private TypeDecl ResolveDerivedTypeDeclaration(TypeDecl declaration)

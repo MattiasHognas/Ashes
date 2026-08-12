@@ -970,12 +970,19 @@ must add cycle handling or be explicitly excluded from RC admission.
 | BigInt | `[sign_and_limb_count:i64][limb0:i64]...` |
 | List cons | `[head:i64][tail:i64]`; nil is zero |
 | ADT / record | `[tag:i64][field0:i64]...` |
+| Zero-cost nominal type | Exactly its sole constructor payload; no tag or wrapper cell |
 | Tuple / environment | `[word0:i64][word1:i64]...` |
 | Closure | `[code:i64][env:i64][packed_env_size_and_ownership:i64][dropper:i64]` |
 
 An RC value has the common 16-byte allocation header immediately before this
 payload. Read-only literals and borrowed views do not. Stack allocation remains
 available for short-lived compiler-proven values.
+
+Transparent aliases are expanded before unification and therefore have no runtime layout. A
+zero-cost nominal type remains distinct during semantic checking, then construction, matching,
+ownership classification, resource containment, temporary-layout tracking, and FFI ABI selection
+delegate to its payload representation. Wrapping never creates an RC cell, and unwrapping never
+loads a tag or field.
 
 The closure packed word reserves bit 63 for runtime-managed result ownership,
 bit 62 for RC-argument adoption, and the low 62 bits for environment size.

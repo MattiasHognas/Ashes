@@ -73,6 +73,31 @@ public sealed class ExplicitExportTests
     }
 
     [Test]
+    public void Abstract_zero_cost_type_and_exported_alias_follow_the_module_interface()
+    {
+        string directory = WriteProject(
+            ("Library", "export (value make, type Identifier, type UserId)\n" +
+                "type alias Identifier(a) = a\n" +
+                "type UserId = UserId(Identifier(Int))\n" +
+                "let make = given (value) -> UserId(value)\n"),
+            ("Main", "import Library\nlet id : UserId = Library.make(42)\n0\n"));
+
+        CombinedCompilationLayout layout = BuildLayout(directory);
+        Lower(directory, layout);
+        layout.ConstructorModules!["Library"].ShouldNotContain("UserId");
+
+        string hiddenDirectory = WriteProject(
+            ("Library", "export (value make, type UserId)\n" +
+                "type UserId = UserId(Int)\n" +
+                "let make = given (value) -> UserId(value)\n"),
+            ("Main", "import Library\nmatch Library.make(42) with | UserId(value) -> value\n"));
+        CombinedCompilationLayout hiddenLayout = BuildLayout(hiddenDirectory);
+        CompileDiagnosticException exception = Should.Throw<CompileDiagnosticException>(() =>
+            Lower(hiddenDirectory, hiddenLayout));
+        exception.Message.ShouldContain("Unknown constructor 'UserId'");
+    }
+
+    [Test]
     public void Selected_constructor_exports_filter_qualified_access()
     {
         string directory = WriteProject(
