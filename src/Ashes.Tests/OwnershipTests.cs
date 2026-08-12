@@ -1198,6 +1198,35 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Match_result_retains_shared_list_from_closure_and_direct_owner_arms()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let selected : List(Int) =
+                let captured = let element = -10 in [element] in
+                match false with
+                    | true -> ((given (_: Unit) -> captured))(Unit)
+                    | false -> captured
+            in selected
+            """);
+
+        ir.EntryFunction.Instructions.Count(instruction =>
+            instruction is IrInst.RcDup
+            {
+                RuntimeManaged: true,
+                MayBeEmpty: true,
+            }).ShouldBe(1);
+        IrFunction closure = ir.Functions.Single(function =>
+            function.Instructions.Any(instruction => instruction is IrInst.LoadEnv));
+        closure.Instructions.Count(instruction =>
+            instruction is IrInst.RcDup
+            {
+                RuntimeManaged: true,
+                MayBeEmpty: true,
+            }).ShouldBe(1);
+    }
+
+    [Test]
     public void Directly_escaping_pointer_element_list_remains_arena_managed()
     {
         IrProgram ir = LowerProgram("let escaped = (let values = [\"one\", \"two\"] in values) in match escaped with | [] -> Ashes.IO.print(\"empty\") | head :: _ -> Ashes.IO.print(head)");
