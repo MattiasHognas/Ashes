@@ -423,7 +423,12 @@ public abstract record ExternalDecl
     /// <summary>An opaque external type whose representation is unknown to the compiler,
     /// <c>external type Name</c>.</summary>
     /// <param name="Name">The type's name.</param>
-    public sealed record OpaqueType(string Name) : ExternalDecl;
+    public sealed record OpaqueType(string Name) : ExternalDecl
+    {
+        /// <summary>The external function that destroys this affine resource, or null for an
+        /// ordinary copyable opaque handle.</summary>
+        public string? DestructorName { get; init; }
+    }
 
     /// <summary>An external function binding, <c>external name(params) -> ret [= "symbol"]</c>.</summary>
     /// <param name="Name">The Ashes-visible name of the function.</param>
@@ -434,7 +439,23 @@ public abstract record ExternalDecl
         string Name,
         IReadOnlyList<ParsedType> ParameterTypes,
         ParsedType ReturnType,
-        string? SymbolName = null) : ExternalDecl;
+        string? SymbolName = null) : ExternalDecl
+    {
+        /// <summary>Written ownership for each parameter. The list has the same length as
+        /// <see cref="ParameterTypes"/>.</summary>
+        public IReadOnlyList<ExternalParameterOwnership> ParameterOwnerships { get; init; } = [];
+    }
+}
+
+/// <summary>Ownership declared at an external FFI parameter boundary.</summary>
+public enum ExternalParameterOwnership
+{
+    /// <summary>No ownership marker was written.</summary>
+    Unspecified,
+    /// <summary>The external call may inspect but does not retain or destroy the resource.</summary>
+    Borrow,
+    /// <summary>The external call takes ownership of the resource.</summary>
+    Consume,
 }
 
 /// <summary>

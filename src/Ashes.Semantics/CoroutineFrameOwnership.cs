@@ -22,10 +22,13 @@ internal enum CoroutineFrameSlotOwnership
     /// <summary>Runtime reference-counted and owned by the frame; the frame dropper releases it.</summary>
     FrameOwnedRuntimeRc,
 
+    /// <summary>An affine resource or resource-bearing value whose cleanup moves into the frame.</summary>
+    FrameOwnedResource,
+
     /// <summary>Region-backed; the region reclaims it and the frame dropper must leave it alone.</summary>
     RegionOwned,
 
-    /// <summary>A resource or borrowed view, released by its own deterministic cleanup path.</summary>
+    /// <summary>A borrowed view; the frame never owns or releases it.</summary>
     ResourceOrBorrowedView,
 
     /// <summary>Representation not established; treated conservatively as not frame-owned.</summary>
@@ -51,6 +54,9 @@ internal enum CoroutineFrameSlotReason
 
     /// <summary>The value is a resource or a borrowed view over storage it does not own.</summary>
     ResourceOrBorrowedStorage,
+
+    /// <summary>The frame owns an affine resource and runs its deterministic cleanup.</summary>
+    FrameOwnedResource,
 
     /// <summary>A local slot receives values whose representations disagree.</summary>
     ConflictingSlotStores,

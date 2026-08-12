@@ -409,6 +409,25 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_external_resource_ownership_declarations()
+    {
+        Program program = ParseProgram("""
+            external type Handle resource destructor closeHandle
+            external closeHandle(consume Handle) -> void
+            external inspectHandle(borrow Handle, Int) -> Int
+            0
+            """);
+
+        ExternalDecl.OpaqueType handle = program.ExternalDecls[0].ShouldBeOfType<ExternalDecl.OpaqueType>();
+        handle.Name.ShouldBe("Handle");
+        handle.DestructorName.ShouldBe("closeHandle");
+        program.ExternalDecls[1].ShouldBeOfType<ExternalDecl.Function>().ParameterOwnerships
+            .ShouldBe([ExternalParameterOwnership.Consume]);
+        program.ExternalDecls[2].ShouldBeOfType<ExternalDecl.Function>().ParameterOwnerships
+            .ShouldBe([ExternalParameterOwnership.Borrow, ExternalParameterOwnership.Unspecified]);
+    }
+
+    [Test]
     public void ParseProgram_should_parse_nested_external_pointer_types()
     {
         var program = ParseProgram("external fill(**u8) -> *Handle\n0");

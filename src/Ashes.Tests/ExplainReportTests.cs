@@ -120,6 +120,35 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void Ownership_report_exposes_declared_external_resource_contracts()
+    {
+        CompilationExplainReport report = Report("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external inspectHandle(borrow Handle) -> Int
+            external closeHandle(consume Handle) -> void
+            0
+            """, ExplainKind.Ownership, null);
+
+        ExternalResourceOwnershipRecord resource = report.ExternalResources.Single();
+        resource.TypeName.ShouldBe("Handle");
+        resource.Destructor.ShouldBe("closeHandle");
+        resource.Parameters.ShouldContain(parameter =>
+            parameter.Function == "inspectHandle"
+            && parameter.Ownership == FfiParameterOwnership.Borrow);
+        resource.Parameters.ShouldContain(parameter =>
+            parameter.Function == "closeHandle"
+            && parameter.Ownership == FfiParameterOwnership.Consume);
+
+        string text = string.Join('\n', ExplainReportFormatter.Format(
+            report,
+            new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Ownership })));
+        text.ShouldContain("External resource: Handle");
+        text.ShouldContain("destructor: closeHandle");
+        text.ShouldContain("inspectHandle parameter #1: borrow");
+    }
+
+    [Test]
     public void A_transferred_parameter_is_reported_as_consumed_and_move_safe()
     {
         // `value` becomes part of the result, so ownership moves into the callee.

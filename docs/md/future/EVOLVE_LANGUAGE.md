@@ -154,6 +154,8 @@ the zero-cost form from an ordinary one-constructor ADT
 
 ## Milestone 3: User-defined affine external resources
 
+Status: completed.
+
 ### Current limitation
 
 Deterministic cleanup applies to compiler-known handles such as `FileHandle`, `Socket`, `TlsSocket`,

@@ -141,5 +141,7 @@ internal sealed record CompilationExplainReport(
     IReadOnlyList<RepresentationFunctionReport> Representation,
     TraitEvidenceAnnotations TraitEvidence)
 {
+    internal IReadOnlyList<ExternalResourceOwnershipRecord> ExternalResources { get; init; } = [];
+
     internal static CompilationExplainReport Empty { get; } = new([], [], [], [], TraitEvidenceAnnotations.Empty);
 }

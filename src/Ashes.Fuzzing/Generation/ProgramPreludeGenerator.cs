@@ -18,6 +18,10 @@ internal static class ProgramPreludeGenerator
         List<string> trace = [];
 
         AddStableGenerationTypes(items, ref context);
+        if (caseIndex % 4 == 0)
+        {
+            AddEvolvedTypes(caseIndex, items, ref context, features, trace);
+        }
         if (generateTraits)
         {
             GeneratedProgramPrelude traits = TraitPreludeGenerator.Generate(caseIndex, context);
@@ -27,6 +31,10 @@ internal static class ProgramPreludeGenerator
             trace.AddRange(traits.Trace.Entries);
         }
         AddTopLevelFunction(caseIndex, items, ref context, features, trace);
+        if (caseIndex % 5 == 0)
+        {
+            AddExternalResource(caseIndex, items, features, trace);
+        }
 
         switch (caseIndex % 3)
         {
@@ -47,6 +55,67 @@ internal static class ProgramPreludeGenerator
         }
 
         return new GeneratedProgramPrelude(items, context, features, new GenerationTrace(trace));
+    }
+
+    private static void AddExternalResource(
+        int caseIndex,
+        List<TopLevelItem> items,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string suffix = caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string typeName = "FuzzResource" + suffix;
+        string destructorName = "fuzzResourceClose" + suffix;
+        items.Add(new TopLevelItem.External(new ExternalDecl.OpaqueType(typeName)
+        {
+            DestructorName = destructorName,
+        }));
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            "fuzzResourceInspect" + suffix,
+            [new ParsedType.Named(typeName)],
+            new ParsedType.Named("Int"))
+        {
+            ParameterOwnerships = [ExternalParameterOwnership.Borrow],
+        }));
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            destructorName,
+            [new ParsedType.Named(typeName)],
+            new ParsedType.Named("void"))
+        {
+            ParameterOwnerships = [ExternalParameterOwnership.Consume],
+        }));
+        features.Add(GeneratedFeature.ExternalResource);
+        trace.Add("program:external-resource");
+    }
+
+    private static void AddEvolvedTypes(
+        int caseIndex,
+        List<TopLevelItem> items,
+        ref GenerationContext context,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string suffix = caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string aliasName = "FuzzIdentifier" + suffix;
+        items.Add(new TopLevelItem.TypeAlias(new TypeAliasDecl(
+            aliasName,
+            [],
+            new TypeExpr.Named("Int"))));
+
+        string typeName = "FuzzUserId" + suffix;
+        string constructorName = "FuzzUserIdValue" + suffix;
+        items.Add(new TopLevelItem.ZeroCostType(new ZeroCostTypeDecl(
+            typeName,
+            [],
+            new TypeConstructor(constructorName, [new TypeExpr.Named(aliasName)]))));
+        context = context.WithAdt(new GeneratedAdt(
+            typeName,
+            0,
+            [(constructorName, [AshesType.Int])]));
+        features.Add(GeneratedFeature.TypeAlias);
+        features.Add(GeneratedFeature.ZeroCostType);
+        trace.Add("program:type-alias");
+        trace.Add("program:zero-cost-type");
     }
 
     private static void AddStableGenerationTypes(List<TopLevelItem> items, ref GenerationContext context)

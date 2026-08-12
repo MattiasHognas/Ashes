@@ -1426,16 +1426,12 @@ public static partial class DocumentService
         var lowering = new Lowering(diag, context.ImportedStdModules, context.ModuleAliases, context.ConstructorModules);
         lowering.Lower(program);
 
-        HoverItem? typeDeclarationHover = GetMappedTypeDeclarationHover(context, position, program);
-        if (typeDeclarationHover is not null)
+        HoverItem? declarationHover = GetMappedTypeDeclarationHover(context, position, program)
+            ?? GetMappedExternalDeclarationHover(context, position, program, lowering)
+            ?? GetMappedTraitHover(context, position, lowering);
+        if (declarationHover is not null)
         {
-            return typeDeclarationHover;
-        }
-
-        HoverItem? traitHover = GetMappedTraitHover(context, position, lowering);
-        if (traitHover is not null)
-        {
-            return traitHover;
+            return declarationHover;
         }
 
         var hover = lowering.GetTypeAtPosition(analysisPosition.Value);
@@ -1514,6 +1510,78 @@ public static partial class DocumentService
                 mapped.Value.Start + context.HeaderOffset,
                 mapped.Value.End + context.HeaderOffset,
                 $"```ashes\n{declaration}\n```\n\n*{kind}*");
+    }
+
+    private static HoverItem? GetMappedExternalDeclarationHover(
+        AnalysisContext context,
+        int originalPosition,
+        Frontend.Program program,
+        Lowering lowering)
+    {
+        int? analysisPosition = MapOriginalPositionToAnalysis(originalPosition, context);
+        if (analysisPosition is null)
+        {
+            return null;
+        }
+
+        (Token Token, TextSpan Span)? identifier = FindIdentifierAtPosition(
+            context.AnalysisSource,
+            analysisPosition.Value);
+        if (identifier is null)
+        {
+            return null;
+        }
+
+        ExternalDecl? declaration = program.ExternalDecls.FirstOrDefault(candidate =>
+            string.Equals(candidate switch
+            {
+                ExternalDecl.OpaqueType opaque => opaque.Name,
+                ExternalDecl.Function function => function.Name,
+                _ => string.Empty,
+            }, identifier.Value.Token.Text, StringComparison.Ordinal));
+        Lowering.ExternalOwnershipInfo? ownership = lowering.GetExternalOwnershipInfo(
+            identifier.Value.Token.Text);
+        if (declaration is null || ownership is null)
+        {
+            return null;
+        }
+
+        string formatted = Ashes.Formatter.Formatter.Format(new Frontend.Program(
+            [new TopLevelItem.External(declaration)], null)).Trim();
+        string markdown = FormatExternalOwnershipHover(formatted, ownership.Value);
+        TextSpan? mapped = MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context);
+        return mapped is null
+            ? null
+            : new HoverItem(mapped.Value.Start + context.HeaderOffset, mapped.Value.End + context.HeaderOffset, markdown);
+    }
+
+    private static string FormatExternalOwnershipHover(
+        string formatted,
+        Lowering.ExternalOwnershipInfo ownership)
+    {
+        var markdown = new StringBuilder($"```ashes\n{formatted}\n```\n\n");
+        if (ownership.IsResourceType)
+        {
+            markdown.Append("*affine external resource*\n\n**Destructor:** `");
+            markdown.Append(ownership.Destructor);
+            markdown.Append('`');
+        }
+        else
+        {
+            markdown.Append("*external function*\n\n**Resource ownership**");
+            foreach (string parameter in ownership.ParameterOwnerships)
+            {
+                markdown.Append("\n\n- `");
+                markdown.Append(parameter);
+                markdown.Append('`');
+            }
+            if (ownership.ReturnsOwnedResource)
+            {
+                markdown.Append("\n\n- return: `owned`");
+            }
+        }
+
+        return markdown.ToString();
     }
 
     private static string? ResolveCanonicalHoverName(

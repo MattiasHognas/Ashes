@@ -384,6 +384,10 @@ public sealed partial class Lowering
             {
                 ReportDiagnostic(GetSpan(opaqueType), $"Duplicate external type '{opaqueType.Name}'.");
             }
+            else if (opaqueType.DestructorName is not null)
+            {
+                _externalResourceTypes[opaqueType.Name] = opaqueType;
+            }
         }
     }
 
@@ -391,35 +395,172 @@ public sealed partial class Lowering
     {
         foreach (var function in externalDecls.OfType<ExternalDecl.Function>())
         {
-            var parameterTypes = function.ParameterTypes.Select(t => ResolveExternalParsedType(function, t, allowVoid: false)).ToList();
-            var returnType = ResolveExternalParsedType(function, function.ReturnType, allowVoid: true);
-            if (parameterTypes.Any(t => t is null) || returnType is null)
-            {
-                continue;
-            }
-
-            var resolvedParameterTypes = parameterTypes.Select(t => t!).ToList();
-
-            var symbolName = function.SymbolName ?? function.Name;
-            string? libraryName = null;
-            var atIndex = symbolName.LastIndexOf('@');
-            if (atIndex >= 0)
-            {
-                libraryName = symbolName[(atIndex + 1)..];
-                symbolName = symbolName[..atIndex];
-            }
-
-            var irFunction = new IrExternalFunction(
-                function.Name,
-                symbolName,
-                resolvedParameterTypes.Select(t => t.FfiType).ToList(),
-                returnType.FfiType,
-                string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
-            _externalFunctions.Add(irFunction);
-
-            var type = BuildFunctionType(resolvedParameterTypes.Select(t => t.SourceType).ToList(), returnType.SourceType);
-            _scopes.Peek()[function.Name] = new Binding.ExternalFunction(irFunction, type);
+            RegisterExternalFunction(function);
         }
+
+        foreach ((string resourceName, ExternalDecl.OpaqueType declaration) in _externalResourceTypes)
+        {
+            if (!_externalResourceDestructors.ContainsKey(resourceName)
+                && !_invalidExternalResourceDestructors.Contains(resourceName))
+            {
+                ReportDiagnostic(
+                    GetSpan(declaration),
+                    $"External resource '{resourceName}' requires destructor '{declaration.DestructorName}' with signature (consume {resourceName}) -> void.",
+                    DiagnosticCodes.InvalidExternalResourceDestructor);
+            }
+        }
+    }
+
+    private void RegisterExternalFunction(ExternalDecl.Function function)
+    {
+        List<ResolvedExternalType?> parameterTypes = function.ParameterTypes
+            .Select(type => ResolveExternalParsedType(function, type, allowVoid: false))
+            .ToList();
+        ResolvedExternalType? returnType = ResolveExternalParsedType(function, function.ReturnType, allowVoid: true);
+        if (parameterTypes.Any(type => type is null) || returnType is null)
+        {
+            return;
+        }
+
+        List<ResolvedExternalType> resolvedParameters = parameterTypes.Select(type => type!).ToList();
+        IReadOnlyList<FfiParameterOwnership> ownerships = ResolveExternalParameterOwnerships(
+            function,
+            resolvedParameters);
+        (string symbolName, string? libraryName) = SplitExternalSymbol(function);
+        var irFunction = new IrExternalFunction(
+            function.Name,
+            symbolName,
+            resolvedParameters.Select(type => type.FfiType).ToList(),
+            returnType.FfiType,
+            libraryName)
+        {
+            ParameterOwnerships = ownerships,
+        };
+        irFunction = RegisterExternalResourceDestructor(
+            function,
+            irFunction,
+            resolvedParameters,
+            ownerships,
+            returnType);
+        _externalFunctions.Add(irFunction);
+
+        TypeRef type = BuildFunctionType(
+            resolvedParameters.Select(parameter => parameter.SourceType).ToList(),
+            returnType.SourceType);
+        _scopes.Peek()[function.Name] = new Binding.ExternalFunction(irFunction, type);
+    }
+
+    private static (string SymbolName, string? LibraryName) SplitExternalSymbol(
+        ExternalDecl.Function function)
+    {
+        string symbolName = function.SymbolName ?? function.Name;
+        int atIndex = symbolName.LastIndexOf('@');
+        if (atIndex < 0)
+        {
+            return (symbolName, null);
+        }
+
+        string libraryName = symbolName[(atIndex + 1)..];
+        return (symbolName[..atIndex], string.IsNullOrWhiteSpace(libraryName) ? null : libraryName);
+    }
+
+    private IrExternalFunction RegisterExternalResourceDestructor(
+        ExternalDecl.Function function,
+        IrExternalFunction irFunction,
+        IReadOnlyList<ResolvedExternalType> parameterTypes,
+        IReadOnlyList<FfiParameterOwnership> parameterOwnerships,
+        ResolvedExternalType returnType)
+    {
+        IReadOnlyList<ExternalDecl.OpaqueType> resources = _externalResourceTypes.Values
+            .Where(resource => string.Equals(resource.DestructorName, function.Name, StringComparison.Ordinal))
+            .ToList();
+        if (resources.Count == 1
+            && IsValidExternalResourceDestructor(resources[0], parameterTypes, parameterOwnerships, returnType))
+        {
+            string resourceName = resources[0].Name;
+            IrExternalFunction destructor = irFunction with { DestructorForResource = resourceName };
+            _externalResourceDestructors[resourceName] = destructor;
+            return destructor;
+        }
+
+        if (resources.Count > 1)
+        {
+            foreach (ExternalDecl.OpaqueType resource in resources)
+            {
+                _invalidExternalResourceDestructors.Add(resource.Name);
+                ReportDiagnostic(
+                    GetSpan(resource),
+                    $"External resource destructor '{function.Name}' is assigned to more than one resource type.",
+                    DiagnosticCodes.InvalidExternalResourceDestructor);
+            }
+        }
+        return irFunction;
+    }
+
+    private IReadOnlyList<FfiParameterOwnership> ResolveExternalParameterOwnerships(
+        ExternalDecl.Function function,
+        IReadOnlyList<ResolvedExternalType> parameterTypes)
+    {
+        var result = new List<FfiParameterOwnership>(parameterTypes.Count);
+        for (int i = 0; i < parameterTypes.Count; i++)
+        {
+            ExternalParameterOwnership written = i < function.ParameterOwnerships.Count
+                ? function.ParameterOwnerships[i]
+                : ExternalParameterOwnership.Unspecified;
+            bool isResource = IsDeclaredExternalResourceType(parameterTypes[i].SourceType);
+            if (isResource && written == ExternalParameterOwnership.Unspecified)
+            {
+                ReportDiagnostic(
+                    GetSpan(function),
+                    $"External resource parameter #{i + 1} of '{function.Name}' must be marked 'borrow' or 'consume'.",
+                    DiagnosticCodes.InvalidExternalOwnershipMarker);
+            }
+            else if (!isResource && written != ExternalParameterOwnership.Unspecified)
+            {
+                ReportDiagnostic(
+                    GetSpan(function),
+                    $"External ownership marker on parameter #{i + 1} of '{function.Name}' requires a direct resource type.",
+                    DiagnosticCodes.InvalidExternalOwnershipMarker);
+            }
+
+            result.Add(written switch
+            {
+                ExternalParameterOwnership.Borrow => FfiParameterOwnership.Borrow,
+                ExternalParameterOwnership.Consume => FfiParameterOwnership.Consume,
+                _ => FfiParameterOwnership.Unspecified,
+            });
+        }
+        return result;
+    }
+
+    private bool IsValidExternalResourceDestructor(
+        ExternalDecl.OpaqueType resource,
+        IReadOnlyList<ResolvedExternalType> parameterTypes,
+        IReadOnlyList<FfiParameterOwnership> parameterOwnerships,
+        ResolvedExternalType returnType)
+    {
+        bool valid = parameterTypes.Count == 1
+            && parameterTypes[0].SourceType is TypeRef.TOpaque opaque
+            && string.Equals(opaque.Name, resource.Name, StringComparison.Ordinal)
+            && parameterOwnerships.Count == 1
+            && parameterOwnerships[0] == FfiParameterOwnership.Consume
+            && returnType.FfiType is FfiType.Void;
+        if (!valid)
+        {
+            _invalidExternalResourceDestructors.Add(resource.Name);
+            ReportDiagnostic(
+                GetSpan(resource),
+                $"External resource destructor '{resource.DestructorName}' must have signature (consume {resource.Name}) -> void.",
+                DiagnosticCodes.InvalidExternalResourceDestructor);
+        }
+        return valid;
+    }
+
+    private bool IsDeclaredExternalResourceType(TypeRef type)
+    {
+        TypeRef represented = EraseZeroCostTypeRepresentation(type);
+        return represented is TypeRef.TOpaque opaque
+            && _externalResourceTypes.ContainsKey(opaque.Name);
     }
 
     private ResolvedExternalType? ResolveExternalParsedType(ExternalDecl externalDecl, ParsedType parsedType, bool allowVoid)
@@ -1546,7 +1687,7 @@ public sealed partial class Lowering
                     fieldTemp = persistentField;
                 }
             }
-            else if (pruned is TypeRef.TTuple tup && tup.Elements.All(e => BuiltinRegistry.IsCopyType(Prune(e))))
+            else if (pruned is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset))
             {
                 int sizeBytes = tup.Elements.Count * 8;
                 if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))

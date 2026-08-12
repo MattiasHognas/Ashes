@@ -1116,7 +1116,10 @@ public abstract record IrInst
     /// observable runtime behavior: files, sockets, processes, and resource-owning closures must be
     /// released even while ordinary heap values remain arena-managed.
     /// </summary>
-    public sealed record CleanupResource(int SourceTemp, string TypeName) : IrInst;
+    public sealed record CleanupResource(
+        int SourceTemp,
+        string TypeName,
+        IrExternalFunction? Destructor = null) : IrInst;
 
     /// <summary>
     /// Perceus lifetime marker for an ordinary owned heap value whose ownership dies here. During
@@ -1821,7 +1824,24 @@ public sealed record IrExternalFunction(
     string SymbolName,
     IReadOnlyList<FfiType> ParameterTypes,
     FfiType ReturnType,
-    string? LibraryName = null);
+    string? LibraryName = null)
+{
+    /// <summary>Ownership declared for each external parameter.</summary>
+    public IReadOnlyList<FfiParameterOwnership> ParameterOwnerships { get; init; } = [];
+    /// <summary>The declared resource type this function destroys, or null for an ordinary external.</summary>
+    public string? DestructorForResource { get; init; }
+}
+
+/// <summary>Ownership at an FFI parameter boundary.</summary>
+public enum FfiParameterOwnership
+{
+    /// <summary>No resource ownership applies to this parameter.</summary>
+    Unspecified,
+    /// <summary>The call borrows the resource while preserving caller ownership.</summary>
+    Borrow,
+    /// <summary>The call consumes and takes ownership of the resource.</summary>
+    Consume,
+}
 
 /// <summary>
 /// Metadata for a coroutine function generated from an async block.

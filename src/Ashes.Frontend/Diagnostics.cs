@@ -67,6 +67,10 @@ public static class DiagnosticCodes
     public const string RecursiveTypeAlias = "ASH039";
     /// <summary>A zero-cost type declaration does not have exactly one constructor payload.</summary>
     public const string InvalidZeroCostTypeDeclaration = "ASH040";
+    /// <summary>An external resource names a missing or invalid destructor declaration.</summary>
+    public const string InvalidExternalResourceDestructor = "ASH041";
+    /// <summary>An external parameter has a missing or invalid resource ownership marker.</summary>
+    public const string InvalidExternalOwnershipMarker = "ASH042";
 }
 
 /// <summary>

@@ -799,10 +799,13 @@ old reference. This conditional implementation still presents one uniform
 both a predecessor double-drop and a retained old reservation.
 
 These are compiler-internal operations. Resource ownership is separate:
-`CleanupResource` closes or reaps files, sockets, processes, and
-resource-bearing closures and remains governed by the `ASH006`-`ASH008`
-diagnostics. Process cleanup closes all pipes, terminates a child that is still running, and then
-reaps it on Linux or waits for and releases its process handle on Windows.
+`CleanupResource` closes or reaps files, sockets, processes, declared opaque external resources, and
+resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnostics. A declared
+external resource carries its destructor symbol, library, ABI signature, and per-parameter
+borrow/consume metadata from frontend declarations through semantic ownership analysis into the IR;
+the backend emits automatic cleanup through the same external-call machinery as an explicit call.
+Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
+or waits for and releases its process handle on Windows.
 
 ### RC allocation and layout
 

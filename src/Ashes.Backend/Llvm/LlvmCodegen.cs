@@ -1876,12 +1876,20 @@ internal static partial class LlvmCodegen
             IrInst.ProcessReadStderrLine procReadStderr => StoreTemp(state, procReadStderr.Target, EmitProcessReadLine(state, LoadTemp(state, procReadStderr.ProcessTemp), stdoutFd: false)),
             IrInst.ProcessWaitForExit procWait => StoreTemp(state, procWait.Target, EmitProcessWaitForExit(state, LoadTemp(state, procWait.ProcessTemp))),
             IrInst.ProcessKill procKill => StoreTemp(state, procKill.Target, EmitProcessKill(state, LoadTemp(state, procKill.ProcessTemp))),
-            IrInst.CleanupResource cleanup => EmitResourceCleanup(state, LoadTemp(state, cleanup.SourceTemp), cleanup.TypeName),
+            IrInst.CleanupResource cleanup => EmitCleanupResourceInstruction(state, cleanup),
             IrInst.RcDrop { RuntimeManaged: true } drop => EmitRuntimeManagedDropInstruction(state, drop),
             IrInst.RcDrop => false,
             _ => (bool?)null,
         };
     }
+
+    private static bool EmitCleanupResourceInstruction(
+        LlvmCodegenState state,
+        IrInst.CleanupResource cleanup) => EmitResourceCleanup(
+            state,
+            LoadTemp(state, cleanup.SourceTemp),
+            cleanup.TypeName,
+            cleanup.Destructor);
 
     private static bool EmitBytesSubTextInstruction(LlvmCodegenState state, IrInst.BytesSubText instruction)
     {

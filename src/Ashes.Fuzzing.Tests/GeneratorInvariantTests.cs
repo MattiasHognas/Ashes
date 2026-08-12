@@ -243,6 +243,52 @@ public sealed class GeneratorInvariantTests
     }
 
     [Test]
+    public void Generated_external_resource_round_trips_and_lowers_ownership_metadata()
+    {
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(5);
+        Ashes.Frontend.Program program = new(prelude.Items, new Expr.IntLit(0));
+        string source = Ashes.Formatter.Formatter.Format(program);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        IrProgram ir = lowering.Lower(parsed);
+
+        diagnostics.Errors.ShouldBeEmpty(source);
+        prelude.Features.Contains(GeneratedFeature.ExternalResource).ShouldBeTrue();
+        prelude.Trace.Entries.ShouldContain("program:external-resource");
+        source.ShouldContain("external type FuzzResource5 resource destructor fuzzResourceClose5");
+        source.ShouldContain("borrow FuzzResource5");
+        source.ShouldContain("consume FuzzResource5");
+        ir.ExternalFunctions.Single(function => string.Equals(
+            function.Name,
+            "fuzzResourceInspect5",
+            StringComparison.Ordinal))
+            .ParameterOwnerships.ShouldBe([FfiParameterOwnership.Borrow]);
+    }
+
+    [Test]
+    public void Generated_alias_and_zero_cost_type_round_trip_and_lower()
+    {
+        GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(4);
+        Ashes.Frontend.Program program = new(prelude.Items, new Expr.Call(
+            new Expr.Var("FuzzUserIdValue4"),
+            new Expr.IntLit(42)));
+        string source = Ashes.Formatter.Formatter.Format(program);
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        Lowering lowering = new(diagnostics);
+        _ = lowering.Lower(parsed);
+
+        diagnostics.Errors.ShouldBeEmpty(source);
+        prelude.Features.Contains(GeneratedFeature.TypeAlias).ShouldBeTrue();
+        prelude.Features.Contains(GeneratedFeature.ZeroCostType).ShouldBeTrue();
+        source.ShouldContain("type alias FuzzIdentifier4 = Int");
+        source.ShouldContain("type FuzzUserId4 = FuzzUserIdValue4(FuzzIdentifier4)");
+        lowering.LastLoweredType.ShouldNotBeNull();
+        lowering.FormatType(lowering.LastLoweredType).ShouldBe("FuzzUserId4");
+    }
+
+    [Test]
     public void AdtGenerationUsesTheDeclaredGenericContextSchema()
     {
         var fixture = TestFixture.Create();

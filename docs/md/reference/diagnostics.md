@@ -192,6 +192,17 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
   does not contain exactly one constructor payload. Ordinary algebraic types continue to use `|`
   before every constructor. Message: `Type 'Name' must have exactly one constructor payload.`
 
+## External resource diagnostics
+
+- `ASH041` — **Invalid external resource destructor.** An `external type Name resource destructor f`
+  declaration has no matching external function in the same file, names more than one declaration,
+  or the function is not exactly `(consume Name) -> void`.
+
+- `ASH042` — **Invalid external ownership contract.** A direct resource parameter omits `borrow` or
+  `consume`, either marker is written on a non-resource parameter, pointer, or return type, or an
+  external function that borrows, consumes, or returns a declared resource is used as a first-class
+  value instead of being called directly.
+
 ## Record diagnostics
 
 Records use the brace-free syntax described in

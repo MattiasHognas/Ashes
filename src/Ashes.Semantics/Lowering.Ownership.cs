@@ -20,7 +20,12 @@ public sealed partial class Lowering
     private bool IsResourceType(TypeRef prunedType)
     {
         TypeRef represented = EraseZeroCostTypeRepresentation(prunedType);
-        return represented is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+        return represented switch
+        {
+            TypeRef.TNamedType named => BuiltinRegistry.IsResourceTypeName(named.Symbol.Name),
+            TypeRef.TOpaque opaque => _externalResourceTypes.ContainsKey(opaque.Name),
+            _ => false,
+        };
     }
 
     /// <summary>
@@ -39,6 +44,7 @@ public sealed partial class Lowering
             TypeRef.TTuple => "Tuple",
             TypeRef.TFun => "Function",
             TypeRef.TNamedType named => named.Symbol.Name,
+            TypeRef.TOpaque opaque when _externalResourceTypes.ContainsKey(opaque.Name) => opaque.Name,
             _ => null // Copy types (Int, Float, Bool), TNever, TVar, TTypeParam
         };
     }
@@ -50,9 +56,12 @@ public sealed partial class Lowering
     private string? GetResourceTypeName(TypeRef prunedType)
     {
         TypeRef represented = EraseZeroCostTypeRepresentation(prunedType);
-        return represented is TypeRef.TNamedType named && BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
-            ? named.Symbol.Name
-            : null;
+        return represented switch
+        {
+            TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name) => named.Symbol.Name,
+            TypeRef.TOpaque opaque when _externalResourceTypes.ContainsKey(opaque.Name) => opaque.Name,
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -69,6 +78,9 @@ public sealed partial class Lowering
         var pruned = Prune(type);
         switch (pruned)
         {
+            case TypeRef.TOpaque opaque when _externalResourceTypes.ContainsKey(opaque.Name):
+                return true;
+
             case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
                 return true;
 
@@ -436,12 +448,18 @@ public sealed partial class Lowering
         }
         else if (info.IsResource)
         {
-            Emit(new IrInst.CleanupResource(loadTemp, info.TypeName));
+            EmitResourceCleanup(loadTemp, info.TypeName);
         }
         else
         {
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
+    }
+
+    private void EmitResourceCleanup(int temp, string typeName)
+    {
+        _externalResourceDestructors.TryGetValue(typeName, out IrExternalFunction? destructor);
+        Emit(new IrInst.CleanupResource(temp, typeName, destructor));
     }
 
     private void EmitFunctionDrop(int loadTemp, OwnershipInfo info)
@@ -1019,8 +1037,12 @@ public sealed partial class Lowering
         var pruned = Prune(type);
         switch (pruned)
         {
+            case TypeRef.TOpaque opaque when _externalResourceTypes.ContainsKey(opaque.Name):
+                EmitResourceCleanup(temp, opaque.Name);
+                return;
+
             case TypeRef.TNamedType named when BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
-                Emit(new IrInst.CleanupResource(temp, named.Symbol.Name));
+                EmitResourceCleanup(temp, named.Symbol.Name);
                 return;
 
             case TypeRef.TNamedType named when IsSelfRecursiveResourceBearingAdt(named):

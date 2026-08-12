@@ -3,10 +3,15 @@
 This is a small Ashes FFI experiment against the official raylib 6.0 Linux x64
 shared library vendored under `vendor/raylib/linux-x64/lib`.
 
-Current Ashes external declarations support primitives, strings, opaque handles,
-and pointers. Raylib's usual 3D API passes structs such as `Vector3`, `Color`,
-and `Camera3D` by value, so this example uses raylib's lower-level `rlgl`
-functions instead. That keeps the call boundary primitive-only.
+Raylib's usual 3D API passes structs such as `Vector3`, `Color`, and `Camera3D`
+by value, so this example uses raylib's lower-level `rlgl` functions instead.
+That keeps the drawing boundary primitive-only.
+
+The example also declares raylib's `LoadedFileText` as an affine external
+resource. `LoadFileText` returns an owned value and `UnloadFileText` is its
+destructor, so `Main.ash` loads `Scene.ash` and lets deterministic scope cleanup
+release it. No manual unload call is needed; an explicit unload would use the
+same `consume` contract and prevent a second automatic cleanup.
 
 Expected run shape:
 

@@ -120,6 +120,41 @@ public sealed class CoroutineFrameOwnershipTests
         dropper.Instructions.OfType<IrInst.StoreMemOffset>().ShouldNotBeEmpty();
     }
 
+    [Test]
+    public void Declared_resource_capture_moves_cleanup_into_task_frame()
+    {
+        var diagnostics = new Frontend.Diagnostics();
+        Frontend.Program parsed = new Frontend.Parser("""
+            external type Handle resource destructor closeHandle
+            external openHandle() -> Handle
+            external readHandle(borrow Handle) -> Int
+            external closeHandle(consume Handle) -> void
+            let resource = openHandle() in
+            let job = async(match await Ashes.Task.sleep(1) with
+                | Ok(_u) -> readHandle(resource)
+                | Error(_e) -> 0) in
+            match Ashes.Task.run(job) with
+                | Ok(value) -> Ashes.IO.print(value)
+                | Error(_e2) -> Ashes.IO.print(0)
+            """, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(diagnostics);
+        IrProgram program = lowering.Lower(parsed);
+        diagnostics.ThrowIfAny();
+
+        lowering.CoroutineRepresentationDecisions.ShouldContain(record =>
+            record.Kind == CoroutineFrameSlotKind.Capture
+            && record.Decision == CoroutineValueRepresentationDecision.SavedInTaskFrame
+            && record.Reason == CoroutineFrameSlotReason.FrameOwnedResource,
+            string.Join("; ", lowering.CoroutineRepresentationDecisions.Select(record =>
+                $"{record.Kind}/{record.Decision}/{record.Reason}")));
+        IrFunction dropper = program.Functions.Single(function =>
+            function.Origin?.Kind == IrFunctionOriginKind.CoroutineFrameDropper);
+        IrInst.CleanupResource cleanup = dropper.Instructions.OfType<IrInst.CleanupResource>().Single();
+        cleanup.Destructor.ShouldNotBeNull();
+        cleanup.Destructor.Name.ShouldBe("closeHandle");
+    }
+
     private static (IrProgram Program, Lowering Lowering) LowerOwnedCaptureProgram()
     {
         var diagnostics = new Frontend.Diagnostics();

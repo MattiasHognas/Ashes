@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <AdditionalFiles Include="BannedSymbols.txt" />
+    <Content Include="Fixtures/affine_resource.c" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
