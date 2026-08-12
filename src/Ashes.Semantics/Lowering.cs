@@ -756,8 +756,8 @@ public sealed partial class Lowering
         // naming an external handle remains concrete instead of being inferred as a type parameter.
         RegisterExternalOpaqueTypes(program.ExternalDecls);
         RegisterTypeDeclarations(program.TypeDecls, program.TypeAliasDecls, program.ZeroCostTypeDecls);
-        RegisterExternalFunctions(program.ExternalDecls);
         RegisterCapabilityDeclarations(program.Items);
+        RegisterExternalFunctions(program.ExternalDecls);
         RegisterProviderDeclarations(program.Items);
         program = ExpandDerivedImplementations(program);
         RegisterTraitAndImplementationDeclarations(program.Items);
@@ -8958,12 +8958,31 @@ public sealed partial class Lowering
             return ReportArityMismatch(rootExpr, expectedArity, collectedArgs.Count);
         }
 
+        if (AmbientCapabilityForIntrinsic(intrinsic.Kind) is { } ambientCapability)
+        {
+            RequireBuiltinCapability(ambientCapability, GetSpan(rootExpr));
+        }
+
         // The dispatch is split into ordered groups; each group falls through (null) to the next.
         return LowerCallIntrinsicIoText(intrinsic.Kind, collectedArgs, request)
             ?? LowerCallIntrinsicNetBytes(intrinsic.Kind, collectedArgs, request)
             ?? LowerCallIntrinsicMathProcess(intrinsic.Kind, collectedArgs)
             ?? throw new NotSupportedException($"Unknown intrinsic: {intrinsic.Kind}");
     }
+
+    private static string? AmbientCapabilityForIntrinsic(IntrinsicKind kind) => kind switch
+    {
+        IntrinsicKind.Print or IntrinsicKind.Panic or IntrinsicKind.Write or IntrinsicKind.WriteBytes
+            or IntrinsicKind.WriteLine or IntrinsicKind.ReadLine or IntrinsicKind.ReadExact
+            or IntrinsicKind.ConsoleEnableRaw or IntrinsicKind.ConsoleRestore or IntrinsicKind.ConsolePoll
+            => ConsoleIoCapabilityName,
+        IntrinsicKind.FileReadText or IntrinsicKind.FileReadAllBytes or IntrinsicKind.FileMmap
+            or IntrinsicKind.FileExists or IntrinsicKind.FileOpen => FileReadCapabilityName,
+        IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes => FileWriteCapabilityName,
+        IntrinsicKind.SpawnProcess => ProcessSpawnCapabilityName,
+        IntrinsicKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
+        _ => null,
+    };
 
     private (int, TypeRef)? LowerCallIntrinsicIoText(
         IntrinsicKind kind,
@@ -9125,12 +9144,38 @@ public sealed partial class Lowering
             $"{resolvedModule}.{qv.Name}",
             functionType);
 
+        if (AmbientCapabilityForBuiltin(builtinMember.Kind) is { } ambientCapability)
+        {
+            RequireBuiltinCapability(ambientCapability, GetSpan(rootExpr));
+        }
+
         // The dispatch is split into ordered groups; each group falls through (null) to the next.
         return LowerCallBuiltinIoText(builtinMember.Kind, collectedArgs, request)
             ?? LowerCallBuiltinNetBytes(builtinMember.Kind, collectedArgs, request)
             ?? LowerCallBuiltinMathProcess(builtinMember.Kind, collectedArgs)
             ?? StdMemberNotFound(resolvedModule, qv.Name);
     }
+
+    private static string? AmbientCapabilityForBuiltin(BuiltinRegistry.BuiltinValueKind kind) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.Print or BuiltinRegistry.BuiltinValueKind.Panic
+            or BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes
+            or BuiltinRegistry.BuiltinValueKind.WriteLine or BuiltinRegistry.BuiltinValueKind.ReadLine
+            or BuiltinRegistry.BuiltinValueKind.IoReadExact
+            or BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw
+            or BuiltinRegistry.BuiltinValueKind.ConsoleRestore
+            or BuiltinRegistry.BuiltinValueKind.ConsolePoll => ConsoleIoCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.FileReadText
+            or BuiltinRegistry.BuiltinValueKind.FileReadAllBytes
+            or BuiltinRegistry.BuiltinValueKind.FileMmap
+            or BuiltinRegistry.BuiltinValueKind.FileExists
+            or BuiltinRegistry.BuiltinValueKind.FileOpen => FileReadCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.FileWriteText
+            or BuiltinRegistry.BuiltinValueKind.FileWriteBytes => FileWriteCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.SpawnProcess => ProcessSpawnCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
+        _ => null,
+    };
 
     private (int, TypeRef)? LowerCallBuiltinIoText(
         BuiltinRegistry.BuiltinValueKind kind,
@@ -10200,17 +10245,14 @@ public sealed partial class Lowering
         TypeRef sourceFunctionType,
         List<Expr> args)
     {
-        if (externalFunction.ParameterTypes.Count == 0
-            && args.Count == 1
-            && args[0] is Expr.Var { Name: "Unit" })
-        {
-            args = [];
-        }
+        args = NormalizeNullaryExternalArguments(externalFunction, args);
 
         if (args.Count != externalFunction.ParameterTypes.Count)
         {
             return ReportArityMismatch(rootExpr, externalFunction.ParameterTypes.Count, args.Count);
         }
+
+        RequireExternalRuntimeCapabilities(externalFunction, GetSpan(rootExpr));
 
         var loweredArgTemps = new List<int>(args.Count);
         TypeRef sourceCursor = sourceFunctionType;
@@ -10259,6 +10301,22 @@ public sealed partial class Lowering
             normalizedRuntimeManagedResult: false,
             BuiltinRegistry.BytesOwnershipProvenance.Unknown);
         return (target, resultType);
+    }
+
+    private static List<Expr> NormalizeNullaryExternalArguments(
+        IrExternalFunction function,
+        List<Expr> arguments) => function.ParameterTypes.Count == 0
+            && arguments.Count == 1
+            && arguments[0] is Expr.Var { Name: "Unit" }
+                ? []
+                : arguments;
+
+    private void RequireExternalRuntimeCapabilities(IrExternalFunction function, TextSpan span)
+    {
+        foreach (string capability in function.RuntimeCapabilities)
+        {
+            RequireBuiltinCapability(capability, span);
+        }
     }
 
     private static FfiParameterOwnership GetExternalParameterOwnership(

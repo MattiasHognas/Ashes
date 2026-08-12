@@ -164,6 +164,9 @@ External resources
 - External parameter ownership markers use one space before their type:
   `external inspect(borrow Handle) -> Int` and
   `external transfer(consume Handle) -> void`.
+- An external capability classification follows the return type as a canonical `needs` row:
+  `external readConfig(Str) -> Str needs {FileRead}`. Capability names retain source order;
+  the empty row is `needs {}`.
 
 Records
 

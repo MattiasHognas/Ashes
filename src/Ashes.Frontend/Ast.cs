@@ -355,12 +355,12 @@ public sealed record TraitImplementationDecl(
     IReadOnlyList<TraitConstraintSyntax> Requirements,
     IReadOnlyList<TraitImplementationMethodBinding> Bindings);
 
-/// <summary>A single capability reference inside a <c>uses</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
+/// <summary>A single capability reference inside a <c>needs</c> row: <c>Clock</c> or <c>State(Int)</c>.</summary>
 public sealed record CapabilityRefSyntax(string Name, IReadOnlyList<TypeExpr> Args);
 
 /// <summary>
-/// A written <c>uses</c> row: <c>uses {A, B}</c> (closed), <c>uses {A, B | e}</c> (open), or
-/// <c>uses e</c> (open, no required capabilities). The row is closed exactly when <see cref="TailVar"/>
+/// A written <c>needs</c> row: <c>needs {A, B}</c> (closed), <c>needs {A, B | e}</c> (open), or
+/// <c>needs e</c> (open, no required capabilities). The row is closed exactly when <see cref="TailVar"/>
 /// is null.
 /// </summary>
 public sealed record NeedsRowSyntax(IReadOnlyList<CapabilityRefSyntax> Capabilities, string? TailVar);
@@ -444,6 +444,10 @@ public abstract record ExternalDecl
         /// <summary>Written ownership for each parameter. The list has the same length as
         /// <see cref="ParameterTypes"/>.</summary>
         public IReadOnlyList<ExternalParameterOwnership> ParameterOwnerships { get; init; } = [];
+
+        /// <summary>The explicit closed runtime capability row, or null when the call defaults to
+        /// <c>UnsafeFfi</c>.</summary>
+        public NeedsRowSyntax? Needs { get; init; }
     }
 }
 

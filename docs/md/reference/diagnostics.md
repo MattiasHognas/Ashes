@@ -127,6 +127,9 @@ These codes cover the capability surface (`capability` declarations, `needs` row
   Messages: `Capability 'Capability' has no operation 'op'.`,
   `Unknown capability 'Capability' in needs row.`,
   `'perform' must be applied to a capability operation call.`
+  An external declaration also uses this code when its `needs` row names a user capability, an
+  unknown capability, or an open row tail. Message:
+  `External function 'name' may use only built-in runtime capabilities in a closed needs row.`
 
 - `ASH020` — **Invalid handler.** A `handle` expression has a malformed arm (an arm for
   an unknown capability/operation, a duplicate arm, a duplicate `return` arm, or a missing

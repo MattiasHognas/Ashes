@@ -211,6 +211,8 @@ Ordinary destruction timing remains unobservable.
 
 ## Milestone 4: Ambient-authority capabilities
 
+Status: completed.
+
 ### Current limitation
 
 `NetListen`, `NetConnect`, and `Stop` make some runtime authority visible in capability rows, but

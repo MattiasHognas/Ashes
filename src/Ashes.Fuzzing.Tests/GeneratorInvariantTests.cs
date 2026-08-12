@@ -255,15 +255,19 @@ public sealed class GeneratorInvariantTests
 
         diagnostics.Errors.ShouldBeEmpty(source);
         prelude.Features.Contains(GeneratedFeature.ExternalResource).ShouldBeTrue();
+        prelude.Features.Contains(GeneratedFeature.AmbientAuthority).ShouldBeTrue();
         prelude.Trace.Entries.ShouldContain("program:external-resource");
+        prelude.Trace.Entries.ShouldContain("program:ambient-authority");
         source.ShouldContain("external type FuzzResource5 resource destructor fuzzResourceClose5");
         source.ShouldContain("borrow FuzzResource5");
         source.ShouldContain("consume FuzzResource5");
-        ir.ExternalFunctions.Single(function => string.Equals(
+        IrExternalFunction inspect = ir.ExternalFunctions.Single(function => string.Equals(
             function.Name,
             "fuzzResourceInspect5",
-            StringComparison.Ordinal))
-            .ParameterOwnerships.ShouldBe([FfiParameterOwnership.Borrow]);
+            StringComparison.Ordinal));
+        inspect.ParameterOwnerships.ShouldBe([FfiParameterOwnership.Borrow]);
+        inspect.RuntimeCapabilities.ShouldBe(["Entropy"]);
+        source.ShouldContain("needs {Entropy}");
     }
 
     [Test]

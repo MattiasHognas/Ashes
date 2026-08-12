@@ -442,12 +442,53 @@ public sealed partial class Lowering
             resolvedParameters,
             ownerships,
             returnType);
+        IReadOnlyList<string> runtimeCapabilities = ResolveExternalRuntimeCapabilities(
+            function,
+            irFunction.DestructorForResource is not null);
+        irFunction = irFunction with { RuntimeCapabilities = runtimeCapabilities };
         _externalFunctions.Add(irFunction);
 
         TypeRef type = BuildFunctionType(
             resolvedParameters.Select(parameter => parameter.SourceType).ToList(),
             returnType.SourceType);
+        if (type is TypeRef.TFun)
+        {
+            type = WithCapabilityRow(type, BuiltinCapabilityRow(runtimeCapabilities));
+        }
         _scopes.Peek()[function.Name] = new Binding.ExternalFunction(irFunction, type);
+    }
+
+    private IReadOnlyList<string> ResolveExternalRuntimeCapabilities(
+        ExternalDecl.Function function,
+        bool isDestructor)
+    {
+        if (function.Needs is null)
+        {
+            return isDestructor ? [] : [UnsafeFfiCapabilityName];
+        }
+
+        bool valid = function.Needs.TailVar is null;
+        var names = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (CapabilityRefSyntax capability in function.Needs.Capabilities)
+        {
+            if (!IsBuiltinRuntimeCapability(capability.Name) || capability.Args.Count != 0)
+            {
+                valid = false;
+                continue;
+            }
+            names.Add(capability.Name);
+        }
+
+        if (!valid)
+        {
+            ReportDiagnostic(
+                GetSpan(function),
+                $"External function '{function.Name}' may use only built-in runtime capabilities in a closed needs row.",
+                UnknownCapabilityCode);
+            return [UnsafeFfiCapabilityName];
+        }
+
+        return [.. names];
     }
 
     private static (string SymbolName, string? LibraryName) SplitExternalSymbol(

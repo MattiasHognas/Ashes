@@ -21,7 +21,7 @@ external rlEnableDepthTest() -> void = "rlEnableDepthTest@$ORIGIN/../vendor/rayl
 external rlDisableDepthTest() -> void = "rlDisableDepthTest@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 external rlDisableBackfaceCulling() -> void = "rlDisableBackfaceCulling@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 external type LoadedFileText resource destructor UnloadFileText
-external LoadFileText(Str) -> LoadedFileText = "LoadFileText@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
+external LoadFileText(Str) -> LoadedFileText needs {FileRead} = "LoadFileText@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 external UnloadFileText(consume LoadedFileText) -> void = "UnloadFileText@$ORIGIN/../vendor/raylib/linux-x64/lib/libraylib.so"
 
 let rlTriangles = 4

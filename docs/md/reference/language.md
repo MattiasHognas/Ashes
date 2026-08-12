@@ -809,6 +809,7 @@ external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 external type Database resource destructor databaseClose
 external databaseClose(consume Database) -> void = "db_close@libdb"
 external databaseVersion(borrow Database) -> Int = "db_version@libdb"
+external readConfig(Str) -> Str needs {FileRead} = "read_config@libconfig"
 
 Rules:
 
@@ -836,6 +837,11 @@ Rules:
   ownership syntax.
 - External resource return values are owned by the caller. Borrowed return views are not part of this
   syntax.
+- An external function may end its signature with a closed runtime capability row, for example
+  `needs {FileRead}` or `needs {}`. Without an explicit row, calling it requires `UnsafeFfi`.
+  External rows may contain only the built-in runtime capabilities from §20.8; user-declared
+  capabilities cannot classify a native call. A declared resource destructor is implicitly
+  possession-only and therefore has an empty row unless one is written explicitly.
 - Pointer external types are represented as native pointers and may be nested for
   C buffer and out-parameter APIs such as `*u8` and `**LLVMModuleRef`.
 - The optional string after `=` overrides the C symbol name. A symbol override
@@ -2910,9 +2916,22 @@ its fully-implicit twin must produce the same inferred types and the same output
 (`tests/capability_conformance_explicit.ash` / `capability_conformance_implicit.ash`); a complete
 production-shaped demo with a logging handler is `examples/capabilities_production.ash`.
 
-### 20.8 Built-in Capabilities (`NetListen`, `NetConnect`, `Stop`)
+### 20.8 Built-in Runtime Capabilities
 
-Three capabilities are built into the compiler and require no declaration:
+The following capabilities are built into the compiler and require no declaration:
+
+- **`ConsoleIO`** — reading stdin or a terminal and writing stdout/stderr. Carried by
+  `Ashes.IO.print`, `panic`, `write`, `writeBytes`, `writeLine`, `readLine`, and `readExact`, plus
+  `Ashes.IO.Console.enableRawInput`, `restoreInput`, and `pollInput`.
+- **`FileRead`** — acquiring filesystem read authority. Carried by
+  `Ashes.IO.File.readText`, `readAllBytes`, `mmap`, `exists`, and `open`.
+- **`FileWrite`** — creating or replacing filesystem data. Carried by
+  `Ashes.IO.File.writeText` and `writeBytes`.
+- **`ProcessSpawn`** — creating a child process. Carried by `Ashes.IO.Process.spawn`.
+- **`TimeRead`** — observing a clock. Carried by `Ashes.IO.Console.monotonicMillis`.
+- **`Entropy`** — acquiring nondeterministic seed material. No compiler builtin currently produces
+  entropy; this reserved marker is available to an explicitly classified external declaration.
+- **`UnsafeFfi`** — an arbitrary user external call whose declaration has no explicit `needs` row.
 
 - **`NetListen`** — creating a listening endpoint. Carried by `Ashes.Net.Tcp.Server.listen` and
   `forkWorkers`, and therefore (by row inference) by every `serve` combinator
@@ -2923,15 +2942,16 @@ Three capabilities are built into the compiler and require no declaration:
 - **`Stop`** — requesting graceful shutdown of the running server. Unlike the two network
   capabilities it is **performable**: it has one operation, `Stop.stop : Unit -> Unit`.
 
-`NetListen` and `NetConnect` are **marker capabilities**: they declare no operations, so there is
-nothing to `perform` and nothing a `handle` arm can intercept — the runtime itself is their
-implicit provider, and they are excluded from the top-level unsatisfied-capability check
-(`ASH017`). Their value is purely in typing:
+All built-in runtime capabilities except `Stop` are **marker capabilities**: they declare no
+operations, so there is nothing to `perform` and nothing a `handle` arm can intercept. The runtime
+itself is their implicit provider, and they are excluded from the top-level unsatisfied-capability
+check (`ASH017`). Their value is purely in typing:
 
 - Every function that (transitively) creates a network endpoint carries the capability in its
   inferred row, so "this program is a server" (or "dials out") is visible in its type.
 - A written **closed** row that omits them rejects such calls (`ASH018`), exactly like any other
-  capability: `let f : Str -> Int needs {Prices} = ...` cannot call `Ashes.Net.Http.get`.
+  capability: `let f : Str -> Int needs {} = ...` cannot read a file or call
+  `Ashes.Net.Http.get`.
 - They can be named in `needs` rows like declared capabilities:
   `let opener : Int -> Task(Str, Socket) needs {NetListen} = given (p) -> tcp.listen(p)`.
 
@@ -2945,11 +2965,31 @@ handler code its `needs {Stop}` row propagates through `serve` and is visible in
 type, so stop authority is trackable:
 `let handle : Request -> Task(E, Response) needs {Stop} = ...`.
 
-Operations on an **established** connection — `send`, `receive`, `close`, `accept` on an accepted
-or connected socket — carry no capability: possession of the connection resource is the
-authority; the capabilities govern creating endpoints, not using them. All three names are
-reserved: a user `capability NetListen = ...` (or `NetConnect`, `Stop`) declaration is a
-compile-time error.
+Possession-only operations carry no ambient capability. This includes reading or closing an already
+open `FileHandle`, operating on an existing `Process`, and `send`, `receive`, `close`, or `accept` on
+an accepted or connected socket. Possession of the resource is the authority; the markers govern
+acquiring ambient access, not using an acquired value.
+
+External declarations use the same closed-row spelling:
+
+```ash
+external loadSecret(Str) -> Str needs {FileRead} = "load_secret@libsecret"
+external secureSeed() -> Int needs {Entropy} = "secure_seed@libsecret"
+external pureMath(Int) -> Int needs {} = "pure_math@libmath"
+external unclassified(Int) -> Int = "unknown_native_call@libnative"
+```
+
+The first three calls require exactly the written runtime markers; `unclassified` requires
+`UnsafeFfi`. An explicit empty row is a trusted FFI assertion that the native call acquires no
+ambient authority. Only built-in runtime capability names are allowed in an external row, and its
+row is closed: user capability variables and open tails are rejected. A declared resource
+destructor defaults to the empty row because destruction uses authority already conveyed by
+possession. Other borrow/consume externals still default to `UnsafeFfi` unless explicitly
+classified.
+
+The names `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`, `Entropy`, `UnsafeFfi`,
+`NetListen`, `NetConnect`, and `Stop` are reserved. A user capability declaration with any of these
+names is a compile-time error.
 
 Because a handler's `needs {Stop}` (or `{NetConnect}`, for a handler that dials out) must thread
 through `serve`, capability rows propagate correctly through higher-order library combinators and

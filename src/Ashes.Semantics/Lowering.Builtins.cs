@@ -185,7 +185,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileOpen,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["FileHandle"])))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["FileHandle"])), FileReadCapabilityName)
         );
     }
 
@@ -2566,7 +2566,7 @@ public sealed partial class Lowering
         var printArgTypeVar = (TypeRef.TVar)NewTypeVar();
         return new Binding.Intrinsic(
             IntrinsicKind.Print,
-            new TypeScheme([new TypeVar(printArgTypeVar.Id, "a")], new TypeRef.TFun(printArgTypeVar, _resolvedTypes["Unit"]))
+            BuiltinCapabilityScheme([new TypeVar(printArgTypeVar.Id, "a")], new TypeRef.TFun(printArgTypeVar, _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 
@@ -2574,7 +2574,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Write,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 
@@ -2582,7 +2582,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.WriteBytes,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), _resolvedTypes["Unit"]))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TBytes(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 
@@ -2590,7 +2590,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.WriteLine,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 
@@ -2598,7 +2598,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ReadLine,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateMaybeType(new TypeRef.TStr())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateMaybeType(new TypeRef.TStr())), ConsoleIoCapabilityName)
         );
     }
 
@@ -2966,7 +2966,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileReadText,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TStr())), FileReadCapabilityName)
         );
     }
 
@@ -2978,7 +2978,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileReadAllBytes,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())), FileReadCapabilityName)
         );
     }
 
@@ -2990,7 +2990,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileMmap,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBytes())), FileReadCapabilityName)
         );
     }
 
@@ -3055,7 +3055,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileWriteText,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))), FileWriteCapabilityName)
         );
     }
 
@@ -3063,7 +3063,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileExists,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())), FileReadCapabilityName)
         );
     }
 
@@ -3219,11 +3219,11 @@ public sealed partial class Lowering
         );
     }
 
-    private static Binding.Intrinsic CreatePanicBinding()
+    private Binding.Intrinsic CreatePanicBinding()
     {
         return new Binding.Intrinsic(
             IntrinsicKind.Panic,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TNever()))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TNever()), ConsoleIoCapabilityName)
         );
     }
 
@@ -4595,7 +4595,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.FileWriteBytes,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TBytes(), CreateStringResultType(_resolvedTypes["Unit"]))))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TBytes(), CreateStringResultType(_resolvedTypes["Unit"]))), FileWriteCapabilityName)
         );
     }
 
@@ -4604,7 +4604,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ReadExact,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateStringResultType(new TypeRef.TStr())), ConsoleIoCapabilityName)
         );
     }
 
@@ -4641,7 +4641,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ConsoleEnableRaw,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TBool()))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TBool()), ConsoleIoCapabilityName)
         );
     }
 
@@ -4668,7 +4668,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ConsoleRestore,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], _resolvedTypes["Unit"]))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 
@@ -4695,7 +4695,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ConsolePoll,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TStr())))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TStr())), ConsoleIoCapabilityName)
         );
     }
 
@@ -4722,7 +4722,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.ConsoleMonotonicMillis,
-            new TypeScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TInt()))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], new TypeRef.TInt()), TimeReadCapabilityName)
         );
     }
 
@@ -4786,7 +4786,7 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.SpawnProcess,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TList(new TypeRef.TStr()), CreateStringResultType(_resolvedTypes["Process"]))))
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TList(new TypeRef.TStr()), CreateStringResultType(_resolvedTypes["Process"]))), ProcessSpawnCapabilityName)
         );
     }
 

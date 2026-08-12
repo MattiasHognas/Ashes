@@ -4,7 +4,7 @@
 // expect: 3
 import Ashes.IO as io
 import Ashes.Text as text
-let recursive loop : Int -> BigInt -> BigInt -> Unit =
+let recursive loop : Int -> BigInt -> BigInt -> Unit needs {ConsoleIO} =
     given (n) ->
         given (left) ->
             given (right) ->

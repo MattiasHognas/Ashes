@@ -15,6 +15,9 @@ public enum ExplainKind
     /// <summary>Hidden trait dictionary ABI parameters and concrete implementation selection.</summary>
     Traits,
 
+    /// <summary>Inferred public and external ambient-authority requirements.</summary>
+    Authority,
+
     /// <summary>Ownership, reference counting, reuse, and representation, correlated.</summary>
     Memory,
 }
@@ -71,6 +74,7 @@ public sealed record ExplainRequest(
             case "rc": kind = ExplainKind.Rc; return true;
             case "reuse": kind = ExplainKind.Reuse; return true;
             case "traits": kind = ExplainKind.Traits; return true;
+            case "authority": kind = ExplainKind.Authority; return true;
             case "memory": kind = ExplainKind.Memory; return true;
             default:
                 error = $"Unknown explain type '{kindText}'.";
@@ -79,8 +83,14 @@ public sealed record ExplainRequest(
     }
 
     /// <summary>The valid values, in report order, for help text and error messages.</summary>
-    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "traits", "memory"];
+    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "traits", "authority", "memory"];
 }
+
+/// <summary>The ambient-authority capabilities inferred for one exported binding.</summary>
+internal sealed record PublicAuthorityRecord(string Binding, IReadOnlyList<string> Capabilities);
+
+/// <summary>The declared ambient-authority row of one external function.</summary>
+internal sealed record ExternalAuthorityRecord(string Function, IReadOnlyList<string> Capabilities);
 
 /// <summary>One function's ownership contract, as reported.</summary>
 internal sealed record OwnershipFunctionReport(
@@ -142,6 +152,10 @@ internal sealed record CompilationExplainReport(
     TraitEvidenceAnnotations TraitEvidence)
 {
     internal IReadOnlyList<ExternalResourceOwnershipRecord> ExternalResources { get; init; } = [];
+
+    internal IReadOnlyList<PublicAuthorityRecord> Authority { get; init; } = [];
+
+    internal IReadOnlyList<ExternalAuthorityRecord> ExternalAuthority { get; init; } = [];
 
     internal static CompilationExplainReport Empty { get; } = new([], [], [], [], TraitEvidenceAnnotations.Empty);
 }

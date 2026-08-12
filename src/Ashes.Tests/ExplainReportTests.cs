@@ -83,6 +83,32 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void Authority_report_agrees_with_public_rows_and_external_declarations()
+    {
+        const string source = """
+            external nativeRead(Int) -> Int needs {FileRead}
+            external nativeUnknown(Int) -> Int
+            let read : Int -> Int needs {FileRead} = given value -> nativeRead(value)
+            let unknown : Int -> Int needs {UnsafeFfi} = given value -> nativeUnknown(value)
+            let pure value = value + 1
+            0
+            """;
+        var request = new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Authority });
+        CompilationExplainReport report = Report(source, request);
+
+        report.Authority.Single(binding => string.Equals(binding.Binding, "read", StringComparison.Ordinal)).Capabilities.ShouldBe(["FileRead"]);
+        report.Authority.Single(binding => string.Equals(binding.Binding, "unknown", StringComparison.Ordinal)).Capabilities.ShouldBe(["UnsafeFfi"]);
+        report.Authority.Single(binding => string.Equals(binding.Binding, "pure", StringComparison.Ordinal)).Capabilities.ShouldBeEmpty();
+        report.ExternalAuthority.Single(external => string.Equals(external.Function, "nativeRead", StringComparison.Ordinal)).Capabilities.ShouldBe(["FileRead"]);
+        report.ExternalAuthority.Single(external => string.Equals(external.Function, "nativeUnknown", StringComparison.Ordinal)).Capabilities.ShouldBe(["UnsafeFfi"]);
+
+        string text = string.Join('\n', ExplainReportFormatter.Format(report, request));
+        text.ShouldContain("Authority report");
+        text.ShouldContain("Public binding: read");
+        text.ShouldContain("External function: nativeUnknown");
+    }
+
+    [Test]
     public void Reported_parameter_ownership_mirrors_the_analysis_partition()
     {
         // Borrowed and consumed partition the parameter list, and the report derives one from the
@@ -353,6 +379,7 @@ public sealed class ExplainReportTests
             ExplainKind.Rc,
             ExplainKind.Reuse,
             ExplainKind.Traits,
+            ExplainKind.Authority,
             ExplainKind.Memory,
         });
         IReadOnlyList<string> lines = ExplainReportFormatter.Format(

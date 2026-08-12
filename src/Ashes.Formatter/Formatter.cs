@@ -803,6 +803,10 @@ public static class Formatter
                             : ExternalParameterOwnership.Unspecified))));
                 sb.Append(") -> ");
                 sb.Append(WriteParsedType(func.ReturnType));
+                if (func.Needs is not null)
+                {
+                    WriteNeedsRow(sb, func.Needs);
+                }
                 if (func.SymbolName is not null)
                 {
                     sb.Append(" = \"");

@@ -172,6 +172,22 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void External_function_hover_exposes_declared_ambient_authority()
+    {
+        const string source =
+            "external readNative(Int) -> Int needs {FileRead}\n" +
+            "let read value = readNative(value)\n" +
+            "0";
+
+        DocumentService.HoverItem? hover = DocumentService.GetHover(
+            source,
+            source.LastIndexOf("readNative", StringComparison.Ordinal));
+
+        hover.ShouldNotBeNull();
+        hover.Value.Contents.ShouldContain("Int -> Int needs {FileRead}");
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

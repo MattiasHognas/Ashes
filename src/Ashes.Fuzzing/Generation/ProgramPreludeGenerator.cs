@@ -76,6 +76,9 @@ internal static class ProgramPreludeGenerator
             new ParsedType.Named("Int"))
         {
             ParameterOwnerships = [ExternalParameterOwnership.Borrow],
+            Needs = new NeedsRowSyntax(
+                [new CapabilityRefSyntax("Entropy", [])],
+                TailVar: null),
         }));
         items.Add(new TopLevelItem.External(new ExternalDecl.Function(
             destructorName,
@@ -85,7 +88,9 @@ internal static class ProgramPreludeGenerator
             ParameterOwnerships = [ExternalParameterOwnership.Consume],
         }));
         features.Add(GeneratedFeature.ExternalResource);
+        features.Add(GeneratedFeature.AmbientAuthority);
         trace.Add("program:external-resource");
+        trace.Add("program:ambient-authority");
     }
 
     private static void AddEvolvedTypes(

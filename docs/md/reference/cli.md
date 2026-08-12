@@ -63,6 +63,8 @@ registry base URL in `~/.ashes/credentials.json`.
 
 The capability row shown by `ashes info` is the registry's server-computed audit — the capabilities the
 package's public API needs, inferred by the compiler at publish time, not a heuristic scan.
+Built-in ambient markers such as `FileRead`, `ProcessSpawn`, and `UnsafeFfi` are included in this
+metadata exactly like declared capability rows.
 
 ---
 
@@ -837,6 +839,7 @@ matching functions.
 ashes compile app.ash --explain ownership
 ashes run     app.ash --explain rc --explain reuse
 ashes compile app.ash --explain traits
+ashes compile app.ash --explain authority
 ashes compile app.ash --explain memory:Map.set
 ```
 
@@ -846,6 +849,7 @@ ashes compile app.ash --explain memory:Map.set
 | `rc` | The Perceus operations in the final semantic IR — dups, drops, uniqueness checks, allocations, reused allocations, reuse tokens, and copies. Functions with no such operations are omitted. |
 | `reuse` | In-place-reuse decisions: whether a specialization was generated, the candidate, the outcome, and a stable reason code with the source location of the site. |
 | `traits` | Hidden immutable dictionary parameters and the concrete implementation selected for each resolved trait requirement. |
+| `authority` | The inferred ambient-authority row of each public binding and the declared row of each external function. |
 | `memory` | Ownership, RC, reuse, trait evidence, and physical representation correlated per source function. |
 
 The selector matches a function's source name, qualified name, generated label, or the source
@@ -871,6 +875,7 @@ The three facilities overlap deliberately, and it is worth knowing how:
 |---|---|
 | How much reference counting a function does | `--explain rc` |
 | Which trait implementation was selected | `--explain traits` |
+| Which ambient authority public functions and externals require | `--explain authority` |
 | Which operations, on which values, and where | `--emit-ir final` |
 | What the optimizer changed | `--emit-ir lowered` and `--emit-ir final`, diffed |
 

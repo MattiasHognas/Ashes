@@ -31,14 +31,16 @@ public sealed partial class Lowering
 
     private TypeRef AmbientRow => _ambientRow ??= NewTypeVar();
 
-    // Built-in marker capabilities for network endpoint creation: NetListen (open a listening
-    // endpoint) and NetConnect (dial out). They have no operations — nothing to perform or handle;
-    // the runtime is their implicit provider, so they are excluded from the ASH017 residual check.
-    // Their value is typing: every function that (transitively) creates a network endpoint carries
-    // the capability in its inferred row, a written closed row without it rejects such calls
-    // (ASH018), and `needs {NetListen}` annotations resolve like any declared capability.
-    // Operations on an ESTABLISHED connection (send/receive/close/accept) carry no capability:
-    // possession of the socket resource is the authority.
+    // Built-in runtime capabilities are typing-only authority markers supplied by the runtime.
+    // They have no operations, handlers, or evidence globals. Stop is the sole performable runtime
+    // capability and is intercepted directly below.
+    private const string ConsoleIoCapabilityName = "ConsoleIO";
+    private const string FileReadCapabilityName = "FileRead";
+    private const string FileWriteCapabilityName = "FileWrite";
+    private const string ProcessSpawnCapabilityName = "ProcessSpawn";
+    private const string TimeReadCapabilityName = "TimeRead";
+    private const string EntropyCapabilityName = "Entropy";
+    private const string UnsafeFfiCapabilityName = "UnsafeFfi";
     private const string NetListenCapabilityName = "NetListen";
     private const string NetConnectCapabilityName = "NetConnect";
 
@@ -53,11 +55,11 @@ public sealed partial class Lowering
     // Deliberately NOT in _capabilitySymbols: CapabilityGlobalCount (evidence globals, the
     // live-posts guards around arena resets) keys off that dictionary, and marker capabilities
     // have no operations, handlers, or evidence — they exist purely in rows.
-    private readonly Dictionary<string, CapabilitySymbol> _builtinNetworkCapabilities = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CapabilitySymbol> _builtinRuntimeCapabilities = new(StringComparer.Ordinal);
 
-    private CapabilitySymbol BuiltinNetworkCapability(string name)
+    private CapabilitySymbol BuiltinRuntimeCapability(string name)
     {
-        if (_builtinNetworkCapabilities.TryGetValue(name, out var existing))
+        if (_builtinRuntimeCapabilities.TryGetValue(name, out var existing))
         {
             return existing;
         }
@@ -67,12 +69,19 @@ public sealed partial class Lowering
             [],
             new Dictionary<string, CapabilityOperationSymbol>(StringComparer.Ordinal),
             new CapabilityDecl(name, [], []));
-        _builtinNetworkCapabilities[name] = symbol;
+        _builtinRuntimeCapabilities[name] = symbol;
         return symbol;
     }
 
-    private static bool IsBuiltinNetworkCapability(string name) =>
-        string.Equals(name, NetListenCapabilityName, StringComparison.Ordinal)
+    private static bool IsBuiltinRuntimeCapability(string name) =>
+        string.Equals(name, ConsoleIoCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, FileReadCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, FileWriteCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, ProcessSpawnCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, TimeReadCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, EntropyCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, UnsafeFfiCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, NetListenCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, NetConnectCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, StopCapabilityName, StringComparison.Ordinal);
 
@@ -98,21 +107,46 @@ public sealed partial class Lowering
     /// <summary>Requires a built-in marker capability in the ambient row at an intrinsic call site.</summary>
     private void RequireBuiltinCapability(string name, TextSpan span)
     {
-        var capability = new TypeRef.TCapability(BuiltinNetworkCapability(name), []);
+        var capability = new TypeRef.TCapability(BuiltinRuntimeCapability(name), []);
         SubsumeCalleeRow(new TypeRef.TRow([capability], null), span);
     }
 
     private TypeRef BuiltinCapabilityRow(string name) =>
-        new TypeRef.TRow([new TypeRef.TCapability(BuiltinNetworkCapability(name), [])], null);
+        new TypeRef.TRow([new TypeRef.TCapability(BuiltinRuntimeCapability(name), [])], null);
+
+    private TypeRef BuiltinCapabilityRow(IReadOnlyList<string> names) =>
+        new TypeRef.TRow(
+            names.Select(name => new TypeRef.TCapability(BuiltinRuntimeCapability(name), [])).ToList(),
+            null);
+
+    private TypeRef WithBuiltinCapability(TypeRef functionType, string name)
+        => WithCapabilityRow(functionType, BuiltinCapabilityRow(name));
+
+    private TypeRef WithCapabilityRow(TypeRef functionType, TypeRef row)
+    {
+        if (functionType is not TypeRef.TFun function)
+        {
+            throw new InvalidOperationException("A builtin capability row requires a function type.");
+        }
+
+        return function.Ret is TypeRef.TFun
+            ? function with { Ret = WithCapabilityRow(function.Ret, row) }
+            : function with { Row = row };
+    }
+
+    private TypeScheme BuiltinCapabilityScheme(
+        IReadOnlyList<TypeVar> variables,
+        TypeRef functionType,
+        string name) => new(variables, WithBuiltinCapability(functionType, name));
 
     private void RegisterCapabilityDeclarations(IReadOnlyList<TopLevelItem> items)
     {
         foreach (var item in items.OfType<TopLevelItem.Capability>())
         {
             var decl = item.Decl;
-            if (IsBuiltinNetworkCapability(decl.Name))
+            if (IsBuiltinRuntimeCapability(decl.Name))
             {
-                ReportDiagnostic(GetSpan(decl), $"Capability name '{decl.Name}' is reserved for the built-in network capability.");
+                ReportDiagnostic(GetSpan(decl), $"Capability name '{decl.Name}' is reserved for a built-in runtime capability.");
                 continue;
             }
 
@@ -745,9 +779,7 @@ public sealed partial class Lowering
         var (capabilities, _) = NormalizeRow(_ambientRow);
         foreach (var capability in capabilities.OrderBy(e => e.Symbol.Name, StringComparer.Ordinal))
         {
-            // Built-in network marker capabilities are satisfied by the runtime itself: they exist
-            // to make endpoint creation visible in rows, not to be handled.
-            if (IsBuiltinNetworkCapability(capability.Symbol.Name))
+            if (IsBuiltinRuntimeCapability(capability.Symbol.Name))
             {
                 continue;
             }
@@ -1825,9 +1857,9 @@ public sealed partial class Lowering
         {
             if (!_capabilitySymbols.TryGetValue(capabilityRef.Name, out var symbol))
             {
-                if (IsBuiltinNetworkCapability(capabilityRef.Name))
+                if (IsBuiltinRuntimeCapability(capabilityRef.Name))
                 {
-                    symbol = BuiltinNetworkCapability(capabilityRef.Name);
+                    symbol = BuiltinRuntimeCapability(capabilityRef.Name);
                 }
                 else
                 {
