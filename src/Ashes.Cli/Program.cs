@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Ashes.Backend.Backends;
+using Ashes.Cli;
 using Ashes.Cli.Registry;
 using Ashes.Formatter;
 using Ashes.Frontend;
