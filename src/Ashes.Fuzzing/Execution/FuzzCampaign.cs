@@ -44,7 +44,24 @@ internal sealed class FuzzCampaign
                     campaignToken.ThrowIfCancellationRequested();
                     int caseIndex = first + offset;
                     FuzzProfile profile = ResolveProfile(requestedProfile, caseIndex);
-                    GeneratedFuzzCase testCase = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
+                    GeneratedFuzzCase testCase;
+                    try
+                    {
+                        testCase = _generator.Generate(masterSeed, caseIndex, profile, configuration.MaximumNodes);
+                    }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        ulong caseSeed = FuzzRandom.DeriveCaseSeed(masterSeed, caseIndex);
+                        string replay = FuzzReplayCommand.Format(
+                            masterSeed,
+                            caseIndex,
+                            profile.Id,
+                            configuration.MaximumNodes,
+                            configuration);
+                        throw new InvalidOperationException(
+                            $"generation failed: seed={masterSeed} case-seed={caseSeed} case={caseIndex} profile={profile.Id}; replay: {replay}; {exception.Message}",
+                            exception);
+                    }
                     if (profile.MutateSource)
                     {
                         testCase = InvalidSourceSeedSelector.Select(testCase, repositoryRoot, caseIndex);

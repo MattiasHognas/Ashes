@@ -140,6 +140,8 @@ just fuzz-replay 12345 417 perceus
 Failure reports use the longer executable form and include `--max-nodes`, target, and compiler and
 program timeouts. Copy that complete command when a campaign used non-default configuration; these
 values are part of exact replay and are also stored in `metadata.json`.
+Internal generation failures print the master seed, case seed, case index, resolved profile, and the
+same complete replay command, so a late failure in a long campaign remains directly reproducible.
 
 On failure, the runner applies bounded, recursive type-aware candidates and accepts a candidate only
 when its stable node/source-size metric decreases, remains valid up to the failing compiler phase,
