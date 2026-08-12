@@ -106,10 +106,9 @@ export default defineConfig({
     // site can never drift.
     languages: [
       {
+        ...ashesGrammar,
         name: "ashes",
         aliases: ["ash"],
-        patterns: ashesGrammar.patterns,
-        repository: ashesGrammar.repository,
       } as any,
     ],
     theme: {
