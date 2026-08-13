@@ -231,7 +231,11 @@ surfaced as parse errors (`ASH003`) or uncoded semantic errors:
   Message: `Record field alternatives cannot be mixed with constructor alternatives.`
 
 The semantic record diagnostics (unknown record type, missing/unknown/duplicate
-field) remain uncoded.
+field) remain uncoded. Named record patterns use the same uncoded unknown/duplicate-field family.
+Or-pattern binder-set mismatches report `Every alternative of an or-pattern must bind exactly the
+same names.`; same-named alternatives with incompatible inferred types use the ordinary type mismatch
+diagnostic. A resource-bearing as-pattern that would create a second consuming binding uses the
+existing affine-use diagnostic family.
 
 Currently uncoded compile failures include examples such as:
 

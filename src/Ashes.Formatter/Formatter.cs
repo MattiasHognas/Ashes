@@ -1355,64 +1355,97 @@ public static class Formatter
         if (!EndsWithNewLine(sb, "\n")) sb.Append('\n');
     }
 
-    private static void WritePattern(StringBuilder sb, Pattern pattern)
+    private static void WritePattern(StringBuilder sb, Pattern pattern, int parentPrecedence = 0)
+    {
+        int precedence = pattern switch
+        {
+            Pattern.Or => 1,
+            Pattern.As => 2,
+            Pattern.Cons => 3,
+            _ => 4,
+        };
+        bool wrap = precedence < parentPrecedence;
+        if (wrap)
+        {
+            sb.Append('(');
+        }
+
+        WritePatternCore(sb, pattern);
+
+        if (wrap)
+        {
+            sb.Append(')');
+        }
+    }
+
+    private static void WritePatternCore(StringBuilder sb, Pattern pattern)
     {
         switch (pattern)
         {
-            case Pattern.EmptyList:
-                sb.Append("[]");
-                return;
-            case Pattern.Var patVar:
-                sb.Append(patVar.Name);
-                return;
-            case Pattern.Wildcard:
-                sb.Append('_');
-                return;
-            case Pattern.Cons cons:
-                WritePattern(sb, cons.Head);
-                sb.Append(" :: ");
-                WritePattern(sb, cons.Tail);
-                return;
-            case Pattern.Tuple tuple:
-                sb.Append('(');
-                for (int i = 0; i < tuple.Elements.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        sb.Append(", ");
-                    }
-                    WritePattern(sb, tuple.Elements[i]);
-                }
-                sb.Append(')');
-                return;
-            case Pattern.Constructor ctor:
-                sb.Append(ctor.Name);
-                if (ctor.Patterns.Count > 0)
-                {
-                    sb.Append('(');
-                    for (int i = 0; i < ctor.Patterns.Count; i++)
-                    {
-                        if (i > 0)
-                        {
-                            sb.Append(", ");
-                        }
-                        WritePattern(sb, ctor.Patterns[i]);
-                    }
-                    sb.Append(')');
-                }
-                return;
-            case Pattern.IntLit intLit:
-                sb.Append(intLit.Value);
-                return;
-            case Pattern.StrLit strLit:
-                sb.Append('"');
-                sb.Append(EscapeString(strLit.Value));
-                sb.Append('"');
-                return;
-            case Pattern.BoolLit boolLit:
-                sb.Append(boolLit.Value ? "true" : "false");
-                return;
+            case Pattern.EmptyList: sb.Append("[]"); break;
+            case Pattern.Var variable: sb.Append(variable.Name); break;
+            case Pattern.Wildcard: sb.Append('_'); break;
+            case Pattern.IntLit integer: sb.Append(integer.Value); break;
+            case Pattern.StrLit text: sb.Append('"').Append(EscapeString(text.Value)).Append('"'); break;
+            case Pattern.BoolLit boolean: sb.Append(boolean.Value ? "true" : "false"); break;
+            case Pattern.Cons cons: WriteConsPattern(sb, cons); break;
+            case Pattern.Tuple tuple: WritePatternSequence(sb, tuple.Elements, "(", ", ", ")", 0); break;
+            case Pattern.Constructor constructor: WriteConstructorPattern(sb, constructor); break;
+            case Pattern.Record record: WriteRecordPattern(sb, record); break;
+            case Pattern.As asPattern: WriteAsPattern(sb, asPattern); break;
+            case Pattern.Or orPattern: WritePatternSequence(sb, orPattern.Alternatives, "", " | ", "", 2); break;
         }
+    }
+
+    private static void WriteConsPattern(StringBuilder sb, Pattern.Cons cons)
+    {
+        WritePattern(sb, cons.Head, 4);
+        sb.Append(" :: ");
+        WritePattern(sb, cons.Tail, 3);
+    }
+
+    private static void WriteConstructorPattern(StringBuilder sb, Pattern.Constructor constructor)
+    {
+        sb.Append(constructor.Name);
+        if (constructor.Patterns.Count > 0)
+        {
+            WritePatternSequence(sb, constructor.Patterns, "(", ", ", ")", 0);
+        }
+    }
+
+    private static void WriteRecordPattern(StringBuilder sb, Pattern.Record record)
+    {
+        sb.Append(record.TypeName).Append(" { ");
+        for (int i = 0; i < record.Fields.Count; i++)
+        {
+            if (i > 0) sb.Append(", ");
+            sb.Append(record.Fields[i].Name).Append(" = ");
+            WritePattern(sb, record.Fields[i].Pattern);
+        }
+        sb.Append(" }");
+    }
+
+    private static void WriteAsPattern(StringBuilder sb, Pattern.As asPattern)
+    {
+        WritePattern(sb, asPattern.Inner, 2);
+        sb.Append(" as ").Append(asPattern.Name);
+    }
+
+    private static void WritePatternSequence(
+        StringBuilder sb,
+        IReadOnlyList<Pattern> patterns,
+        string prefix,
+        string separator,
+        string suffix,
+        int precedence)
+    {
+        sb.Append(prefix);
+        for (int i = 0; i < patterns.Count; i++)
+        {
+            if (i > 0) sb.Append(separator);
+            WritePattern(sb, patterns[i], precedence);
+        }
+        sb.Append(suffix);
     }
 
     private static void WriteExprInline(StringBuilder sb, Expr e, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)

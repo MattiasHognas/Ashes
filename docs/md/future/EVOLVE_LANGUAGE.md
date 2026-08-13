@@ -380,6 +380,8 @@ ambient-capability changes.
 
 ## Milestone 7: Pattern-language completion
 
+Status: completed.
+
 ### Current limitation
 
 Records are constructed and updated by field name but destructured positionally. Patterns also cannot
@@ -400,6 +402,11 @@ and a field may appear at most once. Omitted fields are ignored. Or-patterns mus
 evaluation order, guard semantics, or exhaustiveness. As-patterns bind one additional alias whose
 ownership follows the existing implicit-sharing rules for ordinary values and affine rules for
 resource-bearing values.
+
+The concrete syntax is `TypeName { field = pattern }` for named record patterns, `pattern as name`
+for as-patterns, and `left | right` for or-patterns. Pattern precedence, binder equality, redundancy,
+and the restriction against multiple consuming aliases of one resource are normative in the language
+reference before implementation begins.
 
 Do not add view/active patterns in this milestone. Arbitrary function execution during matching would
 complicate purity, capability rows, exhaustiveness, and evaluation order.

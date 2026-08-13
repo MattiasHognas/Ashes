@@ -526,7 +526,6 @@ public sealed partial class Lowering
                         yield return (binder, relativeDepth);
                     }
                 }
-
                 yield break;
             case Pattern.Constructor constructor:
                 foreach (Pattern child in constructor.Patterns)
@@ -535,6 +534,28 @@ public sealed partial class Lowering
                     {
                         yield return (binder, relativeDepth);
                     }
+                }
+                yield break;
+            case Pattern.Record record:
+                foreach ((string _, Pattern child) in record.Fields)
+                {
+                    foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(child, depth))
+                    {
+                        yield return (binder, relativeDepth);
+                    }
+                }
+
+                yield break;
+            case Pattern.As asPattern:
+                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipBinders(asPattern.Inner, depth))
+                {
+                    yield return (binder, relativeDepth);
+                }
+                yield break;
+            case Pattern.Or { Alternatives.Count: > 0 } orPattern:
+                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipBinders(orPattern.Alternatives[0], depth))
+                {
+                    yield return (binder, relativeDepth);
                 }
 
                 yield break;

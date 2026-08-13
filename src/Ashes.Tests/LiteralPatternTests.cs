@@ -68,6 +68,21 @@ public sealed class LiteralPatternTests
     }
 
     [Test]
+    public void Parse_should_support_named_record_as_and_or_patterns()
+    {
+        Expr.Match match = Parse("match value with | Point { y = Some(n), x = _ } as point | Point { x = n } as point -> n")
+            .ShouldBeOfType<Expr.Match>();
+
+        Pattern.Or alternatives = match.Cases[0].Pattern.ShouldBeOfType<Pattern.Or>();
+        alternatives.Alternatives.Count.ShouldBe(2);
+        Pattern.As first = alternatives.Alternatives[0].ShouldBeOfType<Pattern.As>();
+        first.Name.ShouldBe("point");
+        Pattern.Record record = first.Inner.ShouldBeOfType<Pattern.Record>();
+        record.TypeName.ShouldBe("Point");
+        record.Fields.Select(field => field.Name).ShouldBe(["y", "x"]);
+    }
+
+    [Test]
     public void Parse_should_support_let_tuple_pattern_binding()
     {
         // let (a, b) = (1, 2) in a + b

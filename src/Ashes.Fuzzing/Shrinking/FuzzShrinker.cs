@@ -749,6 +749,16 @@ internal sealed class FuzzShrinker
                 AddPatternNames(cons.Head, names);
                 AddPatternNames(cons.Tail, names);
                 break;
+            case Pattern.Record record:
+                foreach ((string _, Pattern child) in record.Fields) AddPatternNames(child, names);
+                break;
+            case Pattern.As asPattern:
+                AddPatternNames(asPattern.Inner, names);
+                names.Add(asPattern.Name);
+                break;
+            case Pattern.Or { Alternatives.Count: > 0 } orPattern:
+                AddPatternNames(orPattern.Alternatives[0], names);
+                break;
         }
     }
 

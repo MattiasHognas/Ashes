@@ -1506,7 +1506,82 @@ match flag with
 
 ---
 
-### 11.8 Pattern Guards
+### 11.8 Named Record Patterns
+
+Named record patterns match a record by nominal type and field name. They use the same braces and
+`field = value` spelling as record construction:
+
+```ash
+match point with
+    | Point { x = horizontal, y = vertical } -> horizontal + vertical
+```
+
+Fields may be written in any order and may be omitted. An omitted field is ignored; there is no
+implicit binding shorthand in this milestone. The name before `{` must resolve to the record's
+nominal type, every written field must exist, and a field may appear at most once. Named record
+patterns compose recursively with tuple, list, constructor, literal, as-, and or-patterns.
+
+### 11.9 As-Patterns
+
+An as-pattern binds the complete matched value in addition to the bindings introduced by its inner
+pattern:
+
+```ash
+match values with
+    | head :: tail as whole -> (head, tail, whole)
+```
+
+`as` binds less tightly than `::`, so the example means `(head :: tail) as whole`. The name after
+`as` must be a lower-case identifier other than `_`, and it must not duplicate another binder in the
+same pattern.
+
+For ordinary immutable values the alias is shared according to the usual inferred ownership rules.
+For affine values, an as-pattern may not introduce two independently consuming bindings for the same
+resource: if the alias owns a resource-bearing aggregate, nested resource-bearing fields must be
+ignored rather than bound. Violations use the existing affine-use diagnostic instead of permitting a
+double drop.
+
+### 11.10 Or-Patterns
+
+An or-pattern shares one guard and body between alternatives:
+
+```ash
+match option with
+    | Some(value) | Fallback(value) when value > 0 -> value
+    | _ -> 0
+```
+
+`|` has the lowest pattern precedence. `as` binds more tightly than `|`, while `::` binds more tightly
+than `as`. Parentheses may make any grouping explicit. Every alternative must bind exactly the same
+set of names, and each same-named binder must infer to the same type. A mismatch is a compile-time
+error. Duplicate binders inside one alternative remain errors.
+
+Alternatives are tried from left to right without re-evaluating the scrutinee. Once an alternative
+matches, its bindings are established and the arm guard is evaluated exactly once. A false guard
+continues with the next match arm; it does not try another alternative from the same or-pattern.
+Or-patterns contribute the union of their alternatives to exhaustiveness and redundancy analysis.
+An alternative already covered by an earlier alternative or arm is redundant, while later arms are
+unreachable only when the accumulated unguarded alternatives cover them.
+
+The complete precedence grammar is:
+
+```text
+pattern         ::= or-pattern
+or-pattern      ::= as-pattern ("|" as-pattern)*
+as-pattern      ::= cons-pattern ("as" LOWER_IDENT)?
+cons-pattern    ::= primary-pattern ("::" cons-pattern)?
+primary-pattern ::= "_" | LOWER_IDENT | literal-pattern | "[]"
+                  | UPPER_IDENT ("(" pattern ("," pattern)* ")")?
+                  | UPPER_IDENT "{" record-pattern-field
+                      ("," record-pattern-field)* ","? "}"
+                  | "(" pattern ("," pattern)+ ")"
+                  | "(" pattern ")"
+record-pattern-field ::= LOWER_IDENT "=" pattern
+```
+
+View or active patterns are not part of the language; matching never invokes an arbitrary function.
+
+### 11.11 Pattern Guards
 
 Match arms can include an optional `when` guard clause that adds a boolean
 condition to the pattern.
@@ -1567,7 +1642,7 @@ Pattern guards are syntax sugar — no new evaluation rules are introduced.
 
 ---
 
-### 11.9 Let Pattern Bindings
+### 11.12 Let Pattern Bindings
 
 Let expressions support destructuring patterns on the left side of `=`.
 
@@ -1585,6 +1660,9 @@ Rules:
 - Variable patterns and wildcard patterns are irrefutable.
 - Constructor patterns (e.g. `Some(x)`) are not allowed in let bindings
   because they are refutable — use `match` instead.
+- Named record patterns are irrefutable when their nominal record type is known and every nested
+  field pattern is irrefutable. As-patterns are irrefutable when their inner pattern is irrefutable.
+- Or-patterns are not allowed in let bindings; use `match` when alternatives are required.
 - Integer, string, and boolean literal patterns are not allowed in let
   bindings because they are refutable.
 - List cons patterns (`x :: xs`) are allowed but will fail at runtime

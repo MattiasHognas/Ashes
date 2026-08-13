@@ -42,3 +42,56 @@ internal sealed class ConstructorReconstructionTemplate : ICombinationTemplate
         return new GenerationResult<Expr>(new Expr.Let(box, construct, outerMatch), resultType, features, GenerationTrace.Merge("perceus:reconstruct", payload.Trace), payload.NodeCount + 8);
     }
 }
+
+internal sealed class PatternLanguageTemplate : ICombinationTemplate
+{
+    public string Id => "match.pattern-language";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.Match,
+        GeneratedFeature.Record,
+        GeneratedFeature.RecordPattern,
+        GeneratedFeature.AsPattern,
+        GeneratedFeature.OrPattern,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        resultType == AshesType.Int && budget.RemainingNodes >= 9;
+
+    public GenerationResult<Expr> Generate(
+        AshesType resultType,
+        GenerationContext context,
+        GenerationBudget budget,
+        ExpressionGenerator expressions,
+        FuzzRandom random)
+    {
+        GenerationResult<Expr> first = expressions.Generate(
+            AshesType.Int,
+            context,
+            budget.Descend(6).LimitDepth(1).LimitNodes(4),
+            random);
+        Expr record = new Expr.RecordLit(
+            "FuzzRecord",
+            [("first", first.Value), ("second", new Expr.BoolLit(random.NextBool()))]);
+        Pattern selected = new Pattern.As(
+            new Pattern.Or([new Pattern.IntLit(1), new Pattern.IntLit(2)]),
+            "selected");
+        Expr match = new Expr.Match(record,
+        [
+            new MatchCase(
+                new Pattern.Record("FuzzRecord", [("first", selected)]),
+                new Expr.Var("selected")),
+            new MatchCase(
+                new Pattern.Record("FuzzRecord", [("first", new Pattern.Var("fallback"))]),
+                new Expr.Var("fallback")),
+        ]);
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(first.Features);
+        return new GenerationResult<Expr>(
+            match,
+            resultType,
+            features,
+            GenerationTrace.Merge("match:pattern-language", first.Trace),
+            first.NodeCount + 9);
+    }
+}

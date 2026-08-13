@@ -37,6 +37,7 @@ internal sealed class CombinationRegistry
         registry.Register(new NestedAliasTemplate());
         registry.Register(new ClosureCaptureTemplate());
         registry.Register(new AdtMatchTemplate());
+        registry.Register(new PatternLanguageTemplate());
         registry.Register(new ConstructorReconstructionTemplate());
         registry.Register(new BoundedRecursionTemplate());
         registry.Register(new CapabilityHandlerTemplate());
