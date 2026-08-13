@@ -17,8 +17,6 @@ public sealed partial class Lowering
             && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
                 ? loweredMatchValue
                 : LowerExpr(match.Value).AsPair();
-
-
         // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
         // arm's pattern bindings, which take over its cleanup. Mark the binding moved so its own
         // recursive drop is skipped — otherwise the same resource would be closed twice (once by
@@ -36,9 +34,10 @@ public sealed partial class Lowering
 
         Debug.Assert(match.Cases.Count > 0, "Parser should ensure match has at least one case.");
 
-        ValidateSingleAdtMatch(match.Cases);
-        ValidateReachableMatchArms(match.Cases);
-        var hasAnyTuplePattern = match.Cases.Any(c => c.Pattern is Pattern.Tuple);
+        IReadOnlyList<MatchCase> diagnosticCases = ExpandPatternAlternatives(match.Cases);
+        ValidateSingleAdtMatch(diagnosticCases);
+        ValidateReachableMatchArms(diagnosticCases);
+        var hasAnyTuplePattern = diagnosticCases.Any(c => c.Pattern is Pattern.Tuple);
 
         // In-place reuse (#2): if we're matching a linear (uniquely-owned, deep-copied-at-entry)
         // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
@@ -58,7 +57,7 @@ public sealed partial class Lowering
             request);
 
         Emit(new IrInst.Label(noMatchLabel));
-        EmitMatchExhaustivenessDiagnostics(match, valueType, hasAnyTuplePattern);
+        EmitMatchExhaustivenessDiagnostics(match, diagnosticCases, valueType, hasAnyTuplePattern);
 
         int defaultTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(defaultTemp, 0));
@@ -533,7 +532,12 @@ public sealed partial class Lowering
         else
         {
             Unify(valueType, patternType);
-            EmitPattern(match.Cases[i].Pattern, valueTemp, armCleanupLabel, patternBindings);
+            EmitPattern(
+                match.Cases[i].Pattern,
+                valueTemp,
+                armCleanupLabel,
+                patternBindings,
+                new Dictionary<string, int>(StringComparer.Ordinal));
         }
 
         // Track owned bindings created by pattern matching
@@ -828,12 +832,16 @@ public sealed partial class Lowering
     /// were lowered linearly or as a tag switch — exhaustiveness checking is independent of the
     /// dispatch strategy.
     /// </summary>
-    private void EmitMatchExhaustivenessDiagnostics(Expr.Match match, TypeRef valueType, bool hasAnyTuplePattern)
+    private void EmitMatchExhaustivenessDiagnostics(
+        Expr.Match match,
+        IReadOnlyList<MatchCase> diagnosticCases,
+        TypeRef valueType,
+        bool hasAnyTuplePattern)
     {
         var prunedValueType = Prune(valueType);
-        var missingAdtConstructors = GetMissingAdtConstructors(prunedValueType, match.Cases);
-        var missingListCases = GetMissingListCases(prunedValueType, match.Cases);
-        var hasConstructorPatterns = HasConstructorPattern(match.Cases);
+        var missingAdtConstructors = GetMissingAdtConstructors(prunedValueType, diagnosticCases);
+        var missingListCases = GetMissingListCases(prunedValueType, diagnosticCases);
+        var hasConstructorPatterns = HasConstructorPattern(diagnosticCases);
         var hasTuplePatternArm = prunedValueType is TypeRef.TTuple && hasAnyTuplePattern;
         bool reportedNonExhaustive = false;
         var matchPos = match.Pos ?? 0;
@@ -861,14 +869,14 @@ public sealed partial class Lowering
                 reportedNonExhaustive = true;
             }
         }
-        else if (!hasTuplePatternArm && !hasConstructorPatterns && !IsDefinitelyExhaustive(match.Cases) && !IsBoolExhaustive(match.Cases))
+        else if (!hasTuplePatternArm && !hasConstructorPatterns && !IsDefinitelyExhaustive(diagnosticCases) && !IsBoolExhaustive(diagnosticCases))
         {
             _diag.Error(matchPos, "Non-exhaustive match expression.");
             reportedNonExhaustive = true;
         }
 
         if (!reportedNonExhaustive &&
-            TryGetMissingPattern(prunedValueType, match.Cases.Where(c => c.Guard is null).Select(c => c.Pattern).ToList(), out var missingPattern))
+            TryGetMissingPattern(prunedValueType, diagnosticCases.Where(c => c.Guard is null).Select(c => c.Pattern).ToList(), out var missingPattern))
         {
             _diag.Error(matchPos, $"Non-exhaustive match expression. Missing case: {FormatPattern(missingPattern)}.");
         }
@@ -1569,6 +1577,11 @@ public sealed partial class Lowering
 
     private TypeRef InferPatternType(Pattern pattern, Dictionary<string, TypeRef> bindings)
     {
+        if (pattern is Pattern.Record or Pattern.As or Pattern.Or)
+        {
+            return InferExtendedPatternType(pattern, bindings);
+        }
+
         switch (pattern)
         {
             case Pattern.EmptyList:
@@ -1591,6 +1604,7 @@ public sealed partial class Lowering
                 }
                 var varType = NewTypeVar();
                 bindings[v.Name] = varType;
+                RecordHoverType(GetSpan(v), v.Name, varType);
                 return varType;
 
             case Pattern.Cons c:
@@ -1621,6 +1635,126 @@ public sealed partial class Lowering
             default:
                 throw new NotSupportedException(pattern.GetType().Name);
         }
+    }
+
+    private TypeRef InferExtendedPatternType(Pattern pattern, Dictionary<string, TypeRef> bindings)
+    {
+        if (pattern is Pattern.Record record)
+        {
+            return InferRecordPatternType(record, bindings);
+        }
+
+        if (pattern is Pattern.Or orPattern)
+        {
+            return InferOrPatternType(orPattern, bindings);
+        }
+
+        var asPattern = (Pattern.As)pattern;
+        TypeRef innerType = InferPatternType(asPattern.Inner, bindings);
+        if (bindings.ContainsKey(asPattern.Name))
+        {
+            ReportDiagnostic(GetSpan(asPattern), $"Duplicate binding '{asPattern.Name}' in pattern.");
+        }
+        else
+        {
+            bindings[asPattern.Name] = innerType;
+            RecordHoverType(AstSpans.GetAsPatternNameOrDefault(asPattern), asPattern.Name, innerType);
+        }
+
+        if (IsResourceBearing(Prune(innerType))
+            && PatternBindings(asPattern.Inner).Any(name =>
+                bindings.TryGetValue(name, out TypeRef? type) && IsResourceBearing(Prune(type))))
+        {
+            ReportDiagnostic(GetSpan(asPattern), $"Resource-bearing pattern alias '{asPattern.Name}' cannot coexist with a nested resource-bearing binding.");
+        }
+
+        return innerType;
+    }
+
+    private TypeRef InferRecordPatternType(Pattern.Record pattern, Dictionary<string, TypeRef> bindings)
+    {
+        if (!TryResolveConstructorSymbol(pattern.TypeName, GetSpan(pattern), out ConstructorSymbol? constructor)
+            || constructor.DeclaringSyntax.FieldNames.Count == 0)
+        {
+            ReportDiagnostic(GetSpan(pattern), $"Unknown record type '{pattern.TypeName}' in pattern.");
+            foreach ((string _, Pattern fieldPattern) in pattern.Fields)
+            {
+                InferPatternType(fieldPattern, bindings);
+            }
+
+            return NewTypeVar();
+        }
+
+        TypeRef.TNamedType resultType = InstantiateAdtType(constructor);
+        IReadOnlyList<string> fieldNames = constructor.DeclaringSyntax.FieldNames;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach ((string fieldName, Pattern fieldPattern) in pattern.Fields)
+        {
+            if (!seen.Add(fieldName))
+            {
+                ReportDiagnostic(GetSpan(fieldPattern), $"Duplicate field '{fieldName}' in record pattern for '{pattern.TypeName}'.");
+            }
+
+            int fieldIndex = FindFieldIndex(fieldNames, fieldName);
+            TypeRef patternType = InferPatternType(fieldPattern, bindings);
+            if (fieldIndex < 0)
+            {
+                ReportDiagnostic(GetSpan(fieldPattern), $"Record type '{pattern.TypeName}' has no field '{fieldName}'.");
+                continue;
+            }
+
+            Unify(InstantiateConstructorParameterType(constructor, fieldIndex, resultType), patternType);
+        }
+
+        return resultType;
+    }
+
+    private TypeRef InferOrPatternType(Pattern.Or pattern, Dictionary<string, TypeRef> bindings)
+    {
+        TypeRef resultType = NewTypeVar();
+        var outerNames = new HashSet<string>(bindings.Keys, StringComparer.Ordinal);
+        Dictionary<string, TypeRef>? expectedBindings = null;
+        var allIntroducedBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+
+        foreach (Pattern alternative in pattern.Alternatives)
+        {
+            var alternativeBindings = new Dictionary<string, TypeRef>(bindings, StringComparer.Ordinal);
+            TypeRef alternativeType = InferPatternType(alternative, alternativeBindings);
+            Unify(resultType, alternativeType);
+
+            var introduced = alternativeBindings
+                .Where(binding => !outerNames.Contains(binding.Key))
+                .ToDictionary(binding => binding.Key, binding => binding.Value, StringComparer.Ordinal);
+            foreach ((string name, TypeRef type) in introduced)
+            {
+                allIntroducedBindings.TryAdd(name, type);
+            }
+            if (expectedBindings is null)
+            {
+                expectedBindings = introduced;
+                continue;
+            }
+
+            if (!expectedBindings.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(introduced.Keys))
+            {
+                ReportDiagnostic(
+                    GetSpan(alternative),
+                    "Every alternative of an or-pattern must bind exactly the same names.");
+                continue;
+            }
+
+            foreach ((string name, TypeRef type) in introduced)
+            {
+                Unify(expectedBindings[name], type);
+            }
+        }
+
+        foreach ((string name, TypeRef type) in allIntroducedBindings)
+        {
+            bindings[name] = type;
+        }
+
+        return resultType;
     }
 
     private TypeRef InferConstructorPatternType(
@@ -1671,21 +1805,28 @@ public sealed partial class Lowering
     /// <paramref name="failLabel"/>, letting the enclosing match arm perform
     /// guard failure and arena cleanup in one place.
     /// </summary>
-    private void EmitPattern(Pattern pattern, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    private void EmitPattern(
+        Pattern pattern,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots = null)
     {
+        if (TryEmitExtendedPattern(pattern, valueTemp, failLabel, bindingTypes, bindingSlots))
+        {
+            return;
+        }
+
         switch (pattern)
         {
             case Pattern.EmptyList:
                 EmitRequireZero(valueTemp, failLabel);
                 return;
-
             case Pattern.Wildcard:
                 return;
-
             case Pattern.Var v:
-                EmitVarPattern(v, valueTemp, failLabel, bindingTypes);
+                EmitVarPattern(v, valueTemp, failLabel, bindingTypes, bindingSlots);
                 return;
-
             case Pattern.Cons c:
                 EmitRequireNonZero(valueTemp, failLabel);
                 int headTemp = NewTemp();
@@ -1693,10 +1834,9 @@ public sealed partial class Lowering
                 Emit(new IrInst.LoadMemOffset(headTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
                 Emit(new IrInst.LoadMemOffset(tailTemp, valueTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
                 PropagateExtractedBytesProvenance(valueTemp, headTemp, c.Head, bindingTypes);
-                EmitPattern(c.Head, headTemp, failLabel, bindingTypes);
-                EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes);
+                EmitPattern(c.Head, headTemp, failLabel, bindingTypes, bindingSlots);
+                EmitPattern(c.Tail, tailTemp, failLabel, bindingTypes, bindingSlots);
                 return;
-
             case Pattern.Tuple tuple:
                 for (int i = 0; i < tuple.Elements.Count; i++)
                 {
@@ -1704,12 +1844,12 @@ public sealed partial class Lowering
                     Emit(new IrInst.LoadMemOffset(elemTemp, valueTemp, i * 8));
                     PropagateExtractedBytesProvenance(
                         valueTemp, elemTemp, tuple.Elements[i], bindingTypes);
-                    EmitPattern(tuple.Elements[i], elemTemp, failLabel, bindingTypes);
+                    EmitPattern(tuple.Elements[i], elemTemp, failLabel, bindingTypes, bindingSlots);
                 }
                 return;
 
             case Pattern.Constructor ctor:
-                EmitConstructorPattern(ctor, valueTemp, failLabel, bindingTypes);
+                EmitConstructorPattern(ctor, valueTemp, failLabel, bindingTypes, bindingSlots);
                 return;
 
             case Pattern.IntLit intLit:
@@ -1733,11 +1873,58 @@ public sealed partial class Lowering
         }
     }
 
+    private bool TryEmitExtendedPattern(
+        Pattern pattern,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots)
+    {
+        if (pattern is Pattern.Record record)
+        {
+            EmitRecordPattern(record, valueTemp, failLabel, bindingTypes, bindingSlots);
+            return true;
+        }
+
+        if (pattern is Pattern.As asPattern)
+        {
+            EmitPatternBinding(asPattern.Name, valueTemp, bindingTypes, bindingSlots, asPattern);
+            EmitPattern(asPattern.Inner, valueTemp, failLabel, bindingTypes, bindingSlots);
+            return true;
+        }
+
+        if (pattern is not Pattern.Or orPattern)
+        {
+            return false;
+        }
+
+        string successLabel = NewLabel("pattern_or_success");
+        for (int i = 0; i < orPattern.Alternatives.Count; i++)
+        {
+            bool last = i == orPattern.Alternatives.Count - 1;
+            string alternativeFailLabel = last ? failLabel : NewLabel("pattern_or_next");
+            EmitPattern(orPattern.Alternatives[i], valueTemp, alternativeFailLabel, bindingTypes, bindingSlots);
+            Emit(new IrInst.Jump(successLabel));
+            if (!last)
+            {
+                Emit(new IrInst.Label(alternativeFailLabel));
+            }
+        }
+
+        Emit(new IrInst.Label(successLabel));
+        return true;
+    }
+
     /// <summary>
     /// Emits a variable pattern: a variable naming a known nullary constructor is a tag test,
     /// any other variable binds the matched value into a fresh local.
     /// </summary>
-    private void EmitVarPattern(Pattern.Var v, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    private void EmitVarPattern(
+        Pattern.Var v,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots)
     {
         // If this is a known nullary constructor, emit a tag check instead of binding
         if (TryResolveConstructorSymbol(v.Name, GetSpan(v), out var nullaryCtor)
@@ -1747,15 +1934,43 @@ public sealed partial class Lowering
             EmitRequireTagMatch(valueTemp, GetConstructorTag(nullaryCtor), failLabel);
             return;
         }
-        int slot = NewLocal();
-        Emit(new IrInst.StoreLocal(slot, valueTemp));
-        RecordLocalBytesProvenance(slot, valueTemp);
-        RecordLocalDebugInfo(slot, v.Name, bindingTypes[v.Name]);
-        _scopes.Peek()[v.Name] = new Binding.Local(slot, Prune(bindingTypes[v.Name]));
-        _tcoCtx?.RegisterPatternBindingSlot(v, slot);
+        EmitPatternBinding(v.Name, valueTemp, bindingTypes, bindingSlots, v);
     }
 
-    private void EmitConstructorPattern(Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    private void EmitPatternBinding(
+        string name,
+        int valueTemp,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots,
+        Pattern binder)
+    {
+        int slot;
+        if (bindingSlots is not null && bindingSlots.TryGetValue(name, out int existingSlot))
+        {
+            slot = existingSlot;
+        }
+        else
+        {
+            slot = NewLocal();
+            bindingSlots?[name] = slot;
+        }
+
+        Emit(new IrInst.StoreLocal(slot, valueTemp));
+        RecordLocalBytesProvenance(slot, valueTemp);
+        RecordLocalDebugInfo(slot, name, bindingTypes[name]);
+        _scopes.Peek()[name] = new Binding.Local(slot, Prune(bindingTypes[name]));
+        if (binder is Pattern.Var variable)
+        {
+            _tcoCtx?.RegisterPatternBindingSlot(variable, slot);
+        }
+    }
+
+    private void EmitConstructorPattern(
+        Pattern.Constructor ctor,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots)
     {
         if (!TryResolveConstructorSymbol(ctor.Name, GetSpan(ctor), out var ctorSym))
         {
@@ -1765,7 +1980,7 @@ public sealed partial class Lowering
 
         if (ctorSym.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
         {
-            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes);
+            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes, bindingSlots);
             return;
         }
 
@@ -1774,7 +1989,7 @@ public sealed partial class Lowering
         EmitRequireNonZero(valueTemp, failLabel);
         EmitRequireTagMatch(valueTemp, GetConstructorTag(ctorSym), failLabel);
 
-        EmitConstructorFieldBindings(ctorSym, ctor, valueTemp, failLabel, bindingTypes);
+        EmitConstructorFieldBindings(ctorSym, ctor, valueTemp, failLabel, bindingTypes, bindingSlots);
     }
 
     /// <summary>
@@ -1782,11 +1997,17 @@ public sealed partial class Lowering
     /// null/tag check. Shared by the linear pattern path (after its own tag check) and the
     /// tag-switch path (where the switch has already dispatched on the tag).
     /// </summary>
-    private void EmitConstructorFieldBindings(ConstructorSymbol ctorSym, Pattern.Constructor ctor, int valueTemp, string failLabel, IReadOnlyDictionary<string, TypeRef> bindingTypes)
+    private void EmitConstructorFieldBindings(
+        ConstructorSymbol ctorSym,
+        Pattern.Constructor ctor,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots = null)
     {
         if (ctorSym.ParentType is { } parentType && _typeSymbols[parentType].IsZeroCost)
         {
-            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes);
+            EmitPattern(ctor.Patterns[0], valueTemp, failLabel, bindingTypes, bindingSlots);
             return;
         }
 
@@ -1800,7 +2021,37 @@ public sealed partial class Lowering
                 payloadTemp,
                 ctor.Patterns[i],
                 bindingTypes);
-            EmitPattern(ctor.Patterns[i], payloadTemp, failLabel, bindingTypes);
+            EmitPattern(ctor.Patterns[i], payloadTemp, failLabel, bindingTypes, bindingSlots);
+        }
+    }
+
+    private void EmitRecordPattern(
+        Pattern.Record record,
+        int valueTemp,
+        string failLabel,
+        IReadOnlyDictionary<string, TypeRef> bindingTypes,
+        Dictionary<string, int>? bindingSlots)
+    {
+        if (!TryResolveConstructorSymbol(record.TypeName, GetSpan(record), out ConstructorSymbol? constructor)
+            || constructor.DeclaringSyntax.FieldNames.Count == 0)
+        {
+            return;
+        }
+
+        EmitRequireNonZero(valueTemp, failLabel);
+        EmitRequireTagMatch(valueTemp, GetConstructorTag(constructor), failLabel);
+        foreach ((string fieldName, Pattern fieldPattern) in record.Fields)
+        {
+            int fieldIndex = FindFieldIndex(constructor.DeclaringSyntax.FieldNames, fieldName);
+            if (fieldIndex < 0)
+            {
+                continue;
+            }
+
+            int fieldTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(fieldTemp, valueTemp, fieldIndex));
+            PropagateExtractedBytesProvenance(valueTemp, fieldTemp, fieldPattern, bindingTypes);
+            EmitPattern(fieldPattern, fieldTemp, failLabel, bindingTypes, bindingSlots);
         }
     }
 
@@ -1904,94 +2155,55 @@ public sealed partial class Lowering
 
     private static IEnumerable<string> PatternBindings(Pattern p)
     {
-        switch (p)
+        if (p is Pattern.Var variable)
         {
-            case Pattern.Var v:
-                if (!string.Equals(v.Name, "_", StringComparison.Ordinal))
-                {
-                    yield return v.Name;
-                }
+            yield return variable.Name;
+            yield break;
+        }
 
-                yield break;
-            case Pattern.Cons c:
-                foreach (var n in PatternBindings(c.Head))
-                {
-                    yield return n;
-                }
+        foreach (Pattern child in PatternBindingChildren(p))
+        {
+            foreach (string name in PatternBindings(child))
+            {
+                yield return name;
+            }
+        }
 
-                foreach (var n in PatternBindings(c.Tail))
-                {
-                    yield return n;
-                }
-
-                yield break;
-            case Pattern.Tuple tuple:
-                foreach (var sub in tuple.Elements)
-                {
-                    foreach (var n in PatternBindings(sub))
-                    {
-                        yield return n;
-                    }
-                }
-
-                yield break;
-            case Pattern.Constructor ctor:
-                foreach (var sub in ctor.Patterns)
-                {
-                    foreach (var n in PatternBindings(sub))
-                    {
-                        yield return n;
-                    }
-                }
-
-                yield break;
-            default:
-                yield break;
+        if (p is Pattern.As asPattern)
+        {
+            yield return asPattern.Name;
         }
     }
 
     private static IEnumerable<Pattern.Var> PatternVariableBinders(Pattern pattern)
     {
-        switch (pattern)
+        if (pattern is Pattern.Var variable)
         {
-            case Pattern.Var variable:
-                yield return variable;
-                yield break;
-            case Pattern.Cons cons:
-                foreach (Pattern.Var binder in PatternVariableBinders(cons.Head))
-                {
-                    yield return binder;
-                }
-
-                foreach (Pattern.Var binder in PatternVariableBinders(cons.Tail))
-                {
-                    yield return binder;
-                }
-
-                yield break;
-            case Pattern.Tuple tuple:
-                foreach (Pattern element in tuple.Elements)
-                {
-                    foreach (Pattern.Var binder in PatternVariableBinders(element))
-                    {
-                        yield return binder;
-                    }
-                }
-
-                yield break;
-            case Pattern.Constructor constructor:
-                foreach (Pattern child in constructor.Patterns)
-                {
-                    foreach (Pattern.Var binder in PatternVariableBinders(child))
-                    {
-                        yield return binder;
-                    }
-                }
-
-                yield break;
-            default:
-                yield break;
+            yield return variable;
+            yield break;
         }
+
+        foreach (Pattern child in PatternBindingChildren(pattern))
+        {
+            foreach (Pattern.Var binder in PatternVariableBinders(child))
+            {
+                yield return binder;
+            }
+        }
+    }
+
+    private static IEnumerable<Pattern> PatternBindingChildren(Pattern pattern)
+    {
+        return pattern switch
+        {
+            Pattern.Cons cons => [cons.Head, cons.Tail],
+            Pattern.Tuple tuple => tuple.Elements,
+            Pattern.Constructor constructor => constructor.Patterns,
+            Pattern.Record record => record.Fields.Select(field => field.Pattern),
+            Pattern.As asPattern => [asPattern.Inner],
+            Pattern.Or { Alternatives.Count: > 0 } orPattern => [orPattern.Alternatives[0]],
+            _ => []
+        };
     }
 
     /// <summary>
@@ -2099,6 +2311,16 @@ public sealed partial class Lowering
         if (p is Pattern.Tuple tuple)
         {
             return tuple.Elements.All(IsCatchAllPattern);
+        }
+
+        if (p is Pattern.As asPattern)
+        {
+            return IsCatchAllPattern(asPattern.Inner);
+        }
+
+        if (p is Pattern.Or orPattern)
+        {
+            return orPattern.Alternatives.Any(IsCatchAllPattern);
         }
 
         return p is Pattern.Var v
@@ -2555,6 +2777,105 @@ public sealed partial class Lowering
         return null;
     }
 
+    private IReadOnlyList<MatchCase> ExpandPatternAlternatives(IReadOnlyList<MatchCase> cases)
+    {
+        var expanded = new List<MatchCase>();
+        foreach (MatchCase matchCase in cases)
+        {
+            foreach (Pattern pattern in ExpandPatternAlternatives(matchCase.Pattern))
+            {
+                expanded.Add(new MatchCase(pattern, matchCase.Body, matchCase.Guard));
+            }
+        }
+
+        return expanded;
+    }
+
+    private IReadOnlyList<Pattern> ExpandPatternAlternatives(Pattern pattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.Or orPattern:
+                return orPattern.Alternatives.SelectMany(ExpandPatternAlternatives).ToList();
+            case Pattern.As asPattern:
+                return ExpandPatternAlternatives(asPattern.Inner);
+            case Pattern.Cons cons:
+                return CombinePatternChildren([cons.Head, cons.Tail])
+                    .Select(children => CopyPatternSpan(pattern, new Pattern.Cons(children[0], children[1])))
+                    .ToList();
+            case Pattern.Tuple tuple:
+                return CombinePatternChildren(tuple.Elements)
+                    .Select(children => CopyPatternSpan(pattern, new Pattern.Tuple(children)))
+                    .ToList();
+            case Pattern.Constructor constructor:
+                return CombinePatternChildren(constructor.Patterns)
+                    .Select(children => CopyPatternSpan(pattern, new Pattern.Constructor(constructor.Name, children)))
+                    .ToList();
+            case Pattern.Record record:
+                return ExpandRecordPatternAlternatives(record);
+            default:
+                return [pattern];
+        }
+    }
+
+    private IReadOnlyList<Pattern> ExpandRecordPatternAlternatives(Pattern.Record record)
+    {
+        if (!TryResolveConstructorSymbol(record.TypeName, GetSpan(record), out ConstructorSymbol? constructor)
+            || constructor.DeclaringSyntax.FieldNames.Count == 0)
+        {
+            return [record];
+        }
+
+        var fields = Enumerable.Repeat<Pattern>(new Pattern.Wildcard(), constructor.Arity).ToArray();
+        foreach ((string fieldName, Pattern fieldPattern) in record.Fields)
+        {
+            int index = FindFieldIndex(constructor.DeclaringSyntax.FieldNames, fieldName);
+            if (index >= 0)
+            {
+                fields[index] = fieldPattern;
+            }
+        }
+
+        return CombinePatternChildren(fields)
+            .Select(children => CopyPatternSpan(record, new Pattern.Constructor(record.TypeName, children)))
+            .ToList();
+    }
+
+    private IReadOnlyList<IReadOnlyList<Pattern>> CombinePatternChildren(IReadOnlyList<Pattern> children)
+    {
+        var combinations = new List<IReadOnlyList<Pattern>> { Array.Empty<Pattern>() };
+        foreach (Pattern child in children)
+        {
+            IReadOnlyList<Pattern> alternatives = ExpandPatternAlternatives(child);
+            combinations = combinations
+                .SelectMany(prefix => alternatives.Select(alternative =>
+                    (IReadOnlyList<Pattern>)[.. prefix, alternative]))
+                .ToList();
+        }
+
+        return combinations;
+    }
+
+    private static TPattern CopyPatternSpan<TPattern>(Pattern source, TPattern target)
+        where TPattern : Pattern
+    {
+        AstSpans.Set(target, GetSpan(source));
+        return target;
+    }
+
+    private static int FindFieldIndex(IReadOnlyList<string> fieldNames, string fieldName)
+    {
+        for (int i = 0; i < fieldNames.Count; i++)
+        {
+            if (string.Equals(fieldNames[i], fieldName, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private void ValidateSingleAdtMatch(IReadOnlyList<MatchCase> cases)
     {
         var adtNames = cases
@@ -2577,6 +2898,7 @@ public sealed partial class Lowering
         var seenBoolTrue = false;
         var seenBoolFalse = false;
         var hasCatchAll = false;
+        var seenCompositePatterns = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var matchCase in cases)
         {
@@ -2590,6 +2912,21 @@ public sealed partial class Lowering
             {
                 hasCatchAll = true;
                 continue;
+            }
+
+            if (matchCase.Guard is not null)
+            {
+                continue;
+            }
+
+            if (matchCase.Pattern is Pattern.Constructor or Pattern.Cons or Pattern.Tuple)
+            {
+                string patternKey = FormatPattern(matchCase.Pattern);
+                if (!seenCompositePatterns.Add(patternKey))
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: pattern {patternKey} is already matched earlier.");
+                    continue;
+                }
             }
 
             if (ValidateLiteralArmReachability(matchCase, seenIntLiterals, seenStrLiterals, ref seenBoolTrue, ref seenBoolFalse))

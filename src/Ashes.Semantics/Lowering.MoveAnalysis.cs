@@ -3428,6 +3428,24 @@ public sealed partial class Lowering
                 BindPatternPaths(cons.Head, ExtendPaths(parentReach, 0), env2);
                 BindPatternPaths(cons.Tail, ExtendPaths(parentReach, 1), env2);
                 break;
+            case Pattern.Record record:
+                if (TryResolveConstructorSymbol(record.TypeName, GetSpan(record), out ConstructorSymbol? constructor))
+                {
+                    foreach ((string fieldName, Pattern fieldPattern) in record.Fields)
+                    {
+                        int index = FindFieldIndex(constructor.DeclaringSyntax.FieldNames, fieldName);
+                        BindPatternPaths(fieldPattern, ExtendPaths(parentReach, index), env2);
+                    }
+                }
+
+                break;
+            case Pattern.As asPattern:
+                env2[asPattern.Name] = ReachSum(parentReach, TokenReach());
+                BindPatternPaths(asPattern.Inner, parentReach, env2);
+                break;
+            case Pattern.Or { Alternatives.Count: > 0 } orPattern:
+                BindPatternPaths(orPattern.Alternatives[0], parentReach, env2);
+                break;
             default:
                 break;
         }
@@ -4133,6 +4151,13 @@ public sealed partial class Lowering
                 return false;
             case Pattern.Cons cons:
                 return PatternBinds(cons.Head, name) || PatternBinds(cons.Tail, name);
+            case Pattern.Record record:
+                return record.Fields.Any(field => PatternBinds(field.Pattern, name));
+            case Pattern.As asPattern:
+                return string.Equals(asPattern.Name, name, StringComparison.Ordinal)
+                    || PatternBinds(asPattern.Inner, name);
+            case Pattern.Or orPattern:
+                return orPattern.Alternatives.Any(alternative => PatternBinds(alternative, name));
             default:
                 return false;
         }

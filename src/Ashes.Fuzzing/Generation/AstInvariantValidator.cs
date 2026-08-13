@@ -169,6 +169,9 @@ internal sealed class AstInvariantValidator
             case Pattern.Constructor constructor: foreach (Pattern child in constructor.Patterns) AddPatternBindings(child, scope); break;
             case Pattern.Tuple tuple: foreach (Pattern child in tuple.Elements) AddPatternBindings(child, scope); break;
             case Pattern.Cons cons: AddPatternBindings(cons.Head, scope); AddPatternBindings(cons.Tail, scope); break;
+            case Pattern.Record record: foreach ((string _, Pattern child) in record.Fields) AddPatternBindings(child, scope); break;
+            case Pattern.As asPattern: AddPatternBindings(asPattern.Inner, scope); scope.Add(asPattern.Name); break;
+            case Pattern.Or { Alternatives.Count: > 0 } orPattern: AddPatternBindings(orPattern.Alternatives[0], scope); break;
         }
     }
 }

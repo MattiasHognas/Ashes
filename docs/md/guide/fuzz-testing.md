@@ -101,7 +101,9 @@ dotnet run --project src/Ashes.Fuzzing -- list
 
 Profiles include `syntax`, `semantics`, `perceus`, `combinations`, `compile`, `differential`,
 `memory-growth`, `invalid-source`, `invalid-semantics`, `traits`, `traits-differential`, `async`, `capabilities`,
-`resources`, `cross-target`, and `all`. The `traits` profile generates coherent user trait
+`pattern-language`, `resources`, `cross-target`, and `all`. The `pattern-language` profile combines
+named record, as-, and or-patterns and runs parser, formatter, semantic, and IR verification oracles.
+The `traits` profile generates coherent user trait
 declarations, concrete and conditional implementations, constrained generic functions,
 multi-parameter traits, derived implementations, concrete resolution sites, and generic
 trait/closure and derived-operator/sharing combinations. Its trace records every generated

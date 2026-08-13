@@ -264,6 +264,12 @@ public abstract record Pattern
     /// <param name="Name">The constructor name.</param>
     /// <param name="Patterns">Patterns for the constructor's fields.</param>
     public sealed record Constructor(string Name, IReadOnlyList<Pattern> Patterns) : Pattern;
+    /// <summary>A named record pattern, <c>Type { field = pattern, ... }</c>.</summary>
+    public sealed record Record(string TypeName, IReadOnlyList<(string Name, Pattern Pattern)> Fields) : Pattern;
+    /// <summary>An as-pattern, <c>pattern as name</c>, binding the complete matched value.</summary>
+    public sealed record As(Pattern Inner, string Name) : Pattern;
+    /// <summary>An or-pattern, <c>left | right</c>, sharing one arm body and guard.</summary>
+    public sealed record Or(IReadOnlyList<Pattern> Alternatives) : Pattern;
     /// <summary>An integer-literal pattern.</summary>
     /// <param name="Value">The value to match.</param>
     public sealed record IntLit(long Value) : Pattern;

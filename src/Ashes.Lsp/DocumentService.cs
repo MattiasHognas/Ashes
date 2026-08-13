@@ -2738,6 +2738,22 @@ public static partial class DocumentService
                     .Select(element => ResolveDefinitionInPattern(element, position, currentFilePath))
                     .FirstOrDefault(result => result is not null);
 
+            case Pattern.Record record:
+                return record.Fields
+                    .Select(field => ResolveDefinitionInPattern(field.Pattern, position, currentFilePath))
+                    .FirstOrDefault(result => result is not null);
+
+            case Pattern.As asPattern:
+                return ResolveDefinitionInPattern(asPattern.Inner, position, currentFilePath)
+                    ?? (ContainsPosition(AstSpans.GetAsPatternNameOrDefault(asPattern), position)
+                        ? new DefinitionLocation(currentFilePath, AstSpans.GetAsPatternNameOrDefault(asPattern))
+                        : null);
+
+            case Pattern.Or orPattern:
+                return orPattern.Alternatives
+                    .Select(alternative => ResolveDefinitionInPattern(alternative, position, currentFilePath))
+                    .FirstOrDefault(result => result is not null);
+
             default:
                 return null;
         }
@@ -2774,6 +2790,22 @@ public static partial class DocumentService
                     {
                         Visit(element);
                     }
+                    break;
+
+                case Pattern.Record record:
+                    foreach ((string _, Pattern fieldPattern) in record.Fields)
+                    {
+                        Visit(fieldPattern);
+                    }
+                    break;
+
+                case Pattern.As asPattern:
+                    Visit(asPattern.Inner);
+                    bindings[asPattern.Name] = new DefinitionLocation(currentFilePath, AstSpans.GetAsPatternNameOrDefault(asPattern));
+                    break;
+
+                case Pattern.Or { Alternatives.Count: > 0 } orPattern:
+                    Visit(orPattern.Alternatives[0]);
                     break;
             }
         }
@@ -3174,42 +3206,36 @@ public static partial class DocumentService
 
     private static bool TryFindPatternBindingDefinition(Pattern pattern, string name, string? filePath, out DefinitionLocation definition)
     {
-        switch (pattern)
+        if (pattern is Pattern.Var varPattern
+            && IsPatternVariable(varPattern)
+            && string.Equals(varPattern.Name, name, StringComparison.Ordinal))
         {
-            case Pattern.Var varPattern when IsPatternVariable(varPattern) && string.Equals(varPattern.Name, name, StringComparison.Ordinal):
-                definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(varPattern));
+            definition = new DefinitionLocation(filePath, AstSpans.GetOrDefault(varPattern));
+            return true;
+        }
+
+        if (pattern is Pattern.As asPattern && string.Equals(asPattern.Name, name, StringComparison.Ordinal))
+        {
+            definition = new DefinitionLocation(filePath, AstSpans.GetAsPatternNameOrDefault(asPattern));
+            return true;
+        }
+
+        IEnumerable<Pattern> children = pattern switch
+        {
+            Pattern.Cons cons => [cons.Head, cons.Tail],
+            Pattern.Tuple tuple => tuple.Elements,
+            Pattern.Constructor constructor => constructor.Patterns,
+            Pattern.Record record => record.Fields.Select(field => field.Pattern),
+            Pattern.As nestedAs => [nestedAs.Inner],
+            Pattern.Or orPattern => orPattern.Alternatives,
+            _ => [],
+        };
+        foreach (Pattern child in children)
+        {
+            if (TryFindPatternBindingDefinition(child, name, filePath, out definition))
+            {
                 return true;
-
-            case Pattern.Cons cons:
-                if (TryFindPatternBindingDefinition(cons.Head, name, filePath, out definition)
-                    || TryFindPatternBindingDefinition(cons.Tail, name, filePath, out definition))
-                {
-                    return true;
-                }
-
-                break;
-
-            case Pattern.Tuple tuple:
-                foreach (var element in tuple.Elements)
-                {
-                    if (TryFindPatternBindingDefinition(element, name, filePath, out definition))
-                    {
-                        return true;
-                    }
-                }
-
-                break;
-
-            case Pattern.Constructor ctor:
-                foreach (var element in ctor.Patterns)
-                {
-                    if (TryFindPatternBindingDefinition(element, name, filePath, out definition))
-                    {
-                        return true;
-                    }
-                }
-
-                break;
+            }
         }
 
         definition = default;

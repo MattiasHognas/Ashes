@@ -1608,6 +1608,8 @@ public sealed class Parser
         Pattern.Wildcard => true,
         Pattern.Tuple t => t.Elements.All(IsIrrefutableLetPattern),
         Pattern.Cons c => IsIrrefutableLetPattern(c.Head) && IsIrrefutableLetPattern(c.Tail),
+        Pattern.Record record => record.Fields.All(field => IsIrrefutableLetPattern(field.Pattern)),
+        Pattern.As asPattern => IsIrrefutableLetPattern(asPattern.Inner),
         _ => false,
     };
 
@@ -2467,7 +2469,44 @@ public sealed class Parser
 
     private Pattern ParsePattern()
     {
-        return ParsePatternCons();
+        var first = ParsePatternAs();
+        if (_current.Kind != TokenKind.Pipe)
+        {
+            return first;
+        }
+
+        int start = AstSpans.GetOrDefault(first).Start;
+        var alternatives = new List<Pattern> { first };
+        while (_current.Kind == TokenKind.Pipe)
+        {
+            Consume(TokenKind.Pipe);
+            alternatives.Add(ParsePatternAs());
+        }
+
+        return RegisterPattern(new Pattern.Or(alternatives), start, AstSpans.GetOrDefault(alternatives[^1]).End);
+    }
+
+    private Pattern ParsePatternAs()
+    {
+        Pattern inner = ParsePatternCons();
+        if (_current.Kind != TokenKind.Ident
+            || !string.Equals(_current.Text, "as", StringComparison.Ordinal))
+        {
+            return inner;
+        }
+
+        int start = AstSpans.GetOrDefault(inner).Start;
+        Advance();
+        Token name = Consume(TokenKind.Ident);
+        if (string.Equals(name.Text, "_", StringComparison.Ordinal)
+            || name.Text.Length == 0
+            || !char.IsLower(name.Text[0]))
+        {
+            _diag.Error(name.Span, "An as-pattern must bind a lower-case name other than '_'.", DiagnosticCodes.ParseError);
+        }
+        var pattern = RegisterPattern(new Pattern.As(inner, name.Text), start, name.End);
+        AstSpans.SetAsPatternName(pattern, name.Span);
+        return pattern;
     }
 
     private Pattern ParsePatternCons()
@@ -2533,6 +2572,32 @@ public sealed class Parser
             }
             Consume(TokenKind.RParen);
             return RegisterPattern(new Pattern.Constructor(name, patterns), token.Position, LastConsumedEnd);
+        }
+
+        if (_current.Kind == TokenKind.LBrace)
+        {
+            Consume(TokenKind.LBrace);
+            var fields = new List<(string Name, Pattern Pattern)>();
+            if (_current.Kind != TokenKind.RBrace)
+            {
+                while (true)
+                {
+                    Token field = Consume(TokenKind.Ident);
+                    Consume(TokenKind.Equals);
+                    fields.Add((field.Text, ParsePattern()));
+                    if (_current.Kind != TokenKind.Comma)
+                    {
+                        break;
+                    }
+                    Consume(TokenKind.Comma);
+                    if (_current.Kind == TokenKind.RBrace)
+                    {
+                        break;
+                    }
+                }
+            }
+            Consume(TokenKind.RBrace);
+            return RegisterPattern(new Pattern.Record(name, fields), token.Position, LastConsumedEnd);
         }
 
         return RegisterPattern(new Pattern.Var(name), token.Position, token.End);

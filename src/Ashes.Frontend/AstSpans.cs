@@ -27,6 +27,7 @@ public static class AstSpans
     private static readonly ConditionalWeakTable<Expr.LetRecursive, SpanBox> LetRecursiveNameSpans = new();
     private static readonly ConditionalWeakTable<Expr.Lambda, SpanBox> LambdaParameterSpans = new();
     private static readonly ConditionalWeakTable<Pattern, SpanBox> PatternSpans = new();
+    private static readonly ConditionalWeakTable<Pattern.As, SpanBox> AsPatternNameSpans = new();
     private static readonly ConditionalWeakTable<TypeDecl, SpanBox> TypeDeclSpans = new();
     private static readonly ConditionalWeakTable<TypeAliasDecl, SpanBox> TypeAliasDeclSpans = new();
     private static readonly ConditionalWeakTable<ZeroCostTypeDecl, SpanBox> ZeroCostTypeDeclSpans = new();
@@ -57,6 +58,13 @@ public static class AstSpans
     {
         PatternSpans.Remove(pattern);
         PatternSpans.Add(pattern, new SpanBox(span));
+    }
+
+    /// <summary>Records the span of the alias name in an as-pattern.</summary>
+    public static void SetAsPatternName(Pattern.As pattern, TextSpan span)
+    {
+        AsPatternNameSpans.Remove(pattern);
+        AsPatternNameSpans.Add(pattern, new SpanBox(span));
     }
 
     /// <summary>Records the span of the bound name in a <see cref="Expr.Let"/> (the identifier alone,
@@ -163,6 +171,14 @@ public static class AstSpans
     public static TextSpan GetOrDefault(Pattern pattern)
     {
         return PatternSpans.TryGetValue(pattern, out var spanBox) ? spanBox.Span : default;
+    }
+
+    /// <summary>Returns the alias-name span of an as-pattern, or the whole pattern span if unset.</summary>
+    public static TextSpan GetAsPatternNameOrDefault(Pattern.As pattern)
+    {
+        return AsPatternNameSpans.TryGetValue(pattern, out SpanBox? spanBox)
+            ? spanBox.Span
+            : GetOrDefault(pattern);
     }
 
     /// <summary>Returns the recorded name span of a <see cref="Expr.Let"/>, or the default if unset.</summary>

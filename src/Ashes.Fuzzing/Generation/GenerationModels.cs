@@ -15,7 +15,7 @@ internal enum GenerationFlags
 internal enum GeneratedFeature
 {
     Literal, Variable, Arithmetic, Comparison, Let, If, Tuple, List, Lambda, Call,
-    Match, Adt, Record, RecursiveFunction, TailCall, Capability, Handler, Await, Spawn,
+    Match, Adt, Record, RecordPattern, AsPattern, OrPattern, RecursiveFunction, TailCall, Capability, Handler, Await, Spawn,
     Resource, ResultShortCircuit, ReuseCandidate, SharedValue, CrossBranchAlias,
     ConstructorReconstruction, LayoutCompatibleReuse, LayoutIncompatibleFallback,
     ClosureCapture, EscapingClosure, MultipleClosures, GuardedMatch, RuntimeUniquenessCheck,

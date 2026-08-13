@@ -7892,6 +7892,20 @@ public sealed partial class Lowering
                 }
 
                 break;
+            case Pattern.Record record:
+                foreach ((string _, Pattern fieldPattern) in record.Fields)
+                {
+                    CollectPatternBinders(fieldPattern, into);
+                }
+
+                break;
+            case Pattern.As asPattern:
+                CollectPatternBinders(asPattern.Inner, into);
+                into.Add(asPattern.Name);
+                break;
+            case Pattern.Or { Alternatives.Count: > 0 } orPattern:
+                CollectPatternBinders(orPattern.Alternatives[0], into);
+                break;
         }
     }
 

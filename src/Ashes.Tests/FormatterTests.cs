@@ -91,6 +91,24 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_write_pattern_completion_forms_with_canonical_precedence()
+    {
+        Pattern pattern = new Pattern.Or(
+        [
+            new Pattern.As(
+                new Pattern.Cons(new Pattern.Var("head"), new Pattern.Var("tail")),
+                "whole"),
+            new Pattern.As(
+                new Pattern.Record("Pair", [("right", new Pattern.Var("head"))]),
+                "whole"),
+        ]);
+        Expr expression = new Expr.Match(new Expr.Var("value"), [new MatchCase(pattern, new Expr.Var("head"))]);
+
+        Ashes.Formatter.Formatter.Format(expression).ShouldBe(
+            "match value with\n    | head :: tail as whole | Pair { right = head } as whole -> head\n");
+    }
+
+    [Test]
     public void Format_should_write_multiline_let_value()
     {
         var formatted = Ashes.Formatter.Formatter.Format(
