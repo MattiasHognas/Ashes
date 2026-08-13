@@ -2432,6 +2432,34 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public void Linux_backend_llvm_transfers_TCO_promoted_string_concat_without_copy_out()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram probe = IrOptimizer.Optimize(LowerProgramWithImports(BuildTcoPromotedStringConcatProgram()));
+        List<IrFunction> emitFunctions = probe.Functions.Where(function =>
+            string.Equals(function.Origin?.Source?.SourceName, "emit", StringComparison.Ordinal)).ToList();
+        int runtimeConcatCount = 0;
+        foreach (IrFunction emitFunction in emitFunctions)
+        {
+            HashSet<int> runtimeConcatTargets = emitFunction.Instructions
+                .OfType<IrInst.ConcatStr>()
+                .Where(concat => concat.RuntimeManaged)
+                .Select(concat => concat.Target)
+                .ToHashSet();
+            runtimeConcatCount += runtimeConcatTargets.Count;
+            emitFunction.Instructions.Any(instruction =>
+                instruction is IrInst.CopyOutArena copy
+                && runtimeConcatTargets.Contains(copy.SrcTemp)).ShouldBeFalse();
+        }
+
+        runtimeConcatCount.ShouldBeGreaterThan(0);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_escaping_string_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -6954,6 +6982,48 @@ public sealed class LinuxBackendCoverageTests
 
             let ignored = loop({{iterations}})
             Ashes.IO.print({{iterations}})
+            """;
+
+    private static string BuildTcoPromotedStringConcatProgram()
+        => """
+            import Ashes.IO as io
+            import Ashes.Text as text
+            import Ashes.Rune as rune
+
+            let complement c =
+                match c with
+                    | 'A' -> 'T'
+                    | 'C' -> 'G'
+                    | other -> other
+
+            let recursive compLine line acc =
+                match text.uncons(line) with
+                    | None -> acc
+                    | Some((c, rest)) -> compLine(rest)(complement(c) :: acc)
+
+            let recursive emit chars col buf =
+                match chars with
+                    | [] -> if col == 0 then Unit else io.write(buf + "\n")
+                    | c :: rest ->
+                        if col == 60
+                        then
+                            let ignored = io.write(buf + "\n")
+                            in emit(rest)(1)(rune.toText(c))
+                        else emit(rest)(col + 1)(buf + rune.toText(c))
+
+            let recursive loop revcomp =
+                match io.readLine(Unit) with
+                    | None -> emit(revcomp)(0)("")
+                    | Some(line) ->
+                        match text.uncons(line) with
+                            | Some(('>', _)) ->
+                                let ignored = emit(revcomp)(0)("")
+                                in
+                                    let ignored = io.writeLine(line)
+                                    in loop([])
+                            | _ -> loop(compLine(line)(revcomp))
+
+            loop([])
             """;
 
     private static string BuildRuntimeRcEscapingStringProgram(int iterations)
