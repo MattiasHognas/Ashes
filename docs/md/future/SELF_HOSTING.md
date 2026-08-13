@@ -68,7 +68,7 @@ language or stdlib facilities; others describe how already-shipped facilities mu
 validated in the self-hosted toolchain. Complete a package in reviewable slices, updating the
 normative documentation before any language or API change.
 
-### Gap: numeric primitives in the self-hosted compiler {#gap-numeric-primitives}
+### Gap: numeric primitives
 
 Unsigned integers, `u8`, byte literals, bitwise operators, and numeric text conversion are already
 shipped. The remaining gap is adoption and parity in the Ashes implementation of the compiler,
@@ -88,7 +88,7 @@ Workable tasks:
 Done when the self-hosted frontend accepts and rejects the same numeric literals as stage 0, and the
 self-hosted linker produces structurally identical integer fields for all four targets.
 
-### Gap: HM type inference is built on mutable union-find {#gap-hm-type-inference-is-built-on-mutable-union-find}
+### Gap: HM type inference is built on mutable union-find
 
 `Lowering.TypeInference.cs` implements unification via a single mutable
 `Dictionary<int, TypeRef> _subst` field (`Lowering.cs:552`), with in-place path compression in
@@ -116,7 +116,7 @@ Workable tasks:
 Done when inferred public types, accepted/rejected programs, diagnostic codes and spans, and ownership
 summaries match stage 0 across the corpus and extracted inference fixtures.
 
-### Gap: FFI — native arrays, out parameters, returned strings, and foreign buffers {#gap-ffi-native-arrays-out-parameters-and-foreign-buffers}
+### Gap: FFI native arrays, out parameters, and foreign buffers
 
 `Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
 (`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
@@ -233,7 +233,7 @@ callbacks, varargs, scalar out parameters, or public pointer arithmetic until an
 actually requires them. The package is done when an Ashes program uses the facade to construct a tiny
 LLVM module and emit object bytes identical to the C# adapter on all four targets.
 
-### Gap: efficient immutable binary construction {#gap-efficient-immutable-binary-construction}
+### Gap: efficient immutable binary construction
 
 The native ELF/PE linkers do much more than append bytes: they preallocate output images, copy
 sections into aligned offsets, patch headers and instructions, and apply relocations at arbitrary
@@ -263,7 +263,7 @@ Workable tasks:
 Done when representative links are byte-identical or have a documented deterministic-metadata
 difference, pass structural target validation, and remain within an agreed performance factor.
 
-### Gap: host-tool filesystem and process control {#gap-host-tool-filesystem-and-process-control}
+### Gap: host-tool filesystem and process control
 
 Single-file frontend experiments need only `readText`, but a compatible compiler must discover
 projects, normalize paths, walk source roots, find its shipped `lib/` and runtime assets, create output
@@ -294,7 +294,7 @@ Done when the self-hosted CLI can compile a project from outside the repository,
 assets, atomically write an executable, report diagnostics on stderr, and return the same exit code as
 the C# CLI.
 
-### Gap: text, Unicode, and source-coordinate contract {#gap-text-unicode-and-source-coordinates}
+### Gap: text, Unicode, and source coordinates
 
 The C# frontend records UTF-16 string-unit offsets while the self-hosted lexer walks UTF-8 bytes.
 Byte offsets are a natural internal identity for an UTF-8 compiler, but diagnostics, formatter edits,
@@ -320,7 +320,7 @@ Workable tasks:
 Done when token, AST, diagnostic, formatter, LSP, and debug spans agree with the documented contract
 for ASCII and Unicode sources, and the self-hosted lexer builds against the current stdlib.
 
-### Gap: persistent collections in compiler-scale workloads {#gap-persistent-collections}
+### Gap: persistent collections
 
 `Ashes.Collection.Map` and `Ashes.Collection.Array` are shipped; a first compiler can represent sets
 as `Map(K, Unit)` and does not require generic hashing. The risk is algorithmic behavior at compiler
@@ -340,7 +340,7 @@ Workable tasks:
 Done when representative frontend and Semantics workloads have deterministic output and acceptable
 time/memory without relying on a mutable collection escape hatch.
 
-### Gap: scalable immutable text construction {#gap-text-construction-performance}
+### Gap: text construction performance
 
 `Text.join` plus affine-growth reuse is sufficient for the first port, so a named builder or rope is
 optional. Formatter output, diagnostics, IR dumps, JSON, and protocol messages still need measurement
@@ -360,7 +360,7 @@ Workable tasks:
 Done when doubling representative output does not cause accidental quadratic growth and output is
 byte-for-byte equal to the stage-0 component.
 
-### Gap: compiler data modeling {#gap-compiler-data-modeling}
+### Gap: compiler data modeling
 
 Records, named patterns, record updates, type annotations, aliases, and zero-cost nominal `type`
 declarations are shipped. The work is to use them to preserve phase boundaries and prevent accidental
@@ -379,7 +379,7 @@ Workable tasks:
 Done when the self-hosted phase models cover the current C# model without untyped identifier/offset
 shortcuts and their stable serializations match the differential harness.
 
-### Gap: project and module hosting {#gap-project-and-module-hosting}
+### Gap: project and module hosting
 
 The compiler already supports sequential top-level declarations, explicit exports, imports, and path
 dependencies. The self-hosted implementation must reproduce graph construction and diagnostics using
@@ -399,7 +399,7 @@ Workable tasks:
 Done when stage 0 and the self-hosted project loader choose the same ordered source set, visible
 exports, and diagnostics for the full project fixture suite.
 
-### Gap: catchable failures and deterministic memory {#gap-errors-and-deterministic-memory}
+### Gap: errors and deterministic memory
 
 Catchable effects and RC-Perceus are shipped. A compiler port must shape expected failures as values,
 keep panics for violated invariants, and avoid cyclic graphs that deterministic reference counting
@@ -419,7 +419,7 @@ Workable tasks:
 Done when expected bad input never crashes the tool, repeated workloads do not grow without bound,
 and sanitizers/resource counters show balanced cleanup on success and failure.
 
-### Gap: large-ADT semantic parity {#gap-large-adt-semantics}
+### Gap: large ADT semantics
 
 Large-ADT exhaustiveness and performance hardening is shipped, but the self-hosted parser and
 Semantics implementation will exercise it with token, AST, type, IR, and diagnostic unions much
@@ -438,7 +438,7 @@ Workable tasks:
 Done when large compiler unions compile and run within agreed limits and match stage-0 behavior for
 exhaustiveness and diagnostics.
 
-### Gap: tooling protocols and subprocess integration {#gap-tooling-protocols-and-processes}
+### Gap: tooling protocols and processes
 
 JSON, stdio JSON-RPC framing, interactive subprocesses, and regex are shipped. Their remaining gap is
 tool-specific integration and long-lived-process correctness.
@@ -459,7 +459,7 @@ Workable tasks:
 Done when self-hosted protocol transcripts and subprocess outcomes match the current LSP, DAP, and
 TestRunner fixtures on supported hosts.
 
-### Gap: self-hosted validation infrastructure {#gap-self-hosted-validation-infrastructure}
+### Gap: self-hosted validation infrastructure
 
 `Ashes.Test` assertions and the C# fuzzing framework exist. Deterministic discovery depends on the
 host APIs, and porting TestRunner/fuzzing is a toolchain-parity layer rather than a compiler-core gate.
@@ -480,7 +480,7 @@ Workable tasks:
 Done when tests are discovered and reported identically and a failure produced by the self-hosted
 fuzzer can be replayed and minimized by seed with stable artifacts.
 
-### Gap: registry and distribution CLI {#gap-registry-and-distribution-cli}
+### Gap: registry and distribution CLI
 
 Tar/gzip, SHA-256, authenticated HTTP, and multipart upload are needed only to replace the package and
 registry CLI, not to declare the compiler core self-hosted.
@@ -499,7 +499,7 @@ Workable tasks:
 Done when the self-hosted registry CLI passes the existing package workflow suite and produces
 archives/checksums compatible with the C# CLI.
 
-### Gap: bootstrap completion and reproducibility {#gap-bootstrap-completion-gate}
+### Gap: bootstrap completion gate
 
 Component differential tests prove compatibility but do not by themselves prove self-hosting. The
 bootstrap work package is:
