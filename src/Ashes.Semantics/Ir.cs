@@ -1831,6 +1831,9 @@ public abstract record FfiType
     /// <summary>A pointer to <paramref name="Pointee"/>.</summary>
     /// <param name="Pointee">The pointed-to FFI type.</param>
     public sealed record Ptr(FfiType Pointee) : FfiType;
+    /// <summary>A call-scoped contiguous input array of copyable opaque handles.</summary>
+    /// <param name="Element">The opaque handle element type.</param>
+    public sealed record Buffer(FfiType.Opaque Element) : FfiType;
     /// <summary>No value (a <c>void</c> return).</summary>
     public sealed record Void : FfiType;
 }

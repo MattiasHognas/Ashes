@@ -73,6 +73,8 @@ public static class DiagnosticCodes
     public const string InvalidExternalOwnershipMarker = "ASH042";
     /// <summary>A join handle escapes its structured lifetime.</summary>
     public const string StructuredTaskEscape = "ASH043";
+    /// <summary>An FFI buffer is declared or used in a shape that cannot remain call-scoped.</summary>
+    public const string InvalidFfiBuffer = "ASH044";
 }
 
 /// <summary>

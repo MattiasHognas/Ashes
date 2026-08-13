@@ -408,6 +408,16 @@ public sealed class Parser
             return new ParsedType.Pointer(ParseFfiType());
         }
 
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "FfiBuffer", StringComparison.Ordinal))
+        {
+            Consume(TokenKind.Ident);
+            Consume(TokenKind.LParen);
+            ParsedType element = ParseFfiType();
+            Consume(TokenKind.RParen);
+            return new ParsedType.Buffer(element);
+        }
+
         return ParseTypeName();
     }
 

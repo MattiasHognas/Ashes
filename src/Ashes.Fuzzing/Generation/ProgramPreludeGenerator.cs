@@ -35,6 +35,10 @@ internal static class ProgramPreludeGenerator
         {
             AddExternalResource(caseIndex, items, features, trace);
         }
+        if (caseIndex % 10 == 5)
+        {
+            AddFfiBuffer(caseIndex, items, features, trace);
+        }
 
         switch (caseIndex % 3)
         {
@@ -55,6 +59,23 @@ internal static class ProgramPreludeGenerator
         }
 
         return new GeneratedProgramPrelude(items, context, features, new GenerationTrace(trace));
+    }
+
+    private static void AddFfiBuffer(
+        int caseIndex,
+        List<TopLevelItem> items,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string suffix = caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string typeName = "FuzzOpaque" + suffix;
+        items.Add(new TopLevelItem.External(new ExternalDecl.OpaqueType(typeName)));
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            "fuzzBufferInspect" + suffix,
+            [new ParsedType.Buffer(new ParsedType.Named(typeName)), new ParsedType.Named("u64")],
+            new ParsedType.Named("Int"))));
+        features.Add(GeneratedFeature.FfiBuffer);
+        trace.Add("program:ffi-buffer");
     }
 
     private static void AddExternalResource(

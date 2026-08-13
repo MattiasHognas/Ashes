@@ -452,6 +452,18 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_external_ffi_buffer_parameter()
+    {
+        Program program = ParseProgram("external consume(FfiBuffer(Handle), u64) -> Int\n0");
+
+        ExternalDecl.Function consume = program.ExternalDecls.Single().ShouldBeOfType<ExternalDecl.Function>();
+        consume.ParameterTypes.ShouldBe([
+            new ParsedType.Buffer(new ParsedType.Named("Handle")),
+            new ParsedType.Named("u64")
+        ]);
+    }
+
+    [Test]
     public void ParseProgram_should_parse_multiline_type_declaration()
     {
         var program = ParseProgram("type Maybe =\n  | None\n  | Some(T)\nprint(1)");

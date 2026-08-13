@@ -758,4 +758,15 @@ public sealed class FormatterTests
         var secondPass = FormatFixtureSource(formatted);
         secondPass.ShouldBe("external type Handle\nexternal fill(**u8) -> *Handle\n\n0\n");
     }
+
+    [Test]
+    public void Format_should_round_trip_external_ffi_buffer_parameter()
+    {
+        const string source = "external type Handle\nexternal consume(FfiBuffer(Handle), u64) -> Int\n0\n";
+
+        string formatted = FormatFixtureSource(source);
+
+        formatted.ShouldBe("external type Handle\nexternal consume(FfiBuffer(Handle), u64) -> Int\n\n0\n");
+        FormatFixtureSource(formatted).ShouldBe(formatted);
+    }
 }

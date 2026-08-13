@@ -638,6 +638,9 @@ public static partial class DocumentService
 
         var typeNames = lowering.TypeSymbols.Keys.ToHashSet(StringComparer.Ordinal);
         typeNames.UnionWith(program.TypeAliasDecls.Select(declaration => declaration.Name));
+        typeNames.UnionWith(program.ExternalDecls.OfType<ExternalDecl.OpaqueType>()
+            .Select(declaration => declaration.Name));
+        typeNames.Add("FfiBuffer");
         var ctorNames = lowering.ConstructorSymbols.Keys.ToHashSet(StringComparer.Ordinal);
         var traitNames = lowering.TraitSymbols.Values
             .SelectMany(trait => new[] { trait.Name, trait.QualifiedName })
@@ -772,6 +775,7 @@ public static partial class DocumentService
             name.StartsWith(ProjectSupport.PrivateConstructorPrefix, StringComparison.Ordinal)
             || name.StartsWith(ProjectSupport.PrivateTypePrefix, StringComparison.Ordinal));
         completionNames.UnionWith(lowering.TraitSymbols.Values.Select(trait => trait.Name));
+        AddExternalCompletions(completionNames, program.ExternalDecls);
 
         var strippedDiag = new Diagnostics();
         var strippedProgram = new Parser(header.StrippedSource, strippedDiag).ParseProgram();
@@ -800,6 +804,22 @@ public static partial class DocumentService
         return completionNames
             .OrderBy(k => k, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static void AddExternalCompletions(
+        HashSet<string> completionNames,
+        IReadOnlyList<ExternalDecl> declarations)
+    {
+        if (declarations.Count > 0)
+        {
+            completionNames.Add("FfiBuffer");
+        }
+        completionNames.UnionWith(declarations.Select(declaration => declaration switch
+        {
+            ExternalDecl.OpaqueType opaque => opaque.Name,
+            ExternalDecl.Function function => function.Name,
+            _ => string.Empty,
+        }).Where(name => name.Length > 0));
     }
 
     /// <summary>
@@ -1539,49 +1559,87 @@ public static partial class DocumentService
                 ExternalDecl.Function function => function.Name,
                 _ => string.Empty,
             }, identifier.Value.Token.Text, StringComparison.Ordinal));
+        if (declaration is null)
+        {
+            return null;
+        }
+
         Lowering.ExternalOwnershipInfo? ownership = lowering.GetExternalOwnershipInfo(
             identifier.Value.Token.Text);
-        if (declaration is null || ownership is null)
+        bool hasFfiBuffer = declaration is ExternalDecl.Function function
+            && function.ParameterTypes.Any(type => type is ParsedType.Buffer);
+        if (ownership is null && !hasFfiBuffer)
         {
             return null;
         }
 
         string formatted = Ashes.Formatter.Formatter.Format(new Frontend.Program(
             [new TopLevelItem.External(declaration)], null)).Trim();
-        string markdown = FormatExternalOwnershipHover(formatted, ownership.Value);
+        string markdown = FormatExternalDeclarationHover(formatted, declaration, ownership);
         TextSpan? mapped = MapToOriginalSpan(identifier.Value.Span.Start, identifier.Value.Span.End, context);
         return mapped is null
             ? null
             : new HoverItem(mapped.Value.Start + context.HeaderOffset, mapped.Value.End + context.HeaderOffset, markdown);
     }
 
-    private static string FormatExternalOwnershipHover(
+    private static string FormatExternalDeclarationHover(
         string formatted,
-        Lowering.ExternalOwnershipInfo ownership)
+        ExternalDecl declaration,
+        Lowering.ExternalOwnershipInfo? ownership)
     {
         var markdown = new StringBuilder($"```ashes\n{formatted}\n```\n\n");
-        if (ownership.IsResourceType)
+        if (ownership is { IsResourceType: true } resourceOwnership)
         {
             markdown.Append("*affine external resource*\n\n**Destructor:** `");
-            markdown.Append(ownership.Destructor);
+            markdown.Append(resourceOwnership.Destructor);
             markdown.Append('`');
         }
         else
         {
-            markdown.Append("*external function*\n\n**Resource ownership**");
-            foreach (string parameter in ownership.ParameterOwnerships)
+            markdown.Append("*external function*");
+            if (ownership is { } functionOwnership
+                && (functionOwnership.ParameterOwnerships.Count > 0 || functionOwnership.ReturnsOwnedResource))
             {
-                markdown.Append("\n\n- `");
-                markdown.Append(parameter);
-                markdown.Append('`');
+                markdown.Append("\n\n**Resource ownership**");
+                foreach (string parameter in functionOwnership.ParameterOwnerships)
+                {
+                    markdown.Append("\n\n- `");
+                    markdown.Append(parameter);
+                    markdown.Append('`');
+                }
+                if (functionOwnership.ReturnsOwnedResource)
+                {
+                    markdown.Append("\n\n- return: `owned`");
+                }
             }
-            if (ownership.ReturnsOwnedResource)
+
+            if (declaration is ExternalDecl.Function function)
             {
-                markdown.Append("\n\n- return: `owned`");
+                AppendFfiBufferHover(markdown, function);
             }
         }
 
         return markdown.ToString();
+    }
+
+    private static void AppendFfiBufferHover(StringBuilder markdown, ExternalDecl.Function function)
+    {
+        IReadOnlyList<(int Index, ParsedType.Buffer Buffer)> buffers = [.. function.ParameterTypes
+            .Select((type, index) => (Index: index, Type: type))
+            .Where(parameter => parameter.Type is ParsedType.Buffer)
+            .Select(parameter => (parameter.Index, (ParsedType.Buffer)parameter.Type))];
+        if (buffers.Count == 0)
+        {
+            return;
+        }
+
+        markdown.Append("\n\n**Call-scoped buffers**");
+        foreach ((int index, ParsedType.Buffer buffer) in buffers)
+        {
+            string elementName = buffer.Element is ParsedType.Named named ? named.Name : "T";
+            markdown.Append(System.Globalization.CultureInfo.InvariantCulture,
+                $"\n\n- `#{index + 1} FfiBuffer({elementName}): List({elementName})`");
+        }
     }
 
     private static string? ResolveCanonicalHoverName(

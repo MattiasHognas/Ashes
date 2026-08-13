@@ -807,6 +807,7 @@ external strlen(Str) -> Int
 external getpid() -> Int = "getpid"
 external type LLVMModuleRef
 external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
+external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef
 external type Database resource destructor databaseClose
 external databaseClose(consume Database) -> void = "db_close@libdb"
 external databaseVersion(borrow Database) -> Int = "db_version@libdb"
@@ -845,6 +846,18 @@ Rules:
   possession-only and therefore has an empty row unless one is written explicitly.
 - Pointer external types are represented as native pointers and may be nested for
   C buffer and out-parameter APIs such as `*u8` and `**LLVMModuleRef`.
+- `FfiBuffer(T)` is supported only as a direct external parameter, where `T` is a copyable opaque
+  external type. Its Ashes call-site type is `List(T)`. Immediately before the native call, the
+  compiler walks the immutable list and materializes a contiguous native `T*` array. The empty list
+  passes a null pointer; a non-empty list passes stable storage whose lifetime ends when the call
+  returns. The pointer is never observable in Ashes.
+- A native element-count parameter remains explicit in the external signature. The Ashes wrapper is
+  responsible for passing the matching list length (narrowed to the declared ABI width where
+  necessary); the compiler does not infer or couple count parameters by position.
+- `FfiBuffer(T)` cannot be returned, nested under `*`, contain a declared resource type, or be used in
+  an ordinary type annotation. An external function with an `FfiBuffer` parameter must be called
+  directly and cannot be used as a first-class function value, because materialization is tied to the
+  call boundary.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows external imports require an explicit DLL name.
