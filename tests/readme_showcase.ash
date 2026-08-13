@@ -1,15 +1,16 @@
-// expect: Price: 12.50, Count: 6
-// fmt-skip: kept verbatim in sync with the README hero; the formatter would reshape let! and the pipelines.
+// expect: ✓ Price: 12.50, Count: 6
+// fmt-skip: mirrors the README hero; the formatter would reshape let! and the pipelines.
 // A tiny order-pricing pipeline.
 // Pure, immutable, strictly typed — iteration is recursion + match, never loops.
 import Ashes.IO as io
 import Ashes.Collection.List as list
 import Ashes.Text as text
+import Ashes.Rune as rune
 import Ashes.Number.Math as math
 import Ashes.Task as async
 // An algebraic data type: the drinks on the menu...
-// let! awaits a task with no async() wrapper; async.all joins the two tasks
-// into one. |?> maps the Ok branch, |!> tags the Error branch.
+// let! awaits a task; async.all runs both independent calculations together.
+// |?> maps the Ok branch, |!> tags the Error branch.
 type Drink =
     | Espresso
     | Latte
@@ -37,14 +38,14 @@ let add a b = a + b
 
 let lineCount line =
     match line with
-        | Line(_, qty) -> qty
+        | Line { qty = qty } -> qty
 
 // Recursion + list pattern matching; the provider gives each drink's price,
 // widened against the Int quantity with Math.toFloat.
 let recursive priceAll lines acc =
     match lines with
         | [] -> acc
-        | Line(drink, qty) :: rest -> priceAll rest(Priced.cost(drink) * math.toFloat(qty) + acc)
+        | Line { drink = drink, qty = qty } :: rest -> priceAll rest(Priced.cost(drink) * math.toFloat(qty) + acc)
 
 // Symbol pipeline: the number of drinks on the order.
 let count lines =
@@ -64,13 +65,12 @@ let fail e = "order failed: " + e
 
 let render labels =
     match labels with
-        | price :: drinks :: [] -> "Price: " + price + ", Count: " + drinks
+        | price :: drinks :: [] -> rune.toText('✓') + " Price: " + price + ", Count: " + drinks
         | _ -> "unexpected"
 
 let merge result =
     match result with
-        | Ok(line) -> line
-        | Error(line) -> line
+        | Ok(line) | Error(line) -> line
 
 let order = [Line(drink = Espresso, qty = 2), Line(drink = Latte, qty = 1), Line(drink = Drip, qty = 3)]
 

@@ -9,6 +9,7 @@ native executables without runtime dependencies.
 import Ashes.IO as io
 import Ashes.Collection.List as list
 import Ashes.Text as text
+import Ashes.Rune as rune
 import Ashes.Number.Math as math
 import Ashes.Task as async
 
@@ -40,14 +41,14 @@ let add a b = a + b
 
 let lineCount line =
     match line with
-        | Line(_, qty) -> qty
+        | Line { qty = qty } -> qty
 
 // Recursion + list pattern matching; the provider gives each drink's price,
 // widened against the Int quantity with Math.toFloat.
 let recursive priceAll lines acc =
     match lines with
         | [] -> acc
-        | Line(drink, qty) :: rest -> priceAll rest (Priced.cost(drink) * math.toFloat(qty) + acc)
+        | Line { drink = drink, qty = qty } :: rest -> priceAll rest (Priced.cost(drink) * math.toFloat(qty) + acc)
 
 // Symbol pipeline: the number of drinks on the order.
 let count lines =
@@ -63,13 +64,12 @@ let fail e = "order failed: " + e
 
 let render labels =
     match labels with
-        | price :: drinks :: [] -> "Price: " + price + ", Count: " + drinks
+        | price :: drinks :: [] -> rune.toText('✓') + " Price: " + price + ", Count: " + drinks
         | _ -> "unexpected"
 
 let merge result =
     match result with
-        | Ok(line) -> line
-        | Error(line) -> line
+        | Ok(line) | Error(line) -> line
 
 let order = [
     Line(drink = Espresso, qty = 2),
@@ -77,7 +77,7 @@ let order = [
     Line(drink = Drip, qty = 3)
 ]
 
-// let! awaits a task, async.all joins the two tasks into one.
+// let! awaits a task; async.all runs both independent calculations together.
 // |?> maps the Ok branch, |!> tags the Error branch.
 let! purchase = async.all [async.task(priceLabel order), async.task(countLabel order)]
 in
@@ -188,17 +188,20 @@ import Ashes.IO as io
 
 ### Async/Await
 
+Every `async` activation is an implicit structured task scope. `fork` starts a
+child in that scope and `join` consumes its affine handle exactly once:
+
 ```ash
 import Ashes.Task as task
 import Ashes.IO as io
 
-let work = 
-    async(match await task.all([async 21, async 21]) with
+let work =
+    async(match await task.fork(async 42) with
         | Error(_) -> 0
-        | Ok(values) -> 
-            match values with
-                | a :: b :: [] -> a + b
-                | _ -> 0)
+        | Ok(child) ->
+            match await task.join(child) with
+                | Error(_) -> 0
+                | Ok(answer) -> answer)
 in
     io.print(match await work with
         | Ok(n) -> n
@@ -295,15 +298,16 @@ The library is organized under ten top-level namespaces:
 | `Ashes.Net` | `Net.Http`(+`.Server`), `Net.Tcp`(+`.Server`), `Net.Tls`(+`.Server`) clients and servers, and `Net.Rpc` (stdio Content-Length message framing) |
 | `Ashes.Number` | `Number.Math` (arithmetic, trig, rounding, conversions), `Number.BigInt` (arbitrary precision), `Number.UInt` (the unsigned-byte ↔ `Int` bridge) |
 | `Ashes.Collection` | `Collection.List`, `.Array`, `.Map`, `.HashMap`, `.HashTrie` — persistent, structure-sharing containers |
-| `Ashes.Text` | Strings and text formats: `uncons`, `split`, `trim`, `join`, `parseInt`/`parseFloat`, `formatFloat`, plus `Text.Regex` (PCRE2) and `Text.Json` |
+| `Ashes.Text` | UTF-8 strings and text formats: scalar-aware `uncons`, `split`, `trim`, `join`, `parseInt`/`parseFloat`, `formatFloat`, plus `Text.Regex` (PCRE2) and `Text.Json` |
+| `Ashes.Rune` | Unicode scalar conversion, validation, and ASCII classification |
 | `Ashes.Byte` | Immutable byte sequences with O(1) indexing, hashing, and scanning |
-| `Ashes.Task` | Async tasks (`run`, `sleep`, `all`, `race`, `spawn`) and `Task.Parallel` (data-parallel fork/join over worker threads) |
+| `Ashes.Task` | Async tasks with structured scopes (`fork`, `join`, `scope`), combinators (`all`, `race`), detached `spawn`, and `Task.Parallel` for data-parallel work |
 | `Ashes.Core` | `Core.Maybe` and `Core.Result` helpers for the built-in option/result types |
 | `Ashes.Test` | Assertion helpers for `.ash` tests |
 
-Built-in types (always available without imports): `Int`, `Float`, `Bool`, `Str`, `Bytes`,
-`BigInt`, `Unit`, `Maybe(T)`, `Result(E, A)`, `List(T)`, `Task(E, A)`, `Socket`, `TlsSocket`,
-`Process`, `FileHandle`.
+Built-in types (always available without imports): `Int`, `Float`, `Bool`, `Rune`, `Str`, `Bytes`,
+`BigInt`, `Unit`, `Maybe(T)`, `Result(E, A)`, `List(T)`, `Task(E, A)`, `JoinHandle(E, A)`,
+`Socket`, `TlsSocket`, `Process`, `FileHandle`.
 
 Full per-module API: [Standard Library reference](docs/md/reference/standard-library.md).
 
@@ -436,7 +440,7 @@ own `ashes.json` and README:
 | [`restful_api/`](examples/restful_api/) | A CRUD todo API over `Ashes.Net.Http.Server` with storage behind a custom `Store` **capability** — the router is a pure request→response function; production satisfies `Store` with a JSON-file `provide`, and the tests swap in an in-memory `handle`, so they run with no socket or file. |
 | [`key_value_store_service/`](examples/key_value_store_service/) | A mini Redis: an in-memory key-value server speaking the RESP wire protocol (works with `redis-cli`), where the store is an accumulator threaded through the recursive accept loop — "mutation" as pure recursion holding state across connections. |
 | [`fun_terminal/`](examples/fun_terminal/) | Real-time terminal **Pong** vs the computer, built on `Ashes.IO.Console` raw key/mouse input with flicker-free ANSI rendering and a pure physics step. |
-| [`3d_application/`](examples/3d_application/) | A raylib **FFI** experiment: an ANSI-free 3D terrain rendered by calling into the vendored raylib shared library through Ashes `external` declarations (using the primitive-only `rlgl` API). |
+| [`3d_application/`](examples/3d_application/) | A raylib **FFI** experiment: an ANSI-free 3D terrain rendered through `external` declarations, including a declared affine native resource whose destructor is inserted automatically. |
 
 ---
 
@@ -448,8 +452,9 @@ ownership moves avoid unnecessary increments, sharing inserts `dup`, and the
 last `drop` recursively releases owned children. Proven scoped scratch and
 task/capability state use bounded regions; parallel workers exchange independent
 copies rather than sharing non-atomic counts. There is no tracing GC and nothing
-for the user to annotate. Resource types additionally get compile-time
-use-after-close, double-close, and use-after-move checking.
+for the user to annotate. Resource types — including user-declared native FFI
+handles — additionally get deterministic cleanup and compile-time use-after-close,
+double-close, and use-after-move checking.
 *Details: [Ownership Model](docs/md/reference/language.md#17-ownership-model) and
 [Resource Types](docs/md/reference/language.md#16-resource-types-and-deterministic-cleanup)
 in the spec; [Memory Model](docs/md/internals/architecture.md#memory-model) in the
