@@ -845,6 +845,12 @@ public sealed partial class Lowering
                 or IrInst.BytesSubText
                 or IrInst.BytesAppend
                 or IrInst.BytesAppendByte
+                or IrInst.BytesAllocate
+                or IrInst.BytesCopyRange
+                or IrInst.BytesSet
+                or IrInst.BytesSetU16Le
+                or IrInst.BytesSetU32Le
+                or IrInst.BytesSetU64Le
                 or IrInst.BytesFromList
                 or IrInst.BytesU16Le
                 or IrInst.BytesU32Le

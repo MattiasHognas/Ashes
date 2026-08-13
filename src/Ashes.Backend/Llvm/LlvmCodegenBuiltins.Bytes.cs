@@ -521,6 +521,230 @@ internal static partial class LlvmCodegen
         return destRef;
     }
 
+    private static LlvmValueHandle EmitBytesAllocate(
+        LlvmCodegenState state,
+        LlvmValueHandle length)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle negative = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Slt, length, zero, "bytes_allocate_negative");
+        LlvmValueHandle tooLarge = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Ugt,
+            length,
+            LlvmApi.ConstInt(state.I64, 1024UL * 1024UL * 1024UL, 0),
+            "bytes_allocate_too_large");
+        LlvmValueHandle invalid = LlvmApi.BuildOr(builder, negative, tooLarge, "bytes_allocate_invalid");
+        EmitBytesGuard(state, invalid, "Bytes.allocate: length must be between 0 and 1073741824");
+
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(
+            builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_allocate_total");
+        LlvmValueHandle result = EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_allocate");
+        StoreMemory(state, result, 0, length, "bytes_allocate_len");
+        LlvmValueHandle data = GetStringBytesPointer(state, result, "bytes_allocate_data");
+        LlvmApi.BuildMemSet(builder, data, LlvmApi.ConstInt(state.I8, 0, 0), length, 1);
+        return result;
+    }
+
+    private static LlvmValueHandle EmitBytesCopyRange(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesRef,
+        LlvmValueHandle offset,
+        LlvmValueHandle sourceRef,
+        LlvmValueHandle sourceOffset,
+        LlvmValueHandle length,
+        bool reuseInput)
+    {
+        EmitCheckedBytesRange(
+            state,
+            LoadStringLength(state, bytesRef, "bytes_copyrange_dest_len"),
+            offset,
+            length,
+            "Bytes.copyRange: destination range out of bounds",
+            "bytes_copyrange_dest");
+        EmitCheckedBytesRange(
+            state,
+            LoadStringLength(state, sourceRef, "bytes_copyrange_source_len"),
+            sourceOffset,
+            length,
+            "Bytes.copyRange: source range out of bounds",
+            "bytes_copyrange_source");
+
+        LlvmValueHandle result = EmitBytesCopyOnWrite(state, bytesRef, reuseInput, "bytes_copyrange");
+        LlvmValueHandle destination = LlvmApi.BuildGEP2(
+            state.Target.Builder,
+            state.I8,
+            GetStringBytesPointer(state, result, "bytes_copyrange_result_data"),
+            [offset],
+            "bytes_copyrange_destination");
+        LlvmValueHandle source = LlvmApi.BuildGEP2(
+            state.Target.Builder,
+            state.I8,
+            GetStringBytesPointer(state, sourceRef, "bytes_copyrange_source_data"),
+            [sourceOffset],
+            "bytes_copyrange_source_start");
+        EmitBytesRangeCopy(state, result, sourceRef, destination, source, length);
+        return result;
+    }
+
+    private static LlvmValueHandle EmitBytesSetUnsigned(
+        LlvmCodegenState state,
+        LlvmValueHandle bytesRef,
+        LlvmValueHandle offset,
+        LlvmValueHandle value,
+        int byteCount,
+        bool reuseInput,
+        string prefix)
+    {
+        EmitCheckedBytesRange(
+            state,
+            LoadStringLength(state, bytesRef, prefix + "_len"),
+            offset,
+            LlvmApi.ConstInt(state.I64, (ulong)byteCount, 0),
+            $"Bytes.{SetterName(byteCount)}: range out of bounds",
+            prefix);
+        LlvmValueHandle result = EmitBytesCopyOnWrite(state, bytesRef, reuseInput, prefix);
+        LlvmValueHandle data = GetStringBytesPointer(state, result, prefix + "_data");
+        for (int index = 0; index < byteCount; index++)
+        {
+            LlvmValueHandle shifted = index == 0
+                ? value
+                : LlvmApi.BuildLShr(
+                    state.Target.Builder,
+                    value,
+                    LlvmApi.ConstInt(state.I64, (ulong)(index * 8), 0),
+                    prefix + "_shift");
+            LlvmValueHandle byteValue = LlvmApi.BuildTrunc(
+                state.Target.Builder, shifted, state.I8, prefix + "_byte");
+            LlvmValueHandle byteOffset = LlvmApi.BuildAdd(
+                state.Target.Builder,
+                offset,
+                LlvmApi.ConstInt(state.I64, (ulong)index, 0),
+                prefix + "_offset");
+            LlvmValueHandle address = LlvmApi.BuildGEP2(
+                state.Target.Builder, state.I8, data, [byteOffset], prefix + "_address");
+            LlvmApi.BuildStore(state.Target.Builder, byteValue, address);
+        }
+
+        return result;
+    }
+
+    private static string SetterName(int byteCount) => byteCount switch
+    {
+        1 => "set",
+        2 => "setU16Le",
+        4 => "setU32Le",
+        8 => "setU64Le",
+        _ => throw new ArgumentOutOfRangeException(nameof(byteCount)),
+    };
+
+    private static void EmitCheckedBytesRange(
+        LlvmCodegenState state,
+        LlvmValueHandle bufferLength,
+        LlvmValueHandle offset,
+        LlvmValueHandle length,
+        string message,
+        string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle offsetNegative = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Slt, offset, zero, prefix + "_offset_negative");
+        LlvmValueHandle lengthNegative = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Slt, length, zero, prefix + "_length_negative");
+        LlvmValueHandle offsetPastEnd = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Ugt, offset, bufferLength, prefix + "_offset_past_end");
+        LlvmValueHandle available = LlvmApi.BuildSub(builder, bufferLength, offset, prefix + "_available");
+        LlvmValueHandle lengthPastEnd = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Ugt, length, available, prefix + "_length_past_end");
+        LlvmValueHandle invalid = LlvmApi.BuildOr(
+            builder,
+            LlvmApi.BuildOr(builder, offsetNegative, lengthNegative, prefix + "_negative"),
+            LlvmApi.BuildOr(builder, offsetPastEnd, lengthPastEnd, prefix + "_past_end"),
+            prefix + "_invalid");
+        EmitBytesGuard(state, invalid, message);
+    }
+
+    private static void EmitBytesGuard(
+        LlvmCodegenState state,
+        LlvmValueHandle invalid,
+        string message)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle panic = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "bytes_update_panic");
+        LlvmBasicBlockHandle valid = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "bytes_update_valid");
+        LlvmApi.BuildCondBr(builder, invalid, panic, valid);
+        LlvmApi.PositionBuilderAtEnd(builder, panic);
+        EmitPanic(state, EmitStackStringObject(state, message));
+        LlvmApi.PositionBuilderAtEnd(builder, valid);
+    }
+
+    private static LlvmValueHandle EmitBytesCopyOnWrite(
+        LlvmCodegenState state,
+        LlvmValueHandle source,
+        bool reuseInput,
+        string prefix)
+    {
+        if (reuseInput)
+        {
+            return source;
+        }
+
+        LlvmValueHandle length = LoadStringLength(state, source, prefix + "_copy_len");
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(
+            state.Target.Builder,
+            length,
+            LlvmApi.ConstInt(state.I64, 8, 0),
+            prefix + "_copy_total");
+        LlvmValueHandle result = EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_" + prefix + "_copy");
+        StoreMemory(state, result, 0, length, prefix + "_result_len");
+        EmitCopyBytes(
+            state,
+            GetStringBytesPointer(state, result, prefix + "_copy_destination"),
+            GetStringBytesPointer(state, source, prefix + "_copy_source"),
+            length,
+            prefix + "_copy");
+        return result;
+    }
+
+    private static void EmitBytesRangeCopy(
+        LlvmCodegenState state,
+        LlvmValueHandle destinationRef,
+        LlvmValueHandle sourceRef,
+        LlvmValueHandle destination,
+        LlvmValueHandle source,
+        LlvmValueHandle length)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle sameBuffer = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Eq, destinationRef, sourceRef, "bytes_copyrange_same_buffer");
+        LlvmBasicBlockHandle overlapSafe = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "bytes_copyrange_overlap_safe");
+        LlvmBasicBlockHandle direct = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "bytes_copyrange_direct");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "bytes_copyrange_done");
+        LlvmApi.BuildCondBr(builder, sameBuffer, overlapSafe, direct);
+
+        LlvmApi.PositionBuilderAtEnd(builder, overlapSafe);
+        LlvmValueHandle scratch = EmitAllocDynamic(
+            state,
+            LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_copyrange_scratch_size"));
+        LlvmValueHandle scratchBytes = LlvmApi.BuildIntToPtr(builder, scratch, state.I8Ptr, "bytes_copyrange_scratch");
+        EmitCopyBytes(state, scratchBytes, source, length, "bytes_copyrange_to_scratch");
+        EmitCopyBytes(state, destination, scratchBytes, length, "bytes_copyrange_from_scratch");
+        LlvmApi.BuildBr(builder, done);
+
+        LlvmApi.PositionBuilderAtEnd(builder, direct);
+        EmitCopyBytes(state, destination, source, length, "bytes_copyrange_direct");
+        LlvmApi.BuildBr(builder, done);
+
+        LlvmApi.PositionBuilderAtEnd(builder, done);
+    }
+
     private static LlvmValueHandle EmitBytesFromList(
         LlvmCodegenState state,
         LlvmValueHandle listRef,

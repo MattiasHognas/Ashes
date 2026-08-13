@@ -832,6 +832,11 @@ remains live through the instruction and ordinary cleanup follows it, no foreign
 in the resulting value. The private LLVM facade uses this sequence for
 `LLVMTargetMachineEmitToMemoryBuffer`: the memory buffer is an affine resource, its start and size are
 borrowed reads, and `LLVMDisposeMemoryBuffer` runs after the object bytes have been materialized.
+Pure `Ashes.Byte` patch operations use copy-on-write lowering. Update inputs are normalized into the
+reference-counted heap. A freshly produced, unaliased update temporary is patched in place and
+forwarded; a named, borrowed, or non-RC value is copied before patching, so aliases retain their
+original bytes. Fixed-width setters and linker-oriented range copies therefore keep language-level
+immutability while avoiding a full buffer allocation for every patch in a linear ownership chain.
 Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
 or waits for and releases its process handle on Windows.
 

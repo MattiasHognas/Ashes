@@ -31,6 +31,10 @@ internal static class ProgramPreludeGenerator
             trace.AddRange(traits.Trace.Entries);
         }
         AddTopLevelFunction(caseIndex, items, ref context, features, trace);
+        if (caseIndex % 6 == 0)
+        {
+            AddBinaryConstruction(caseIndex, items, ref context, features, trace);
+        }
         if (caseIndex % 5 == 0)
         {
             AddExternalResource(caseIndex, items, features, trace);
@@ -62,6 +66,69 @@ internal static class ProgramPreludeGenerator
         }
 
         return new GeneratedProgramPrelude(items, context, features, new GenerationTrace(trace));
+    }
+
+    private static void AddBinaryConstruction(
+        int caseIndex,
+        List<TopLevelItem> items,
+        ref GenerationContext context,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string name = "fuzzBytes" + caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Expr allocated = ApplyByteIntrinsic("allocate", new Expr.IntLit(16));
+        int operation = caseIndex / 6 % 6;
+        Expr value = operation switch
+        {
+            0 => allocated,
+            1 => ApplyByteIntrinsic(
+                "set",
+                allocated,
+                new Expr.IntLit(caseIndex % 16),
+                new Expr.UIntLit((ulong)(caseIndex & 0xFF), 8)),
+            2 => ApplyByteIntrinsic(
+                "setU16Le",
+                allocated,
+                new Expr.IntLit(caseIndex % 15),
+                new Expr.UIntLit(unchecked((ulong)caseIndex * 257UL) & 0xFFFFUL, 16)),
+            3 => ApplyByteIntrinsic(
+                "setU32Le",
+                allocated,
+                new Expr.IntLit(caseIndex % 13),
+                new Expr.UIntLit(unchecked((ulong)caseIndex * 0x01010101UL) & 0xFFFFFFFFUL, 32)),
+            4 => ApplyByteIntrinsic(
+                "setU64Le",
+                allocated,
+                new Expr.IntLit(caseIndex % 9),
+                new Expr.UIntLit(unchecked((ulong)caseIndex * 0x0101010101010101UL), 64)),
+            _ => ApplyByteIntrinsic(
+                "copyRange",
+                allocated,
+                new Expr.IntLit(caseIndex % 9),
+                ApplyByteIntrinsic("allocate", new Expr.IntLit(8)),
+                new Expr.IntLit(0),
+                new Expr.IntLit(8)),
+        };
+        items.Add(new TopLevelItem.LetDecl(name, value, IsRecursive: false));
+        context = context.WithBinding(new GeneratedBinding(name, AshesType.Bytes));
+        features.Add(GeneratedFeature.BinaryConstruction);
+        if (operation != 0)
+        {
+            features.Add(GeneratedFeature.ReuseCandidate);
+        }
+
+        trace.Add("program:binary-construction:" + operation.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private static Expr ApplyByteIntrinsic(string member, params Expr[] arguments)
+    {
+        Expr expression = new Expr.QualifiedVar("Ashes.Byte", member);
+        foreach (Expr argument in arguments)
+        {
+            expression = new Expr.Call(expression, argument);
+        }
+
+        return expression;
     }
 
     private static void AddFfiBuffer(

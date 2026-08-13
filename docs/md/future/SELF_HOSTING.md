@@ -26,7 +26,7 @@ packages below.
 | [Foreign pointer-plus-length buffers](../reference/standard-library.md#ashes-ffi) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
 | [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
-| [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
+| [Efficient preallocation, range copy, and random-access binary patching](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `LSP`, `Fuzzing` |
 | [Binary file output (`Ashes.IO.File.writeBytes`)](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
 | [Path normalization, joining, parent/basename, and relative paths](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Current/executable/temp/cache directories and environment lookup](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
@@ -60,36 +60,6 @@ language/runtime/stdlib blocker is demonstrated.
 Each package below is the implementation hand-off for one or more incomplete rows in the table. A
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
-
-### Gap: efficient immutable binary construction
-
-The native ELF/PE linkers do much more than append bytes: they preallocate output images, copy
-sections into aligned offsets, patch headers and instructions, and apply relocations at arbitrary
-positions. `Ashes.Byte` currently exposes indexed reads, concatenation, and endian encode/decode, but
-no preallocation, range copy, or random-access write operation. Rebuilding the complete value for
-every patch would make any immutable binary builder accidentally quadratic.
-
-Specify a pure binary-building surface. Operations such as allocation,
-range replacement, and `setU16Le`/`setU32Le`/`setU64Le` must return new `Bytes` values at the language
-level while allowing the compiler to reuse a uniquely owned buffer internally.
-
-Workable tasks:
-
-1. Inventory every indexed read, aligned copy, patch, relocation write, and output-size calculation in
-   the ELF and PE linkers; use that inventory to specify the minimum `Bytes` API.
-2. Add pure allocation, range-copy/replacement, and checked random-access setters for `u8`, `u16`,
-   `u32`, and `u64` in both endian orders actually used. Define out-of-range behavior explicitly.
-3. Lower update chains so uniquely owned buffers can be reused internally while aliases preserve the
-   old value; add ownership regressions that prove both paths.
-4. Add model-based tests that compare every operation sequence with a simple list-backed reference,
-   including aliasing, overlap, alignment, boundaries, and invalid ranges.
-5. Extend builtin/lowering fuzz generators for the new operations and preserve minimized ownership or
-   codegen failures as regressions.
-6. Benchmark relocation-shaped patch workloads derived from the current ELF/PE linkers, measuring
-   scaling, peak memory, and output equality on every target.
-
-Done when the public API is specified, its functional/aliasing properties pass, all targets produce
-identical bytes, and increasing patch counts does not produce quadratic time or memory growth.
 
 ### Gap: host-tool filesystem and process control
 

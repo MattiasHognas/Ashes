@@ -61,6 +61,29 @@ public sealed class LspCompletionTests
         }
     }
 
+    [Test]
+    public async Task Completion_should_return_immutable_binary_construction_intrinsics()
+    {
+        const string source = "Ashes.Byte.";
+        var document = TempDocument.Create("CompletionBytes.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
+
+                completions.ShouldContain("allocate");
+                completions.ShouldContain("copyRange");
+                completions.ShouldContain("set");
+                completions.ShouldContain("setU16Le");
+                completions.ShouldContain("setU32Le");
+                completions.ShouldContain("setU64Le");
+            }
+        }
+    }
+
     private sealed class TempDocument : IAsyncDisposable
     {
         private readonly string _directory;

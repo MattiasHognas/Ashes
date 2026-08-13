@@ -301,6 +301,42 @@ public sealed class GeneratorInvariantTests
     }
 
     [Test]
+    public void Generated_binary_construction_round_trips_and_exercises_reuse_lowering()
+    {
+        List<IrInst> instructions = [];
+        string combinedSource = string.Empty;
+        for (int caseIndex = 0; caseIndex <= 30; caseIndex += 6)
+        {
+            GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(caseIndex);
+            Ashes.Frontend.Program program = new(prelude.Items, new Expr.IntLit(0));
+            string source = Ashes.Formatter.Formatter.Format(program);
+            Diagnostics diagnostics = new();
+            Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+            IrProgram ir = new Lowering(diagnostics).Lower(parsed);
+
+            diagnostics.Errors.ShouldBeEmpty(source);
+            prelude.Features.Contains(GeneratedFeature.BinaryConstruction).ShouldBeTrue();
+            prelude.Trace.Entries.ShouldContain(
+                "program:binary-construction:" + (caseIndex / 6).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            instructions.AddRange(ir.EntryFunction.Instructions);
+            combinedSource += source;
+        }
+
+        combinedSource.ShouldContain("Ashes.Byte.allocate(16)");
+        combinedSource.ShouldContain("Ashes.Byte.copyRange");
+        combinedSource.ShouldContain("Ashes.Byte.set(");
+        combinedSource.ShouldContain("Ashes.Byte.setU16Le");
+        combinedSource.ShouldContain("Ashes.Byte.setU32Le");
+        combinedSource.ShouldContain("Ashes.Byte.setU64Le");
+        instructions.Any(instruction => instruction is IrInst.BytesAllocate).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.BytesCopyRange { ReuseInput: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.BytesSet { ReuseInput: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.BytesSetU16Le { ReuseInput: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.BytesSetU32Le { ReuseInput: true }).ShouldBeTrue();
+        instructions.Any(instruction => instruction is IrInst.BytesSetU64Le { ReuseInput: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Generated_alias_and_zero_cost_type_round_trip_and_lower()
     {
         GeneratedProgramPrelude prelude = ProgramPreludeGenerator.Generate(4);

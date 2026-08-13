@@ -385,6 +385,11 @@ internal static partial class LlvmApi
         LlvmBuilderHandle b, LlvmValueHandle dst, uint dstAlign,
         LlvmValueHandle src, uint srcAlign, LlvmValueHandle size);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMBuildMemSet")]
+    public static partial LlvmValueHandle BuildMemSet(
+        LlvmBuilderHandle b, LlvmValueHandle ptr, LlvmValueHandle val,
+        LlvmValueHandle len, uint align);
+
     [LibraryImport(Lib, EntryPoint = "LLVMBuildGEP2", StringMarshalling = StringMarshalling.Utf8)]
     private static unsafe partial LlvmValueHandle BuildGEP2Raw(
         LlvmBuilderHandle b, LlvmTypeHandle type, LlvmValueHandle ptr,

@@ -57,6 +57,30 @@ public sealed class BuiltinRegistryEdgeCaseTests
     }
 
     [Test]
+    public void Ashes_Byte_binary_construction_members_should_have_expected_contracts()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Byte", out BuiltinRegistry.BuiltinModule module).ShouldBeTrue();
+        Dictionary<string, int> expectedArities = new(StringComparer.Ordinal)
+        {
+            ["allocate"] = 1,
+            ["copyRange"] = 5,
+            ["set"] = 3,
+            ["setU16Le"] = 3,
+            ["setU32Le"] = 3,
+            ["setU64Le"] = 3,
+        };
+
+        foreach ((string name, int arity) in expectedArities)
+        {
+            BuiltinRegistry.BuiltinModuleMember member = module.Members[name];
+            member.IsCallable.ShouldBeTrue();
+            member.Arity.ShouldBe(arity);
+            member.ProducesFreshRcResult.ShouldBe(BuiltinRegistry.FreshRcResultKind.Bytes);
+            member.BytesProvenance.ShouldBe(BuiltinRegistry.BytesOwnershipProvenance.FreshOwnedBuffer);
+        }
+    }
+
+    [Test]
     public void Ashes_IO_args_should_not_be_callable()
     {
         BuiltinRegistry.TryGetModule("Ashes.IO", out var module).ShouldBeTrue();
