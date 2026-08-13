@@ -616,6 +616,23 @@ a string nor a user-perceived grapheme cluster.
 
 `Rune` supports `Eq`, `Ord`, `Show`, and `Hash`, but not `Default`.
 
+### `Ashes.Text.Source`
+
+Source-coordinate conversion for compiler and editor tooling. Absolute offsets and spans use UTF-8
+bytes. `Position` contains zero-based `line` and `character` fields, and `PositionEncoding` is
+`Utf8`, `Utf16`, or `UnicodeScalar`.
+
+- `byteOffsetToPosition(text)(encoding)(offset)` returning `Position` — clamp the offset into the
+  source and backward to a UTF-8 boundary, then convert it to a line-relative position.
+- `positionToByteOffset(text)(encoding)(position)` returning `Int` — clamp the line and character
+  into the source and selected line, returning a valid UTF-8 boundary.
+- `isBoundary(text)(offset)` returning `Bool` — whether `offset` is an in-range UTF-8 scalar
+  boundary, including zero and the end of the text.
+
+`CRLF`, `LF`, and `CR` are line endings. UTF-16 positions count two code units for astral scalars;
+Unicode-scalar positions count combining marks separately and do not attempt grapheme or display-cell
+measurement. These pure functions share the compiler's coordinate contract and require no capability.
+
 ### `Ashes.Text.Regex`
 
 Regular expressions backed by [PCRE2](https://www.pcre.org/) (Perl-compatible syntax). The 8-bit

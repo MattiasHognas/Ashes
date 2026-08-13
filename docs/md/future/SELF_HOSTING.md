@@ -35,7 +35,7 @@ packages below.
 | [stderr output and controlled process exit codes](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | [Unicode scalar classification through `Rune`](../reference/standard-library.md#ashes-rune) | Complete | `Compiler/Frontend`, `Formatter`, `LSP` |
-| [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](#gap-text-unicode-and-source-coordinates) | Design required | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
+| [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](../reference/language.md#source-encoding-and-coordinates) | Complete | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
 | [Persistent immutable map (`Ashes.Collection.Map`)](../reference/standard-library.md#ashes-collection-map) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
 | [Persistent immutable array (`Ashes.Collection.Array`)](../reference/standard-library.md#ashes-collection-array) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
 | [Records, named patterns, and record-update syntax](../reference/language.md#_4-3-record-types) | Complete | `Compiler`, `Formatter`, `LSP` |
@@ -89,26 +89,3 @@ Workable tasks:
 Done when an Ashes program launched outside the repository can locate installed-layout fixtures,
 atomically write an executable file, report an expected failure on stderr, and return a controlled
 exit code on Linux and Windows.
-
-### Gap: text, Unicode, and source coordinates
-
-The current compiler records UTF-16 string-unit offsets, while an Ashes program naturally encounters
-UTF-8 source bytes at file boundaries. Diagnostics, formatter edits, debug information, and LSP
-positions therefore need a specified conversion contract that Ashes code can call directly.
-
-Workable tasks:
-
-1. Choose and document one canonical internal span unit, malformed-UTF-8 behavior, newline handling,
-   and conversion rules for byte offsets, Unicode scalar columns, UTF-16/LSP positions, and debug
-   locations.
-2. Implement a shared line index and conversion API usable from Ashes and consumed by diagnostics,
-   formatter edits, LSP, and DAP rather than duplicating conversions in each tool.
-3. Add empty, ASCII, non-ASCII, combining-mark, astral, mixed-newline, and malformed-input fixtures
-   for every conversion direction.
-4. Add property tests for round trips at valid boundaries, monotonic positions, bounded invalid
-   positions, and consistent line starts.
-5. Update the current compiler, formatter, LSP, and DAP to use the shared contract, proving that the
-   surface is sufficient for compiler tooling before self-hosting begins.
-
-Done when token, AST, diagnostic, formatter, LSP, and debug spans all use the documented contract and
-the conversion API is available to ordinary Ashes code.

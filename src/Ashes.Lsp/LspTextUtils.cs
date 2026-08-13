@@ -1,53 +1,31 @@
+using Ashes.Frontend;
+
 namespace Ashes.Lsp;
 
 internal static class LspTextUtils
 {
-    internal static int[] GetLineStarts(string text)
-    {
-        var starts = new List<int> { 0 };
-        for (var i = 0; i < text.Length; i++)
-        {
-            if (text[i] == '\n')
-            {
-                starts.Add(i + 1);
-            }
-        }
+    internal static SourcePositionEncoding PositionEncoding { get; set; } = SourcePositionEncoding.Utf16;
 
-        return starts.ToArray();
+    internal static SourceTextIndex GetLineStarts(string text) => new(text);
+
+    internal static (int line, int character) ToLineCharacter(
+        SourceTextIndex index,
+        int textLength,
+        int position,
+        SourcePositionEncoding? encoding = null)
+    {
+        _ = textLength;
+        return index.ToPosition(position, encoding ?? PositionEncoding);
     }
 
-    internal static (int line, int character) ToLineCharacter(int[] lineStarts, int textLength, int position)
+    internal static int FromLineCharacter(
+        SourceTextIndex index,
+        int textLength,
+        int line,
+        int character,
+        SourcePositionEncoding? encoding = null)
     {
-        if (lineStarts.Length == 0)
-        {
-            return (0, 0);
-        }
-
-        var clamped = Math.Clamp(position, 0, textLength);
-        var line = Array.BinarySearch(lineStarts, clamped);
-        if (line < 0)
-        {
-            line = ~line - 1;
-        }
-
-        var character = clamped - lineStarts[line];
-        return (line, character);
-    }
-
-    internal static int FromLineCharacter(int[] lineStarts, int textLength, int line, int character)
-    {
-        if (lineStarts.Length == 0)
-        {
-            return 0;
-        }
-
-        var clampedLine = Math.Clamp(line, 0, lineStarts.Length - 1);
-        var lineStart = lineStarts[clampedLine];
-        var lineEnd = clampedLine + 1 < lineStarts.Length
-            ? lineStarts[clampedLine + 1] - 1
-            : textLength;
-
-        var clampedCharacter = Math.Clamp(character, 0, Math.Max(lineEnd - lineStart, 0));
-        return Math.Clamp(lineStart + clampedCharacter, 0, textLength);
+        _ = textLength;
+        return index.FromPosition(line, character, encoding ?? PositionEncoding);
     }
 }

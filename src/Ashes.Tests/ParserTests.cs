@@ -7,6 +7,19 @@ namespace Ashes.Tests;
 public sealed class ParserTests
 {
     [Test]
+    public void Lexer_reports_utf8_byte_spans()
+    {
+        var diagnostics = new Diagnostics();
+        var lexer = new Lexer("\"é\" 😀", diagnostics);
+
+        Token text = lexer.Next();
+        Token badAstral = lexer.Next();
+
+        text.Span.ShouldBe(TextSpan.FromBounds(0, 4));
+        badAstral.Span.ShouldBe(TextSpan.FromBounds(5, 9));
+        diagnostics.StructuredErrors.Single().Span.ShouldBe(TextSpan.FromBounds(5, 9));
+    }
+    [Test]
     public void Parse_should_support_empty_and_non_empty_list_literals()
     {
         Parse("[]").ShouldBeOfType<Expr.ListLit>().Elements.ShouldBeEmpty();

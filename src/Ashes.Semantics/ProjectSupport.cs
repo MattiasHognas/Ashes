@@ -129,10 +129,10 @@ public readonly record struct ParsedImportHeader(
 /// maps needed to translate diagnostics on the combined text back to their originating files.
 /// </summary>
 /// <param name="Source">The concatenated source text handed to the frontend as one unit.</param>
-/// <param name="EntryOffset">Offset in <paramref name="Source"/> where the entry module's content begins.</param>
-/// <param name="BodyStart">Offset where the entry module's trailing body expression begins.</param>
-/// <param name="ModuleOffsets">Per-file spans within the combined source, for mapping offsets back to files.</param>
-/// <param name="EntryTypeDeclFragments">Spans of entry-module type declarations hoisted into the combined preamble, mapping combined offset to original offset and length; null when none were hoisted.</param>
+/// <param name="EntryOffset">Host-string index in <paramref name="Source"/> where the entry module's content begins.</param>
+/// <param name="BodyStart">Host-string index where the entry module's trailing body expression begins.</param>
+/// <param name="ModuleOffsets">Per-file host-string spans within the combined source.</param>
+/// <param name="EntryTypeDeclFragments">Host-string spans of entry-module type declarations hoisted into the combined preamble, mapping combined index to original index and length; null when none were hoisted.</param>
 /// <param name="ConstructorModules">Maps each module name to the ADT constructor names its own <c>type</c> declarations introduce, so a qualified reference (<c>alias.Ctor</c>) can be scoped to the module the alias actually names.</param>
 /// <param name="FunctionSourceNames">Maps compiler binding names in the stitched source back to the
 /// original source and module-qualified declaration names.</param>
@@ -1235,7 +1235,7 @@ public static class ProjectSupport
                 continue;
             }
 
-            var parsed = ParseImportHeader(File.ReadAllText(matches[0]), matches[0]);
+            var parsed = ParseImportHeader(SourceTextIndex.ReadUtf8File(matches[0]), matches[0]);
             var (_, inlineModules) = ExpandInlineModules(parsed.SourceWithoutImports, enclosing, matches[0]);
             if (inlineModules.Any(m => string.Equals(m.ModuleName, name, StringComparison.Ordinal)))
             {
@@ -1546,7 +1546,7 @@ public static class ProjectSupport
     /// file's original text, so errors render at the coordinates the user sees. The entry region of
     /// the combined source is line/column-preserving with respect to the original file (imports and
     /// hoisted declarations are blanked keeping newlines; alias preludes overwrite blank lines), so
-    /// entry-region spans map by line/column rather than byte offset. Hoisted entry declarations map
+    /// entry-region spans map by line/column rather than direct offset. Hoisted entry declarations map
     /// exactly via <see cref="CombinedCompilationLayout.EntryTypeDeclFragments"/>. Spans inside a
     /// stitched (reconstructed) module region cannot be positioned — they are attributed to the
     /// owning file with <c>HasPosition = false</c>.
@@ -1560,19 +1560,22 @@ public static class ProjectSupport
     {
         var combined = layout.Source;
         var originalLineStarts = BuildLineStarts(entryOriginalSource);
+        SourceTextIndex combinedIndex = new(combined);
+        SourceTextIndex originalIndex = new(entryOriginalSource);
         var results = new List<MappedDiagnostic>(entries.Count);
 
         foreach (var entry in entries)
         {
-            var start = Math.Clamp(entry.Span.Start, 0, combined.Length);
+            var start = combinedIndex.ToUtf16Offset(entry.Span.Start);
             var length = Math.Max(entry.Span.End - entry.Span.Start, 0);
 
             if (start >= layout.EntryOffset)
             {
                 var (line, column) = OffsetToLineColumn(combined, layout.EntryOffset, start);
-                var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                var mappedStringStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                var mappedStart = originalIndex.ToUtf8Offset(mappedStringStart);
                 results.Add(new MappedDiagnostic(
-                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
+                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, originalIndex.Utf8Length)) },
                     entryFilePath,
                     HasPosition: true));
                 continue;
@@ -1618,13 +1621,15 @@ public static class ProjectSupport
             if (start >= fragmentStart && start < fragmentStart + fragmentLength)
             {
                 // Fragment offsets are relative to the imports-stripped source, which shares
-                // the original file's line structure but not its byte offsets — hop via
+                // the original file's line structure but not its direct offsets — hop via
                 // line/column.
                 var strippedOffset = Math.Min(originalStart + (start - fragmentStart), entryStrippedSource.Length);
                 var (line, column) = OffsetToLineColumn(entryStrippedSource, 0, strippedOffset);
-                var mappedStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                var mappedStringStart = LineColumnToOffset(entryOriginalSource, originalLineStarts, line, column);
+                SourceTextIndex originalIndex = new(entryOriginalSource);
+                var mappedStart = originalIndex.ToUtf8Offset(mappedStringStart);
                 results.Add(new MappedDiagnostic(
-                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, entryOriginalSource.Length)) },
+                    entry with { Span = TextSpan.FromBounds(mappedStart, Math.Min(mappedStart + length, originalIndex.Utf8Length)) },
                     entryFilePath,
                     HasPosition: true));
                 return true;
@@ -2919,7 +2924,7 @@ public static class ProjectSupport
         }
 
         var diag = new Diagnostics();
-        var lexer = new Lexer(trimmed, diag);
+        var lexer = new StringOffsetLexer(trimmed, diag);
         var builder = new StringBuilder();
         var copiedUpTo = 0;
         var previousKind = TokenKind.EOF;
@@ -3068,7 +3073,8 @@ public static class ProjectSupport
         ModuleExportPolicy policy = BuildExportPolicy(
             moduleName, declaration, declaredValues, declaredTypes, directModules);
         TextSpan span = AstSpans.GetOrDefault(declaration);
-        string withoutDeclaration = BlankSpans(source, [(span.Start, span.End)]);
+        TextSpan stringSpan = ToStringSpan(source, span);
+        string withoutDeclaration = BlankSpans(source, [(stringSpan.Start, stringSpan.End)]);
         return (RenamePrivateModuleMembers(
             withoutDeclaration,
             moduleName,
@@ -3292,7 +3298,7 @@ public static class ProjectSupport
 
         var byName = replacements.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         var diagnostics = new Diagnostics();
-        var lexer = new Lexer(source, diagnostics);
+        var lexer = new StringOffsetLexer(source, diagnostics);
         var builder = new StringBuilder();
         int copied = 0;
         while (true)
@@ -3495,6 +3501,7 @@ public static class ProjectSupport
         List<(int Start, int End)> hoistedSpans,
         ref int cursor)
     {
+        span = ToStringSpan(source, span);
         if (span.End <= span.Start || span.End > source.Length)
         {
             return false;
@@ -3608,7 +3615,7 @@ public static class ProjectSupport
             return false;
         }
 
-        var valueEnd = AstSpans.GetOrDefault(value).End;
+        var valueEnd = new SourceTextIndex(source).ToUtf16Offset(AstSpans.GetOrDefault(value).End);
         if (valueEnd <= valueStart || valueEnd > source.Length)
         {
             return false;
@@ -3647,7 +3654,7 @@ public static class ProjectSupport
     private static int ExtendToBalancedEnd(string source, int from, int astEnd)
     {
         var diag = new Diagnostics();
-        var lexer = new Lexer(source[from..], diag);
+        var lexer = new StringOffsetLexer(source[from..], diag);
         var depth = 0;
         var reachedAstEnd = false;
 
@@ -3708,7 +3715,7 @@ public static class ProjectSupport
         }
 
         var diag = new Diagnostics();
-        var lexer = new Lexer(source[from..], diag);
+        var lexer = new StringOffsetLexer(source[from..], diag);
 
         var token = lexer.Next();
         if (token.Kind is TokenKind.Let or TokenKind.And)
@@ -3749,7 +3756,7 @@ public static class ProjectSupport
         return true;
     }
 
-    private static bool TryScanLetParameters(string source, int from, Lexer lexer, ref Token token, List<string> collected)
+    private static bool TryScanLetParameters(string source, int from, StringOffsetLexer lexer, ref Token token, List<string> collected)
     {
         while (token.Kind is TokenKind.Ident or TokenKind.LParen)
         {
@@ -3771,7 +3778,7 @@ public static class ProjectSupport
     }
 
     private static bool TryScanAnnotatedLetHeader(
-        string source, int from, Lexer lexer, Token token, out int valueStart, out string? annotation)
+        string source, int from, StringOffsetLexer lexer, Token token, out int valueStart, out string? annotation)
     {
         valueStart = from;
         annotation = null;
@@ -3805,7 +3812,7 @@ public static class ProjectSupport
     }
 
     private static bool TryScanParenthesizedParameter(
-        string source, int from, Lexer lexer, ref Token token, List<string> collected)
+        string source, int from, StringOffsetLexer lexer, ref Token token, List<string> collected)
     {
         // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
         // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
@@ -3875,7 +3882,7 @@ public static class ProjectSupport
         }
 
         var diag = new Diagnostics();
-        var lexer = new Lexer(source, diag);
+        var lexer = new StringOffsetLexer(source, diag);
         var token = lexer.Next();
         if (token.Kind != TokenKind.Let)
         {
@@ -3919,7 +3926,7 @@ public static class ProjectSupport
         return TrySplitBindingValue(source, lexer, valueStart, name, isRecursive, sugarParams, out binding, out remaining);
     }
 
-    private static bool TryScanSugarParams(string source, Lexer lexer, ref Token equals, List<string> sugarParams)
+    private static bool TryScanSugarParams(string source, StringOffsetLexer lexer, ref Token equals, List<string> sugarParams)
     {
         if (equals.Kind is TokenKind.Ident or TokenKind.LParen)
         {
@@ -3954,7 +3961,7 @@ public static class ProjectSupport
 
     private static bool TrySplitBindingValue(
         string source,
-        Lexer lexer,
+        StringOffsetLexer lexer,
         int valueStart,
         string name,
         bool isRecursive,
@@ -3999,14 +4006,14 @@ public static class ProjectSupport
         if (parsedPrefixEnd > 0)
         {
             var remainderDiagnostics = new Diagnostics();
-            Token firstBodyToken = new Lexer(source[parsedPrefixEnd..], remainderDiagnostics).Next();
+            Token firstBodyToken = new StringOffsetLexer(source[parsedPrefixEnd..], remainderDiagnostics).Next();
             return firstBodyToken.Kind == TokenKind.EOF
                 ? source.Length
                 : parsedPrefixEnd + firstBodyToken.Position;
         }
 
         var diag = new Diagnostics();
-        var lexer = new Lexer(source, diag);
+        var lexer = new StringOffsetLexer(source, diag);
         var tok = lexer.Next();
 
         while (tok.Kind == TokenKind.Type)
@@ -4064,13 +4071,21 @@ public static class ProjectSupport
                 {
                     break;
                 }
-                parsedPrefixEnd = span.End;
+                parsedPrefixEnd = new SourceTextIndex(source).ToUtf16Offset(span.End);
             }
         }
         return parsedPrefixEnd;
     }
 
-    private static Token AdvancePastBalancedParentheses(Lexer lexer)
+    private static TextSpan ToStringSpan(string source, TextSpan byteSpan)
+    {
+        SourceTextIndex index = new(source);
+        return TextSpan.FromBounds(
+            index.ToUtf16Offset(byteSpan.Start),
+            index.ToUtf16Offset(byteSpan.End));
+    }
+
+    private static Token AdvancePastBalancedParentheses(StringOffsetLexer lexer)
     {
         int depth = 1;
         while (depth > 0)
@@ -4092,7 +4107,7 @@ public static class ProjectSupport
         return lexer.Next();
     }
 
-    private static Token AdvancePastRecordFieldType(Lexer lexer)
+    private static Token AdvancePastRecordFieldType(StringOffsetLexer lexer)
     {
         // Type expressions contain neither a bare branch pipe nor a deriving keyword, so either one
         // safely terminates this field in the legacy declaration-prefix scanner.
@@ -4114,7 +4129,7 @@ public static class ProjectSupport
         return token;
     }
 
-    private static Token AdvancePastDerivingClause(Lexer lexer)
+    private static Token AdvancePastDerivingClause(StringOffsetLexer lexer)
     {
         Token token = lexer.Next();
         if (token.Kind != TokenKind.LBrace)
@@ -4512,7 +4527,7 @@ public static class ProjectSupport
 
     private static (IReadOnlyList<string> Imports, string SourceWithoutImports, IReadOnlyDictionary<string, string> Aliases, IReadOnlyList<ImportSelector> Selectors) ParseImports(string filePath)
     {
-        var parsed = ParseImportHeader(File.ReadAllText(filePath), filePath);
+        var parsed = ParseImportHeader(SourceTextIndex.ReadUtf8File(filePath), filePath);
         return (parsed.ImportNames, parsed.SourceWithoutImports, parsed.ImportAliases, parsed.ImportSelectors);
     }
 
@@ -4800,5 +4815,28 @@ public static class ProjectSupport
         return Path.GetFullPath(Path.IsPathRooted(pathValue)
             ? pathValue
             : Path.Combine(projectDirectory, pathValue));
+    }
+
+    // Project stitching slices the host string while it constructs a new source file. Keep that
+    // implementation detail explicit at this boundary; Lexer itself always exposes canonical byte
+    // spans to compiler consumers.
+    private sealed class StringOffsetLexer
+    {
+        private readonly Lexer _lexer;
+        private readonly SourceTextIndex _index;
+
+        public StringOffsetLexer(string source, Diagnostics diagnostics)
+        {
+            _lexer = new Lexer(source, diagnostics);
+            _index = new SourceTextIndex(source);
+        }
+
+        public Token Next()
+        {
+            Token token = _lexer.Next();
+            int start = _index.ToUtf16Offset(token.Position);
+            int end = _index.ToUtf16Offset(token.End);
+            return token with { Position = start, Length = end - start };
+        }
     }
 }

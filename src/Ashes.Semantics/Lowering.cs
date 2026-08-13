@@ -73,11 +73,10 @@ public sealed partial class Lowering
 
     // Source location tracking for debug info
     private string? _currentFilePath;
-    private int[]? _lineStarts;
-    private int _sourceLength;
+    private SourceTextIndex? _sourceIndex;
     private Expr? _currentSourceExpr;
     private IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)>? _moduleOffsets;
-    private int[][]? _moduleLineStarts;
+    private SourceTextIndex[]? _moduleSourceIndexes;
     private IReadOnlyDictionary<string, SourceFunctionName>? _functionSourceNames;
     private IReadOnlyDictionary<string, ModuleProvenance>? _moduleProvenanceByPath;
 

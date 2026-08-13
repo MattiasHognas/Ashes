@@ -590,6 +590,10 @@ public static class BuiltinRegistry
                     ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String)
                 }),
+            ["Ashes.Text.Source"] = new(
+                "Ashes.Text.Source",
+                "Ashes.Semantics.StdLib.Ashes.Text.Source.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Rune"] = new(
                 "Ashes.Rune",
                 null,

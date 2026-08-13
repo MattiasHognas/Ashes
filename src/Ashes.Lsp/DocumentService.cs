@@ -137,6 +137,7 @@ public static partial class DocumentService
     /// </summary>
     private static ImportHeaderInfo StripImportHeader(string source)
     {
+        SourceTextIndex sourceIndex = new(source);
         var imports = new List<ImportItem>();
         var headerLines = new List<HeaderLineItem>();
         var diagnostics = new List<DiagnosticItem>();
@@ -156,7 +157,7 @@ public static partial class DocumentService
                 // an optional alias (matching ProjectSupport.ImportModulePattern).
                 var selector = match.Groups[2].Success ? match.Groups[2].Value : null;
                 var alias = match.Groups[3].Success ? match.Groups[3].Value : null;
-                imports.Add(new ImportItem(TextSpan.FromBounds(lineStart, lineStart + lineContent.Length), match.Groups[1].Value, selector, alias));
+                imports.Add(new ImportItem(ToByteSpan(sourceIndex, lineStart, lineStart + lineContent.Length), match.Groups[1].Value, selector, alias));
                 headerLines.Add(new HeaderLineItem(lineContent, match.Groups[1].Value, selector, alias));
                 pos = nextPos;
                 continue;
@@ -165,11 +166,11 @@ public static partial class DocumentService
             if (trimmed.StartsWith("import ", StringComparison.Ordinal))
             {
                 diagnostics.Add(new DiagnosticItem(
-                    lineStart,
-                    lineStart + lineContent.Length,
+                    sourceIndex.ToUtf8Offset(lineStart),
+                    sourceIndex.ToUtf8Offset(lineStart + lineContent.Length),
                     "Invalid import syntax. Expected 'import Foo' or 'import Foo.Bar' or 'import Foo.Bar as Alias'.",
                     DiagnosticCodes.ParseError));
-                return new ImportHeaderInfo(source[nextPos..], nextPos, headerLines, imports, diagnostics);
+                return new ImportHeaderInfo(source[nextPos..], sourceIndex.ToUtf8Offset(nextPos), headerLines, imports, diagnostics);
             }
 
             if (trimmed.Length == 0 || trimmed.StartsWith("//", StringComparison.Ordinal))
@@ -187,8 +188,11 @@ public static partial class DocumentService
             pos = source.Length;
         }
 
-        return new ImportHeaderInfo(source[pos..], pos, headerLines, imports, diagnostics);
+        return new ImportHeaderInfo(source[pos..], sourceIndex.ToUtf8Offset(pos), headerLines, imports, diagnostics);
     }
+
+    private static TextSpan ToByteSpan(SourceTextIndex index, int start, int end) =>
+        TextSpan.FromBounds(index.ToUtf8Offset(start), index.ToUtf8Offset(end));
 
     /// <summary>
     /// Reads the header line starting at <paramref name="pos"/>, returning its content and the
@@ -338,8 +342,8 @@ public static partial class DocumentService
 
         return new ProjectAnalysisContext(
             layout.Source,
-            layout.EntryOffset,
-            layout.BodyStart,
+            new SourceTextIndex(layout.Source).ToUtf8Offset(layout.EntryOffset),
+            new SourceTextIndex(layout.Source).ToUtf8Offset(layout.BodyStart),
             plan.ImportedStdModules,
             plan.MergedAliases.Count == 0 ? null : plan.MergedAliases,
             layout.ConstructorModules);
@@ -429,8 +433,9 @@ public static partial class DocumentService
                 header.StrippedSource,
                 header.Imports.Select(x => x.ModuleName).ToArray());
             analysisSource = layout.Source;
-            entryOffset = layout.EntryOffset;
-            bodyStart = layout.BodyStart;
+            SourceTextIndex analysisIndex = new(analysisSource);
+            entryOffset = analysisIndex.ToUtf8Offset(layout.EntryOffset);
+            bodyStart = analysisIndex.ToUtf8Offset(layout.BodyStart);
             constructorModules = layout.ConstructorModules;
             if (layout.ModuleProvenanceByPath is not null)
             {
@@ -731,11 +736,26 @@ public static partial class DocumentService
 
             // Map position in stripped source back to position in the original source.
             var originalPos = tok.Position + headerOffset;
-            var (line, character) = LspTextUtils.ToLineCharacter(originalLineStarts, source.Length, originalPos);
-            tokens.Add(new SemanticTokenItem(line, character, tok.Text.Length, tokenType, 0));
+            AddSemanticToken(tokens, originalLineStarts, source.Length, originalPos, tok.Length, tokenType);
         }
 
         return tokens;
+    }
+
+    private static void AddSemanticToken(
+        List<SemanticTokenItem> tokens,
+        SourceTextIndex index,
+        int sourceLength,
+        int start,
+        int length,
+        int tokenType)
+    {
+        (int line, int character) = LspTextUtils.ToLineCharacter(index, sourceLength, start);
+        (int endLine, int endCharacter) = LspTextUtils.ToLineCharacter(index, sourceLength, start + length);
+        if (endLine == line)
+        {
+            tokens.Add(new SemanticTokenItem(line, character, endCharacter - character, tokenType, 0));
+        }
     }
 
     /// <summary>Returns completion candidates for <paramref name="source"/> without a cursor position,
@@ -792,7 +812,7 @@ public static partial class DocumentService
             if (position is not null)
             {
                 var strippedPosition = position.Value - header.HeaderOffset;
-                if (strippedPosition >= 0 && strippedPosition <= header.StrippedSource.Length)
+                if (strippedPosition >= 0 && strippedPosition <= new SourceTextIndex(header.StrippedSource).Utf8Length)
                 {
                     foreach (var name in CollectVisibleBindingsInProgram(strippedProgram, strippedPosition))
                     {
@@ -1158,7 +1178,8 @@ public static partial class DocumentService
     {
         completions = Array.Empty<string>();
 
-        if (position < 0 || position > source.Length)
+        SourceTextIndex sourceIndex = new(source);
+        if (position < 0 || position > sourceIndex.Utf8Length)
         {
             return false;
         }
@@ -1175,7 +1196,8 @@ public static partial class DocumentService
             return true;
         }
 
-        int prefixStart = position - prefix.Length;
+        int stringPosition = sourceIndex.ToUtf16Offset(position);
+        int prefixStart = stringPosition - prefix.Length;
         string sourceWithoutIncompleteReference = source.Remove(prefixStart, prefix.Length);
         AnalysisContext context = PrepareAnalysisContext(sourceWithoutIncompleteReference, filePath);
         if (context.Diagnostics.Count > 0)
@@ -1235,7 +1257,8 @@ public static partial class DocumentService
 
     private static string ExtractCompletionPrefix(string source, int position)
     {
-        var start = position;
+        int stringPosition = new SourceTextIndex(source).ToUtf16Offset(position);
+        var start = stringPosition;
         while (start > 0)
         {
             var ch = source[start - 1];
@@ -1248,7 +1271,7 @@ public static partial class DocumentService
             break;
         }
 
-        return source[start..position];
+        return source[start..stringPosition];
     }
 
     private static string? ResolveCompletionModuleName(string qualifier, IReadOnlyList<ImportItem> imports)
@@ -1979,7 +2002,7 @@ public static partial class DocumentService
             {
                 return null;
             }
-            TextSpan span = TextSpan.FromStartLength(token.Position, token.Text.Length);
+            TextSpan span = token.Span;
             if (token.Kind == TokenKind.Ident && ContainsPosition(span, position))
             {
                 return (token, span);
@@ -1989,7 +2012,7 @@ public static partial class DocumentService
 
     private static string? FindQualifierBeforeIdentifier(string source, int identifierStart)
     {
-        int end = identifierStart;
+        int end = new SourceTextIndex(source).ToUtf16Offset(identifierStart);
         if (end == 0 || source[end - 1] != '.')
         {
             return null;
@@ -2021,7 +2044,7 @@ public static partial class DocumentService
         }
 
         var strippedPosition = position - header.HeaderOffset;
-        if (strippedPosition < 0 || strippedPosition > header.StrippedSource.Length)
+        if (strippedPosition < 0 || strippedPosition > new SourceTextIndex(header.StrippedSource).Utf8Length)
         {
             return null;
         }
@@ -2067,7 +2090,7 @@ public static partial class DocumentService
         int strippedPosition = position - header.HeaderOffset;
         if (header.Diagnostics.Count > 0
             || strippedPosition < 0
-            || strippedPosition > header.StrippedSource.Length)
+            || strippedPosition > new SourceTextIndex(header.StrippedSource).Utf8Length)
         {
             return [];
         }
@@ -2110,7 +2133,7 @@ public static partial class DocumentService
             {
                 continue;
             }
-            TextSpan span = TextSpan.FromStartLength(token.Position, token.Text.Length);
+            TextSpan span = token.Span;
             if (!includeDeclaration && IsDeclarationIdentifier(header.StrippedSource, span, target.Value))
             {
                 continue;
@@ -2156,7 +2179,7 @@ public static partial class DocumentService
             }
             if (token.Kind == TokenKind.Ident && token.Position >= outer.Start)
             {
-                return (token, TextSpan.FromStartLength(token.Position, token.Text.Length));
+                return (token, token.Span);
             }
         }
     }
@@ -2179,15 +2202,17 @@ public static partial class DocumentService
             return TextSpan.FromBounds(start, end);
         }
 
-        if (start >= context.EntryOffset && end <= context.AnalysisSource.Length)
+        SourceTextIndex analysisIndex = new(context.AnalysisSource);
+        if (start >= context.EntryOffset && end <= analysisIndex.Utf8Length)
         {
+            string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];
             return TextSpan.FromBounds(
                 MapPositionByLineAndCharacter(
-                    context.AnalysisSource[context.EntryOffset..],
+                    entrySource,
                     start - context.EntryOffset,
                     context.StrippedSource),
                 MapPositionByLineAndCharacter(
-                    context.AnalysisSource[context.EntryOffset..],
+                    entrySource,
                     end - context.EntryOffset,
                     context.StrippedSource));
         }
@@ -2242,7 +2267,7 @@ public static partial class DocumentService
     private static int? MapOriginalPositionToAnalysis(int position, AnalysisContext context)
     {
         var strippedPosition = position - context.HeaderOffset;
-        if (strippedPosition < 0 || strippedPosition > context.StrippedSource.Length)
+        if (strippedPosition < 0 || strippedPosition > new SourceTextIndex(context.StrippedSource).Utf8Length)
         {
             return null;
         }
@@ -2257,10 +2282,12 @@ public static partial class DocumentService
             return strippedPosition;
         }
 
+        SourceTextIndex analysisIndex = new(context.AnalysisSource);
+        string entrySource = context.AnalysisSource[analysisIndex.ToUtf16Offset(context.EntryOffset)..];
         return context.EntryOffset + MapPositionByLineAndCharacter(
             context.StrippedSource,
             strippedPosition,
-            context.AnalysisSource[context.EntryOffset..]);
+            entrySource);
     }
 
     private static int MapPositionByLineAndCharacter(
@@ -2268,17 +2295,19 @@ public static partial class DocumentService
         int sourcePosition,
         string target)
     {
-        int[] sourceLineStarts = LspTextUtils.GetLineStarts(source);
+        SourceTextIndex sourceLineStarts = LspTextUtils.GetLineStarts(source);
         (int line, int character) = LspTextUtils.ToLineCharacter(
             sourceLineStarts,
             source.Length,
-            sourcePosition);
-        int[] targetLineStarts = LspTextUtils.GetLineStarts(target);
+            sourcePosition,
+            SourcePositionEncoding.UnicodeScalar);
+        SourceTextIndex targetLineStarts = LspTextUtils.GetLineStarts(target);
         return LspTextUtils.FromLineCharacter(
             targetLineStarts,
             target.Length,
             line,
-            character);
+            character,
+            SourcePositionEncoding.UnicodeScalar);
     }
 
     private static DefinitionLocation? ResolveDefinitionInProgram(
@@ -2535,7 +2564,7 @@ public static partial class DocumentService
         string traitReference,
         string? methodName)
     {
-        string originalSource = File.ReadAllText(module.FilePath);
+        string originalSource = SourceTextIndex.ReadUtf8File(module.FilePath);
         ImportHeaderInfo header = StripImportHeader(originalSource);
         if (header.Diagnostics.Count > 0)
         {
@@ -3086,7 +3115,7 @@ public static partial class DocumentService
 
     private static DefinitionLocation? FindModuleDefinition(ProjectModule module, string exportName)
     {
-        var originalSource = File.ReadAllText(module.FilePath);
+        var originalSource = SourceTextIndex.ReadUtf8File(module.FilePath);
         var header = StripImportHeader(originalSource);
         if (header.Diagnostics.Count > 0)
         {

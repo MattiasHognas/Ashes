@@ -155,8 +155,8 @@ public enum TokenKind
 /// <param name="Text">The raw source slice the token was lexed from.</param>
 /// <param name="IntValue">The decoded value for an integer/big-int token; zero otherwise.</param>
 /// <param name="FloatValue">The decoded value for a float token; zero otherwise.</param>
-/// <param name="Position">The inclusive start offset in the source.</param>
-/// <param name="Length">The number of characters the token spans.</param>
+/// <param name="Position">The inclusive UTF-8 byte offset in the source.</param>
+/// <param name="Length">The number of UTF-8 bytes the token spans.</param>
 public readonly record struct Token(
     TokenKind Kind,
     string Text,

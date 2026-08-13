@@ -11,6 +11,7 @@ public sealed class Parser
     private readonly Lexer _lexer;
     private readonly Diagnostics _diag;
     private readonly string _source;
+    private readonly SourceTextIndex _sourceIndex;
     private Token _current;
     private Token _previous;
     private int _matchCasePipeSuppressionDepth;
@@ -44,6 +45,7 @@ public sealed class Parser
     {
         _diag = diag;
         _source = text;
+        _sourceIndex = new SourceTextIndex(text);
         _lexer = new Lexer(text, diag);
         _previous = new Token(TokenKind.EOF, "", 0, 0, 0);
         _current = _lexer.Next();
@@ -52,9 +54,10 @@ public sealed class Parser
     // Returns the 0-based column of the character at `pos` in _source.
     private int GetColumn(int pos)
     {
-        if (pos <= 0) return 0;
-        var lineStart = _source.LastIndexOf('\n', pos - 1);
-        return lineStart < 0 ? pos : pos - lineStart - 1;
+        int utf16Position = _sourceIndex.ToUtf16Offset(pos);
+        if (utf16Position <= 0) return 0;
+        var lineStart = _source.LastIndexOf('\n', utf16Position - 1);
+        return lineStart < 0 ? utf16Position : utf16Position - lineStart - 1;
     }
 
     /// <summary>
@@ -2298,8 +2301,9 @@ public sealed class Parser
     // first token).
     private bool StartsSourceLine(int pos)
     {
-        var lineStart = pos <= 0 ? 0 : _source.LastIndexOf('\n', pos - 1) + 1;
-        for (var i = lineStart; i < pos; i++)
+        int utf16Position = _sourceIndex.ToUtf16Offset(pos);
+        var lineStart = utf16Position <= 0 ? 0 : _source.LastIndexOf('\n', utf16Position - 1) + 1;
+        for (var i = lineStart; i < utf16Position; i++)
         {
             if (!char.IsWhiteSpace(_source[i]))
             {

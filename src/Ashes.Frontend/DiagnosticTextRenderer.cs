@@ -60,7 +60,7 @@ public static class DiagnosticTextRenderer
                     sb.Append(' ', lineNumberText.Length);
                     sb.Append(" | ");
                     sb.Append(' ', Math.Max(location.Column - 1, 0));
-                    sb.AppendLine(new string('^', ComputeUnderlineLength(entry, location, lineText.Length)));
+                    sb.AppendLine(new string('^', sourceView.ComputeUnderlineLength(entry, location, lineText)));
                     sb.Append(' ', lineNumberText.Length);
                     sb.AppendLine(" |");
                 }
@@ -120,49 +120,21 @@ public static class DiagnosticTextRenderer
         return sb.ToString();
     }
 
-    private static int ComputeUnderlineLength(DiagnosticEntry entry, SourceLocation location, int lineLength)
-    {
-        var availableOnLine = Math.Max(lineLength - (location.Column - 1), 0);
-        var requested = Math.Max(entry.End - entry.Start, 1);
-        if (availableOnLine <= 0)
-        {
-            return 1;
-        }
-
-        return Math.Clamp(requested, 1, availableOnLine);
-    }
-
     private sealed class SourceView
     {
         private readonly string[] _lines;
-        private readonly int[] _lineStarts;
+        private readonly SourceTextIndex _index;
 
         public SourceView(string source)
         {
-            _lines = source.Split(["\r\n", "\n"], StringSplitOptions.None);
-            var starts = new List<int> { 0 };
-            for (var i = 0; i < source.Length; i++)
-            {
-                if (source[i] == '\n')
-                {
-                    starts.Add(i + 1);
-                }
-            }
-
-            _lineStarts = [.. starts];
+            _lines = source.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+            _index = new SourceTextIndex(source);
         }
 
         public SourceLocation GetLocation(int position)
         {
-            for (var i = _lineStarts.Length - 1; i >= 0; i--)
-            {
-                if (_lineStarts[i] <= position)
-                {
-                    return new SourceLocation(i + 1, position - _lineStarts[i] + 1);
-                }
-            }
-
-            return new SourceLocation(1, 1);
+            (int line, int character) = _index.ToPosition(position, SourcePositionEncoding.UnicodeScalar);
+            return new SourceLocation(line + 1, character + 1);
         }
 
         public string? GetLine(int line)
@@ -173,6 +145,22 @@ public static class DiagnosticTextRenderer
             }
 
             return _lines[line - 1].TrimEnd('\r');
+        }
+
+        public int ComputeUnderlineLength(DiagnosticEntry entry, SourceLocation location, string lineText)
+        {
+            int lineLength = 0;
+            foreach (Rune _ in lineText.EnumerateRunes())
+            {
+                lineLength++;
+            }
+
+            int availableOnLine = Math.Max(lineLength - (location.Column - 1), 0);
+            (int endLine, int endCharacter) = _index.ToPosition(entry.End, SourcePositionEncoding.UnicodeScalar);
+            int requested = endLine == location.Line - 1
+                ? Math.Max(endCharacter - (location.Column - 1), 1)
+                : Math.Max(availableOnLine, 1);
+            return availableOnLine <= 0 ? 1 : Math.Clamp(requested, 1, availableOnLine);
         }
     }
 

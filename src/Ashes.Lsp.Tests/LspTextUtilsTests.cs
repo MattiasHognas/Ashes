@@ -1,3 +1,5 @@
+using System.Text;
+using Ashes.Frontend;
 using Ashes.Lsp;
 using Shouldly;
 
@@ -6,243 +8,126 @@ namespace Ashes.Lsp.Tests;
 public sealed class LspTextUtilsTests
 {
     [Test]
-    public void GetLineStarts_should_return_single_zero_for_empty_text()
+    public void Line_starts_are_canonical_utf8_offsets_for_all_newline_forms()
     {
-        var starts = LspTextUtils.GetLineStarts("");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("é\r\n😀\rZ\n");
 
-        starts.ShouldBe([0]);
+        index.LineStarts.ShouldBe([0, 4, 9, 11]);
     }
 
     [Test]
-    public void GetLineStarts_should_return_single_zero_for_text_without_newlines()
+    public void Utf16_position_converts_to_utf8_byte_offset()
     {
-        var starts = LspTextUtils.GetLineStarts("hello world");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("a😀b");
 
-        starts.ShouldBe([0]);
+        LspTextUtils.FromLineCharacter(index, 4, 0, 3, SourcePositionEncoding.Utf16)
+            .ShouldBe(5);
     }
 
     [Test]
-    public void GetLineStarts_should_return_starts_for_multiline_text()
+    public void Utf8_position_preserves_utf8_byte_offset()
     {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef\nghi");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("a😀b");
 
-        starts.ShouldBe([0, 4, 8]);
+        LspTextUtils.FromLineCharacter(index, 4, 0, 5, SourcePositionEncoding.Utf8)
+            .ShouldBe(5);
     }
 
     [Test]
-    public void GetLineStarts_should_handle_trailing_newline()
+    public void Astral_byte_offset_converts_to_utf16_position()
     {
-        var starts = LspTextUtils.GetLineStarts("abc\n");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("a😀b");
 
-        starts.ShouldBe([0, 4]);
+        LspTextUtils.ToLineCharacter(index, 4, 5, SourcePositionEncoding.Utf16)
+            .ShouldBe((0, 3));
     }
 
     [Test]
-    public void GetLineStarts_should_handle_consecutive_newlines()
+    public void Combining_marks_are_separate_unicode_scalars()
     {
-        var starts = LspTextUtils.GetLineStarts("\n\n\n");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("e\u0301x");
 
-        starts.ShouldBe([0, 1, 2, 3]);
+        index.ToPosition(3, SourcePositionEncoding.UnicodeScalar).ShouldBe((0, 2));
     }
 
     [Test]
-    public void GetLineStarts_should_handle_only_newline()
+    public void CrLf_interior_boundary_maps_to_preceding_line_end()
     {
-        var starts = LspTextUtils.GetLineStarts("\n");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("é\r\nZ");
 
-        starts.ShouldBe([0, 1]);
+        index.ToPosition(3, SourcePositionEncoding.Utf8).ShouldBe((0, 2));
+        index.ToPosition(3, SourcePositionEncoding.Utf16).ShouldBe((0, 1));
     }
 
     [Test]
-    public void ToLineCharacter_should_return_origin_for_empty_lineStarts()
+    public void Property_every_representable_boundary_round_trips_for_every_encoding()
     {
-        var result = LspTextUtils.ToLineCharacter([], 0, 0);
+        SourceTextIndex index = LspTextUtils.GetLineStarts("é\r\n😀e\u0301\rZ");
+        SourcePositionEncoding[] encodings =
+        [
+            SourcePositionEncoding.Utf8,
+            SourcePositionEncoding.Utf16,
+            SourcePositionEncoding.UnicodeScalar,
+        ];
 
-        result.ShouldBe((0, 0));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_return_first_line_for_position_zero()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 0);
-
-        result.ShouldBe((0, 0));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_return_correct_position_mid_first_line()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 2);
-
-        result.ShouldBe((0, 2));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_return_second_line_for_position_after_newline()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 4);
-
-        result.ShouldBe((1, 0));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_return_second_line_mid_position()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 5);
-
-        result.ShouldBe((1, 1));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_clamp_negative_position_to_zero()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, -5);
-
-        result.ShouldBe((0, 0));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_clamp_position_beyond_text_length()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 100);
-
-        result.ShouldBe((1, 3));
-    }
-
-    [Test]
-    public void ToLineCharacter_should_handle_position_at_newline_character()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.ToLineCharacter(starts, 7, 3);
-
-        result.ShouldBe((0, 3));
-    }
-
-    [Test]
-    public void FromLineCharacter_should_return_zero_for_empty_lineStarts()
-    {
-        var result = LspTextUtils.FromLineCharacter([], 0, 0, 0);
-
-        result.ShouldBe(0);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_return_correct_position_for_first_line()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, 0, 2);
-
-        result.ShouldBe(2);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_return_correct_position_for_second_line()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, 1, 1);
-
-        result.ShouldBe(5);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_clamp_negative_line_to_zero()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, -1, 0);
-
-        result.ShouldBe(0);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_clamp_line_beyond_array_length()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, 100, 0);
-
-        result.ShouldBe(4);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_clamp_negative_character_to_zero()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, 0, -5);
-
-        result.ShouldBe(0);
-    }
-
-    [Test]
-    public void FromLineCharacter_should_clamp_character_beyond_line_length()
-    {
-        var starts = LspTextUtils.GetLineStarts("abc\ndef");
-        var result = LspTextUtils.FromLineCharacter(starts, 7, 0, 100);
-
-        result.ShouldBe(3);
-    }
-
-    [Test]
-    public void ToLineCharacter_and_FromLineCharacter_should_round_trip()
-    {
-        var text = "first\nsecond\nthird";
-        var starts = LspTextUtils.GetLineStarts(text);
-
-        for (var pos = 0; pos < text.Length; pos++)
+        for (int utf16 = 0; utf16 <= index.Text.Length; utf16++)
         {
-            var (line, character) = LspTextUtils.ToLineCharacter(starts, text.Length, pos);
-            var roundTripped = LspTextUtils.FromLineCharacter(starts, text.Length, line, character);
-            roundTripped.ShouldBe(pos, $"Round-trip failed for position {pos}");
+            int byteOffset = index.ToUtf8Offset(utf16);
+            if (index.ToUtf16Offset(byteOffset) != utf16)
+            {
+                continue;
+            }
+
+            if (utf16 > 0 && utf16 < index.Text.Length
+                && index.Text[utf16 - 1] == '\r' && index.Text[utf16] == '\n')
+            {
+                continue;
+            }
+
+            foreach (SourcePositionEncoding encoding in encodings)
+            {
+                (int line, int character) = index.ToPosition(byteOffset, encoding);
+                index.FromPosition(line, character, encoding).ShouldBe(byteOffset);
+            }
         }
     }
 
     [Test]
-    public void GetLineStarts_should_handle_crlf_by_counting_lf_only()
+    public void Property_positions_are_monotonic_at_scalar_boundaries()
     {
-        var starts = LspTextUtils.GetLineStarts("ab\r\ncd\r\n");
+        SourceTextIndex index = LspTextUtils.GetLineStarts("aé😀e\u0301\nZ");
+        foreach (SourcePositionEncoding encoding in Enum.GetValues<SourcePositionEncoding>())
+        {
+            (int Line, int Character) previous = (0, 0);
+            for (int utf16 = 0; utf16 <= index.Text.Length; utf16++)
+            {
+                int offset = index.ToUtf8Offset(utf16);
+                if (index.ToUtf16Offset(offset) != utf16)
+                {
+                    continue;
+                }
 
-        starts.ShouldBe([0, 4, 8]);
+                (int Line, int Character) current = index.ToPosition(offset, encoding);
+                (current.Line > previous.Line
+                    || current.Line == previous.Line && current.Character >= previous.Character).ShouldBeTrue();
+                previous = current;
+            }
+        }
     }
 
     [Test]
-    public void ToLineCharacter_should_handle_single_line_text()
+    public void Invalid_positions_clamp_to_valid_boundaries()
     {
-        var starts = LspTextUtils.GetLineStarts("hello");
-        var result = LspTextUtils.ToLineCharacter(starts, 5, 3);
+        SourceTextIndex index = LspTextUtils.GetLineStarts("😀x");
 
-        result.ShouldBe((0, 3));
+        index.ToUtf16Offset(3).ShouldBe(0);
+        index.FromPosition(0, 3, SourcePositionEncoding.Utf8).ShouldBe(0);
+        index.FromPosition(99, 99, SourcePositionEncoding.Utf16).ShouldBe(5);
     }
 
     [Test]
-    public void FromLineCharacter_should_handle_single_line_text()
+    public void Malformed_utf8_is_rejected()
     {
-        var starts = LspTextUtils.GetLineStarts("hello");
-        var result = LspTextUtils.FromLineCharacter(starts, 5, 0, 3);
-
-        result.ShouldBe(3);
-    }
-
-    [Test]
-    public void ToLineCharacter_should_handle_position_at_end_of_text()
-    {
-        var text = "abc\ndef";
-        var starts = LspTextUtils.GetLineStarts(text);
-        var result = LspTextUtils.ToLineCharacter(starts, text.Length, text.Length);
-
-        result.ShouldBe((1, 3));
-    }
-
-    [Test]
-    public void FromLineCharacter_should_return_text_length_for_last_position()
-    {
-        var text = "abc\ndef";
-        var starts = LspTextUtils.GetLineStarts(text);
-        var result = LspTextUtils.FromLineCharacter(starts, text.Length, 1, 3);
-
-        result.ShouldBe(7);
+        Should.Throw<DecoderFallbackException>(() => SourceTextIndex.DecodeUtf8([0xC3, 0x28]));
     }
 }

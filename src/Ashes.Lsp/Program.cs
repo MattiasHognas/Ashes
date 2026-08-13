@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Ashes.Formatter;
+using Ashes.Frontend;
 
 namespace Ashes.Lsp;
 
@@ -70,7 +71,7 @@ internal static class Program
             case "initialize":
                 if (hasId)
                 {
-                    HandleInitialize(output, id);
+                    HandleInitialize(parameters, output, id);
                 }
                 break;
 
@@ -155,13 +156,20 @@ internal static class Program
         }
     }
 
-    private static void HandleInitialize(Stream output, JsonElement id)
+    private static void HandleInitialize(JsonElement parameters, Stream output, JsonElement id)
     {
+        LspTextUtils.PositionEncoding = SupportsUtf8Positions(parameters)
+            ? SourcePositionEncoding.Utf8
+            : SourcePositionEncoding.Utf16;
+        string positionEncoding = LspTextUtils.PositionEncoding == SourcePositionEncoding.Utf8
+            ? "utf-8"
+            : "utf-16";
         SendResponse(output, id, new
         {
             capabilities = new
             {
                 textDocumentSync = 1,
+                positionEncoding,
                 documentFormattingProvider = true,
                 hoverProvider = true,
                 definitionProvider = true,
@@ -178,6 +186,20 @@ internal static class Program
                 completionProvider = new { }
             }
         });
+    }
+
+    private static bool SupportsUtf8Positions(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("capabilities", out JsonElement capabilities)
+            || !capabilities.TryGetProperty("general", out JsonElement general)
+            || !general.TryGetProperty("positionEncodings", out JsonElement encodings)
+            || encodings.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        return encodings.EnumerateArray().Any(value =>
+            string.Equals(value.GetString(), "utf-8", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void HandleDidOpen(JsonElement parameters, Stream output)
@@ -285,9 +307,8 @@ internal static class Program
 
     private static object FullDocumentRange(string text)
     {
-        var lines = text.Split('\n');
-        var line = Math.Max(lines.Length - 1, 0);
-        var character = lines.Length == 0 ? 0 : lines[^1].Length;
+        SourceTextIndex index = new(text);
+        (int line, int character) = index.ToPosition(index.Utf8Length, LspTextUtils.PositionEncoding);
         return new
         {
             start = new { line = 0, character = 0 },
@@ -403,7 +424,7 @@ internal static class Program
         var definitionSource = definition.Value.FilePath is not null
             && !string.Equals(definition.Value.FilePath, currentFilePath, StringComparison.OrdinalIgnoreCase)
             && File.Exists(definition.Value.FilePath)
-                ? File.ReadAllText(definition.Value.FilePath)
+                ? SourceTextIndex.ReadUtf8File(definition.Value.FilePath)
                 : source;
         var definitionLineStarts = LspTextUtils.GetLineStarts(definitionSource);
         var (startLine, startCharacter) = LspTextUtils.ToLineCharacter(definitionLineStarts, definitionSource.Length, definition.Value.Start);
@@ -431,7 +452,7 @@ internal static class Program
         }
 
         JsonElement position = parameters.GetProperty("position");
-        int[] lineStarts = LspTextUtils.GetLineStarts(source);
+        SourceTextIndex lineStarts = LspTextUtils.GetLineStarts(source);
         int absolutePosition = LspTextUtils.FromLineCharacter(
             lineStarts,
             source.Length,
@@ -463,9 +484,9 @@ internal static class Program
         string targetSource = reference.FilePath is not null
             && !string.Equals(reference.FilePath, currentFilePath, StringComparison.OrdinalIgnoreCase)
             && File.Exists(reference.FilePath)
-                ? File.ReadAllText(reference.FilePath)
+                ? SourceTextIndex.ReadUtf8File(reference.FilePath)
                 : currentSource;
-        int[] lineStarts = LspTextUtils.GetLineStarts(targetSource);
+        SourceTextIndex lineStarts = LspTextUtils.GetLineStarts(targetSource);
         (int startLine, int startCharacter) = LspTextUtils.ToLineCharacter(
             lineStarts,
             targetSource.Length,
@@ -580,7 +601,7 @@ internal static class Program
             read += n;
         }
 
-        payload = Encoding.UTF8.GetString(body);
+        payload = SourceTextIndex.DecodeUtf8(body);
         return true;
     }
 

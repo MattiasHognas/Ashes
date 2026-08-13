@@ -8,86 +8,15 @@ namespace Ashes.Tests;
 
 public sealed class DebugInfoTests
 {
-    // SourceTextUtils tests
-
     [Test]
-    public void GetLineStarts_returns_offsets_of_line_beginnings()
+    public void Source_index_handles_astral_combining_and_mixed_newlines()
     {
-        var text = "abc\ndef\nghi";
-        var starts = SourceTextUtils.GetLineStarts(text);
-        starts.ShouldBe([0, 4, 8]);
-    }
+        var index = new SourceTextIndex("é\r\n😀e\u0301\rZ\n");
 
-    [Test]
-    public void GetLineStarts_single_line_returns_zero()
-    {
-        var starts = SourceTextUtils.GetLineStarts("hello");
-        starts.ShouldBe([0]);
-    }
-
-    [Test]
-    public void GetLineStarts_empty_string_returns_zero()
-    {
-        var starts = SourceTextUtils.GetLineStarts("");
-        starts.ShouldBe([0]);
-    }
-
-    [Test]
-    public void ToLineColumn_first_character_is_1_1()
-    {
-        var starts = SourceTextUtils.GetLineStarts("hello");
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, 5, 0);
-        line.ShouldBe(1);
-        col.ShouldBe(1);
-    }
-
-    [Test]
-    public void ToLineColumn_second_line_start()
-    {
-        var text = "ab\ncd";
-        var starts = SourceTextUtils.GetLineStarts(text);
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, text.Length, 3);
-        line.ShouldBe(2);
-        col.ShouldBe(1);
-    }
-
-    [Test]
-    public void ToLineColumn_middle_of_second_line()
-    {
-        var text = "ab\ncd";
-        var starts = SourceTextUtils.GetLineStarts(text);
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, text.Length, 4);
-        line.ShouldBe(2);
-        col.ShouldBe(2);
-    }
-
-    [Test]
-    public void ToLineColumn_position_at_end_of_text()
-    {
-        var text = "ab\ncd";
-        var starts = SourceTextUtils.GetLineStarts(text);
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, text.Length, text.Length);
-        line.ShouldBe(2);
-        col.ShouldBe(3);
-    }
-
-    [Test]
-    public void ToLineColumn_clamps_negative_position()
-    {
-        var starts = SourceTextUtils.GetLineStarts("hello");
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, 5, -10);
-        line.ShouldBe(1);
-        col.ShouldBe(1);
-    }
-
-    [Test]
-    public void ToLineColumn_clamps_beyond_end_position()
-    {
-        var text = "abc";
-        var starts = SourceTextUtils.GetLineStarts(text);
-        var (line, col) = SourceTextUtils.ToLineColumn(starts, text.Length, 100);
-        line.ShouldBe(1);
-        col.ShouldBe(4);
+        index.LineStarts.ShouldBe([0, 4, 12, 14]);
+        index.ToPosition(8, SourcePositionEncoding.Utf16).ShouldBe((1, 2));
+        index.ToPosition(11, SourcePositionEncoding.UnicodeScalar).ShouldBe((1, 3));
+        index.FromPosition(1, 2, SourcePositionEncoding.Utf16).ShouldBe(8);
     }
 
     // SourceLocation propagation tests

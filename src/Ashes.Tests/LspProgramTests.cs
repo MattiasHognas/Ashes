@@ -9,6 +9,36 @@ namespace Ashes.Tests;
 public sealed class LspProgramTests
 {
     [Test]
+    public async Task Lsp_program_should_negotiate_utf8_positions()
+    {
+        using var process = StartLspProcess();
+        await WriteMessageAsync(process, new
+        {
+            jsonrpc = "2.0",
+            id = 1,
+            method = "initialize",
+            @params = new
+            {
+                capabilities = new
+                {
+                    general = new { positionEncodings = new[] { "utf-8", "utf-16" } }
+                }
+            }
+        }).ConfigureAwait(false);
+
+        JsonElement response = await ReadMessageAsync(process).ConfigureAwait(false);
+        response.GetProperty("result").GetProperty("capabilities")
+            .GetProperty("positionEncoding").GetString().ShouldBe("utf-8");
+
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", id = 2, method = "shutdown", @params = new { } })
+            .ConfigureAwait(false);
+        _ = await ReadMessageAsync(process).ConfigureAwait(false);
+        await WriteMessageAsync(process, new { jsonrpc = "2.0", method = "exit", @params = new { } })
+            .ConfigureAwait(false);
+        await process.WaitForExitAsync().ConfigureAwait(false);
+    }
+
+    [Test]
     public async Task Lsp_program_should_handle_basic_document_lifecycle_requests()
     {
         using var process = StartLspProcess();
@@ -31,7 +61,9 @@ public sealed class LspProgramTests
 
         var initializeResponse = await ReadMessageAsync(process).ConfigureAwait(false);
         initializeResponse.GetProperty("id").GetInt32().ShouldBe(1);
-        initializeResponse.GetProperty("result").GetProperty("capabilities").GetProperty("documentFormattingProvider").GetBoolean().ShouldBeTrue();
+        JsonElement capabilities = initializeResponse.GetProperty("result").GetProperty("capabilities");
+        capabilities.GetProperty("documentFormattingProvider").GetBoolean().ShouldBeTrue();
+        capabilities.GetProperty("positionEncoding").GetString().ShouldBe("utf-16");
 
         await WriteMessageAsync(process, new
         {

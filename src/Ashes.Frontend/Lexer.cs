@@ -14,6 +14,7 @@ public sealed class Lexer
 {
     private readonly string _text;
     private readonly Diagnostics _diag;
+    private readonly SourceTextIndex _sourceIndex;
     private int _pos;
 
     /// <summary>
@@ -24,14 +25,15 @@ public sealed class Lexer
     {
         _text = text ?? "";
         _diag = diag;
+        _sourceIndex = new SourceTextIndex(_text);
     }
 
     /// <summary>Captures the current byte offset so it can later be handed back to
     /// <see cref="RestorePosition(int)"/> for bounded lookahead/backtracking.</summary>
-    public int SavePosition() => _pos;
+    public int SavePosition() => _sourceIndex.ToUtf8Offset(_pos);
 
     /// <summary>Rewinds the lexer to a position previously returned by <see cref="SavePosition"/>.</summary>
-    public void RestorePosition(int pos) => _pos = pos;
+    public void RestorePosition(int pos) => _pos = _sourceIndex.GetUtf16Offset(pos);
 
     /// <summary>
     /// Scans and returns the next token, advancing past it. Whitespace and <c>//</c> line comments are
@@ -43,7 +45,7 @@ public sealed class Lexer
 
         if (_pos >= _text.Length)
         {
-            return new Token(TokenKind.EOF, "", 0, _pos, 0);
+            return ToSourceToken(new Token(TokenKind.EOF, "", 0, _pos, 0));
         }
 
         int start = _pos;
@@ -51,35 +53,51 @@ public sealed class Lexer
 
         if (TryReadDoubleCharacterToken(start, out var token))
         {
-            return token;
+            return ToSourceToken(token);
         }
 
         if (TryReadSingleCharacterToken(c, start, out token))
         {
-            return token;
+            return ToSourceToken(token);
         }
 
         if (c == '"')
         {
-            return ReadString(start);
+            return ToSourceToken(ReadString(start));
         }
 
         if (c == '\'')
         {
-            return ReadRune(start);
+            return ToSourceToken(ReadRune(start));
         }
 
         if (char.IsDigit(c))
         {
-            return ReadNumber(start);
+            return ToSourceToken(ReadNumber(start));
         }
 
         if (char.IsLetter(c) || c == '_')
         {
-            return ReadIdentifierOrKeyword(start);
+            return ToSourceToken(ReadIdentifierOrKeyword(start));
         }
 
-        return ReadBadToken(start, c);
+        return ToSourceToken(ReadBadToken(start, c));
+    }
+
+    private Token ToSourceToken(Token token)
+    {
+        int start = _sourceIndex.ToUtf8Offset(token.Position);
+        int end = _sourceIndex.ToUtf8Offset(token.End);
+        return token with { Position = start, Length = end - start };
+    }
+
+    private void Error(int utf16Start, int utf16End, string message)
+    {
+        _diag.Error(
+            _sourceIndex.ToUtf8Offset(utf16Start),
+            _sourceIndex.ToUtf8Offset(utf16End),
+            message,
+            DiagnosticCodes.ParseError);
     }
 
     private void SkipWhite()
@@ -209,7 +227,7 @@ public sealed class Lexer
             sb.Append(ch);
         }
 
-        _diag.Error(start, _pos, "Unterminated string literal.", DiagnosticCodes.ParseError);
+        Error(start, _pos, "Unterminated string literal.");
         return new Token(TokenKind.String, sb.ToString(), 0, start, _pos - start);
     }
 
@@ -266,7 +284,7 @@ public sealed class Lexer
 
         if (!valid || !IsValidUnicodeScalar(value))
         {
-            _diag.Error(start, _pos, "A rune literal must contain exactly one valid Unicode scalar value.", DiagnosticCodes.ParseError);
+            Error(start, _pos, "A rune literal must contain exactly one valid Unicode scalar value.");
             value = 0xFFFD;
         }
 
@@ -340,7 +358,7 @@ public sealed class Lexer
             var floatText = _text[start.._pos];
             if (!double.TryParse(floatText, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var floatValue))
             {
-                _diag.Error(start, _pos, $"Invalid float literal: {floatText}.", DiagnosticCodes.ParseError);
+                Error(start, _pos, $"Invalid float literal: {floatText}.");
             }
 
             return new Token(TokenKind.Float, floatText, 0, floatValue, start, _pos - start);
@@ -359,12 +377,12 @@ public sealed class Lexer
         {
             if (!ulong.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out var unsignedValue))
             {
-                _diag.Error(start, _pos, $"Invalid unsigned integer literal: {text}.", DiagnosticCodes.ParseError);
+                Error(start, _pos, $"Invalid unsigned integer literal: {text}.");
                 unsignedValue = 0;
             }
             else if (unsignedValue > GetUnsignedMax(unsignedBits))
             {
-                _diag.Error(start, _pos, $"Unsigned integer literal out of range for u{unsignedBits}: {text}.", DiagnosticCodes.ParseError);
+                Error(start, _pos, $"Unsigned integer literal out of range for u{unsignedBits}: {text}.");
                 unsignedValue = 0;
             }
 
@@ -373,7 +391,7 @@ public sealed class Lexer
 
         if (!long.TryParse(numberText, NumberStyles.None, CultureInfo.InvariantCulture, out var value))
         {
-            _diag.Error(start, _pos, $"Invalid integer literal: {numberText}.", DiagnosticCodes.ParseError);
+            Error(start, _pos, $"Invalid integer literal: {numberText}.");
         }
 
         return new Token(TokenKind.Int, text, value, start, _pos - start);
@@ -507,8 +525,13 @@ public sealed class Lexer
 
     private Token ReadBadToken(int start, char c)
     {
-        _diag.Error(start, start + 1, $"Unexpected character: '{c}'.", DiagnosticCodes.ParseError);
-        _pos++;
+        int consumed = char.IsHighSurrogate(c)
+            && start + 1 < _text.Length
+            && char.IsLowSurrogate(_text[start + 1])
+                ? 2
+                : 1;
+        Error(start, start + consumed, $"Unexpected character: '{_text[start..(start + consumed)]}'.");
+        _pos += consumed;
         return new Token(TokenKind.Bad, _text[start.._pos], 0, start, _pos - start);
     }
 }
