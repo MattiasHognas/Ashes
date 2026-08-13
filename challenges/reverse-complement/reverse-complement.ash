@@ -9,24 +9,25 @@
 // flush the pending reverse-complement and pass through unchanged.
 import Ashes.IO as io
 import Ashes.Text as text
+import Ashes.Rune as rune
 let complement c =
     match c with
-        | "A" -> "T"
-        | "C" -> "G"
-        | "G" -> "C"
-        | "T" -> "A"
-        | "U" -> "A"
-        | "M" -> "K"
-        | "R" -> "Y"
-        | "W" -> "W"
-        | "S" -> "S"
-        | "Y" -> "R"
-        | "K" -> "M"
-        | "V" -> "B"
-        | "H" -> "D"
-        | "D" -> "H"
-        | "B" -> "V"
-        | "N" -> "N"
+        | 'A' -> 'T'
+        | 'C' -> 'G'
+        | 'G' -> 'C'
+        | 'T' -> 'A'
+        | 'U' -> 'A'
+        | 'M' -> 'K'
+        | 'R' -> 'Y'
+        | 'W' -> 'W'
+        | 'S' -> 'S'
+        | 'Y' -> 'R'
+        | 'K' -> 'M'
+        | 'V' -> 'B'
+        | 'H' -> 'D'
+        | 'D' -> 'H'
+        | 'B' -> 'V'
+        | 'N' -> 'N'
         | other -> other
 
 let recursive compLine line acc =
@@ -44,15 +45,15 @@ let recursive emit chars col buf =
             if col == 60
             then
                 let _ = io.write(buf + "\n")
-                in emit(chars)(0)("")
-            else emit(rest)(col + 1)(buf + c)
+                in emit(rest)(1)(rune.toText(c))
+            else emit(rest)(col + 1)(buf + rune.toText(c))
 
 let recursive loop revcomp =
     match io.readLine(Unit) with
         | None -> emit(revcomp)(0)("")
         | Some(line) ->
             match text.uncons(line) with
-                | Some((">", _)) ->
+                | Some(('>', _)) ->
                     let _ = emit(revcomp)(0)("")
                     in
                         let _ = io.writeLine(line)

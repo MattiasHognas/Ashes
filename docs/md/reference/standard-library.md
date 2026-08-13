@@ -548,7 +548,9 @@ layer is shipped Ashes code built on `Ashes.Byte`.
   byte-identical, so non-ASCII text is untouched (no Unicode case folding — the ASCII scope is in
   the name, following OCaml's `uppercase_ascii` / Rust's `to_ascii_uppercase`)
 - `asciiLower(text)` returning `Str` — ASCII-only lowercase, the inverse of `asciiUpper`
- 
+- `fromRunes(runes)` — `List(Rune) -> Str`, UTF-8-encode the runes in list order; the empty list
+  produces `""`
+
 - `length` — `Str -> Int`, number of characters
 - `substring` — `Str -> Int -> Int -> Str`, `count` characters starting at index `start`. Codepoint-
   indexed, so it walks the string to the `start`-th codepoint — `O(start + count)`. For repeated

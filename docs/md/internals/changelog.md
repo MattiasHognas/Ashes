@@ -182,10 +182,22 @@ The final exit gates were:
 > run the opt-in `challenges/` suite. A fresh pre/post A/B then surfaced P1
 > ownership failures plus severe scaling and peak-RSS regressions across it.
 > All of them have since been resolved — each fix is narrated in the chronology
-> below and locked by a regression test under `tests/`. The later `Rune` API
-> migration invalidated the old list-of-small-`Str` diagnosis and also left the
-> checked-in reverse-complement challenge stale. That regression and the verified
-> output-buffering gap are tracked under [Roadmap](#roadmap).
+> below and locked by a regression test under `tests/`. A later `Rune` API
+> migration temporarily left fasta and reverse-complement stale; the renewed
+> full-suite sweep fixed both sources and one associated TCO ownership bug. The
+> verified output-buffering gap remains under [Roadmap](#roadmap).
+
+The `Rune` challenge repair also closed the last unexplained reverse-complement memory result.
+Both challenges now convert the `Rune` returned by `Text.uncons` explicitly, and
+reverse-complement stores `List(Rune)` rather than one heap string per base. Enabling its natural
+tail-consuming output loop exposed a compiler bug: final string-concat promotion could change a
+back-edge argument to runtime-RC after the pending TCO reset had captured its ownership facts, so
+the reset copied an already-RC string out of the arena and retained the original. The final reset
+refresh now recognizes every runtime-managed result, not only `ConcatStrTip`. A focused IR
+regression rejects that redundant copy. At the standard fasta N=25,000,000 workload,
+reverse-complement completes in 8.22 seconds at 4.27 GB peak RSS and a second transform reproduces
+the 254,166,745-byte input exactly. The roughly 34 bytes per base in the largest live sequence
+matches the isolated `List(Rune)` working set; no unexplained retained temporary remains.
 
 The first post-migration scaling correction removed repeated RC graph normalization across ordinary
 closure calls. A second ownership bit in the closure's packed metadata now advertises that the
@@ -421,5 +433,4 @@ speculative capabilities without a measured workload are intentionally excluded.
 
 | Gap | Current evidence | Completion gate |
 |-----|------------------|-----------------|
-| **Restore reverse-complement after the `Rune` migration and diagnose its residual memory cost** | The checked-in challenge no longer compiles: `Text.uncons` returns `(Rune, Str)`, while `complement` still accepts single-character `Str` values. In a locally corrected Rune version, peak memory still scales at about **95 B per input base**, while an isolated `List(Rune)` scales at about **35 B per element**. The old roadmap claim that a `List(Str)` caused the full cost is therefore false; the remaining roughly 60 B per base needs a fresh ownership and live-set diagnosis. | Update the challenge to the current Rune API and lock its output with a regression. Attribute the remaining peak memory to live data versus retained temporaries, fix any compiler ownership or reclamation bug found, and run the standard 25M-base workload within the justified live-set envelope. |
 | **Provide a batched stdout path for line-oriented output** | `Ashes.IO.write` lowers directly to one Linux `write(1, ptr, len)` syscall or one Windows `WriteFile` call. `writeLine` performs two low-level writes: payload and newline. A three-call trace produced exactly three syscalls, so fasta and reverse-complement currently issue one call per emitted line, plus separate newline calls when using `writeLine`. | Add buffering or an explicit batched-output API without weakening observable ordering. Define flush behavior for normal exit, errors, and explicit flush; cover Linux and Windows; and demonstrate the syscall reduction and throughput effect on a line-oriented benchmark. |

@@ -1130,7 +1130,7 @@ public sealed partial class Lowering
         {
             RuntimeManagedArgResults = info.RuntimeManagedArgResults
                 .Select((runtimeManaged, index) =>
-                    runtimeManaged || IsRuntimeManagedConcatStrTipResult(info.ArgTemps[index]))
+                    runtimeManaged || IsRuntimeManagedResultTemp(info.ArgTemps[index]))
                 .ToArray(),
             ParamPlacements = info.ParamSlots
                 .Select(slot => info.Tco.ParamPlacements[slot].Current)

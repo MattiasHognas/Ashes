@@ -1,3 +1,10 @@
+let fromRunes runes =
+    (let recursive go remaining output =
+        match remaining with
+            | [] -> output
+            | head :: tail -> go(tail)(output + Ashes.Rune.toText(head))
+    in go(runes)(""))
+
 let recursive length text =
     match Ashes.Text.unconsText(text) with
         | None -> 0

@@ -2091,6 +2091,9 @@ The `Ashes.Rune` module provides:
 integer code point; `Show` produces the same one-scalar text as `Rune.toText`. `Rune` deliberately has
 no `Default` evidence because there is no canonical default scalar.
 
+`Ashes.Text.fromRunes` has type `List(Rune) -> Str`. It UTF-8-encodes each rune in list order and
+returns `""` for the empty list.
+
 `Ashes.Text.parseInt` has type `Str -> Result(Str, Int)`. It accepts an
 optional leading `-` followed by decimal digits. Malformed input and overflow
 return `Error(message)`.

@@ -11,6 +11,7 @@
 import Ashes.IO as io
 import Ashes.Text as text
 import Ashes.Number.Math as math
+import Ashes.Rune as rune
 let im = 139968
 
 let ia = 3877
@@ -84,9 +85,11 @@ let recursive repeatFasta src remaining col out =
         match text.uncons(src) with
             | None -> repeatFasta(alu)(remaining)(col)(out)
             | Some((h, t)) ->
-                if col == 60
-                then repeatFasta(t)(remaining - 1)(1)(out + "\n" + h)
-                else repeatFasta(t)(remaining - 1)(col + 1)(out + h)
+                let ch = rune.toText(h)
+                in
+                    if col == 60
+                    then repeatFasta(t)(remaining - 1)(1)(out + "\n" + ch)
+                    else repeatFasta(t)(remaining - 1)(col + 1)(out + ch)
 
 let recursive randomFasta table remaining col seed out =
     if remaining == 0
