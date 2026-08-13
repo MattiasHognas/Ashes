@@ -257,10 +257,12 @@ public sealed class GeneratorInvariantTests
         prelude.Features.Contains(GeneratedFeature.ExternalResource).ShouldBeTrue();
         prelude.Features.Contains(GeneratedFeature.FfiBuffer).ShouldBeTrue();
         prelude.Features.Contains(GeneratedFeature.FfiOut).ShouldBeTrue();
+        prelude.Features.Contains(GeneratedFeature.FfiString).ShouldBeTrue();
         prelude.Features.Contains(GeneratedFeature.AmbientAuthority).ShouldBeTrue();
         prelude.Trace.Entries.ShouldContain("program:external-resource");
         prelude.Trace.Entries.ShouldContain("program:ffi-buffer");
         prelude.Trace.Entries.ShouldContain("program:ffi-out");
+        prelude.Trace.Entries.ShouldContain("program:ffi-string");
         prelude.Trace.Entries.ShouldContain("program:ambient-authority");
         source.ShouldContain("external type FuzzResource5 resource destructor fuzzResourceClose5");
         source.ShouldContain("borrow FuzzResource5");

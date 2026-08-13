@@ -291,7 +291,7 @@ internal static partial class LlvmCodegen
             FfiType.Float32 => state.F32,
             FfiType.Bool => state.I8,
             FfiType.Str => state.I8Ptr,
-            FfiType.Opaque { } or FfiType.Ptr { } or FfiType.Buffer { } or FfiType.Out { } => state.I8Ptr,
+            FfiType.Opaque { } or FfiType.Ptr { } or FfiType.Buffer { } or FfiType.Out { } or FfiType.NativeString { } => state.I8Ptr,
             FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
             FfiType.UInt uintType => throw new InvalidOperationException($"Unsupported unsigned FFI width '{uintType.Bits}'."),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
@@ -338,6 +338,162 @@ internal static partial class LlvmCodegen
         LlvmValueHandle slot = LlvmApi.BuildIntToPtr(builder, slotAddress, state.I8Ptr, "ffi_out_slot_ptr");
         LlvmValueHandle value = LlvmApi.BuildLoad2(builder, llvmElementType, slot, "ffi_out_value");
         return LlvmApi.BuildPtrToInt(builder, value, state.I64, "ffi_out_value_word");
+    }
+
+    private static LlvmValueHandle EmitCopyFfiString(
+        LlvmCodegenState state,
+        LlvmValueHandle pointerAddress,
+        FfiType.NativeString stringType)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_string_result");
+        LlvmValueHandle lengthSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_string_length");
+        LlvmValueHandle pointer = LlvmApi.BuildIntToPtr(builder, pointerAddress, state.I8Ptr, "ffi_string_pointer");
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            pointerAddress,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "ffi_string_is_null");
+
+        FfiStringBlocks blocks = CreateFfiStringBlocks(state);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), lengthSlot);
+        LlvmApi.BuildCondBr(builder, isNull, blocks.Null, blocks.Scan);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Null);
+        LlvmValueHandle nullResult = stringType.Nullable
+            ? EmitResultOk(state, EmitAllocAdt(state, 0, 0))
+            : EmitResultError(state, EmitHeapStringLiteral(state, "Native UTF-8 string was null."));
+        LlvmApi.BuildStore(builder, nullResult, resultSlot);
+        LlvmApi.BuildBr(builder, blocks.Done);
+
+        LlvmValueHandle finalLength = EmitFfiStringScan(state, pointer, lengthSlot, blocks);
+        EmitFfiStringResults(state, pointerAddress, pointer, finalLength, resultSlot, stringType, blocks);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Done);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "ffi_string_result_value");
+    }
+
+    private static LlvmValueHandle EmitFfiStringScan(
+        LlvmCodegenState state,
+        LlvmValueHandle pointer,
+        LlvmValueHandle lengthSlot,
+        FfiStringBlocks blocks)
+    {
+        const ulong scanLimit = 1024UL * 1024UL * 1024UL;
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Scan);
+        LlvmValueHandle length = LlvmApi.BuildLoad2(builder, state.I64, lengthSlot, "ffi_string_length_value");
+        LlvmValueHandle atLimit = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Uge,
+            length,
+            LlvmApi.ConstInt(state.I64, scanLimit, 0),
+            "ffi_string_at_limit");
+        LlvmApi.BuildCondBr(builder, atLimit, blocks.TooLong, blocks.ScanByte);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.ScanByte);
+        LlvmValueHandle bytePointer = LlvmApi.BuildGEP2(builder, state.I8, pointer, [length], "ffi_string_byte_pointer");
+        LlvmValueHandle currentByte = LlvmApi.BuildLoad2(builder, state.I8, bytePointer, "ffi_string_byte");
+        LlvmValueHandle terminated = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            currentByte,
+            LlvmApi.ConstInt(state.I8, 0, 0),
+            "ffi_string_terminated");
+        LlvmApi.BuildStore(
+            builder,
+            LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 1, 0), "ffi_string_next_length"),
+            lengthSlot);
+        LlvmApi.BuildCondBr(builder, terminated, blocks.Validate, blocks.Scan);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Validate);
+        LlvmValueHandle finalLength = LlvmApi.BuildLoad2(builder, state.I64, lengthSlot, "ffi_string_final_length_with_nul");
+        finalLength = LlvmApi.BuildSub(builder, finalLength, LlvmApi.ConstInt(state.I64, 1, 0), "ffi_string_final_length");
+        LlvmValueHandle isValid = EmitValidateUtf8(state, pointer, finalLength, "ffi_string_utf8");
+        LlvmApi.BuildCondBr(
+            builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, isValid, LlvmApi.ConstInt(state.I64, 0, 0), "ffi_string_utf8_valid"),
+            blocks.Valid,
+            blocks.Invalid);
+        return finalLength;
+    }
+
+    private static void EmitFfiStringResults(
+        LlvmCodegenState state,
+        LlvmValueHandle pointerAddress,
+        LlvmValueHandle pointer,
+        LlvmValueHandle finalLength,
+        LlvmValueHandle resultSlot,
+        FfiType.NativeString stringType,
+        FfiStringBlocks blocks)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Valid);
+        LlvmValueHandle copied = EmitHeapStringSliceFromBytesPointer(state, pointer, finalLength, "ffi_string_copy");
+        LlvmValueHandle successValue = stringType.Nullable
+            ? EmitFfiStringSome(state, copied)
+            : copied;
+        LlvmApi.BuildStore(builder, EmitResultOk(state, successValue), resultSlot);
+        LlvmApi.BuildBr(builder, blocks.Release);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Invalid);
+        LlvmApi.BuildStore(
+            builder,
+            EmitResultError(state, EmitHeapStringLiteral(state, "Native UTF-8 string is invalid.")),
+            resultSlot);
+        LlvmApi.BuildBr(builder, blocks.Release);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.TooLong);
+        LlvmApi.BuildStore(
+            builder,
+            EmitResultError(state, EmitHeapStringLiteral(state, "Native UTF-8 string exceeds 1073741824 bytes.")),
+            resultSlot);
+        LlvmApi.BuildBr(builder, blocks.Release);
+
+        LlvmApi.PositionBuilderAtEnd(builder, blocks.Release);
+        if (stringType.Ownership == FfiNativeStringOwnership.Owned)
+        {
+            _ = EmitCallExternalValues(
+                state,
+                stringType.DestructorSymbol!,
+                stringType.DestructorLibrary,
+                [pointerAddress],
+                [new FfiType.Ptr(new FfiType.UInt(8))],
+                new FfiType.Void());
+        }
+        LlvmApi.BuildBr(builder, blocks.Done);
+    }
+
+    private static FfiStringBlocks CreateFfiStringBlocks(LlvmCodegenState state) => new(
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_null"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_scan"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_scan_byte"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_validate"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_too_long"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_valid"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_invalid"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_release"),
+        LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_string_done"));
+
+    private sealed record FfiStringBlocks(
+        LlvmBasicBlockHandle Null,
+        LlvmBasicBlockHandle Scan,
+        LlvmBasicBlockHandle ScanByte,
+        LlvmBasicBlockHandle Validate,
+        LlvmBasicBlockHandle TooLong,
+        LlvmBasicBlockHandle Valid,
+        LlvmBasicBlockHandle Invalid,
+        LlvmBasicBlockHandle Release,
+        LlvmBasicBlockHandle Done);
+
+    private static LlvmValueHandle EmitFfiStringSome(LlvmCodegenState state, LlvmValueHandle stringValue)
+    {
+        LlvmValueHandle some = EmitAllocAdt(state, 1, 1);
+        StoreAdtField(state, some, 0, stringValue, "ffi_string_some_value");
+        return some;
     }
 
     private static LlvmValueHandle EmitFfiBufferArgument(

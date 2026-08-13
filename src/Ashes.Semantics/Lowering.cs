@@ -569,6 +569,7 @@ public sealed partial class Lowering
     private readonly Dictionary<string, ExternalDecl.OpaqueType> _externalResourceTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IrExternalFunction> _externalResourceDestructors = new(StringComparer.Ordinal);
     private readonly HashSet<string> _invalidExternalResourceDestructors = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, ExternalDecl.Function> _externalFunctionDeclarations = new(StringComparer.Ordinal);
     private readonly List<IrExternalFunction> _externalFunctions = new();
 
     /// <summary>The type declarations registered during lowering, keyed by type name.</summary>
@@ -2751,18 +2752,24 @@ public sealed partial class Lowering
 
         bool hasBuffer = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer);
         bool hasOut = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Out);
+        bool hasNativeString = externalFunction.Function.ReturnType is FfiType.NativeString
+            || externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Out { Element: FfiType.NativeString });
         string contract = hasBuffer
             ? "a call-scoped FFI buffer parameter"
-            : hasOut
-                ? "a compiler-owned FFI out parameter"
+            : hasNativeString
+                ? "a native string conversion contract"
+                : hasOut
+                    ? "a compiler-owned FFI out parameter"
                 : "a resource ownership contract";
         ReportDiagnostic(
             GetSpan(variable),
             $"External function '{variable.Name}' has {contract} and must be called directly.",
             hasBuffer
                 ? DiagnosticCodes.InvalidFfiBuffer
-                : hasOut
-                    ? DiagnosticCodes.InvalidFfiOutParameter
+                : hasNativeString
+                    ? DiagnosticCodes.InvalidFfiString
+                    : hasOut
+                        ? DiagnosticCodes.InvalidFfiOutParameter
                     : DiagnosticCodes.InvalidExternalOwnershipMarker);
         Emit(new IrInst.LoadConstInt(fallbackTemp, 0));
         return (fallbackTemp, externalFunction.Type);
@@ -2775,6 +2782,7 @@ public sealed partial class Lowering
 
     private bool RequiresDirectExternalCall(IrExternalFunction function) =>
         HasExternalResourceOwnershipContract(function)
+        || function.ReturnType is FfiType.NativeString
         || function.ParameterTypes.Any(type => type is FfiType.Buffer or FfiType.Out);
 
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
@@ -10400,7 +10408,11 @@ public sealed partial class Lowering
         IReadOnlyList<(int SlotTemp, FfiType ElementType)> outputSlots)
     {
         var components = new List<(int Temp, TypeRef Type)>();
-        if (returnType is not FfiType.Void)
+        if (returnType is FfiType.NativeString nativeString)
+        {
+            components.Add(MaterializeNativeString(nativeResult, nativeString));
+        }
+        else if (returnType is not FfiType.Void)
         {
             components.Add((nativeResult, FromFfiType(returnType)));
         }
@@ -10431,6 +10443,10 @@ public sealed partial class Lowering
     {
         int valueTemp = NewTemp();
         Emit(new IrInst.LoadFfiOut(valueTemp, slotTemp, elementType));
+        if (elementType is FfiType.NativeString nativeString)
+        {
+            return MaterializeNativeString(valueTemp, nativeString with { Nullable = true });
+        }
         int zeroTemp = NewTemp();
         Emit(new IrInst.LoadConstInt(zeroTemp, 0));
         int isNullTemp = NewTemp();
@@ -10457,6 +10473,18 @@ public sealed partial class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return (resultTemp, CreateMaybeType(FromFfiType(elementType)));
+    }
+
+    private (int Temp, TypeRef Type) MaterializeNativeString(
+        int pointerTemp,
+        FfiType.NativeString nativeString)
+    {
+        int target = NewTemp();
+        Emit(new IrInst.CopyFfiString(target, pointerTemp, nativeString));
+        TypeRef successType = nativeString.Nullable
+            ? CreateMaybeType(new TypeRef.TStr())
+            : new TypeRef.TStr();
+        return (target, CreateStringResultType(successType));
     }
 
     private void RequireExternalRuntimeCapabilities(IrExternalFunction function, TextSpan span)

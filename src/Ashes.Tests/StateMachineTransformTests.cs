@@ -154,6 +154,32 @@ public sealed class StateMachineTransformTests
     }
 
     [Test]
+    public void Ffi_out_slots_and_native_string_pointers_live_across_await_are_saved_and_restored()
+    {
+        FfiType.Opaque handle = new("Handle");
+        FfiType.NativeString nativeString = new(false, FfiNativeStringOwnership.Borrowed, null, null);
+        var body = new List<IrInst>
+        {
+            new IrInst.AllocFfiOut(5, handle),
+            new IrInst.LoadConstInt(6, 0),
+        };
+        EmitCompletedTask(body, valueTemp: 8, taskTemp: 7);
+        body.Add(new IrInst.AwaitTask(9, 7));
+        body.Add(new IrInst.LoadFfiOut(10, 5, handle));
+        body.Add(new IrInst.CopyFfiString(11, 6, nativeString));
+        body.Add(new IrInst.Return(11));
+
+        StateMachineResult result = StateMachineTransform.Transform(body, captureCount: 0);
+
+        IrInst.Suspend suspend = result.Instructions.OfType<IrInst.Suspend>().ShouldHaveSingleItem();
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 5);
+        suspend.SaveVars.ShouldContain(variable => variable.SourceTemp == 6);
+        IrInst.Resume resume = result.Instructions.OfType<IrInst.Resume>().ShouldHaveSingleItem();
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 5);
+        resume.RestoreVars.ShouldContain(variable => variable.TargetTemp == 6);
+    }
+
+    [Test]
     public void Deferred_tco_reset_dependencies_live_across_await_are_saved_and_restored()
     {
         var body = new List<IrInst>

@@ -244,6 +244,38 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Ffi_string_external_supports_hover_completion_and_semantic_tokens()
+    {
+        const string source =
+            "external dispose(*u8) -> void\n" +
+            "external name() -> FfiStr(nullable owned dispose)\n" +
+            "external verify(out FfiStr(borrowed)) -> Bool\n" +
+            "0";
+
+        IReadOnlyList<string> completions = DocumentService.GetCompletions(source, source.Length);
+        completions.ShouldContain("FfiStr");
+
+        DocumentService.HoverItem? returnedHover = DocumentService.GetHover(
+            source,
+            source.IndexOf("name", StringComparison.Ordinal));
+        returnedHover.ShouldNotBeNull();
+        returnedHover.Value.Contents.ShouldContain(
+            "return `FfiStr(nullable owned dispose)`: copied to `Result(Str, Maybe(Str))`");
+
+        DocumentService.HoverItem? outputHover = DocumentService.GetHover(
+            source,
+            source.IndexOf("verify", StringComparison.Ordinal));
+        outputHover.ShouldNotBeNull();
+        outputHover.Value.Contents.ShouldContain(
+            "#1 `out FfiStr(borrowed)`: copied to `Result(Str, Maybe(Str))`");
+
+        IReadOnlyList<DocumentService.SemanticTokenItem> tokens = DocumentService.GetSemanticTokens(source);
+        tokens.ShouldContain(token => token.Line == 1
+            && token.Character == "external name() -> ".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

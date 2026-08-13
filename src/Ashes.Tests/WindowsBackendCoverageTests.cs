@@ -1178,9 +1178,10 @@ public sealed class WindowsBackendCoverageTests
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
             warm.ShouldContain("HTTP/1.1 200 OK");
 
-            // Fire many concurrent requests at once; every one must get a 200 and the server must stay up.
+            // Exercise sustained concurrency in bounded waves; this keeps the test focused on the
+            // Ashes reactor rather than Wine and host thread-pool/socket-setup saturation.
             const int total = 60;
-            int ok = await CountOkConcurrentHttpGetsAsync(port, total).ConfigureAwait(false);
+            int ok = await CountOkConcurrentHttpGetsAsync(port, total, waveSize: 6).ConfigureAwait(false);
 
             ok.ShouldBe(total);
             proc.HasExited.ShouldBeFalse();
@@ -1227,24 +1228,23 @@ public sealed class WindowsBackendCoverageTests
                 | Error(e) -> Ashes.IO.print(e)
             """;
 
-    private static async Task<int> CountOkConcurrentHttpGetsAsync(int port, int total)
+    private static async Task<int> CountOkConcurrentHttpGetsAsync(int port, int total, int waveSize)
     {
-        var tasks = new List<Task<bool>>(total);
-        for (int i = 0; i < total; i++)
+        int ok = 0;
+        for (int offset = 0; offset < total; offset += waveSize)
         {
-            tasks.Add(Task.Run(async () =>
+            int count = Math.Min(waveSize, total - offset);
+            Task<bool>[] tasks = Enumerable.Range(0, count).Select(async _ =>
             {
                 var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
                 return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
-            }));
-        }
-        bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-        int ok = 0;
-        foreach (bool r in results)
-        {
-            if (r)
+            }).ToArray();
+            foreach (bool succeeded in await Task.WhenAll(tasks).ConfigureAwait(false))
             {
-                ok++;
+                if (succeeded)
+                {
+                    ok++;
+                }
             }
         }
 

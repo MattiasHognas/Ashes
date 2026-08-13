@@ -395,6 +395,23 @@ public abstract record ParsedType
     /// <summary>A compiler-owned nullable output slot, written <c>out T</c>.</summary>
     /// <param name="Element">The opaque handle or pointer value written by the native call.</param>
     public sealed record Out(ParsedType Element) : ParsedType;
+    /// <summary>A borrowed or owned native UTF-8 string pointer copied at the call boundary.</summary>
+    /// <param name="Nullable">Whether a direct return may be null.</param>
+    /// <param name="Ownership">Whether the native pointer is borrowed or must be disposed.</param>
+    /// <param name="DestructorName">External destructor name for owned pointers.</param>
+    public sealed record NativeString(
+        bool Nullable,
+        FfiStringOwnership Ownership,
+        string? DestructorName) : ParsedType;
+}
+
+/// <summary>Ownership contract for a native UTF-8 string pointer.</summary>
+public enum FfiStringOwnership
+{
+    /// <summary>The native owner retains the pointer; Ashes copies without freeing it.</summary>
+    Borrowed,
+    /// <summary>A declared external destructor must release the pointer after Ashes copies it.</summary>
+    Owned,
 }
 
 /// <summary>A type expression written by the user in an annotation, e.g. <c>Int -> Str</c>.</summary>

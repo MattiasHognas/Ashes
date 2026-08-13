@@ -324,6 +324,78 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void External_native_strings_lower_owned_borrowed_nullable_and_out_contracts()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle
+            external disposeMessage(*u8) -> void = "dispose@strings.so"
+            external hostName() -> FfiStr(owned disposeMessage)
+            external targetName(Handle) -> FfiStr(nullable borrowed)
+            external verify(Handle, out FfiStr(owned disposeMessage)) -> Bool
+            0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrExternalFunction host = program.ExternalFunctions.Single(function =>
+            string.Equals(function.Name, "hostName", StringComparison.Ordinal));
+        host.ReturnType.ShouldBe(new FfiType.NativeString(
+            false,
+            FfiNativeStringOwnership.Owned,
+            "dispose",
+            "strings.so"));
+        IrExternalFunction target = program.ExternalFunctions.Single(function =>
+            string.Equals(function.Name, "targetName", StringComparison.Ordinal));
+        target.ReturnType.ShouldBe(new FfiType.NativeString(
+            true,
+            FfiNativeStringOwnership.Borrowed,
+            null,
+            null));
+        IrExternalFunction verify = program.ExternalFunctions.Single(function =>
+            string.Equals(function.Name, "verify", StringComparison.Ordinal));
+        verify.ParameterTypes[1].ShouldBe(new FfiType.Out(new FfiType.NativeString(
+            false,
+            FfiNativeStringOwnership.Owned,
+            "dispose",
+            "strings.so")));
+    }
+
+    [Test]
+    public void External_native_string_calls_materialize_conversion_in_direct_results()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external disposeMessage(*u8) -> void
+            external hostName() -> FfiStr(owned disposeMessage)
+            external verify(out FfiStr(borrowed)) -> Bool
+            let host = hostName() in verify()
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.EntryFunction.Instructions.OfType<IrInst.CopyFfiString>().Count().ShouldBe(2);
+        program.EntryFunction.Instructions.OfType<IrInst.LoadFfiOut>().Count().ShouldBe(1);
+    }
+
+    [Test]
+    public void External_native_strings_reject_invalid_positions_destructors_and_indirect_use()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external badDispose(Int) -> void
+            external parameter(FfiStr(borrowed)) -> Int
+            external nested() -> *FfiStr(borrowed)
+            external missing() -> FfiStr(owned unknownDispose)
+            external bad() -> FfiStr(owned badDispose)
+            external redundant(out FfiStr(nullable borrowed)) -> Bool
+            external direct() -> FfiStr(borrowed)
+            let f = direct in 0
+            """);
+
+        program.ExternalFunctions.Select(function => function.Name).ShouldBe(["badDispose", "direct"]);
+        diagnostics.StructuredErrors.Count(error => string.Equals(
+            error.Code,
+            DiagnosticCodes.InvalidFfiString,
+            StringComparison.Ordinal)).ShouldBe(6);
+    }
+
+    [Test]
     public void Void_is_rejected_as_an_external_parameter_type()
     {
         var (program, diagnostics) = LowerProgram("""

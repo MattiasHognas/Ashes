@@ -416,6 +416,12 @@ public sealed class Parser
         }
 
         if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "FfiStr", StringComparison.Ordinal))
+        {
+            return ParseFfiStringType();
+        }
+
+        if (_current.Kind == TokenKind.Ident
             && string.Equals(_current.Text, "FfiBuffer", StringComparison.Ordinal))
         {
             Consume(TokenKind.Ident);
@@ -426,6 +432,63 @@ public sealed class Parser
         }
 
         return ParseTypeName();
+    }
+
+    private ParsedType ParseFfiStringType()
+    {
+        Consume(TokenKind.Ident);
+        Consume(TokenKind.LParen);
+        bool nullable = false;
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "nullable", StringComparison.Ordinal))
+        {
+            nullable = true;
+            Consume(TokenKind.Ident);
+        }
+
+        if (_current.Kind != TokenKind.Ident)
+        {
+            _diag.Error(
+                CurrentErrorSpan(),
+                "FfiStr expects 'borrowed' or 'owned disposeName'.",
+                DiagnosticCodes.InvalidFfiString);
+            Consume(TokenKind.RParen);
+            return new ParsedType.NativeString(nullable, FfiStringOwnership.Borrowed, null);
+        }
+
+        Token ownership = Advance();
+        FfiStringOwnership kind;
+        string? destructor = null;
+        if (string.Equals(ownership.Text, "borrowed", StringComparison.Ordinal))
+        {
+            kind = FfiStringOwnership.Borrowed;
+        }
+        else if (string.Equals(ownership.Text, "owned", StringComparison.Ordinal))
+        {
+            kind = FfiStringOwnership.Owned;
+            if (_current.Kind == TokenKind.Ident)
+            {
+                destructor = Advance().Text;
+            }
+            else
+            {
+                _diag.Error(
+                    CurrentErrorSpan(),
+                    "Owned FfiStr requires an external destructor name.",
+                    DiagnosticCodes.InvalidFfiString);
+            }
+        }
+        else
+        {
+            _diag.Error(
+                ownership.Span,
+                "FfiStr expects 'borrowed' or 'owned disposeName'.",
+                DiagnosticCodes.InvalidFfiString);
+            kind = FfiStringOwnership.Borrowed;
+        }
+
+        Consume(TokenKind.RParen);
+        return new ParsedType.NativeString(nullable, kind, destructor);
     }
 
     private ParsedType ParseTypeName()
@@ -1088,6 +1151,8 @@ public sealed class Parser
 
     private TypeExpr ParseTypeExprPrimary()
     {
+        ReportInvalidFfiStringTypeAnnotation();
+
         if (_current.Kind == TokenKind.Ident
             && string.Equals(_current.Text, "out", StringComparison.Ordinal))
         {
@@ -1144,6 +1209,18 @@ public sealed class Parser
         }
 
         return new TypeExpr.Named(name);
+    }
+
+    private void ReportInvalidFfiStringTypeAnnotation()
+    {
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "FfiStr", StringComparison.Ordinal))
+        {
+            _diag.Error(
+                _current.Span,
+                "FfiStr(...) is supported only in direct external return and out-parameter contracts.",
+                DiagnosticCodes.InvalidFfiString);
+        }
     }
 
     private Expr ParseMatch()

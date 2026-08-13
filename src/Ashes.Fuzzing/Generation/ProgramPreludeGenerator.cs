@@ -39,6 +39,7 @@ internal static class ProgramPreludeGenerator
         {
             AddFfiBuffer(caseIndex, items, features, trace);
             AddFfiOut(caseIndex, items, features, trace);
+            AddFfiString(caseIndex, items, features, trace);
         }
 
         switch (caseIndex % 3)
@@ -96,6 +97,26 @@ internal static class ProgramPreludeGenerator
             new ParsedType.Named("Bool"))));
         features.Add(GeneratedFeature.FfiOut);
         trace.Add("program:ffi-out");
+    }
+
+    private static void AddFfiString(
+        int caseIndex,
+        List<TopLevelItem> items,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string suffix = caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string destructorName = "fuzzDisposeMessage" + suffix;
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            destructorName,
+            [new ParsedType.Pointer(new ParsedType.Named("u8"))],
+            new ParsedType.Named("void"))));
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            "fuzzNativeName" + suffix,
+            [],
+            new ParsedType.NativeString(false, FfiStringOwnership.Owned, destructorName))));
+        features.Add(GeneratedFeature.FfiString);
+        trace.Add("program:ffi-string");
     }
 
     private static void AddExternalResource(

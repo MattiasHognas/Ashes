@@ -54,6 +54,7 @@ Current codes:
 | `ASH043` | A structured-concurrency join handle escapes its owning task scope |
 | `ASH044` | Invalid FFI buffer contract                                |
 | `ASH045` | Invalid FFI out-parameter contract                         |
+| `ASH046` | Invalid native FFI string contract                         |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -225,6 +226,11 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
   parameter, `T` is not an opaque external type or pointer type, `borrow` or `consume` is attached
   to the compiler-owned slot, or the declaring function is used as a first-class value instead of
   being called directly.
+
+- `ASH046` — **Invalid native FFI string contract.** `FfiStr(...)` is used outside a direct
+  external return or `out` contract, has invalid ownership syntax, names a missing or incompatible
+  owned-string destructor, redundantly uses `nullable` inside `out`, is nested under another FFI
+  type, or the declaring function is used as a first-class value instead of being called directly.
 
 ## Record diagnostics
 
