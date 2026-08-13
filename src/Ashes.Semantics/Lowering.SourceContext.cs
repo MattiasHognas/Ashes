@@ -11,10 +11,9 @@ public sealed partial class Lowering
     public void SetSourceContext(string filePath, string sourceText)
     {
         _currentFilePath = filePath;
-        _lineStarts = SourceTextUtils.GetLineStarts(sourceText);
-        _sourceLength = sourceText.Length;
+        _sourceIndex = new SourceTextIndex(sourceText);
         _moduleOffsets = null;
-        _moduleLineStarts = null;
+        _moduleSourceIndexes = null;
         _functionSourceNames = null;
         _moduleProvenanceByPath = null;
     }
@@ -25,20 +24,19 @@ public sealed partial class Lowering
     /// </summary>
     public void SetSourceContext(CombinedCompilationLayout layout)
     {
-        _lineStarts = SourceTextUtils.GetLineStarts(layout.Source);
-        _sourceLength = layout.Source.Length;
+        _sourceIndex = new SourceTextIndex(layout.Source);
         _moduleOffsets = layout.ModuleOffsets;
         _functionSourceNames = layout.FunctionSourceNames;
         _moduleProvenanceByPath = layout.ModuleProvenanceByPath;
 
         // Pre-compute line starts per region (not per file) so disjoint regions
         // for the same file each get correct line/column mappings.
-        _moduleLineStarts = new int[layout.ModuleOffsets.Count][];
+        _moduleSourceIndexes = new SourceTextIndex[layout.ModuleOffsets.Count];
         for (int i = 0; i < layout.ModuleOffsets.Count; i++)
         {
             var (_, startOffset, endOffset) = layout.ModuleOffsets[i];
             var moduleText = layout.Source[startOffset..endOffset];
-            _moduleLineStarts[i] = SourceTextUtils.GetLineStarts(moduleText);
+            _moduleSourceIndexes[i] = new SourceTextIndex(moduleText);
         }
 
         // Default fallback to entry module file (entry expression region is appended last).
@@ -51,10 +49,9 @@ public sealed partial class Lowering
     private void CopySourceContextTo(Lowering target)
     {
         target._currentFilePath = _currentFilePath;
-        target._lineStarts = _lineStarts;
-        target._sourceLength = _sourceLength;
+        target._sourceIndex = _sourceIndex;
         target._moduleOffsets = _moduleOffsets;
-        target._moduleLineStarts = _moduleLineStarts;
+        target._moduleSourceIndexes = _moduleSourceIndexes;
         target._functionSourceNames = _functionSourceNames;
         target._moduleProvenanceByPath = _moduleProvenanceByPath;
     }
@@ -65,7 +62,7 @@ public sealed partial class Lowering
     /// </summary>
     private void Emit(IrInst inst)
     {
-        if (_lineStarts is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
+        if (_sourceIndex is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
         {
             TextSpan span = AstSpans.GetOrDefault(_currentSourceExpr);
             if (ResolveSourceLocation(span) is { } resolved)
@@ -104,20 +101,30 @@ public sealed partial class Lowering
 
     private (string FilePath, int Line, int Column)? ResolveSourceLocation(int absolutePosition)
     {
+        SourceTextIndex? sourceIndex = _sourceIndex;
+        if (sourceIndex is null)
+        {
+            return null;
+        }
+
         // Multi-file resolution: find which module the position falls in
         if (_moduleOffsets is not null)
         {
+            int stringPosition = sourceIndex.ToUtf16Offset(absolutePosition);
             for (int i = _moduleOffsets.Count - 1; i >= 0; i--)
             {
                 var (filePath, startOffset, endOffset) = _moduleOffsets[i];
-                if (absolutePosition >= startOffset && absolutePosition < endOffset)
+                if (stringPosition >= startOffset && stringPosition < endOffset)
                 {
-                    var relativePosition = absolutePosition - startOffset;
-                    if (_moduleLineStarts is not null)
+                    var relativePosition = stringPosition - startOffset;
+                    if (_moduleSourceIndexes is not null)
                     {
-                        var moduleLength = endOffset - startOffset;
-                        var (line, column) = SourceTextUtils.ToLineColumn(_moduleLineStarts[i], moduleLength, relativePosition);
-                        return (filePath, line, column);
+                        SourceTextIndex moduleIndex = _moduleSourceIndexes[i];
+                        int relativeBytePosition = moduleIndex.ToUtf8Offset(relativePosition);
+                        (int line, int column) = moduleIndex.ToPosition(
+                            relativeBytePosition,
+                            SourcePositionEncoding.UnicodeScalar);
+                        return (filePath, line + 1, column + 1);
                     }
                 }
             }
@@ -130,13 +137,13 @@ public sealed partial class Lowering
         }
 
         // Single-file fallback
-        var (l, c) = SourceTextUtils.ToLineColumn(_lineStarts!, _sourceLength, absolutePosition);
-        return (_currentFilePath ?? "<unknown>", l, c);
+        (int l, int c) = sourceIndex.ToPosition(absolutePosition, SourcePositionEncoding.UnicodeScalar);
+        return (_currentFilePath ?? "<unknown>", l + 1, c + 1);
     }
 
     private SourceLocation? ResolveSourceLocation(TextSpan span)
     {
-        if (_lineStarts is null || (span.Length == 0 && span.Start == 0))
+        if (_sourceIndex is null || (span.Length == 0 && span.Start == 0))
         {
             return null;
         }

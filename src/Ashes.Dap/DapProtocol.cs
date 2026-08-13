@@ -205,7 +205,8 @@ public sealed record DapSourceBreakpoint
     [JsonPropertyName("line")]
     public int Line { get; init; }
 
-    /// <summary>One-based column within the line; zero when unspecified.</summary>
+    /// <summary>One-based Unicode-scalar column within the line; zero when unspecified. This is the
+    /// same coordinate emitted into Ashes debug information.</summary>
     [JsonPropertyName("column")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public int Column { get; init; }
@@ -267,7 +268,7 @@ public sealed record DapStackFrame
     [JsonPropertyName("line")]
     public int Line { get; init; }
 
-    /// <summary>One-based column within the line for the frame's current position.</summary>
+    /// <summary>One-based Unicode-scalar column within the line for the frame's current position.</summary>
     [JsonPropertyName("column")]
     public int Column { get; init; }
 }

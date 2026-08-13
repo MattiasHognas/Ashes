@@ -156,7 +156,7 @@ static async Task<string> ReadSourceAsync(string? inputFile, string? expr)
         throw new CliUserException($"File not found: {inputFile}");
     }
 
-    return await File.ReadAllTextAsync(inputFile).ConfigureAwait(false);
+    return await SourceTextIndex.ReadUtf8FileAsync(inputFile).ConfigureAwait(false);
 }
 
 static byte[] CompileToImage(
@@ -1321,7 +1321,7 @@ static (bool WriteInPlace, List<string> Files) ParseFmtArguments(string[] a)
 
 static async Task FormatSingleFileAsync(string file, bool writeInPlace, int fileCount)
 {
-    var src = await File.ReadAllTextAsync(file).ConfigureAwait(false);
+    var src = await SourceTextIndex.ReadUtf8FileAsync(file).ConfigureAwait(false);
     // Inline `module` blocks are a compile-time stitching construct with no AST node, so the
     // formatter cannot model them. Leave such files untouched (the author's layout is
     // authoritative) rather than error or mangle; full formatting fidelity is future work.

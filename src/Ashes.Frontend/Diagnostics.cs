@@ -3,7 +3,7 @@ using System.Text;
 namespace Ashes.Frontend;
 
 /// <summary>
-/// A half-open range of character offsets into a source string, used to locate diagnostics and AST
+/// A half-open range of UTF-8 byte offsets into source text, used to locate diagnostics and AST
 /// nodes. Constructed via <see cref="FromBounds(int, int)"/> or <see cref="FromStartLength(int, int)"/>,
 /// which normalize negative or inverted inputs.
 /// </summary>
@@ -11,7 +11,7 @@ namespace Ashes.Frontend;
 /// <param name="End">Exclusive end offset; never less than <paramref name="Start"/> once normalized.</param>
 public readonly record struct TextSpan(int Start, int End)
 {
-    /// <summary>Number of characters covered, clamped to zero for an empty or inverted span.</summary>
+    /// <summary>Number of UTF-8 bytes covered, clamped to zero for an empty or inverted span.</summary>
     public int Length => Math.Max(End - Start, 0);
 
     /// <summary>Builds a span from explicit bounds, clamping <paramref name="start"/> to zero and

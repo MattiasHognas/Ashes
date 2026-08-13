@@ -29,6 +29,22 @@ Line comments are supported:
 - `// ...` starts a comment that runs to the end of the current line.
 - Comments are ignored by lexing/parsing and do not affect evaluation or typing.
 
+### Source encoding and coordinates
+
+Ashes source files are strict UTF-8. A malformed byte sequence is rejected at source ingestion; it
+is never decoded with replacement characters. Token, AST, diagnostic, and formatter spans are
+half-open UTF-8 byte ranges `[start, end)`. An offset is valid only at a UTF-8 scalar boundary;
+compiler APIs reject invalid boundaries, while protocol adapters clamp untrusted positions backward
+to the nearest valid boundary and into the selected line.
+
+`CRLF`, lone `LF`, and lone `CR` each end one line. Line-relative columns have an explicit unit:
+UTF-8 bytes, Unicode scalar values, or UTF-16 code units. Scalars do not mean grapheme clusters or
+terminal display cells. Debug locations use 1-based lines and scalar columns. LSP negotiates UTF-8
+positions when the client supports them and otherwise converts at the protocol boundary to UTF-16;
+DAP's 1-based coordinates use the same shared source index. The otherwise valid byte boundary
+between `CR` and `LF` has no distinct line/column representation and converts to the end of the
+preceding line.
+
 The following words are **reserved keywords** and cannot be used as identifiers:
 
 `let`, `recursive`, `and`, `in`, `if`, `then`, `else`, `match`, `with`, `when`, `given`,

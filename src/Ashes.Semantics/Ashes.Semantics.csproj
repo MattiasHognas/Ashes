@@ -60,6 +60,8 @@
       LogicalName="Ashes.Semantics.StdLib.Ashes.Core.Result.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Text.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Text.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\Text.Source.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.Text.Source.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Test.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Test.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Text.Json.ash"

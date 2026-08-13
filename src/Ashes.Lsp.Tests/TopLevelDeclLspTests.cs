@@ -76,6 +76,22 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Hover_should_use_utf8_offsets_after_astral_source_text()
+    {
+        const string source = "let label = \"😀\"\nlet answer = 42\nanswer";
+        var index = new SourceTextIndex(source);
+        int stringPosition = source.LastIndexOf("answer", StringComparison.Ordinal);
+
+        DocumentService.HoverItem? hover = DocumentService.GetHover(
+            source,
+            index.ToUtf8Offset(stringPosition));
+
+        hover.ShouldNotBeNull();
+        hover.Value.Start.ShouldBe(index.ToUtf8Offset(stringPosition));
+        hover.Value.End.ShouldBe(index.ToUtf8Offset(stringPosition + "answer".Length));
+    }
+
+    [Test]
     public void Hover_should_report_type_for_mutually_recursive_group_member()
     {
         const string source =
