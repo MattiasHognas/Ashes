@@ -348,6 +348,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerQualifiedBuiltinFunctionReference(name, CreateParallelWithWorkersBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FileReplace => LowerQualifiedBuiltinFunctionReference(name, CreateFileReplaceBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextUncons or BuiltinRegistry.BuiltinValueKind.TextUnconsText =>
                 LowerQualifiedBuiltinFunctionReference(name, (kind == BuiltinRegistry.BuiltinValueKind.TextUncons ? CreateTextUnconsBinding() : CreateTextUnconsTextBinding()).S.Body),
             BuiltinRegistry.BuiltinValueKind.RuneToText or BuiltinRegistry.BuiltinValueKind.RuneToInt or BuiltinRegistry.BuiltinValueKind.RuneFromInt or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiLetter or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiDigit or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiWhiteSpace => ResolveRuneBuiltinMember(kind, name),
@@ -390,6 +391,9 @@ public sealed partial class Lowering
 
     private (int, TypeRef)? ResolveEnvironmentBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind) => kind switch
     {
+        BuiltinRegistry.BuiltinValueKind.DirectoryEntries => LowerQualifiedBuiltinFunctionReference(name, CreateDirectoryOperationBinding(IntrinsicKind.DirectoryEntries).S.Body),
+        BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll => LowerQualifiedBuiltinFunctionReference(name, CreateDirectoryOperationBinding(IntrinsicKind.DirectoryCreateAll).S.Body),
+        BuiltinRegistry.BuiltinValueKind.DirectoryRemoveTree => LowerQualifiedBuiltinFunctionReference(name, CreateDirectoryOperationBinding(IntrinsicKind.DirectoryRemoveTree).S.Body),
         BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentCurrentDirectory).S.Body),
         BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentExecutableDirectory).S.Body),
         BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentTemporaryDirectory).S.Body),

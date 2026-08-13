@@ -55,6 +55,7 @@ internal sealed class CombinationRegistry
         registry.Register(new NestedCapabilityHandlersTemplate());
         registry.Register(new DeterministicResourceTemplate());
         registry.Register(new DeterministicEnvironmentTemplate());
+        registry.Register(new DeterministicDirectoryTemplate());
         registry.Register(new SharedReconstructionFallbackTemplate());
         registry.Register(new BranchSelectiveReuseTemplate());
         registry.Register(new UniqueRecordUpdateTemplate());

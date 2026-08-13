@@ -1521,6 +1521,38 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_directory_remove_tree_should_not_follow_symlinks()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string tmpDir = CreateTempDirectory();
+        try
+        {
+            string outside = Path.Combine(tmpDir, "outside");
+            string tree = Path.Combine(tmpDir, "tree");
+            Directory.CreateDirectory(outside);
+            Directory.CreateDirectory(tree);
+            await File.WriteAllTextAsync(Path.Combine(outside, "kept.txt"), "kept").ConfigureAwait(false);
+            Directory.CreateSymbolicLink(Path.Combine(tree, "link"), outside);
+
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.IO.Directory.removeTree("tree") with | Error(message) -> Ashes.IO.print(message) | Ok(_) -> Ashes.IO.print("removed")""",
+                workingDirectory: tmpDir).ConfigureAwait(false);
+
+            result.Stdout.ShouldBe("removed\n");
+            File.Exists(Path.Combine(outside, "kept.txt")).ShouldBeTrue();
+            Directory.Exists(tree).ShouldBeFalse();
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_uncons_unicode_scalars()
     {
         if (!OperatingSystem.IsLinux())

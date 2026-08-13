@@ -595,6 +595,59 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
+    private (int, TypeRef) LowerFileReplace(Expr sourceArg, Expr destinationArg)
+    {
+        int sourceTemp = LowerHostPathArgument(sourceArg, "Ashes.IO.File.replace() source");
+        int destinationTemp = LowerHostPathArgument(destinationArg, "Ashes.IO.File.replace() destination");
+        int target = NewTemp();
+        Emit(new IrInst.FileReplace(target, sourceTemp, destinationTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
+    }
+
+    private (int, TypeRef) LowerDirectoryOperation(Expr pathArg, IntrinsicKind kind)
+    {
+        string operation = kind switch
+        {
+            IntrinsicKind.DirectoryEntries => "Ashes.IO.Directory.entries()",
+            IntrinsicKind.DirectoryCreateAll => "Ashes.IO.Directory.createAll()",
+            IntrinsicKind.DirectoryRemoveTree => "Ashes.IO.Directory.removeTree()",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        int pathTemp = LowerHostPathArgument(pathArg, operation);
+        int target = NewTemp();
+        Emit(kind switch
+        {
+            IntrinsicKind.DirectoryEntries => new IrInst.DirectoryEntries(target, pathTemp),
+            IntrinsicKind.DirectoryCreateAll => new IrInst.DirectoryCreateAll(target, pathTemp),
+            IntrinsicKind.DirectoryRemoveTree => new IrInst.DirectoryRemoveTree(target, pathTemp),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        });
+        TypeRef success = kind == IntrinsicKind.DirectoryEntries
+            ? new TypeRef.TList(new TypeRef.TStr())
+            : _resolvedTypes["Unit"];
+        return (target, CreateStringResultType(success));
+    }
+
+    private int LowerHostPathArgument(Expr argument, string operation)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(argument);
+        var (temp, type) = LowerExpr(argument);
+        TypeRef loweredType = Prune(type);
+        if (loweredType is not TypeRef.TNever)
+        {
+            if (loweredType is TypeRef.TVar)
+            {
+                Unify(loweredType, new TypeRef.TStr());
+            }
+            else if (loweredType is not TypeRef.TStr)
+            {
+                ReportDiagnostic(GetSpan(argument), $"{operation} expects Str but got {Pretty(loweredType)}.");
+            }
+        }
+
+        return temp;
+    }
+
     private (int, TypeRef) LowerEnvironmentDirectory(Expr unitArg, EnvironmentDirectoryKind kind)
     {
         using var diagnosticSpan = PushDiagnosticSpan(unitArg);
@@ -1450,6 +1503,7 @@ public sealed partial class Lowering
         IntrinsicKind.ParallelWithWorkers => 2,
         IntrinsicKind.FileWriteText => 2,
         IntrinsicKind.FileWriteBytes => 2,
+        IntrinsicKind.FileReplace => 2,
         IntrinsicKind.BytesGet => 2,
         IntrinsicKind.BytesIndexOf => 3,
         IntrinsicKind.BytesCompare => 2,
@@ -3349,6 +3403,28 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.FileExists,
             BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())), FileReadCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateFileReplaceBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileReplace,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))), FileWriteCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateDirectoryOperationBinding(IntrinsicKind kind)
+    {
+        TypeRef success = kind == IntrinsicKind.DirectoryEntries
+            ? new TypeRef.TList(new TypeRef.TStr())
+            : _resolvedTypes["Unit"];
+        string capability = kind == IntrinsicKind.DirectoryEntries
+            ? FileReadCapabilityName
+            : FileWriteCapabilityName;
+        return new Binding.Intrinsic(
+            kind,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(success)), capability)
         );
     }
 

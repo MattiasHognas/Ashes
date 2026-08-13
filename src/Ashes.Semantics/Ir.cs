@@ -881,6 +881,18 @@ public abstract record IrInst
     /// <param name="PathTemp">Temp holding the file path.</param>
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
 
+    /// <summary>Atomically renames one filesystem entry over another.</summary>
+    public sealed record FileReplace(int Target, int SourceTemp, int DestinationTemp) : IrInst;
+
+    /// <summary>Enumerates immediate directory entry basenames in deterministic order.</summary>
+    public sealed record DirectoryEntries(int Target, int PathTemp) : IrInst;
+
+    /// <summary>Recursively creates all missing directory components.</summary>
+    public sealed record DirectoryCreateAll(int Target, int PathTemp) : IrInst;
+
+    /// <summary>Recursively removes a filesystem tree without following symlinks.</summary>
+    public sealed record DirectoryRemoveTree(int Target, int PathTemp) : IrInst;
+
     /// <summary>Discovers a host directory from process state.</summary>
     public sealed record EnvironmentDirectory(int Target, EnvironmentDirectoryKind Kind) : IrInst;
 

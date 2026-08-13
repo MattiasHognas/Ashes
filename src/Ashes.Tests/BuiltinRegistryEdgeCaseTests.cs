@@ -127,6 +127,17 @@ public sealed class BuiltinRegistryEdgeCaseTests
     }
 
     [Test]
+    public void Ashes_directory_module_should_contain_host_tool_members()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.IO.Directory", out BuiltinRegistry.BuiltinModule module).ShouldBeTrue();
+
+        module.Members.Keys.Order(StringComparer.Ordinal).ShouldBe(["createAll", "entries", "removeTree"]);
+        module.Members.Values.ShouldAllBe(member => member.IsCallable && member.Arity == 1);
+        BuiltinRegistry.TryGetModule("Ashes.IO.File", out BuiltinRegistry.BuiltinModule file).ShouldBeTrue();
+        file.Members["replace"].Arity.ShouldBe(2);
+    }
+
+    [Test]
     public void TryGetType_should_return_true_for_unit()
     {
         BuiltinRegistry.TryGetType("Unit", out var type).ShouldBeTrue();
