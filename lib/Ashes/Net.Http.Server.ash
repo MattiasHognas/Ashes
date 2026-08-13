@@ -89,13 +89,13 @@ let charLowerCode c =
         else code)
 
 let recursive sameHeaderName a b =
-    match Ashes.Text.uncons(a) with
+    match Ashes.Text.unconsText(a) with
         | None ->
-            match Ashes.Text.uncons(b) with
+            match Ashes.Text.unconsText(b) with
                 | None -> true
                 | Some(_pair) -> false
         | Some((ca, ta)) ->
-            match Ashes.Text.uncons(b) with
+            match Ashes.Text.unconsText(b) with
                 | None -> false
                 | Some((cb, tb)) ->
                     if charLowerCode(ca) == charLowerCode(cb)

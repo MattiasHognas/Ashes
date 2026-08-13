@@ -386,6 +386,7 @@ public sealed partial class Lowering
             TypeRef.TFloat => ("Float", precAtom),
             TypeRef.TBigInt => ("BigInt", precAtom),
             TypeRef.TStr => ("Str", precAtom),
+            TypeRef.TRune => ("Rune", precAtom),
             TypeRef.TBytes => ("Bytes", precAtom),
             TypeRef.TBool => ("Bool", precAtom),
             TypeRef.TNever => ("Never", precAtom),

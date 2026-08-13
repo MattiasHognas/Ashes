@@ -1,8 +1,8 @@
 let recursive rpcStartsWith text prefix =
-    match Ashes.Text.uncons(prefix) with
+    match Ashes.Text.unconsText(prefix) with
         | None -> true
         | Some((ph, pt)) ->
-            match Ashes.Text.uncons(text) with
+            match Ashes.Text.unconsText(text) with
                 | None -> false
                 | Some((th, tt)) ->
                     if th == ph
@@ -13,17 +13,17 @@ let recursive rpcDrop text n =
     if n <= 0
     then text
     else
-        match Ashes.Text.uncons(text) with
+        match Ashes.Text.unconsText(text) with
             | None -> ""
             | Some((_h, t)) -> rpcDrop(t)(n - 1)
 
 let recursive rpcStrLen text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> 0
         | Some((_h, t)) -> 1 + rpcStrLen(t)
 
 let recursive rpcTrimStart text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> ""
         | Some((h, t)) ->
             if h == " "

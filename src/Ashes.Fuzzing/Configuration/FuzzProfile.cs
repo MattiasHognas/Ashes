@@ -56,10 +56,12 @@ internal sealed class FuzzProfileRegistry
         string[] defaultCombinations = allCombinations.Where(id =>
             !id.StartsWith("resource.", StringComparison.Ordinal)
             && !id.StartsWith("trait.", StringComparison.Ordinal)
-            && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)).ToArray();
+            && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)
+            && !id.StartsWith("unicode.", StringComparison.Ordinal)).ToArray();
         string[] traitCombinations = allCombinations.Where(id =>
             !id.StartsWith("resource.", StringComparison.Ordinal)
-            && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)).ToArray();
+            && !string.Equals(id, "match.pattern-language", StringComparison.Ordinal)
+            && !id.StartsWith("unicode.", StringComparison.Ordinal)).ToArray();
         Generation.AshesType[] scalarTypes = [Generation.AshesType.Int, Generation.AshesType.Bool, Generation.AshesType.Str, Generation.AshesType.Float, Generation.AshesType.BigInt, new Generation.AshesType.UInt(8), new Generation.AshesType.UInt(16), new Generation.AshesType.UInt(32), new Generation.AshesType.UInt(64)];
         Generation.AshesType[] aggregateTypes =
         [
@@ -87,6 +89,7 @@ internal sealed class FuzzProfileRegistry
             new Generation.AshesType.Task(Generation.AshesType.Str, new Generation.AshesType.Record("FuzzRecord")),
         ];
         Generation.AshesType[] allTypes = [.. scalarTypes, .. aggregateTypes];
+        Generation.AshesType[] allFeatureTypes = [.. allTypes, Generation.AshesType.Rune];
         Generation.AshesType[] observableTypes = allTypes.Where(IsObservable).ToArray();
         string[] observableCombinations = CompatibleCombinations(
             defaultCombinations,
@@ -146,6 +149,7 @@ internal sealed class FuzzProfileRegistry
         registry.Register(new FuzzProfile("capabilities", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "capability.deterministic-handler", "capability.nested-handlers", "capability.closure-match", "capability.result-operation", "capability.recursive-list" }, ["parse", "format", "semantic", "ir"], allTypes, 2, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("pattern-language", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "match.pattern-language" }, ["parse", "format", "semantic", "ir"], [Generation.AshesType.Int], 1, Defaults: Defaults(100, 80)));
         registry.Register(new FuzzProfile("resources", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "resource.deterministic-file-handle" }, ["parse", "format", "semantic", "ir"], scalarTypes, 2, ContextFlags: Generation.GenerationFlags.RecursionAllowed | Generation.GenerationFlags.ResourcesAllowed, Defaults: Defaults(50, 80), ResourceTypes: [Generation.AshesType.FileHandle]));
+        registry.Register(new FuzzProfile("unicode", allRules.ToHashSet(StringComparer.Ordinal), new HashSet<string>(StringComparer.Ordinal) { "unicode.rune-roundtrip" }, ["parse", "format", "semantic", "ir", "execution"], [Generation.AshesType.Rune], 2, Native: true, Defaults: Defaults(25, 50, compilerTimeout: 30)));
         // GenerateTraits is deliberately off here: smoke backs ci_quick (`just ci-quick`), the fast
         // pre-commit inner loop, budgeted for a fixed-seed pass on every commit. Trait declarations and
         // coherent implementations add real generation and validation cost (see the "traits" profile's
@@ -157,7 +161,7 @@ internal sealed class FuzzProfileRegistry
             allRules.ToHashSet(StringComparer.Ordinal),
             allCombinations.ToHashSet(StringComparer.Ordinal),
             ["parse", "format", "semantic", "ir"],
-            allTypes,
+            allFeatureTypes,
             1,
             ContextFlags: Generation.GenerationFlags.RecursionAllowed |
                 Generation.GenerationFlags.SuspensionAllowed |

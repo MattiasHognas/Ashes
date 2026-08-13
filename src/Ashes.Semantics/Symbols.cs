@@ -37,6 +37,7 @@ public sealed record TraitConstraint(TraitSymbol Trait, IReadOnlyList<TypeRef> T
         TypeRef.TFloat => "Float",
         TypeRef.TBigInt => "BigInt",
         TypeRef.TStr => "Str",
+        TypeRef.TRune => "Rune",
         TypeRef.TBytes => "Bytes",
         TypeRef.TBool => "Bool",
         TypeRef.TNever => "Never",

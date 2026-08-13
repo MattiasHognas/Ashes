@@ -786,6 +786,9 @@ public static class IrOptimizer
             IrInst.FileReadLine f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.FileClose f => f with { HandleTemp = R(f.HandleTemp) },
             IrInst.TextUncons t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.TextUnconsText t => t with { TextTemp = R(t.TextTemp) },
+            IrInst.RuneToText t => t with { RuneTemp = R(t.RuneTemp) },
+            IrInst.RuneFromInt t => t with { IntTemp = R(t.IntTemp) },
             IrInst.TextParseInt t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextParseFloat t => t with { TextTemp = R(t.TextTemp) },
             IrInst.TextFromInt t => t with { ValueTemp = R(t.ValueTemp) },
@@ -910,6 +913,9 @@ public static class IrOptimizer
             IrInst.CreateTlsCloseTask t => t with { SslTemp = R(t.SslTemp) },
             IrInst.AsyncAll aa => aa with { TaskListTemp = R(aa.TaskListTemp) },
             IrInst.AsyncRace ar => ar with { TaskListTemp = R(ar.TaskListTemp) },
+            IrInst.CreateScopedTask s => s with { ParentTaskTemp = R(s.ParentTaskTemp), ScopeTemp = R(s.ScopeTemp) },
+            IrInst.ForkScopedTask f => f with { OwnerTaskTemp = R(f.OwnerTaskTemp), TaskTemp = R(f.TaskTemp) },
+            IrInst.JoinScopedTask j => j with { HandleTemp = R(j.HandleTemp) },
             IrInst.Suspend s => s with
             {
                 StateStructTemp = R(s.StateStructTemp),
@@ -2018,6 +2024,9 @@ public static class IrOptimizer
         switch (inst)
         {
             case IrInst.TextUncons t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.TextUnconsText t: usedTemps.Add(t.TextTemp); break;
+            case IrInst.RuneToText t: usedTemps.Add(t.RuneTemp); break;
+            case IrInst.RuneFromInt t: usedTemps.Add(t.IntTemp); break;
             case IrInst.TextParseInt t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextParseFloat t: usedTemps.Add(t.TextTemp); break;
             case IrInst.TextFromInt t: usedTemps.Add(t.ValueTemp); break;
@@ -2173,6 +2182,9 @@ public static class IrOptimizer
             case IrInst.CreateTlsCloseTask t: usedTemps.Add(t.SslTemp); break;
             case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
             case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
+            case IrInst.CreateScopedTask s: usedTemps.Add(s.ParentTaskTemp); usedTemps.Add(s.ScopeTemp); break;
+            case IrInst.ForkScopedTask f: usedTemps.Add(f.OwnerTaskTemp); usedTemps.Add(f.TaskTemp); break;
+            case IrInst.JoinScopedTask j: usedTemps.Add(j.HandleTemp); break;
         }
     }
 

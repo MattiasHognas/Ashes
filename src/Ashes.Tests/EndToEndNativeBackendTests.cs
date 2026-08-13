@@ -611,15 +611,15 @@ public sealed class EndToEndNativeBackendTests
         // JSON stdlib and hand-written parsers hit this on every keyword/literal.
         var src = """
             let recursive skipWs text =
-                match Ashes.Text.uncons(text) with
+                match Ashes.Text.unconsText(text) with
                     | None -> ""
                     | Some((h, t)) -> if h == " " then skipWs(t) else text
 
             let recursive consumeExact expected txt =
-                match Ashes.Text.uncons(expected) with
+                match Ashes.Text.unconsText(expected) with
                     | None -> Ok(txt)
                     | Some((w, wr)) ->
-                        match Ashes.Text.uncons(txt) with
+                        match Ashes.Text.unconsText(txt) with
                             | None -> Error("end")
                             | Some((g, gr)) -> if g == w then consumeExact(wr)(gr) else Error("char")
 
@@ -651,7 +651,7 @@ public sealed class EndToEndNativeBackendTests
         // independent RC string inside the TCO loop.
         var src = """
             let recursive readWord acc text =
-                match Ashes.Text.uncons(text) with
+                match Ashes.Text.unconsText(text) with
                     | None -> (acc, "")
                     | Some((h, t)) -> if h == " " then (acc, t) else readWord(acc + h)(t)
             in match readWord("")("name value") with
@@ -676,7 +676,7 @@ public sealed class EndToEndNativeBackendTests
         // accumulator and the match-bound tail suffix are materialized out of the reused arena.
         var src = """
             let recursive readWord acc text =
-                match Ashes.Text.uncons(text) with
+                match Ashes.Text.unconsText(text) with
                     | None -> Error("eof")
                     | Some((h, t)) -> if h == " " then Ok((acc, t)) else readWord(acc + h)(t)
             in match readWord("")("name value ") with

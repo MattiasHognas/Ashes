@@ -17,6 +17,7 @@ public sealed partial class Lowering
             TypeExpr.Named { Name: "Int" } => new TypeRef.TInt(),
             TypeExpr.Named { Name: "Bool" } => new TypeRef.TBool(),
             TypeExpr.Named { Name: "Str" } => new TypeRef.TStr(),
+            TypeExpr.Named { Name: "Rune" } => new TypeRef.TRune(),
             TypeExpr.Named { Name: "Float" } => new TypeRef.TFloat(),
             TypeExpr.Named { Name: "BigInt" } => new TypeRef.TBigInt(),
             TypeExpr.Named n when _typeExprParamScope?.TryGetValue(n.Name, out var scoped) == true => scoped,
@@ -817,7 +818,7 @@ public sealed partial class Lowering
     // these is a concrete field type, never an implicit type parameter. (The full resolution list also
     // treats the declaring type's own name as concrete — handled per-declaration below.)
     private static readonly HashSet<string> PrimitivePayloadTypeNames =
-        new(StringComparer.Ordinal) { "Int", "Bool", "Str", "Bytes", "Float", "BigInt" };
+        new(StringComparer.Ordinal) { "Int", "Bool", "Str", "Bytes", "Float", "BigInt", "Rune" };
 
     private static IReadOnlyList<TypeParameter> InferImplicitTypeParameters(
         string declaringTypeName,

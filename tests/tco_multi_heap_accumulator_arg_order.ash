@@ -21,7 +21,7 @@ let recursive llen xs acc =
         | h :: t -> llen(t)(acc + 1)
 
 let recursive slen text acc =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> acc
         | Some((_h, tl)) -> slen(tl)(acc + 1)
 

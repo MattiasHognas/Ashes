@@ -462,7 +462,7 @@ public sealed partial class Lowering
         var pruned = Prune(type);
         return pruned switch
         {
-            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool => true,
             TypeRef.TStr or TypeRef.TBytes => true,
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 || Prune(list.Element) is TypeRef.TStr
@@ -551,9 +551,16 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
-    private (int, TypeRef) LowerTextUncons(
+    private (int, TypeRef) LowerTextUncons(Expr textArg, LoweredValueRequest request = default) =>
+        LowerTextUnconsCore(textArg, stringHead: false, request);
+
+    private (int, TypeRef) LowerTextUnconsText(Expr textArg, LoweredValueRequest request = default) =>
+        LowerTextUnconsCore(textArg, stringHead: true, request);
+
+    private (int, TypeRef) LowerTextUnconsCore(
         Expr textArg,
-        LoweredValueRequest request = default)
+        bool stringHead,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -577,13 +584,144 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextUncons(
-            target,
-            textTemp,
-            request.EmitsRuntime(
-                LoweredValueRuntimeRepresentation.TextUnconsResult)));
-        return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
+        bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.TextUnconsResult);
+        Emit(stringHead
+            ? new IrInst.TextUnconsText(target, textTemp, runtimeManaged)
+            : new IrInst.TextUncons(target, textTemp, runtimeManaged));
+        TypeRef headType = stringHead ? new TypeRef.TStr() : new TypeRef.TRune();
+        return (target, CreateMaybeType(new TypeRef.TTuple([headType, new TypeRef.TStr()])));
     }
+
+    private (int, TypeRef) LowerRuneToText(Expr argument, LoweredValueRequest request)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, "Ashes.Rune.toText()");
+        if (Prune(runeType) is TypeRef.TNever)
+        {
+            return (runeTemp, runeType);
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.RuneToText(target, runeTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerRuneToInt(Expr argument)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, "Ashes.Rune.toInt()");
+        return (runeTemp, Prune(runeType) is TypeRef.TNever ? runeType : new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerRuneFromInt(Expr argument, LoweredValueRequest request)
+    {
+        var (valueTemp, valueType) = LowerExpr(argument);
+        TypeRef pruned = Prune(valueType);
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not (TypeRef.TInt or TypeRef.TNever))
+        {
+            ReportDiagnostic(GetSpan(argument), $"Ashes.Rune.fromInt() expects Int but got {Pretty(pruned)}.");
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.RuneFromInt(target, valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Adt)));
+        return (target, CreateMaybeType(new TypeRef.TRune()));
+    }
+
+    private (int, TypeRef) LowerRunePredicate(Expr argument, IntrinsicKind kind)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, $"Ashes.Rune.{RunePredicateName(kind)}()");
+        if (Prune(runeType) is TypeRef.TNever)
+        {
+            return (runeTemp, runeType);
+        }
+
+        int result = kind switch
+        {
+            IntrinsicKind.RuneIsAsciiLetter => EmitRuneAsciiLetter(runeTemp),
+            IntrinsicKind.RuneIsAsciiDigit => EmitRuneRange(runeTemp, '0', '9'),
+            IntrinsicKind.RuneIsAsciiWhiteSpace => EmitRuneAsciiWhiteSpace(runeTemp),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+        return (result, new TypeRef.TBool());
+    }
+
+    private (int Temp, TypeRef Type) LowerRuneArgument(Expr argument, string label)
+    {
+        var lowered = LowerExpr(argument);
+        TypeRef pruned = Prune(lowered.Type);
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TRune());
+            pruned = new TypeRef.TRune();
+        }
+        else if (pruned is not (TypeRef.TRune or TypeRef.TNever))
+        {
+            ReportDiagnostic(GetSpan(argument), $"{label} expects Rune but got {Pretty(pruned)}.");
+        }
+
+        return (lowered.Temp, pruned);
+    }
+
+    private int EmitRuneRange(int runeTemp, int lower, int upper)
+    {
+        int lowerTemp = NewTemp();
+        int upperTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(lowerTemp, lower));
+        Emit(new IrInst.LoadConstInt(upperTemp, upper));
+        int atLeast = NewTemp();
+        int atMost = NewTemp();
+        Emit(new IrInst.CmpIntGe(atLeast, runeTemp, lowerTemp));
+        Emit(new IrInst.CmpIntLe(atMost, runeTemp, upperTemp));
+        int result = NewTemp();
+        Emit(new IrInst.AndInt(result, atLeast, atMost));
+        return result;
+    }
+
+    private int EmitRuneAsciiLetter(int runeTemp)
+    {
+        int upper = EmitRuneRange(runeTemp, 'A', 'Z');
+        int lower = EmitRuneRange(runeTemp, 'a', 'z');
+        int result = NewTemp();
+        Emit(new IrInst.OrInt(result, upper, lower));
+        return result;
+    }
+
+    private int EmitRuneAsciiWhiteSpace(int runeTemp)
+    {
+        int result = EmitRuneEquals(runeTemp, ' ');
+        foreach (int value in new[] { '\t', '\n', '\r' })
+        {
+            int equals = EmitRuneEquals(runeTemp, value);
+            int combined = NewTemp();
+            Emit(new IrInst.OrInt(combined, result, equals));
+            result = combined;
+        }
+
+        return result;
+    }
+
+    private int EmitRuneEquals(int runeTemp, int value)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(valueTemp, value));
+        int result = NewTemp();
+        Emit(new IrInst.CmpIntEq(result, runeTemp, valueTemp));
+        return result;
+    }
+
+    private static string RunePredicateName(IntrinsicKind kind) => kind switch
+    {
+        IntrinsicKind.RuneIsAsciiLetter => "isAsciiLetter",
+        IntrinsicKind.RuneIsAsciiDigit => "isAsciiDigit",
+        IntrinsicKind.RuneIsAsciiWhiteSpace => "isAsciiWhiteSpace",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
 
     // Ashes.Text.Regex.Native (PCRE2) primitives.
     // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Text.Regex (Regex.ash) wraps
@@ -995,7 +1133,16 @@ public sealed partial class Lowering
         {
             LoopResetEligible = loopResetEligible,
         });
-        return (taskTemp, taskType);
+        if (!coroutine.HasStructuredFork)
+        {
+            return (taskTemp, taskType);
+        }
+
+        int scopeTemp = NewTemp();
+        Emit(new IrInst.CreateTaskScope(scopeTemp, IsExplicit: false));
+        int scopedTaskTemp = NewTemp();
+        Emit(new IrInst.CreateScopedTask(scopedTaskTemp, taskTemp, scopeTemp));
+        return (scopedTaskTemp, taskType);
     }
 
     private int LowerCapturedStringTaskEmitEnvironment(IReadOnlyList<int> captureTemps)
@@ -1079,7 +1226,10 @@ public sealed partial class Lowering
     }
 
     /// <summary>A generated coroutine: its frame size and the label of its frame dropper, if any.</summary>
-    private sealed record CoroutineEmission(int StateStructSize, string? FrameDropperLabel);
+    private sealed record CoroutineEmission(
+        int StateStructSize,
+        string? FrameDropperLabel,
+        bool HasStructuredFork);
 
     private CoroutineEmission LowerCapturedStringTaskBuildCoroutine(
         IReadOnlyList<int> captureTemps,
@@ -1142,7 +1292,10 @@ public sealed partial class Lowering
             transformResult, captureTemps, enclosingTempFacts, placementResult.Instructions);
         RecordCoroutineFrameRepresentation(coroutineLabel, coroutineOrigin, frameSlots);
         string? frameDropperLabel = SynthesizeCoroutineFrameDropper(coroutineLabel, frameSlots, coroutineOrigin);
-        return new CoroutineEmission(transformResult.StateStructSize, frameDropperLabel);
+        return new CoroutineEmission(
+            transformResult.StateStructSize,
+            frameDropperLabel,
+            placementResult.Instructions.Any(instruction => instruction is IrInst.ForkScopedTask));
     }
 
     private void LowerCapturedStringTaskRestoreState(CapturedStringTaskSavedState saved)
@@ -1895,6 +2048,13 @@ public sealed partial class Lowering
         _inCoroutineBody = true;
         _ownershipPlacementContext = savedPlacement with { MayExecuteInsideCoroutine = true };
         var (valueTemp, valueType) = LowerExpr(valueArg);
+        if (ContainsStructuredScopeValue(valueType))
+        {
+            ReportDiagnostic(
+                GetSpan(valueArg),
+                "A JoinHandle cannot escape in the result of an async task.",
+                DiagnosticCodes.StructuredTaskEscape);
+        }
         _ownershipPlacementContext = savedPlacement;
         _inCoroutineBody = savedInCoroutineBody;
 
@@ -2045,6 +2205,13 @@ public sealed partial class Lowering
 
         var (valueTemp, valueType) = LowerExpr(valueArg);
         Unify(valueType, successType);
+        if (ContainsStructuredScopeValue(valueType))
+        {
+            ReportDiagnostic(
+                GetSpan(valueArg),
+                "A JoinHandle cannot escape in the result of an async task.",
+                DiagnosticCodes.StructuredTaskEscape);
+        }
         int okTemp = LowerSingleFieldConstructorValue(
             okConstructor, NormalizeCoroutineResultToRegion(valueTemp, valueType));
 
@@ -2606,9 +2773,29 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.TextUncons,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()]))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TRune(), new TypeRef.TStr()]))))
         );
     }
+
+    private Binding.Intrinsic CreateTextUnconsTextBinding() => new(
+        IntrinsicKind.TextUnconsText,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])))));
+
+    private Binding.Intrinsic CreateRuneToTextBinding() => new(
+        IntrinsicKind.RuneToText,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TStr())));
+
+    private Binding.Intrinsic CreateRuneToIntBinding() => new(
+        IntrinsicKind.RuneToInt,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TInt())));
+
+    private Binding.Intrinsic CreateRuneFromIntBinding() => new(
+        IntrinsicKind.RuneFromInt,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TRune()))));
+
+    private Binding.Intrinsic CreateRunePredicateBinding(IntrinsicKind kind) => new(
+        kind,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TBool())));
 
     private Binding.Intrinsic CreateTextParseIntBinding()
     {
@@ -3351,6 +3538,13 @@ public sealed partial class Lowering
             if (LookupOwnedValue(freeName) is { IsDropped: false } moved
                 && (moved.IsResource || moved.IsResourceBearing))
             {
+                if (moved.Type is not null && ContainsStructuredScopeValue(moved.Type))
+                {
+                    ReportDiagnostic(
+                        GetSpan(taskArg),
+                        $"Join handle '{freeName}' cannot escape its owning task scope.",
+                        DiagnosticCodes.StructuredTaskEscape);
+                }
                 moved.ReleaseKind = ResourceReleaseKind.Moved;
             }
         }
@@ -3396,6 +3590,160 @@ public sealed partial class Lowering
             IntrinsicKind.AsyncRace,
             new TypeScheme([new TypeVar(((TypeRef.TVar)e).Id, "E"), new TypeVar(((TypeRef.TVar)a).Id, "A")], new TypeRef.TFun(inputType, resultType))
         );
+    }
+
+    // Ashes.Task.scope : Task(E, A) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncScopeBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            throw new InvalidOperationException("Built-in Task type is not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncScope,
+            new TypeScheme(
+                [new TypeVar(e.Id, "E"), new TypeVar(a.Id, "A")],
+                new TypeRef.TFun(taskType, taskType)));
+    }
+
+    // Ashes.Task.fork : Task(E, A) -> Task(E, JoinHandle(E, A))
+    private Binding.Intrinsic CreateAsyncForkBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("JoinHandle", out var handleSymbol))
+        {
+            throw new InvalidOperationException("Structured task types are not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var handleType = new TypeRef.TNamedType(handleSymbol, [e, a]);
+        var resultType = new TypeRef.TNamedType(taskSymbol, [e, handleType]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncFork,
+            new TypeScheme(
+                [new TypeVar(e.Id, "E"), new TypeVar(a.Id, "A")],
+                new TypeRef.TFun(taskType, resultType)));
+    }
+
+    // Ashes.Task.join : JoinHandle(E, A) -> Task(E, A)
+    private Binding.Intrinsic CreateAsyncJoinBinding()
+    {
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("JoinHandle", out var handleSymbol))
+        {
+            throw new InvalidOperationException("Structured task types are not registered.");
+        }
+
+        var e = new TypeRef.TVar(_nextTypeVar++);
+        var a = new TypeRef.TVar(_nextTypeVar++);
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        var handleType = new TypeRef.TNamedType(handleSymbol, [e, a]);
+        return new Binding.Intrinsic(
+            IntrinsicKind.AsyncJoin,
+            new TypeScheme(
+                [new TypeVar(e.Id, "E"), new TypeVar(a.Id, "A")],
+                new TypeRef.TFun(handleType, taskType)));
+    }
+
+    private (int, TypeRef) LowerAsyncScope(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+        _usesAsync = true;
+        var (parentTaskTemp, parentTaskType) = LowerExpr(taskArg);
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: Task type is not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var e = NewTypeVar();
+        var a = NewTypeVar();
+        var taskType = new TypeRef.TNamedType(taskSymbol, [e, a]);
+        Unify(parentTaskType, taskType);
+        if (ContainsStructuredScopeValue(Prune(e)) || ContainsStructuredScopeValue(Prune(a)))
+        {
+            ReportDiagnostic(
+                GetSpan(taskArg),
+                "A JoinHandle cannot escape through Ashes.Task.scope().",
+                DiagnosticCodes.StructuredTaskEscape);
+        }
+
+        int scopeTemp = NewTemp();
+        Emit(new IrInst.CreateTaskScope(scopeTemp, IsExplicit: true));
+        int scopedTaskTemp = NewTemp();
+        Emit(new IrInst.CreateScopedTask(scopedTaskTemp, parentTaskTemp, scopeTemp));
+        return (scopedTaskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(e), Prune(a)]));
+    }
+
+    private (int, TypeRef) LowerAsyncFork(Expr taskArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(taskArg);
+        _usesAsync = true;
+        var (taskTemp, taskType) = LowerExpr(taskArg);
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("JoinHandle", out var handleSymbol))
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Internal error: structured task types are not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        if (!_inCoroutineBody)
+        {
+            ReportDiagnostic(GetSpan(taskArg), "Ashes.Task.fork() must be used inside an async task.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var e = NewTypeVar();
+        var a = NewTypeVar();
+        Unify(taskType, new TypeRef.TNamedType(taskSymbol, [e, a]));
+        int ownerTaskTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(ownerTaskTemp, 0));
+        int resultTaskTemp = NewTemp();
+        Emit(new IrInst.ForkScopedTask(resultTaskTemp, ownerTaskTemp, taskTemp));
+        var handleType = new TypeRef.TNamedType(handleSymbol, [Prune(e), Prune(a)]);
+        return (resultTaskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(e), handleType]));
+    }
+
+    private (int, TypeRef) LowerAsyncJoin(Expr handleArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(handleArg);
+        _usesAsync = true;
+        CheckUseAfterDrop(handleArg);
+        var (handleTemp, handleType) = LowerExpr(handleArg);
+        if (!_typeSymbols.TryGetValue("Task", out var taskSymbol)
+            || !_typeSymbols.TryGetValue("JoinHandle", out var handleSymbol))
+        {
+            ReportDiagnostic(GetSpan(handleArg), "Internal error: structured task types are not registered.");
+            return ReturnNeverWithDummyTemp();
+        }
+
+        var e = NewTypeVar();
+        var a = NewTypeVar();
+        Unify(handleType, new TypeRef.TNamedType(handleSymbol, [e, a]));
+        MarkResourceArgMoved(handleArg);
+        int taskTemp = NewTemp();
+        Emit(new IrInst.JoinScopedTask(taskTemp, handleTemp));
+        return (taskTemp, new TypeRef.TNamedType(taskSymbol, [Prune(e), Prune(a)]));
+    }
+
+    private bool ContainsStructuredScopeValue(TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        return pruned switch
+        {
+            TypeRef.TNamedType named when string.Equals(named.Symbol.Name, "JoinHandle", StringComparison.Ordinal) => true,
+            TypeRef.TNamedType named => named.TypeArgs.Any(ContainsStructuredScopeValue),
+            TypeRef.TTuple tuple => tuple.Elements.Any(ContainsStructuredScopeValue),
+            TypeRef.TList list => ContainsStructuredScopeValue(list.Element),
+            TypeRef.TFun function => ContainsStructuredScopeValue(function.Arg) || ContainsStructuredScopeValue(function.Ret),
+            _ => false,
+        };
     }
 
     // --- Ashes.Byte lowering methods ---

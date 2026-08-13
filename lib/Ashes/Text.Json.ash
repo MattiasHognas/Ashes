@@ -10,7 +10,7 @@ type Json(B, N, F, S) =
     | JsonObjectEnd
 
 let recursive skipWs text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> ""
         | Some((h, t)) ->
             if h == " "
@@ -27,10 +27,10 @@ let recursive skipWs text =
                         else text
 
 let recursive consumeExact expected txt =
-    match Ashes.Text.uncons(expected) with
+    match Ashes.Text.unconsText(expected) with
         | None -> Ok(txt)
         | Some((want, wantRest)) ->
-            match Ashes.Text.uncons(txt) with
+            match Ashes.Text.unconsText(txt) with
                 | None -> Error("unexpected end of input")
                 | Some((got, gotRest)) ->
                     if got == want
@@ -38,7 +38,7 @@ let recursive consumeExact expected txt =
                     else Error("unexpected character: " + got)
 
 let recursive parseStrBody acc text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> Error("unterminated string")
         | Some((h, t)) ->
             if h == "\""
@@ -46,7 +46,7 @@ let recursive parseStrBody acc text =
             else
                 if h == "\\"
                 then
-                    match Ashes.Text.uncons(t) with
+                    match Ashes.Text.unconsText(t) with
                         | None -> Error("unterminated escape")
                         | Some((esc, t2)) ->
                             if esc == "\""
@@ -95,7 +95,7 @@ let noEscapeString text =
                         else Some((Ashes.Byte.subText(tb)(0)(q), Ashes.Byte.subView(tb)(q + 1)(tlen - q - 1))))
 
 let parseQuotedStr text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> Error("expected '\"'")
         | Some((h, t)) ->
             if h == "\""
@@ -106,7 +106,7 @@ let parseQuotedStr text =
             else Error("expected '\"' to open string")
 
 let recursive takeNum acc text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> (acc, "")
         | Some((h, t)) ->
             match h with
@@ -128,7 +128,7 @@ let recursive takeNum acc text =
                 | _ -> (acc, text)
 
 let recursive hasFloatMark text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> false
         | Some((h, t)) ->
             if h == "."
@@ -144,7 +144,7 @@ let recursive hasFloatMark text =
 let recursive parseValue text =
     (let trimmed = skipWs(text)
     in
-        match Ashes.Text.uncons(trimmed) with
+        match Ashes.Text.unconsText(trimmed) with
             | None -> Error("unexpected end of input")
             | Some((h, rest)) ->
                 if h == "n"
@@ -176,7 +176,7 @@ let recursive parseValue text =
                                     let recursive parseArr cur =
                                         let tc = skipWs(cur)
                                         in
-                                            match Ashes.Text.uncons(tc) with
+                                            match Ashes.Text.unconsText(tc) with
                                                 | None -> Error("unterminated array")
                                                 | Some((c, ctail)) ->
                                                     if c == "]"
@@ -187,7 +187,7 @@ let recursive parseValue text =
                                                             | Ok((elem, afterElem)) ->
                                                                 let ta = skipWs(afterElem)
                                                                 in
-                                                                    match Ashes.Text.uncons(ta) with
+                                                                    match Ashes.Text.unconsText(ta) with
                                                                         | None -> Error("unterminated array")
                                                                         | Some((sep, sepTail)) ->
                                                                             if sep == "]"
@@ -206,7 +206,7 @@ let recursive parseValue text =
                                         let recursive parseObj cur =
                                             let tc = skipWs(cur)
                                             in
-                                                match Ashes.Text.uncons(tc) with
+                                                match Ashes.Text.unconsText(tc) with
                                                     | None -> Error("unterminated object")
                                                     | Some((c, ctail)) ->
                                                         if c == "}"
@@ -219,7 +219,7 @@ let recursive parseValue text =
                                                                     | Ok((key, afterKey)) ->
                                                                         let tak = skipWs(afterKey)
                                                                         in
-                                                                            match Ashes.Text.uncons(tak) with
+                                                                            match Ashes.Text.unconsText(tak) with
                                                                                 | None -> Error("expected ':' after key")
                                                                                 | Some((colon, afterColon)) ->
                                                                                     if colon == ":"
@@ -229,7 +229,7 @@ let recursive parseValue text =
                                                                                             | Ok((v, afterVal)) ->
                                                                                                 let tav = skipWs(afterVal)
                                                                                                 in
-                                                                                                    match Ashes.Text.uncons(tav) with
+                                                                                                    match Ashes.Text.unconsText(tav) with
                                                                                                         | None -> Error("unterminated object")
                                                                                                         | Some((sep, sepTail)) ->
                                                                                                             if sep == "}"
@@ -271,7 +271,7 @@ let parse text =
             else Error("trailing input after JSON value")
 
 let recursive escStr acc text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> acc
         | Some((h, t)) ->
             if h == "\""

@@ -61,7 +61,8 @@ Canonical built-ins available today include:
 - `Ashes.IO.File.readText(path)` returning `Result(Str, Str)`
 - `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)`
 - `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)`
-- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))`
+- `Ashes.Text.uncons(text)` returning `Maybe((Rune, Str))`
+- `Ashes.Rune.toText(rune)` returning `Str`
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)`
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)`
 - `Ashes.Text.fromInt(value)` returning `Str`
@@ -1928,7 +1929,7 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.IO.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
 - `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
 - `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
-- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))` - split one Unicode scalar from the front of a string.
+- `Ashes.Text.uncons(text)` returning `Maybe((Rune, Str))` - split one Unicode scalar from the front of a string.
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)` - parse a decimal integer with optional leading `-`.
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)` - parse a decimal float with optional fraction and exponent.
 - `Ashes.Text.fromInt(value)` returning `Str` - format an integer as decimal text.
@@ -1988,10 +1989,46 @@ Rules:
 `Ashes.IO.readLine` has type `Unit -> Maybe(Str)` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
 
-`Ashes.Text.uncons` has type `Str -> Maybe((Str, Str))` and returns `None` for
-the empty string. For non-empty strings it returns `Some((head, tail))`, where
-`head` is one Unicode scalar value encoded as a `Str` and `tail` is the
-remaining suffix.
+`Rune` is an inline copy type representing exactly one Unicode scalar value. It occupies one machine
+word containing the scalar's integer code point and never owns heap storage. A rune is not a grapheme
+cluster: a user-perceived character may contain several runes.
+
+Rune literals use single quotes. A literal must decode to exactly one scalar:
+
+```ash
+let latin = 'A'
+let emoji = '😀'
+let newline = '\n'
+let escaped = '\u{1F600}'
+```
+
+The escapes `\\`, `\'`, `\n`, `\r`, `\t`, `\0`, and `\u{H...}` are supported. A Unicode escape
+contains one to six hexadecimal digits. Empty and multi-scalar literals, unescaped line breaks,
+surrogate values U+D800–U+DFFF, and values above U+10FFFF are compile-time errors. Canonical
+formatting uses a printable scalar directly, the short escape for the listed control characters,
+and uppercase `\u{...}` hexadecimal for other non-printable scalars.
+
+`Ashes.Text.uncons` has type `Str -> Maybe((Rune, Str))` and returns `None` for the empty string. For
+non-empty strings it returns `Some((head, tail))`, where `head` is the first scalar and `tail` is the
+remaining suffix. Strings produced by Ashes APIs are valid UTF-8. If byte-level operations or an
+external function nevertheless create malformed UTF-8, `uncons` returns U+FFFD and consumes one
+invalid byte, so repeated traversal is total and always progresses. `Text.unconsText` is the
+one-release compatibility helper with the previous `Str -> Maybe((Str, Str))` result. The previous
+string-typed predicates remain for that release under the explicit names `Text.isLetterText`,
+`Text.isDigitText`, and `Text.isWhiteSpaceText`; the old ambiguous names are removed.
+
+The `Ashes.Rune` module provides:
+
+- `toText : Rune -> Str`, UTF-8 encoding of the scalar;
+- `toInt : Rune -> Int`, the exact code point;
+- `fromInt : Int -> Maybe(Rune)`, returning `None` for surrogates, negative values, and values above
+  U+10FFFF;
+- `isAsciiLetter : Rune -> Bool`, `isAsciiDigit : Rune -> Bool`, and
+  `isAsciiWhiteSpace : Rune -> Bool` for the deliberately ASCII-scoped classifications.
+
+`Rune` has built-in `Eq`, `Ord`, `Show`, and `Hash` evidence. Ordering and hashing use the scalar's
+integer code point; `Show` produces the same one-scalar text as `Rune.toText`. `Rune` deliberately has
+no `Default` evidence because there is no canonical default scalar.
 
 `Ashes.Text.parseInt` has type `Str -> Result(Str, Int)`. It accepts an
 optional leading `-` followed by decimal digits. Malformed input and overflow
@@ -2119,9 +2156,9 @@ zero, or a positive integer.
 - `Ashes.Text.contains : Str -> Str -> Bool`
 - `Ashes.Text.split : Str -> Str -> List<Str>`
 - `Ashes.Text.trim : Str -> Str`
-- `Ashes.Text.isLetter : Str -> Bool`
-- `Ashes.Text.isDigit : Str -> Bool`
-- `Ashes.Text.isWhiteSpace : Str -> Bool`
+- `Ashes.Rune.isAsciiLetter : Rune -> Bool`
+- `Ashes.Rune.isAsciiDigit : Rune -> Bool`
+- `Ashes.Rune.isAsciiWhiteSpace : Rune -> Bool`
 
 `Ashes.Test` currently exports:
 
@@ -2653,6 +2690,9 @@ Desugars to:
 | `Ashes.Task.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
 | `Ashes.Task.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
 | `Ashes.Task.spawn(task)` | `Task(E, A) -> Unit` |
+| `Ashes.Task.scope(task)` | `Task(E, A) -> Task(E, A)` |
+| `Ashes.Task.fork(task)` | `Task(E, A) -> Task(E, JoinHandle(E, A))` |
+| `Ashes.Task.join(handle)` | `JoinHandle(E, A) -> Task(E, A)` |
 
 `Ashes.Task.spawn(task)` detaches a task for fire-and-forget execution: the task advances
 cooperatively whenever any `Ashes.Task.run` drive is blocked waiting (on a socket or timer), and
@@ -2662,7 +2702,42 @@ them, so the task must release its own resources. Detached tasks still in flight
 `run` completes (and the program exits) are abandoned. This is the concurrency primitive behind
 `Ashes.Net.Tcp.Server.serve`'s concurrent connection handling.
 
-#### 19.6.1 Ashes.Task.sleep
+#### 19.6.1 Structured task scopes
+
+Every `async` activation creates one implicit task group. `fork(task)` registers its child with the
+nearest active group and returns a task whose successful value is an affine `JoinHandle(E, A)`.
+`join(handle)` consumes the handle exactly once and returns a task with the child's original result.
+A second join or any later use of that handle is `ASH008`, the ordinary use-after-move resource
+diagnostic. Because the compiler supplies the active group, user code cannot pass the wrong scope.
+
+`Task.scope(task)` optionally introduces a shorter nested boundary inside an enclosing async task.
+It is useful when a parent should finish or cancel one group of children and then continue. It
+preserves the wrapped task's capability row and does not expose a scope token.
+
+Scope-bound values have an additional non-escape rule, checked after ordinary type inference:
+
+- `JoinHandle(E, A)` may not occur in the owning task's error or success result, including inside an
+  aggregate or closure;
+- a task passed to detached `Ashes.Task.spawn` may not capture a join handle; and
+- a nested scope owns distinct handles that cannot escape into its parent.
+
+An escaping value is `ASH043`. This is a semantic lifetime check because the ordinary HM type does
+not carry a source-visible scope parameter.
+
+Leaving a scope is deterministic. After the parent task produces a result, the runtime cancels every
+unjoined child in fork order, drains all children, runs each task-frame ownership descriptor, and only
+then exposes the parent result. A joined child is drained by `join` and is not cancelled again. If an
+unjoined child has already failed, the first such error in fork order becomes the scope result after
+the remaining children are cancelled and drained. If the parent fails, its error wins and all
+children are cancelled before it propagates. Cancellation recursively enters nested scopes and is
+observed only when a task suspends at an existing scheduler wait point.
+
+An empty scope is equivalent to its parent task. `all` and `race` remain task combinators: they may be
+forked as one child, and their existing cancellation rules run inside that child. `spawn` remains the
+explicit detached primitive for infrastructure; ordinary application concurrency should use
+`scope`, `fork`, and `join`.
+
+#### 19.6.2 Ashes.Task.sleep
 
 `Ashes.Task.sleep(ms)` creates a task that suspends for the given
 number of milliseconds, then completes with `0`:
@@ -2677,7 +2752,7 @@ number of milliseconds, then completes with `0`:
 - On Linux, `sleep` uses the `nanosleep` syscall.
 - On Windows, `sleep` uses the `Sleep` kernel32 function.
 
-#### 19.6.2 Ashes.Task.all
+#### 19.6.3 Ashes.Task.all
 
 `Ashes.Task.all(tasks)` takes a list of tasks and runs them all,
 collecting results into a list in the original order:
@@ -2695,7 +2770,7 @@ collecting results into a list in the original order:
 - Results are collected in the same order as the input list.
 - An empty input list produces an empty result list.
 
-#### 19.6.3 Ashes.Task.race
+#### 19.6.4 Ashes.Task.race
 
 `Ashes.Task.race(tasks)` takes a list of tasks and returns the result
 of the first task to complete:

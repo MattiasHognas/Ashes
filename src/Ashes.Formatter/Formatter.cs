@@ -886,7 +886,7 @@ public static class Formatter
     {
         return e switch
         {
-            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
+            Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.Var or Expr.QualifiedVar => true,
             Expr.Add a => IsSingleLine(a.Left, preferPipelines) && IsSingleLine(a.Right, preferPipelines),
             Expr.Subtract sub => IsSingleLine(sub.Left, preferPipelines) && IsSingleLine(sub.Right, preferPipelines),
             Expr.Multiply mul => IsSingleLine(mul.Left, preferPipelines) && IsSingleLine(mul.Right, preferPipelines),
@@ -1387,6 +1387,7 @@ public static class Formatter
             case Pattern.Wildcard: sb.Append('_'); break;
             case Pattern.IntLit integer: sb.Append(integer.Value); break;
             case Pattern.StrLit text: sb.Append('"').Append(EscapeString(text.Value)).Append('"'); break;
+            case Pattern.RuneLit rune: sb.Append(FormatRuneLiteral(rune.Value)); break;
             case Pattern.BoolLit boolean: sb.Append(boolean.Value ? "true" : "false"); break;
             case Pattern.Cons cons: WriteConsPattern(sb, cons); break;
             case Pattern.Tuple tuple: WritePatternSequence(sb, tuple.Elements, "(", ", ", ")", 0); break;
@@ -1498,6 +1499,10 @@ public static class Formatter
                 sb.Append('"');
                 return true;
 
+            case Expr.RuneLit rune:
+                sb.Append(FormatRuneLiteral(rune.Value));
+                return true;
+
             case Expr.BoolLit b:
                 sb.Append(b.Value ? "true" : "false");
                 return true;
@@ -1515,6 +1520,22 @@ public static class Formatter
             default:
                 return false;
         }
+    }
+
+    private static string FormatRuneLiteral(int value)
+    {
+        string body = value switch
+        {
+            '\\' => "\\\\",
+            '\'' => "\\'",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            0 => "\\0",
+            _ when value >= 0x20 && value != 0x7F => char.ConvertFromUtf32(value),
+            _ => $"\\u{{{value:X}}}",
+        };
+        return $"'{body}'";
     }
 
     /// <summary>Writes the remaining structured forms: collections, calls, records, and keyword prefixes.</summary>

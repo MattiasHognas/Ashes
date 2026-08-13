@@ -779,7 +779,8 @@ public sealed partial class Lowering
 
         (leftPruned, rightPruned) = ResolveEqualityOperandTypes(leftPruned, rightPruned);
 
-        if (leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+        if ((leftPruned is TypeRef.TInt && rightPruned is TypeRef.TInt)
+            || (leftPruned is TypeRef.TRune && rightPruned is TypeRef.TRune))
         {
             int target = NewTemp();
             Emit(negate ? new IrInst.CmpIntNe(target, leftTemp, rightTemp) : new IrInst.CmpIntEq(target, leftTemp, rightTemp));
@@ -830,6 +831,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TRune => new TypeRef.TRune(),
                 TypeRef.TBool => new TypeRef.TBool(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
@@ -844,6 +846,7 @@ public sealed partial class Lowering
             {
                 TypeRef.TStr => new TypeRef.TStr(),
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TRune => new TypeRef.TRune(),
                 TypeRef.TBool => new TypeRef.TBool(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
@@ -1019,7 +1022,8 @@ public sealed partial class Lowering
     {
         var (resolvedLeft, resolvedRight) = ResolveNumericOperandTypes(leftType, rightType);
 
-        if (resolvedLeft is TypeRef.TInt && resolvedRight is TypeRef.TInt)
+        if ((resolvedLeft is TypeRef.TInt && resolvedRight is TypeRef.TInt)
+            || (resolvedLeft is TypeRef.TRune && resolvedRight is TypeRef.TRune))
         {
             int target = NewTemp();
             Emit(intFactory(target, leftTemp, rightTemp));
@@ -1077,6 +1081,7 @@ public sealed partial class Lowering
             TypeRef resolved = right switch
             {
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TRune => new TypeRef.TRune(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()
@@ -1090,6 +1095,7 @@ public sealed partial class Lowering
             TypeRef resolved = left switch
             {
                 TypeRef.TFloat => new TypeRef.TFloat(),
+                TypeRef.TRune => new TypeRef.TRune(),
                 TypeRef.TBigInt => new TypeRef.TBigInt(),
                 TypeRef.TUInt u => (TypeRef)new TypeRef.TUInt(u.Bits),
                 _ => new TypeRef.TInt()

@@ -45,6 +45,7 @@ internal sealed class CombinationRegistry
         registry.Register(new AsyncClosureMatchAcrossAwaitTemplate());
         registry.Register(new AsyncSpawnSharedValueTemplate());
         registry.Register(new AsyncTaskResultReuseTemplate());
+        registry.Register(new StructuredConcurrencyTemplate());
         registry.Register(new EscapingClosureTemplate());
         registry.Register(new MultipleClosuresTemplate());
         registry.Register(new ListHeadSharingTemplate());
@@ -70,6 +71,7 @@ internal sealed class CombinationRegistry
         registry.Register(new LoopCarriedAdtTemplate());
         registry.Register(new TraitConstrainedClosureTemplate());
         registry.Register(new TraitDerivedOperatorSharingTemplate());
+        registry.Register(new RuneRoundTripTemplate());
         return registry;
     }
 }

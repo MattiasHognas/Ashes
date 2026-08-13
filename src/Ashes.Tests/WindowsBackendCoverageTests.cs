@@ -491,7 +491,7 @@ public sealed class WindowsBackendCoverageTests
         }
 
         var result = await CompileRunWithWindowsLlvmAsync(
-            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(head + "|" + tail)""").ConfigureAwait(false);
+            """match Ashes.Text.uncons("é!") with | None -> Ashes.IO.print("empty") | Some((head, tail)) -> Ashes.IO.print(Ashes.Rune.toText(head) + "|" + tail)""").ConfigureAwait(false);
         result.Stdout.ShouldBe("é|!\n");
     }
 

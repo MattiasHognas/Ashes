@@ -483,6 +483,7 @@ public sealed class CoverageExpansionTests
         AshesType.Int,
         AshesType.Bool,
         AshesType.Str,
+        AshesType.Rune,
         AshesType.Float,
         AshesType.BigInt,
         new AshesType.UInt(8),

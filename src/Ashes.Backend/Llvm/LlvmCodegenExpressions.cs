@@ -2280,6 +2280,124 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
+    /// Drives a structured scope. Phase 0 schedules the callback's parent task. Once that parent
+    /// wakes the composite, phase 1 cancels and drains every remaining child in fork order and
+    /// preserves the parent's result, except that the first completed unjoined child failure wins
+    /// when the parent succeeded.
+    /// </summary>
+    private readonly record struct ScopeStepLayout(
+        LlvmValueHandle StatusSlot, LlvmValueHandle ResultSlot, LlvmValueHandle CursorSlot,
+        LlvmBasicBlockHandle StartBlock, LlvmBasicBlockHandle FinishInitBlock,
+        LlvmBasicBlockHandle LoopBlock, LlvmBasicBlockHandle ChildBlock,
+        LlvmBasicBlockHandle CancelBlock, LlvmBasicBlockHandle InspectBlock,
+        LlvmBasicBlockHandle ReplaceBlock, LlvmBasicBlockHandle NextBlock,
+        LlvmBasicBlockHandle CompleteBlock, LlvmBasicBlockHandle DoneBlock);
+
+    private static ScopeStepLayout EmitScopeStepPrologue(LlvmCodegenState state, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        return new ScopeStepLayout(
+            LlvmApi.BuildAlloca(builder, state.I64, prefix + "_status"),
+            LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result"),
+            LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cursor"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_start"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_finish_init"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_loop"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_child"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_cancel"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_inspect"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_replace"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_next"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_complete"),
+            LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_done"));
+    }
+
+    private static LlvmValueHandle EmitStepScopeComposite(LlvmCodegenState state, LlvmValueHandle task, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        ScopeStepLayout layout = EmitScopeStepPrologue(state, prefix);
+        LlvmApi.BuildStore(builder, zero, layout.StatusSlot);
+        LlvmApi.BuildCondBr(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+                LoadMemory(state, task, TaskStructLayout.WaitData0, prefix + "_phase"), zero, prefix + "_is_start"),
+            layout.StartBlock, layout.FinishInitBlock);
+        EmitScopeStepStart(state, task, layout, prefix);
+        EmitScopeStepFinish(state, task, layout, prefix);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.DoneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, layout.StatusSlot, prefix + "_status_result");
+    }
+
+    private static void EmitScopeStepStart(LlvmCodegenState state, LlvmValueHandle task, in ScopeStepLayout layout, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.PositionBuilderAtEnd(builder, layout.StartBlock);
+        StoreMemory(state, task, TaskStructLayout.WaitData0, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_phase_finish");
+        LlvmValueHandle parent = LoadMemory(state, task, TaskStructLayout.AwaitedTask, prefix + "_parent");
+        StoreMemory(state, parent, TaskStructLayout.Waiter, task, prefix + "_parent_waiter");
+        StoreMemory(state, parent, TaskStructLayout.ArenaOwner,
+            LoadMemory(state, task, TaskStructLayout.ArenaOwner, prefix + "_owner"), prefix + "_parent_owner");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [parent], prefix + "_enqueue_parent");
+        LlvmApi.BuildBr(builder, layout.DoneBlock);
+    }
+
+    private static void EmitScopeStepFinish(LlvmCodegenState state, LlvmValueHandle task, in ScopeStepLayout layout, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.FinishInitBlock);
+        LlvmApi.BuildStore(builder, LoadMemory(state, task, TaskStructLayout.ResultSlot, prefix + "_parent_result"), layout.ResultSlot);
+        LlvmValueHandle scope = LoadMemory(state, task, TaskStructLayout.IoArg1, prefix + "_scope");
+        LlvmApi.BuildStore(builder, LoadMemory(state, scope, 0, prefix + "_head"), layout.CursorSlot);
+        LlvmApi.BuildBr(builder, layout.LoopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.LoopBlock);
+        LlvmValueHandle node = LlvmApi.BuildLoad2(builder, state.I64, layout.CursorSlot, prefix + "_node");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, node, zero, prefix + "_children_done"), layout.CompleteBlock, layout.ChildBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.ChildBlock);
+        LlvmValueHandle child = LoadMemory(state, node, 0, prefix + "_child_task");
+        LlvmValueHandle childDone = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            LoadMemory(state, child, TaskStructLayout.StateIndex, prefix + "_child_state"),
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_child_done");
+        LlvmApi.BuildCondBr(builder, childDone, layout.InspectBlock, layout.CancelBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.CancelBlock);
+        _ = EmitNetworkingRuntimeCall(state, "ashes_cancel_task", [child], prefix + "_cancel_child");
+        LlvmApi.BuildBr(builder, layout.InspectBlock);
+        EmitScopeStepInspect(state, node, child, layout, prefix);
+
+        LlvmApi.PositionBuilderAtEnd(builder, layout.CompleteBlock);
+        StoreMemory(state, scope, 24, LlvmApi.ConstInt(state.I64, 1, 0), prefix + "_closed");
+        StoreMemory(state, task, TaskStructLayout.ResultSlot,
+            LlvmApi.BuildLoad2(builder, state.I64, layout.ResultSlot, prefix + "_final_result"), prefix + "_store_result");
+        StoreMemory(state, task, TaskStructLayout.StateIndex,
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1), prefix + "_completed");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), layout.StatusSlot);
+        LlvmApi.BuildBr(builder, layout.DoneBlock);
+    }
+
+    private static void EmitScopeStepInspect(LlvmCodegenState state, LlvmValueHandle node, LlvmValueHandle child, in ScopeStepLayout layout, string prefix)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.InspectBlock);
+        LlvmValueHandle childResult = LoadMemory(state, child, TaskStructLayout.ResultSlot, prefix + "_child_result");
+        LlvmValueHandle currentResult = LlvmApi.BuildLoad2(builder, state.I64, layout.ResultSlot, prefix + "_current_result");
+        LlvmValueHandle shouldReplace = LlvmApi.BuildAnd(builder,
+            LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadMemory(state, node, 8, prefix + "_joined"), zero, prefix + "_unjoined"),
+            LlvmApi.BuildAnd(builder,
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LoadAdtTag(state, childResult, prefix + "_child_tag"), zero, prefix + "_child_failed"),
+                LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, LoadAdtTag(state, currentResult, prefix + "_current_tag"), zero, prefix + "_current_ok"),
+                prefix + "_failure_wins"), prefix + "_replace_result");
+        LlvmApi.BuildCondBr(builder, shouldReplace, layout.ReplaceBlock, layout.NextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.ReplaceBlock);
+        LlvmApi.BuildStore(builder, childResult, layout.ResultSlot);
+        LlvmApi.BuildBr(builder, layout.NextBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, layout.NextBlock);
+        LlvmApi.BuildStore(builder, LoadMemory(state, node, 16, prefix + "_next_node"), layout.CursorSlot);
+        LlvmApi.BuildBr(builder, layout.LoopBlock);
+    }
+
+    /// <summary>
     /// Body of <c>ashes_scheduler_run(mainTask)</c>: the flat run-queue loop. Seeds the queue with the
     /// main task, then repeatedly pops a ready task and steps it once. A leaf that completes, or a
     /// coroutine that returns COMPLETED, delivers its result to its <c>Waiter</c> (clearing the waiter's
@@ -2309,8 +2427,10 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle ReapBlock,
         LlvmBasicBlockHandle LeafCoroBlock,
         LlvmBasicBlockHandle CompositeBlock,
+        LlvmBasicBlockHandle CompositeKindBlock,
         LlvmBasicBlockHandle AllStepBlock,
         LlvmBasicBlockHandle RaceStepBlock,
+        LlvmBasicBlockHandle ScopeStepBlock,
         LlvmBasicBlockHandle CompAfterBlock,
         LlvmBasicBlockHandle AllWaiterBlock,
         LlvmBasicBlockHandle NotAllWaiterBlock,
@@ -2345,8 +2465,14 @@ internal static partial class LlvmCodegen
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_reap"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_leaf_coro"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_composite"),
+            state.UsesStructuredConcurrency
+                ? LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_composite_kind")
+                : default,
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_all_step"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_race_step"),
+            state.UsesStructuredConcurrency
+                ? LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_scope_step")
+                : default,
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_comp_after"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_all_waiter"),
             LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "sched_not_all_waiter"),
@@ -2395,8 +2521,8 @@ internal static partial class LlvmCodegen
         SchedulerRunLayout layout = EmitSchedulerRunPrologue(state);
         LlvmApi.BuildBr(builder, layout.LoopBlock);
 
-        (LlvmValueHandle task, LlvmValueHandle isRaceComposite) = EmitSchedulerLoopDispatch(state, mainTask, taskSlot, layout);
-        EmitSchedulerCompositePhase(state, task, isRaceComposite, layout);
+        (LlvmValueHandle task, LlvmValueHandle isRaceComposite, LlvmValueHandle isScopeComposite) = EmitSchedulerLoopDispatch(state, mainTask, taskSlot, layout);
+        EmitSchedulerCompositePhase(state, task, isRaceComposite, isScopeComposite, layout);
         EmitSchedulerLeafCoroPhase(state, task, layout);
         EmitSchedulerSuspendPhase(state, task, layout);
         EmitSchedulerCompletePhase(state, taskSlot, layout);
@@ -2459,7 +2585,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, layout.AfterDrainBlock);
     }
 
-    private static (LlvmValueHandle Task, LlvmValueHandle IsRaceComposite) EmitSchedulerLoopDispatch(LlvmCodegenState state, LlvmValueHandle mainTask, LlvmValueHandle taskSlot, in SchedulerRunLayout layout)
+    private static (LlvmValueHandle Task, LlvmValueHandle IsRaceComposite, LlvmValueHandle IsScopeComposite) EmitSchedulerLoopDispatch(LlvmCodegenState state, LlvmValueHandle mainTask, LlvmValueHandle taskSlot, in SchedulerRunLayout layout)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle completedConst = LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateCompleted), 1);
@@ -2492,14 +2618,20 @@ internal static partial class LlvmCodegen
         LlvmValueHandle isComposite = LlvmApi.BuildOr(builder,
             LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateAllComposite), 1), "sched_is_all_comp"),
             isRaceComposite, "sched_is_composite");
+        LlvmValueHandle isScopeComposite = default;
+        if (state.UsesStructuredConcurrency)
+        {
+            isScopeComposite = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, stateIdx, LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateScopeComposite), 1), "sched_is_scope_comp");
+            isComposite = LlvmApi.BuildOr(builder, isComposite, isScopeComposite, "sched_is_structured_composite");
+        }
         LlvmApi.BuildCondBr(builder, isComposite, layout.CompositeBlock, layout.LeafCoroBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, layout.LeafCoroBlock);
         LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, stateIdx, completedConst, "sched_is_leaf"), layout.LeafBlock, layout.CoroBlock);
-        return (task, isRaceComposite);
+        return (task, isRaceComposite, isScopeComposite);
     }
 
-    private static void EmitSchedulerCompositePhase(LlvmCodegenState state, LlvmValueHandle task, LlvmValueHandle isRaceComposite, in SchedulerRunLayout layout)
+    private static void EmitSchedulerCompositePhase(LlvmCodegenState state, LlvmValueHandle task, LlvmValueHandle isRaceComposite, LlvmValueHandle isScopeComposite, in SchedulerRunLayout layout)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
@@ -2509,10 +2641,23 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, layout.CompositeBlock);
         LlvmValueHandle compStatusSlot = LlvmApi.BuildAlloca(builder, state.I64, "sched_comp_status_slot");
         (LlvmValueHandle compOwner, LlvmValueHandle compSavedCursor, LlvmValueHandle compSavedEnd) = EmitInstallTaskArena(state, task, "sched_comp");
+        if (state.UsesStructuredConcurrency)
+        {
+            LlvmApi.BuildCondBr(builder, isScopeComposite, layout.ScopeStepBlock, layout.CompositeKindBlock);
+            LlvmApi.PositionBuilderAtEnd(builder, layout.CompositeKindBlock);
+        }
+
         LlvmApi.BuildCondBr(builder, isRaceComposite, layout.RaceStepBlock, layout.AllStepBlock);
         LlvmApi.PositionBuilderAtEnd(builder, layout.AllStepBlock);
         LlvmApi.BuildStore(builder, EmitStepComposite(state, task, isRace: false, "sched_all"), compStatusSlot);
         LlvmApi.BuildBr(builder, layout.CompAfterBlock);
+        if (state.UsesStructuredConcurrency)
+        {
+            LlvmApi.PositionBuilderAtEnd(builder, layout.ScopeStepBlock);
+            LlvmApi.BuildStore(builder, EmitStepScopeComposite(state, task, "sched_scope"), compStatusSlot);
+            LlvmApi.BuildBr(builder, layout.CompAfterBlock);
+        }
+
         LlvmApi.PositionBuilderAtEnd(builder, layout.RaceStepBlock);
         LlvmApi.BuildStore(builder, EmitStepComposite(state, task, isRace: true, "sched_race"), compStatusSlot);
         LlvmApi.BuildBr(builder, layout.CompAfterBlock);
@@ -3830,6 +3975,135 @@ internal static partial class LlvmCodegen
         StoreMemory(state, taskPtr, TaskStructLayout.Waiter, zero, "comp_waiter");
         StoreMemory(state, taskPtr, TaskStructLayout.ArenaOwner, zero, "comp_owner");
         return taskPtr;
+    }
+
+    // Structured scope layout: head @0, tail @8, owning composite @16, closed flag @24,
+    // explicit-boundary flag @32.
+    // Join-node layout: child task @0, joined flag @8, next @16.
+    private static LlvmValueHandle EmitCreateTaskScope(LlvmCodegenState state, bool isExplicit)
+    {
+        LlvmValueHandle scope = EmitAlloc(state, 40);
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        StoreMemory(state, scope, 0, zero, "scope_head");
+        StoreMemory(state, scope, 8, zero, "scope_tail");
+        StoreMemory(state, scope, 16, zero, "scope_composite");
+        StoreMemory(state, scope, 24, zero, "scope_open");
+        StoreMemory(state, scope, 32, LlvmApi.ConstInt(state.I64, isExplicit ? 1UL : 0UL, 0), "scope_explicit");
+        return scope;
+    }
+
+    private static LlvmValueHandle EmitCreateScopedTask(
+        LlvmCodegenState state,
+        LlvmValueHandle parentTask,
+        LlvmValueHandle scope)
+    {
+        LlvmValueHandle task = EmitCreateCompositeTask(state, parentTask, TaskStructLayout.StateScopeComposite);
+        StoreMemory(state, task, TaskStructLayout.AwaitedTask, parentTask, "scope_parent");
+        StoreMemory(state, task, TaskStructLayout.IoArg1, scope, "scope_token");
+        StoreMemory(state, task, TaskStructLayout.WaitData0, LlvmApi.ConstInt(state.I64, 0, 0), "scope_phase");
+        StoreMemory(state, scope, 16, task, "scope_owner");
+        return task;
+    }
+
+    private static LlvmValueHandle EmitForkScopedTask(
+        LlvmCodegenState state,
+        LlvmValueHandle ownerTask,
+        LlvmValueHandle childTask)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle composite = LoadMemory(state, ownerTask, TaskStructLayout.Waiter, "fork_composite");
+        LlvmValueHandle scope = EmitSelectForkScope(state, composite);
+        LlvmValueHandle node = EmitAlloc(state, 24);
+        StoreMemory(state, node, 0, childTask, "fork_child");
+        StoreMemory(state, node, 8, zero, "fork_unjoined");
+        StoreMemory(state, node, 16, zero, "fork_next");
+        EmitAppendForkNode(state, scope, node);
+        StoreMemory(state, childTask, TaskStructLayout.Waiter, zero, "fork_no_waiter");
+        StoreMemory(state, childTask, TaskStructLayout.ArenaOwner,
+            LoadMemory(state, composite, TaskStructLayout.ArenaOwner, "fork_owner"), "fork_child_owner");
+        _ = EmitNetworkingRuntimeCall(state, "ashes_ready_enqueue", [childTask], "fork_enqueue");
+        return EmitCreateCompletedTask(state, EmitResultOk(state, node));
+    }
+
+    private static LlvmValueHandle EmitSelectForkScope(LlvmCodegenState state, LlvmValueHandle composite)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle nearestScope = LoadMemory(state, composite, TaskStructLayout.IoArg1, "fork_nearest_scope");
+        LlvmValueHandle compositeSlot = LlvmApi.BuildAlloca(builder, state.I64, "fork_scope_composite_cursor");
+        LlvmValueHandle scopeSlot = LlvmApi.BuildAlloca(builder, state.I64, "fork_selected_scope");
+        LlvmApi.BuildStore(builder, composite, compositeSlot);
+        LlvmApi.BuildStore(builder, nearestScope, scopeSlot);
+        LlvmBasicBlockHandle scopeCheckBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_check");
+        LlvmBasicBlockHandle scopeOuterBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_outer");
+        LlvmBasicBlockHandle scopeCandidateBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_candidate");
+        LlvmBasicBlockHandle scopeSelectBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_select");
+        LlvmBasicBlockHandle scopeNextBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_next");
+        LlvmBasicBlockHandle scopeReadyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_scope_ready");
+        LlvmValueHandle nearestIsExplicit = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            LoadMemory(state, nearestScope, 32, "fork_nearest_explicit"), zero, "fork_nearest_is_explicit");
+        LlvmApi.BuildCondBr(builder, nearestIsExplicit, scopeReadyBlock, scopeCheckBlock);
+
+        // An async containing fork owns an implicit scope. When Task.scope wraps it, its explicit
+        // composite is the first explicit waiter above that implicit scope. Prefer that boundary;
+        // otherwise the nearest implicit scope owns the child.
+        LlvmApi.PositionBuilderAtEnd(builder, scopeCheckBlock);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, compositeSlot, "fork_scope_cursor");
+        LlvmValueHandle outerComposite = LoadMemory(state, cursor, TaskStructLayout.Waiter, "fork_outer_composite");
+        LlvmValueHandle hasNoOuter = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            outerComposite, zero, "fork_no_outer_scope");
+        LlvmApi.BuildCondBr(builder, hasNoOuter, scopeReadyBlock, scopeOuterBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scopeOuterBlock);
+        LlvmValueHandle outerIsScope = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
+            LoadMemory(state, outerComposite, TaskStructLayout.StateIndex, "fork_outer_state"),
+            LlvmApi.ConstInt(state.I64, unchecked((ulong)TaskStructLayout.StateScopeComposite), 1),
+            "fork_outer_is_scope");
+        LlvmApi.BuildCondBr(builder, outerIsScope, scopeCandidateBlock, scopeReadyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scopeCandidateBlock);
+        LlvmValueHandle outerScope = LoadMemory(state, outerComposite, TaskStructLayout.IoArg1, "fork_outer_scope");
+        LlvmValueHandle outerIsExplicit = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne,
+            LoadMemory(state, outerScope, 32, "fork_outer_explicit"),
+            zero, "fork_outer_is_explicit");
+        LlvmApi.BuildCondBr(builder, outerIsExplicit, scopeSelectBlock, scopeNextBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scopeSelectBlock);
+        LlvmApi.BuildStore(builder, outerScope, scopeSlot);
+        LlvmApi.BuildBr(builder, scopeReadyBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scopeNextBlock);
+        LlvmApi.BuildStore(builder, outerComposite, compositeSlot);
+        LlvmApi.BuildBr(builder, scopeCheckBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, scopeReadyBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, scopeSlot, "fork_scope");
+    }
+
+    private static void EmitAppendForkNode(LlvmCodegenState state, LlvmValueHandle scope, LlvmValueHandle node)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
+        LlvmValueHandle tail = LoadMemory(state, scope, 8, "fork_tail");
+        LlvmBasicBlockHandle firstBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_first");
+        LlvmBasicBlockHandle appendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_append");
+        LlvmBasicBlockHandle linkedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "fork_linked");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, tail, zero, "fork_empty"), firstBlock, appendBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, firstBlock);
+        StoreMemory(state, scope, 0, node, "fork_set_head");
+        LlvmApi.BuildBr(builder, linkedBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, appendBlock);
+        StoreMemory(state, tail, 16, node, "fork_link_tail");
+        LlvmApi.BuildBr(builder, linkedBlock);
+        LlvmApi.PositionBuilderAtEnd(builder, linkedBlock);
+        StoreMemory(state, scope, 8, node, "fork_set_tail");
+    }
+
+    private static LlvmValueHandle EmitJoinScopedTask(LlvmCodegenState state, LlvmValueHandle handle)
+    {
+        StoreMemory(state, handle, 8, LlvmApi.ConstInt(state.I64, 1, 0), "join_consumed");
+        return LoadMemory(state, handle, 0, "join_child");
     }
 
     private static LlvmValueHandle EmitAsyncAll(LlvmCodegenState state, LlvmValueHandle taskListPtr)

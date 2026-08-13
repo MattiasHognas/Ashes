@@ -31,6 +31,9 @@ public abstract record Expr
     /// <summary>A string literal.</summary>
     /// <param name="Value">The decoded string value (escape sequences already resolved).</param>
     public sealed record StrLit(string Value) : Expr;
+    /// <summary>A Unicode scalar literal.</summary>
+    /// <param name="Value">The scalar's integer code point.</param>
+    public sealed record RuneLit(int Value) : Expr;
     /// <summary>A boolean literal.</summary>
     /// <param name="Value">The literal's value.</param>
     public sealed record BoolLit(bool Value) : Expr;
@@ -273,6 +276,8 @@ public abstract record Pattern
     /// <summary>A string-literal pattern.</summary>
     /// <param name="Value">The value to match.</param>
     public sealed record StrLit(string Value) : Pattern;
+    /// <summary>A Unicode scalar literal pattern.</summary>
+    public sealed record RuneLit(int Value) : Pattern;
     /// <summary>A boolean-literal pattern.</summary>
     /// <param name="Value">The value to match.</param>
     public sealed record BoolLit(bool Value) : Pattern;

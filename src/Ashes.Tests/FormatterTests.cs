@@ -74,6 +74,14 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_escape_rune_literals()
+    {
+        Ashes.Formatter.Formatter.Format(new Expr.RuneLit('\n')).ShouldBe("'\\n'\n");
+        Ashes.Formatter.Formatter.Format(new Expr.RuneLit('\'')).ShouldBe("'\\\''\n");
+        Ashes.Formatter.Formatter.Format(new Expr.RuneLit(0x1F600)).ShouldBe("'😀'\n");
+    }
+
+    [Test]
     public void Format_should_write_float_literals()
     {
         var formatted = Ashes.Formatter.Formatter.Format(

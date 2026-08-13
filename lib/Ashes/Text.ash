@@ -1,5 +1,5 @@
 let recursive length text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> 0
         | Some((_head, tail)) -> 1 + length(tail)
 
@@ -7,7 +7,7 @@ let recursive drop text count =
     if count <= 0
     then text
     else
-        match Ashes.Text.uncons(text) with
+        match Ashes.Text.unconsText(text) with
             | None -> ""
             | Some((_head, tail)) -> drop(tail)(count - 1)
 
@@ -15,7 +15,7 @@ let recursive take text count =
     if count <= 0
     then ""
     else
-        match Ashes.Text.uncons(text) with
+        match Ashes.Text.unconsText(text) with
             | None -> ""
             | Some((head, tail)) -> head + take(tail)(count - 1)
 
@@ -134,7 +134,7 @@ let split text separator =
                                 else Ashes.Byte.subText(tb)(from)(idx - from) :: go(idx + slen)
                         in go(0)
 
-let isDigit text =
+let isDigitText text =
     match text with
         | "0" -> true
         | "1" -> true
@@ -148,7 +148,7 @@ let isDigit text =
         | "9" -> true
         | _ -> false
 
-let isLetter text =
+let isLetterText text =
     match text with
         | "a" -> true
         | "b" -> true
@@ -204,7 +204,7 @@ let isLetter text =
         | "Z" -> true
         | _ -> false
 
-let isWhiteSpace text =
+let isWhiteSpaceText text =
     match text with
         | " " -> true
         | "\t" -> true
@@ -238,10 +238,10 @@ let trimStart text =
             in go(0))
 
 let recursive lastAndInit text =
-    match Ashes.Text.uncons(text) with
+    match Ashes.Text.unconsText(text) with
         | None -> None
         | Some((head, tail)) ->
-            match Ashes.Text.uncons(tail) with
+            match Ashes.Text.unconsText(tail) with
                 | None -> Some(("", head))
                 | Some((_tailHead, _tailRest)) ->
                     match lastAndInit(tail) with

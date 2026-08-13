@@ -47,6 +47,11 @@ internal enum GeneratedFeature
     AmbientAuthority,
     TypeAlias,
     ZeroCostType,
+    RuneLiteral,
+    RuneRoundTrip,
+    StructuredScope,
+    Fork,
+    Join,
 }
 
 internal enum OwnershipInterest

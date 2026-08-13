@@ -47,9 +47,18 @@ Current codes:
 | `ASH036` | Missing or otherwise unresolvable concrete trait implementation |
 | `ASH037` | Duplicate module export entry                                  |
 | `ASH038` | Unknown or invalid module export entry                          |
+| `ASH039` | Recursive type alias                                         |
+| `ASH040` | Invalid zero-cost nominal type declaration                  |
+| `ASH041` | Invalid external resource destructor                        |
+| `ASH042` | Invalid external ownership contract                         |
+| `ASH043` | A structured-concurrency join handle escapes its owning task scope |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
+
+`ASH043` reports a `JoinHandle(E, A)` that escapes the `async` or explicit `Task.scope` lifetime that
+owns it, including through an aggregate or closure, or is captured by detached `Task.spawn`.
+Message: `Join handle 'name' cannot escape its owning task scope.`
 
 ## Trait diagnostics
 

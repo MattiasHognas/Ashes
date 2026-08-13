@@ -269,6 +269,8 @@ only in a declared compatibility release, with precise migration diagnostics.
 
 ## Milestone 5: Structured asynchronous concurrency
 
+Status: completed.
+
 ### Current limitation
 
 `Ashes.Task.spawn` detaches a task and returns `Unit`. Callers cannot join it, observe its failure, or
@@ -281,16 +283,18 @@ otherwise deterministic lifetime story.
 Add a scoped task-group abstraction and an affine join handle. Conceptually the API provides:
 
 ```text
-Task.scope : (TaskScope -> Task(E, A)) -> Task(E, A)
-Task.fork  : TaskScope -> Task(E, A) -> Task(E, JoinHandle(E, A))
+Task.scope : Task(E, A) -> Task(E, A)
+Task.fork  : Task(E, A) -> Task(E, JoinHandle(E, A))
 Task.join  : JoinHandle(E, A) -> Task(E, A)
 ```
 
 The exact type/error spelling belongs in the spec, but these invariants are required:
 
 - a child cannot outlive its scope;
-- `TaskScope` and its `JoinHandle` values cannot escape the callback that created the scope, including
-  through a returned aggregate or a detached-task capture;
+- every `async` activation is an implicit scope, and `scope` optionally introduces a shorter nested
+  boundary without exposing a scope token;
+- a `JoinHandle` cannot escape the async or explicit scope that owns it, including through a returned
+  aggregate or a detached-task capture;
 - leaving the scope cancels and drains every unjoined child before returning;
 - joining consumes the handle exactly once and yields the child's result;
 - scope cancellation recursively cancels child scopes and releases task frames/resources;
@@ -305,8 +309,8 @@ servers. Documentation should steer ordinary user code toward scoped concurrency
 
 1. Specify scope lifetime, child error propagation, join consumption, cancellation order, empty
    scopes, nested scopes, and interaction with `race`, `all`, and resources.
-2. Add built-in affine `TaskScope` and `JoinHandle(E, A)` types, resource diagnostics, and a semantic
-   non-escape check for scope-bound values (the ordinary HM type alone cannot express this lifetime).
+2. Add the built-in affine `JoinHandle(E, A)` type, resource diagnostics, implicit scope inference for
+   `async`, and a semantic non-escape check (the ordinary HM type alone cannot express this lifetime).
 3. Extend scheduler/task-frame state with parent-child linkage owned by the task region, not cyclic RC
    graphs.
 4. Implement fork, join, scope-exit cancellation/drain, and nested cancellation on Linux and Windows.
@@ -326,6 +330,8 @@ servers. Documentation should steer ordinary user code toward scoped concurrency
 ---
 
 ## Milestone 6: Unicode scalar values (`Rune`)
+
+Status: completed.
 
 ### Current limitation
 
@@ -356,6 +362,11 @@ segmentation in this milestone.
 Changing `Text.uncons` is source-breaking. Either provide a compatibility helper under a distinct
 name for one release or land the signature change in the same declared compatibility release as the
 ambient-capability changes.
+
+This milestone uses single-quoted literals (`'a'`, `'😀'`, `'\n'`, `'\u{1F600}'`) and provides
+`Text.unconsText : Str -> Maybe((Str, Str))` as the one-release compatibility helper. Character
+classification moves to the explicitly scoped `Rune.isAsciiLetter`, `Rune.isAsciiDigit`, and
+`Rune.isAsciiWhiteSpace` APIs.
 
 ### Work items
 

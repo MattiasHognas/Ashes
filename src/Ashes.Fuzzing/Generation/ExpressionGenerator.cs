@@ -91,6 +91,12 @@ internal sealed class ExpressionGenerator
             AshesType.Primitive { Name: "Int" } => Result(new Expr.IntLit((long)random.Next(21) - 10), type, GeneratedFeature.Literal, "literal:int", 1),
             AshesType.Primitive { Name: "Bool" } => Result(new Expr.BoolLit(random.NextBool()), type, GeneratedFeature.Literal, "literal:bool", 1),
             AshesType.Primitive { Name: "Str" } => Result(new Expr.StrLit(new[] { "", "ash", "owned", "λ" }[random.Next(4)]), type, GeneratedFeature.Literal, "literal:str", 1),
+            AshesType.Primitive { Name: "Rune" } => Result(
+                new Expr.RuneLit(new[] { 0x41, 0xE9, 0x20AC, 0x1F600, 0x10FFFF }[random.Next(5)]),
+                type,
+                GeneratedFeature.RuneLiteral,
+                "literal:rune",
+                1),
             AshesType.Primitive { Name: "Float" } => Result(new Expr.FloatLit(random.Next(9) + 0.5), type, GeneratedFeature.Literal, "literal:float", 1),
             AshesType.Primitive { Name: "BigInt" } => Result(new Expr.BigIntLit(random.Next(1000).ToString(System.Globalization.CultureInfo.InvariantCulture)), type, GeneratedFeature.Literal, "literal:bigint", 1),
             AshesType.UInt unsigned => Result(new Expr.UIntLit((ulong)random.Next(16), unsigned.Bits), type, GeneratedFeature.Literal, $"literal:uint{unsigned.Bits}", 1),

@@ -64,6 +64,11 @@ public sealed class Lexer
             return ReadString(start);
         }
 
+        if (c == '\'')
+        {
+            return ReadRune(start);
+        }
+
         if (char.IsDigit(c))
         {
             return ReadNumber(start);
@@ -207,6 +212,113 @@ public sealed class Lexer
         _diag.Error(start, _pos, "Unterminated string literal.", DiagnosticCodes.ParseError);
         return new Token(TokenKind.String, sb.ToString(), 0, start, _pos - start);
     }
+
+    private Token ReadRune(int start)
+    {
+        _pos++;
+        int value = 0xFFFD;
+        bool valid = true;
+        if (_pos >= _text.Length || _text[_pos] is '\r' or '\n' or '\'')
+        {
+            valid = false;
+        }
+        else if (_text[_pos] == '\\')
+        {
+            _pos++;
+            valid = TryReadRuneEscape(out value);
+        }
+        else if (char.IsHighSurrogate(_text[_pos]))
+        {
+            if (_pos + 1 < _text.Length && char.IsLowSurrogate(_text[_pos + 1]))
+            {
+                value = char.ConvertToUtf32(_text[_pos], _text[_pos + 1]);
+                _pos += 2;
+            }
+            else
+            {
+                valid = false;
+                _pos++;
+            }
+        }
+        else if (char.IsLowSurrogate(_text[_pos]))
+        {
+            valid = false;
+            _pos++;
+        }
+        else
+        {
+            value = _text[_pos++];
+        }
+
+        if (_pos >= _text.Length || _text[_pos] != '\'')
+        {
+            valid = false;
+            while (_pos < _text.Length && _text[_pos] is not ('\'' or '\r' or '\n'))
+            {
+                _pos++;
+            }
+        }
+
+        if (_pos < _text.Length && _text[_pos] == '\'')
+        {
+            _pos++;
+        }
+
+        if (!valid || !IsValidUnicodeScalar(value))
+        {
+            _diag.Error(start, _pos, "A rune literal must contain exactly one valid Unicode scalar value.", DiagnosticCodes.ParseError);
+            value = 0xFFFD;
+        }
+
+        return new Token(TokenKind.Rune, _text[start.._pos], value, start, _pos - start);
+    }
+
+    private bool TryReadRuneEscape(out int value)
+    {
+        value = 0xFFFD;
+        if (_pos >= _text.Length)
+        {
+            return false;
+        }
+
+        char escape = _text[_pos++];
+        value = escape switch
+        {
+            '\\' => '\\',
+            '\'' => '\'',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            '0' => 0,
+            _ => value,
+        };
+        if (escape != 'u')
+        {
+            return escape is '\\' or '\'' or 'n' or 'r' or 't' or '0';
+        }
+
+        if (_pos >= _text.Length || _text[_pos++] != '{')
+        {
+            return false;
+        }
+
+        int digitsStart = _pos;
+        while (_pos < _text.Length && _pos - digitsStart < 6 && Uri.IsHexDigit(_text[_pos]))
+        {
+            _pos++;
+        }
+
+        if (_pos == digitsStart || _pos >= _text.Length || _text[_pos++] != '}')
+        {
+            return false;
+        }
+
+        return int.TryParse(_text[digitsStart..(_pos - 1)], NumberStyles.AllowHexSpecifier,
+            CultureInfo.InvariantCulture, out value) && IsValidUnicodeScalar(value);
+    }
+
+    private static bool IsValidUnicodeScalar(int value) =>
+        value is >= 0 and <= 0x10FFFF and not (>= 0xD800 and <= 0xDFFF);
 
     private Token ReadNumber(int start)
     {

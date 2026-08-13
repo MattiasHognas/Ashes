@@ -80,6 +80,7 @@ internal sealed class ComparisonGenerationRule : IExpressionGenerationRule
             AshesType.Int,
             AshesType.Bool,
             AshesType.Str,
+            AshesType.Rune,
             AshesType.Float,
             AshesType.BigInt,
             new AshesType.UInt(8),
@@ -92,7 +93,7 @@ internal sealed class ComparisonGenerationRule : IExpressionGenerationRule
         GenerationResult<Expr> right = expressions.Generate(operandType, context, budget.Descend(2), random);
         string leftName = "comparedLeft" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
         string rightName = "comparedRight" + random.Next(100000).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        bool supportsOrdering = operandType is AshesType.UInt or AshesType.Primitive { Name: "Int" or "Float" or "BigInt" };
+        bool supportsOrdering = operandType is AshesType.UInt or AshesType.Primitive { Name: "Int" or "Float" or "BigInt" or "Rune" };
         int operationIndex = supportsOrdering ? random.Next(6) : random.Next(2);
         Expr operation = operationIndex switch
         {
