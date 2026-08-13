@@ -236,6 +236,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes");
         names.ShouldContain("Ashes.IO");
         names.ShouldContain("Ashes.IO.File");
+        names.ShouldContain("Ashes.IO.Path");
         names.ShouldContain("Ashes.Ffi");
         names.ShouldContain("Ashes.Text");
         names.ShouldContain("Ashes.Net.Http");
@@ -276,6 +277,20 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.TryGetModule("Ashes.Collection.List", out var module).ShouldBeTrue();
 
         module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.Collection.List.ash");
+    }
+
+    [Test]
+    public void Ashes_Path_module_should_have_resource_name()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.IO.Path", out BuiltinRegistry.BuiltinModule module).ShouldBeTrue();
+
+        module.ResourceName.ShouldBe("Ashes.Semantics.StdLib.Ashes.IO.Path.ash");
+        BuiltinRegistry.TryGetModuleExports("Ashes.IO.Path", out IReadOnlySet<string> exports).ShouldBeTrue();
+        exports.ShouldContain("Unix");
+        exports.ShouldContain("Windows");
+        exports.ShouldContain("normalize");
+        exports.ShouldContain("relativeTo");
+        exports.ShouldNotContain("reverseList");
     }
 
     [Test]

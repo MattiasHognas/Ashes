@@ -84,6 +84,31 @@ public sealed class LspCompletionTests
         }
     }
 
+    [Test]
+    public async Task Completion_should_return_path_module_exports()
+    {
+        const string source = "Ashes.IO.Path.";
+        var document = TempDocument.Create("CompletionPath.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
+
+                completions.ShouldContain("Unix");
+                completions.ShouldContain("Windows");
+                completions.ShouldContain("normalize");
+                completions.ShouldContain("join");
+                completions.ShouldContain("parent");
+                completions.ShouldContain("basename");
+                completions.ShouldContain("extension");
+                completions.ShouldContain("relativeTo");
+            }
+        }
+    }
+
     private sealed class TempDocument : IAsyncDisposable
     {
         private readonly string _directory;

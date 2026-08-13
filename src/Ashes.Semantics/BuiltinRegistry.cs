@@ -567,6 +567,10 @@ public static class BuiltinRegistry
                     ["readLine"] = new("readLine", BuiltinValueKind.FileReadLine, IsCallable: true, Arity: 1),
                     ["close"] = new("close", BuiltinValueKind.FileClose, IsCallable: true, Arity: 1)
                 }),
+            ["Ashes.IO.Path"] = new(
+                "Ashes.IO.Path",
+                "Ashes.Semantics.StdLib.Ashes.IO.Path.ash",
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
             ["Ashes.Text"] = new(
                 "Ashes.Text",
                 "Ashes.Semantics.StdLib.Ashes.Text.ash",
@@ -986,15 +990,8 @@ public static class BuiltinRegistry
 
     private static void CollectResourceModuleExports(string resourceName, HashSet<string> exports)
     {
-        var source = LoadEmbeddedResource(resourceName);
-        if (source is null)
-        {
-            return;
-        }
-
-        var diagnostics = new Diagnostics();
-        var program = new Parser(source, diagnostics).ParseProgram();
-        if (diagnostics.StructuredErrors.Count > 0)
+        Program? program = ParseResourceProgram(resourceName);
+        if (program is null)
         {
             return;
         }
@@ -1020,7 +1017,7 @@ public static class BuiltinRegistry
 
                     break;
                 case TopLevelItem.Type typeDecl:
-                    exports.Add(typeDecl.Decl.Name);
+                    AddTypeExports(typeDecl.Decl, exports);
                     break;
             }
         }
@@ -1047,6 +1044,29 @@ public static class BuiltinRegistry
         }
     }
 
+    private static Program? ParseResourceProgram(string resourceName)
+    {
+        string? source = LoadEmbeddedResource(resourceName);
+        if (source is null)
+        {
+            return null;
+        }
+
+        ParsedImportHeader header = ProjectSupport.ParseImportHeader(source, resourceName);
+        var diagnostics = new Diagnostics();
+        Program program = new Parser(header.SourceWithoutImports, diagnostics).ParseProgram();
+        return diagnostics.StructuredErrors.Count == 0 ? program : null;
+    }
+
+    private static void AddTypeExports(TypeDecl declaration, HashSet<string> exports)
+    {
+        exports.Add(declaration.Name);
+        foreach (TypeConstructor constructor in declaration.Constructors)
+        {
+            exports.Add(constructor.Name);
+        }
+    }
+
     private static bool TryCollectExplicitResourceExports(Program program, HashSet<string> exports)
     {
         ExportDecl? explicitInterface = program.Items
@@ -1061,17 +1081,48 @@ public static class BuiltinRegistry
         exports.Clear();
         foreach (ExportItem item in explicitInterface.Items)
         {
-            string name = item switch
+            switch (item)
             {
-                ExportItem.Value value => value.Name,
-                ExportItem.Type type => type.Name,
-                ExportItem.Module module => module.Name,
-                _ => throw new InvalidOperationException("Unknown export item."),
-            };
-            exports.Add(name);
+                case ExportItem.Value value:
+                    exports.Add(value.Name);
+                    break;
+                case ExportItem.Type type:
+                    exports.Add(type.Name);
+                    AddExplicitTypeConstructors(program, type, exports);
+                    break;
+                case ExportItem.Module module:
+                    exports.Add(module.Name);
+                    break;
+            }
         }
 
         return true;
+    }
+
+    private static void AddExplicitTypeConstructors(
+        Program program,
+        ExportItem.Type export,
+        HashSet<string> exports)
+    {
+        if (export.Constructors is ExportConstructors.Selected selected)
+        {
+            exports.UnionWith(selected.Names);
+            return;
+        }
+
+        if (export.Constructors is not ExportConstructors.All)
+        {
+            return;
+        }
+
+        TypeDecl? declaration = program.Items
+            .OfType<TopLevelItem.Type>()
+            .Select(item => item.Decl)
+            .FirstOrDefault(candidate => string.Equals(candidate.Name, export.Name, StringComparison.Ordinal));
+        if (declaration is not null)
+        {
+            exports.UnionWith(declaration.Constructors.Select(constructor => constructor.Name));
+        }
     }
 
     private static string? LoadEmbeddedResource(string resourceName)

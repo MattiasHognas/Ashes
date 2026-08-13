@@ -28,7 +28,7 @@ packages below.
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `LSP`, `Fuzzing` |
 | [Binary file output (`Ashes.IO.File.writeBytes`)](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
-| [Path normalization, joining, parent/basename, and relative paths](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [Path normalization, joining, parent/basename, and relative paths](../reference/standard-library.md#ashes-io-path) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Current/executable/temp/cache directories and environment lookup](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | [Directory enumeration, creation, deletion, and atomic rename](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
 | [Marking emitted ELF files executable](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `TestRunner`, `Fuzzing` |
@@ -75,17 +75,15 @@ unchanged.
 
 Workable tasks:
 
-1. Specify and implement pure path normalization, join, parent, basename, extension, relative-path,
-   and platform-separator behavior with Windows drive/UNC and Unix-root fixtures.
-2. Add capability-tracked APIs for current/executable/temp/cache directories and environment lookup;
+1. Add capability-tracked APIs for current/executable/temp/cache directories and environment lookup;
    make installed compiler asset discovery independent of the repository working directory.
-3. Add deterministic directory enumeration, recursive creation, deletion, and atomic same-filesystem
+2. Add deterministic directory enumeration, recursive creation, deletion, and atomic same-filesystem
    replacement. Specify ordering, missing paths, collisions, symlinks, and cross-device failures.
-4. Add a portable executable-permission operation that sets the required Unix mode bits and is a
+3. Add a portable executable-permission operation that sets the required Unix mode bits and is a
    documented no-op or equivalent on Windows.
-5. Add stderr writes and controlled process termination without turning expected compiler failures
+4. Add stderr writes and controlled process termination without turning expected compiler failures
    into `panic`; preserve cleanup of live resources on ordinary error-return paths.
-6. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
+5. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
    from an installed-layout fixture, and atomically create output on Linux and Windows hosts.
 
 Done when an Ashes program launched outside the repository can locate installed-layout fixtures,

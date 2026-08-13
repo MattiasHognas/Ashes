@@ -50,13 +50,13 @@ async function loadGrammar(): Promise<IGrammar> {
   return grammarPromise;
 }
 
-/** Tokenizes every line of `traits.ash`, threading TextMate state across lines. */
-async function tokenizeTraitsFixture(): Promise<
-  { line: string; tokens: IToken[] }[]
-> {
+/** Tokenizes every line of a fixture, threading TextMate state across lines. */
+async function tokenizeFixture(
+  fileName: string,
+): Promise<{ line: string; tokens: IToken[] }[]> {
   const grammar = await loadGrammar();
   const source = fs.readFileSync(
-    path.join(extensionRoot, "src/test/fixtures/traits.ash"),
+    path.join(extensionRoot, "src/test/fixtures", fileName),
     "utf8",
   );
   const lines = source.split("\n");
@@ -101,7 +101,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
   this.timeout(20000);
 
   test("trait declaration names the trait", async () => {
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     assert.ok(
       scopesFor(lines, "trait Render(a)", "Render").includes(
         "entity.name.type.trait.ashes",
@@ -110,7 +110,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
   });
 
   test("implementation head names the trait as an inherited class", async () => {
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     assert.ok(
       scopesFor(lines, "implement Render(Int)", "Render").includes(
         "entity.other.inherited-class.trait.ashes",
@@ -119,7 +119,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
   });
 
   test("trait method declarations and overrides get method scopes", async () => {
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     assert.ok(
       scopesFor(lines, "| render : a -> Str", "render").includes(
         "entity.name.function.trait-method.ashes",
@@ -135,7 +135,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
   });
 
   test("deriving clause highlights every listed trait", async () => {
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     for (const traitName of ["Eq", "Show", "Hash"]) {
       assert.ok(
         scopesFor(lines, "deriving {Eq, Show, Hash}", traitName).includes(
@@ -147,7 +147,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
   });
 
   test("requires clause highlights the trait name", async () => {
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     assert.ok(
       scopesFor(lines, "requires {Render(a)}", "Render").includes(
         "entity.other.inherited-class.trait.ashes",
@@ -160,7 +160,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
     // (Eq, Ord, Show, ... / equal, compare, show, ...) by design, so it never
     // false-positives on an ordinary module-qualified call like Ashes.IO.print(...) or
     // List.map(...). Eq.equal is in that list; verify it actually lights up.
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     const callLine = "Eq.equal(left)(right)";
     assert.ok(
       scopesFor(lines, callLine, "Eq").includes("entity.name.type.trait.ashes"),
@@ -179,7 +179,7 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
     // correctly gets no trait-specific scope at all (unlike the Render trait's own
     // declaration and implementation sites, which the tests above cover) -- documenting
     // the boundary of the qualified-call pattern's intentionally closed name list.
-    const lines = await tokenizeTraitsFixture();
+    const lines = await tokenizeFixture("traits.ash");
     const callLine = "Render.render(value)";
     assert.ok(
       !scopesFor(lines, callLine, "Render").includes(
@@ -191,5 +191,79 @@ suite("Trait fixture tokenization (real TextMate engine)", function () {
         "entity.name.function.trait-method.ashes",
       ),
     );
+  });
+});
+
+suite("Self-hosting syntax tokenization (real TextMate engine)", function () {
+  this.timeout(20000);
+
+  test("external resource declarations highlight their contextual modifiers", async () => {
+    const lines = await tokenizeFixture("self-hosting.ash");
+    const declaration =
+      "external type Database resource destructor databaseClose";
+    assert.ok(
+      scopesFor(lines, declaration, "resource").includes(
+        "storage.modifier.resource.ashes",
+      ),
+    );
+    assert.ok(
+      scopesFor(lines, declaration, "destructor").includes(
+        "storage.modifier.destructor.ashes",
+      ),
+    );
+  });
+
+  test("external parameter ownership and out modifiers are highlighted", async () => {
+    const lines = await tokenizeFixture("self-hosting.ash");
+    for (const [line, modifier] of [
+      ["databaseClose(consume Database)", "consume"],
+      ["databaseVersion(borrow Database)", "borrow"],
+      ["out LLVMTargetRef", "out"],
+    ]) {
+      assert.ok(
+        scopesFor(lines, line, modifier).includes(
+          "storage.modifier.ownership.ashes",
+        ),
+      );
+    }
+  });
+
+  test("FFI declaration types and string policies are highlighted", async () => {
+    const lines = await tokenizeFixture("self-hosting.ash");
+    assert.ok(
+      scopesFor(lines, "FfiBuffer(LLVMTypeRef)", "FfiBuffer").includes(
+        "support.type.ffi.ashes",
+      ),
+    );
+    assert.ok(
+      scopesFor(lines, "FfiStr(nullable borrowed)", "FfiStr").includes(
+        "support.type.ffi.ashes",
+      ),
+    );
+    for (const policy of ["nullable", "borrowed"]) {
+      assert.ok(
+        scopesFor(lines, "FfiStr(nullable borrowed)", policy).includes(
+          "storage.modifier.ffi-string.ashes",
+        ),
+      );
+    }
+    assert.ok(
+      scopesFor(lines, "FfiStr(owned LLVMDisposeMessage)", "owned").includes(
+        "storage.modifier.ffi-string.ashes",
+      ),
+    );
+  });
+
+  test("FFI scalar types are highlighted", async () => {
+    const lines = await tokenizeFixture("self-hosting.ash");
+    for (const [line, typeName] of [
+      ["FfiBuffer(LLVMTypeRef), u32", "u32"],
+      ["out *u8", "u8"],
+      ["-> void", "void"],
+    ]) {
+      assert.ok(
+        scopesFor(lines, line, typeName).includes("support.type.builtin.ashes"),
+      );
+    }
   });
 });

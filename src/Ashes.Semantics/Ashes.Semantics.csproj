@@ -68,6 +68,8 @@
       LogicalName="Ashes.Semantics.StdLib.Ashes.Net.Rpc.ash" />
     <EmbeddedResource Include="..\..\lib\Ashes\Text.Regex.ash"
       LogicalName="Ashes.Semantics.StdLib.Ashes.Text.Regex.ash" />
+    <EmbeddedResource Include="..\..\lib\Ashes\IO.Path.ash"
+      LogicalName="Ashes.Semantics.StdLib.Ashes.IO.Path.ash" />
   </ItemGroup>
 
 </Project>
