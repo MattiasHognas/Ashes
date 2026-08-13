@@ -813,6 +813,12 @@ public abstract record IrInst
     /// <summary>Writes the string in <paramref name="Source"/> to standard output with no trailing newline.</summary>
     /// <param name="Source">Temp holding the string to write.</param>
     public sealed record WriteStr(int Source) : IrInst;
+    /// <summary>Appends the string in <paramref name="Source"/> to the buffered standard-output path.</summary>
+    /// <param name="Source">Temp holding the string to buffer.</param>
+    /// <param name="AppendNewline">Whether to append a newline after the string.</param>
+    public sealed record WriteBufferedStr(int Source, bool AppendNewline) : IrInst;
+    /// <summary>Writes all pending buffered standard output immediately.</summary>
+    public sealed record FlushStdout : IrInst;
     /// <summary>Reads one line from standard input into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the line read.</param>
     public sealed record ReadLine(int Target) : IrInst;

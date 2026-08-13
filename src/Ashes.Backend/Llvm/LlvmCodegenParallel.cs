@@ -724,7 +724,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitAtomicFetchAdd(LlvmCodegenState state, LlvmValueHandle addr, ulong delta, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        if (state.Flavor == LlvmCodegenFlavor.LinuxArm64)
+        if (IsArm64Flavor(state.Flavor))
         {
             // ldxr/stxr acquire-release CAS loop (portable across armv8; the 'generic' CPU has no LSE
             // ldaddal). $0 = old (result), $1 = delta, $2 = address; x9 holds new, w10 the store status.

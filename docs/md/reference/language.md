@@ -57,6 +57,9 @@ Canonical built-ins available today include:
 - `Ashes.IO.args` returning `List(Str)`
 - `Ashes.IO.write(expr)` returning `Unit`
 - `Ashes.IO.writeLine(expr)` returning `Unit`
+- `Ashes.IO.writeBuffered(expr)` returning `Unit`
+- `Ashes.IO.writeBufferedLine(expr)` returning `Unit`
+- `Ashes.IO.flush(Unit)` returning `Unit`
 - `Ashes.IO.readLine()` returning `Maybe(Str)`
 - `Ashes.IO.File.readText(path)` returning `Result(Str, Str)`
 - `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)`
@@ -1983,6 +1986,9 @@ The built-in `Ashes.IO` module exports:
   compiled program (excluding the executable path/name at `argv[0]`).
 - `write("text")` - writes a string to standard output without adding a newline.
 - `writeLine("text")` - writes a string to standard output and then writes `\n`.
+- `writeBuffered("text")` - appends a string to the process-wide 64 KiB standard-output buffer.
+- `writeBufferedLine("text")` - appends a string followed by `\n` to that buffer.
+- `flush(Unit)` - writes all pending buffered standard output and returns `Unit`.
 - `readLine()` - reads one line from standard input and returns `Some(line)` or `None` on EOF.
 
 Other built-in runtime modules are also always available through qualified access:
@@ -2045,7 +2051,12 @@ Rules:
 - `None` and `Some` participate in normal constructor resolution rules.
 - `Ok` and `Error` participate in normal constructor resolution rules.
 
-`Ashes.IO.write` and `Ashes.IO.writeLine` return `Unit`.
+`Ashes.IO.write`, `Ashes.IO.writeLine`, `Ashes.IO.writeBuffered`, `Ashes.IO.writeBufferedLine`, and
+`Ashes.IO.flush` return `Unit`. Buffered output is written automatically when the 64 KiB buffer fills,
+before any direct `print`/`write`/`writeLine`/`writeBytes`, on normal program exit, and before a panic
+or runtime failure terminates the process. A single buffered value larger than the buffer flushes any
+pending bytes and is written directly. These rules preserve source ordering when buffered and direct
+operations are mixed. An external forced termination cannot run the automatic flush.
 `Ashes.IO.print` has type `a -> Unit`.
 `Ashes.IO.readLine` has type `Unit -> Maybe(Str)` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
@@ -3138,7 +3149,8 @@ production-shaped demo with a logging handler is `examples/capabilities_producti
 The following capabilities are built into the compiler and require no declaration:
 
 - **`ConsoleIO`** — reading stdin or a terminal and writing stdout/stderr. Carried by
-  `Ashes.IO.print`, `panic`, `write`, `writeBytes`, `writeLine`, `readLine`, and `readExact`, plus
+  `Ashes.IO.print`, `panic`, `write`, `writeBytes`, `writeLine`, `writeBuffered`,
+  `writeBufferedLine`, `flush`, `readLine`, and `readExact`, plus
   `Ashes.IO.Console.enableRawInput`, `restoreInput`, and `pollInput`.
 - **`FileRead`** — acquiring filesystem read authority. Carried by
   `Ashes.IO.File.readText`, `readAllBytes`, `mmap`, `exists`, and `open`.

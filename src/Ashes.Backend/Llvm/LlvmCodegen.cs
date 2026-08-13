@@ -501,6 +501,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(i64, [i64, i64, i64]);
 
         EmitProgramModuleFlags flags = EmitProgramModuleComputeFlags(program, flavor);
+        EmitStdoutBufferGlobals(target, flags.UsesBufferedStdout, i8, i64);
         EmitProgramModuleArena arena = EmitProgramModuleArenaGlobals(target, program, flavor, i64, flags.Arm64UsesTlsArena);
 
         var imports = new EmitProgramModuleImports();
@@ -547,6 +548,7 @@ internal static partial class LlvmCodegen
 
     private readonly record struct EmitProgramModuleFlags(
         bool UsesProgramArgs,
+        bool UsesBufferedStdout,
         bool UsesWindowsStdout,
         bool UsesWindowsExitProcess,
         bool UsesWindowsProgramArgs,
@@ -618,12 +620,15 @@ internal static partial class LlvmCodegen
         bool isWindows = IsWindowsFlavor(flavor);
         bool usesProgramArgs = ProgramUsesInstruction<IrInst.LoadProgramArgs>(program);
         bool usesReadLine = ProgramUsesInstruction<IrInst.ReadLine>(program);
+        bool usesBufferedStdout = ProgramUsesInstruction<IrInst.WriteBufferedStr>(program)
+            || ProgramUsesInstruction<IrInst.FlushStdout>(program);
         bool usesWindowsStdout = isWindows
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
                 || ProgramUsesInstruction<IrInst.PrintBool>(program)
                 || ProgramUsesInstruction<IrInst.PanicStr>(program)
+                || usesBufferedStdout
                 || usesReadLine);
         bool usesWindowsFileOps = isWindows && EmitProgramModuleUsesFileOps(program);
         bool usesNetworkingRuntimeAbi = EmitProgramModuleUsesNetworking(program);
@@ -648,7 +653,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.ConsolePoll>(program)
                 || ProgramUsesInstruction<IrInst.MonotonicMillis>(program));
         return new EmitProgramModuleFlags(
-            usesProgramArgs, usesWindowsStdout, isWindows, isWindows && usesProgramArgs,
+            usesProgramArgs, usesBufferedStdout, usesWindowsStdout, isWindows, isWindows && usesProgramArgs,
             isWindows && usesReadLine, usesWindowsFileOps, usesNetworkingRuntimeAbi, useRunQueueScheduler,
             usesStructuredConcurrency,
             arm64UsesTlsArena, usesWindowsSockets, usesWindowsSleep, usesWindowsProcess, usesWindowsReadExact,
@@ -1714,10 +1719,12 @@ internal static partial class LlvmCodegen
             {
                 if (IsLinuxFlavor(state.Flavor))
                 {
+                    EmitFlushStdout(state);
                     EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));
                 }
                 else
                 {
+                    EmitFlushStdout(state);
                     LlvmApi.BuildRetVoid(target.Builder);
                 }
             }
@@ -1736,6 +1743,7 @@ internal static partial class LlvmCodegen
             ?? EmitInstructionGroup3(state, instruction)
             ?? EmitInstructionGroup4(state, instruction)
             ?? EmitInstructionGroup5(state, instruction)
+            ?? EmitBufferedStdoutInstruction(state, instruction)
             ?? EmitInstructionGroup6(state, instruction, index, instructions)
             ?? EmitInstructionGroup7(state, instruction, index)
             ?? throw new InvalidOperationException($"The LLVM Linux backend does not yet support instruction '{instruction.GetType().Name}'.");

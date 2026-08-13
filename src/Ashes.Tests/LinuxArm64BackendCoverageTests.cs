@@ -168,6 +168,24 @@ public sealed class LinuxArm64BackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_arm64_backend_llvm_should_preserve_buffered_stdout_order_and_flush_on_exit()
+    {
+        if (!TryResolveLinuxArm64ExecutionEnvironment(out _))
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxArm64LlvmAsync(LowerProgram("""
+            let _ = Ashes.IO.writeBuffered("a")
+            in let _ = Ashes.IO.flush(Unit)
+            in let _ = Ashes.IO.writeBuffered("b")
+            in let _ = Ashes.IO.write("c")
+            in Ashes.IO.writeBufferedLine("d")
+            """)).ConfigureAwait(false);
+        result.Stdout.ShouldBe("abcd\n");
+    }
+
+    [Test]
     public async Task Linux_arm64_backend_llvm_should_report_https_trust_failures_against_loopback_tls_fixture()
     {
         if (!TryResolveLinuxArm64ExecutionEnvironment(out _))

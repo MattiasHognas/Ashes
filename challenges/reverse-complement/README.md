@@ -38,8 +38,9 @@ the more tractable benchmarks to write today.
 **Implemented + benchmarked.** [`reverse-complement.ash`](reverse-complement.ash) reads the FASTA
 stream, reverse-complements each sequence with the IUPAC complement table, and re-wraps at 60
 columns. `Text.uncons` yields `Rune` values, so the reversed working sequence is a `List(Rune)` and
-conversion back to `Str` happens only while emitting. Output is verified by the transform's
-involution: applying it twice reproduces the input byte-for-byte.
+conversion back to `Str` happens only while emitting. Lines use `IO.writeBufferedLine`, avoiding a
+system call for every payload and newline. Output is verified by the transform's involution:
+applying it twice reproduces the input byte-for-byte.
 
 ## Build & run
 
@@ -62,7 +63,7 @@ Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
 |-----------------|-----------|------|----------|
 | 250,000 | ~2.5 MB | 0.09 s | 49 MB |
 | 1,000,000 | ~10 MB | 0.40 s | 176 MB |
-| **25,000,000** (standard) | ~254 MB | **8.22 s** | **4.27 GB** |
+| **25,000,000** (standard) | ~254 MB | **7.09 s** | **3.91 GB** |
 
 Time and memory are both **linear**. Peak RSS follows the largest sequence that must remain live
 until its header or EOF is reached: about 34 bytes per stored base, matching the isolated
@@ -70,3 +71,8 @@ until its header or EOF is reached: about 34 bytes per stored base, matching the
 an already-runtime-managed output buffer at each back-edge; the compiler now refreshes the final
 runtime-managed result facts before placing the reset, and a focused IR regression covers it. The
 standard workload completes within the justified live-set envelope.
+
+For the buffered-stdout comparison, three standard-workload runs improved from 7.55 s to 7.09 s
+mean (1.06x). At fasta N=125,000, the output trace dropped from 20,840 `write` syscalls to 20, with
+byte-identical output. The peak-RSS figure above is from the standard buffered run; timing is the
+three-run mean.

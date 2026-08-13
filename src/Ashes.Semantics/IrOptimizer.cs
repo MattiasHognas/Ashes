@@ -781,6 +781,7 @@ public static class IrOptimizer
             IrInst.PrintStr p => p with { Source = R(p.Source) },
             IrInst.PrintBool p => p with { Source = R(p.Source) },
             IrInst.WriteStr w => w with { Source = R(w.Source) },
+            IrInst.WriteBufferedStr w => w with { Source = R(w.Source) },
             IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
@@ -2027,7 +2028,7 @@ public static class IrOptimizer
             case IrInst.PrintInt p: usedTemps.Add(p.Source); break;
             case IrInst.PrintStr p: usedTemps.Add(p.Source); break;
             case IrInst.PrintBool p: usedTemps.Add(p.Source); break;
-            case IrInst.WriteStr w: usedTemps.Add(w.Source); break;
+            case IrInst.WriteStr or IrInst.WriteBufferedStr: usedTemps.Add(GetWriteSource(inst)); break;
             case IrInst.FileReadText f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
@@ -2037,6 +2038,13 @@ public static class IrOptimizer
             case IrInst.FileClose f: usedTemps.Add(f.HandleTemp); break;
         }
     }
+
+    private static int GetWriteSource(IrInst instruction) => instruction switch
+    {
+        IrInst.WriteStr write => write.Source,
+        IrInst.WriteBufferedStr write => write.Source,
+        _ => throw new ArgumentOutOfRangeException(nameof(instruction))
+    };
 
     private static void CollectTextAndBigIntUsedTemps(IrInst inst, HashSet<int> usedTemps)
     {

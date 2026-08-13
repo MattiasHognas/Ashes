@@ -9019,7 +9019,8 @@ public sealed partial class Lowering
     private static string? AmbientCapabilityForIntrinsic(IntrinsicKind kind) => kind switch
     {
         IntrinsicKind.Print or IntrinsicKind.Panic or IntrinsicKind.Write or IntrinsicKind.WriteBytes
-            or IntrinsicKind.WriteLine or IntrinsicKind.ReadLine or IntrinsicKind.ReadExact
+            or IntrinsicKind.WriteLine or IntrinsicKind.WriteBuffered or IntrinsicKind.WriteBufferedLine
+            or IntrinsicKind.FlushStdout or IntrinsicKind.ReadLine or IntrinsicKind.ReadExact
             or IntrinsicKind.ConsoleEnableRaw or IntrinsicKind.ConsoleRestore or IntrinsicKind.ConsolePoll
             => ConsoleIoCapabilityName,
         IntrinsicKind.FileReadText or IntrinsicKind.FileReadAllBytes or IntrinsicKind.FileMmap
@@ -9040,6 +9041,9 @@ public sealed partial class Lowering
             IntrinsicKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
             IntrinsicKind.WriteBytes => LowerWriteBytes(collectedArgs[0]),
             IntrinsicKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+            IntrinsicKind.WriteBuffered => LowerBufferedWrite(collectedArgs[0], appendNewline: false),
+            IntrinsicKind.WriteBufferedLine => LowerBufferedWrite(collectedArgs[0], appendNewline: true),
+            IntrinsicKind.FlushStdout => LowerFlushStdout(collectedArgs[0]),
             IntrinsicKind.ReadLine => LowerReadLine(collectedArgs[0]),
             IntrinsicKind.FileReadText => LowerFileReadText(collectedArgs[0]),
             IntrinsicKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),
@@ -9223,7 +9227,9 @@ public sealed partial class Lowering
     {
         BuiltinRegistry.BuiltinValueKind.Print or BuiltinRegistry.BuiltinValueKind.Panic
             or BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes
-            or BuiltinRegistry.BuiltinValueKind.WriteLine or BuiltinRegistry.BuiltinValueKind.ReadLine
+            or BuiltinRegistry.BuiltinValueKind.WriteLine or BuiltinRegistry.BuiltinValueKind.WriteBuffered
+            or BuiltinRegistry.BuiltinValueKind.WriteBufferedLine or BuiltinRegistry.BuiltinValueKind.FlushStdout
+            or BuiltinRegistry.BuiltinValueKind.ReadLine
             or BuiltinRegistry.BuiltinValueKind.IoReadExact
             or BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw
             or BuiltinRegistry.BuiltinValueKind.ConsoleRestore
@@ -9251,6 +9257,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.Write => LowerWrite(collectedArgs[0], appendNewline: false),
             BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerWriteBytes(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.WriteLine => LowerWrite(collectedArgs[0], appendNewline: true),
+            BuiltinRegistry.BuiltinValueKind.WriteBuffered => LowerBufferedWrite(collectedArgs[0], appendNewline: false),
+            BuiltinRegistry.BuiltinValueKind.WriteBufferedLine => LowerBufferedWrite(collectedArgs[0], appendNewline: true),
+            BuiltinRegistry.BuiltinValueKind.FlushStdout => LowerFlushStdout(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.ReadLine => LowerReadLine(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.FileReadText => LowerFileReadText(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerFileReadAllBytes(collectedArgs[0]),

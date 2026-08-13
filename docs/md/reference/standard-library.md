@@ -45,6 +45,14 @@ Ambient acquisition is reflected in inferred capability rows. Console input/outp
   newline and no UTF-8 constraint (unlike `write`, which takes a `Str`). Use this for binary output such
   as a packed image or any non-text byte stream
 - `writeLine(text)` returning `Unit` — write `text` to stdout followed by a newline
+- `writeBuffered(text)` returning `Unit` — append `text` to a process-wide 64 KiB stdout buffer
+- `writeBufferedLine(text)` returning `Unit` — append `text` and a newline to the stdout buffer
+- `flush(unit)` returning `Unit` — write pending buffered stdout immediately. The buffer also flushes
+  when full, before a direct stdout operation, on normal exit, and before panic/runtime termination;
+  a value larger than the buffer is written directly after pending bytes. Forced external termination
+  cannot flush. Buffered and direct operations retain source order. Low-level direct writes and
+  buffered operations synchronize access across threads; ordering between concurrent calls is
+  unspecified.
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
 

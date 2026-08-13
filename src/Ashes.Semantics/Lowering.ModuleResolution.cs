@@ -332,9 +332,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.Print => LowerQualifiedBuiltinFunctionReference(name, CreatePrintBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.Panic => LowerQualifiedBuiltinFunctionReference(name, CreatePanicBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.Args => LowerProgramArgs(NewTemp(), CreateArgsBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.Write => LowerQualifiedBuiltinFunctionReference(name, CreateWriteBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.IoWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateWriteBytesBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.WriteLine => LowerQualifiedBuiltinFunctionReference(name, CreateWriteLineBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes or BuiltinRegistry.BuiltinValueKind.WriteLine => ResolveDirectIoBuiltinMember(name, kind),
+            BuiltinRegistry.BuiltinValueKind.WriteBuffered or BuiltinRegistry.BuiltinValueKind.WriteBufferedLine or BuiltinRegistry.BuiltinValueKind.FlushStdout => ResolveBufferedIoBuiltinMember(name, kind),
             BuiltinRegistry.BuiltinValueKind.ReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateReadLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadAllBytesBinding().S.Body),
@@ -387,6 +386,24 @@ public sealed partial class Lowering
             _ => null
         };
     }
+
+    private (int, TypeRef) ResolveBufferedIoBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+        => LowerQualifiedBuiltinFunctionReference(name, kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.WriteBuffered => CreateWriteBufferedBinding(appendNewline: false).S.Body,
+            BuiltinRegistry.BuiltinValueKind.WriteBufferedLine => CreateWriteBufferedBinding(appendNewline: true).S.Body,
+            BuiltinRegistry.BuiltinValueKind.FlushStdout => CreateFlushStdoutBinding().S.Body,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        });
+
+    private (int, TypeRef) ResolveDirectIoBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
+        => LowerQualifiedBuiltinFunctionReference(name, kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.Write => CreateWriteBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.IoWriteBytes => CreateWriteBytesBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.WriteLine => CreateWriteLineBinding().S.Body,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        });
 
     private (int, TypeRef) ResolveRuneBuiltinMember(BuiltinRegistry.BuiltinValueKind kind, string name)
     {
