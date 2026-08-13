@@ -8,9 +8,8 @@ import Ashes.Text as text
 import Ashes.Rune as rune
 import Ashes.Number.Math as math
 import Ashes.Task as async
+
 // An algebraic data type: the drinks on the menu...
-// let! awaits a task; async.all runs both independent calculations together.
-// |?> maps the Ok branch, |!> tags the Error branch.
 type Drink =
     | Espresso
     | Latte
@@ -45,7 +44,7 @@ let lineCount line =
 let recursive priceAll lines acc =
     match lines with
         | [] -> acc
-        | Line { drink = drink, qty = qty } :: rest -> priceAll rest(Priced.cost(drink) * math.toFloat(qty) + acc)
+        | Line { drink = drink, qty = qty } :: rest -> priceAll rest (Priced.cost(drink) * math.toFloat(qty) + acc)
 
 // Symbol pipeline: the number of drinks on the order.
 let count lines =
@@ -53,13 +52,9 @@ let count lines =
     |> list.map lineCount
     |> list.foldLeft add 0
 
-let priceLabel order =
-    text.formatFloat(priceAll order 0.0)(2)
+let priceLabel order = text.formatFloat(priceAll order 0.0)(2)
 
-let countLabel order =
-    order
-    |> count
-    |> text.fromInt
+let countLabel order = text.fromInt(count order)
 
 let fail e = "order failed: " + e
 
@@ -72,14 +67,15 @@ let merge result =
     match result with
         | Ok(line) | Error(line) -> line
 
-let order = [Line(drink = Espresso, qty = 2), Line(drink = Latte, qty = 1), Line(drink = Drip, qty = 3)]
+let order = [
+    Line(drink = Espresso, qty = 2),
+    Line(drink = Latte, qty = 1),
+    Line(drink = Drip, qty = 3)
+]
 
-let purchase =
-    await async.all [order
-    |> priceLabel
-    |> async.task, order
-    |> countLabel
-    |> async.task]
+// let! awaits a task; async.all runs both independent calculations together.
+// |?> maps the Ok branch, |!> tags the Error branch.
+let! purchase = async.all [async.task(priceLabel order), async.task(countLabel order)]
 in
     purchase
     |?> render
