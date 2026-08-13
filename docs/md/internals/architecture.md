@@ -1153,11 +1153,12 @@ within the compilation unit by unifying all perform-sites and handler arms.
 
 Runtime-provided marker capabilities use the same rows without handler evidence. Direct and
 higher-order builtin calls insert `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`,
-`NetListen`, `NetConnect`, or `Stop` at their acquisition site. External declarations carry a closed
-runtime row in `IrExternalFunction.RuntimeCapabilities`; ordinary externals default to `UnsafeFfi`,
-while declared resource destructors default to the empty row. The top-level unsatisfied-capability
-check recognizes these runtime-supplied names, but closed-row subsumption still rejects omissions.
-Possession-only operations on an existing handle do not insert another marker.
+`EnvironmentRead`, `NetListen`, `NetConnect`, or `Stop` at their acquisition site. External
+declarations carry a closed runtime row in `IrExternalFunction.RuntimeCapabilities`; ordinary
+externals default to `UnsafeFfi`, while declared resource destructors default to the empty row. The
+top-level unsatisfied-capability check recognizes these runtime-supplied names, but closed-row
+subsumption still rejects omissions. Possession-only operations on an existing handle do not insert
+another marker.
 
 ### Handler evidence: dynamically-scoped globals
 

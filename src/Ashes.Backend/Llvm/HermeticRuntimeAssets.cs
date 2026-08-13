@@ -153,7 +153,6 @@ internal sealed class HermeticRuntimeAssets
             yield return assemblyDirectory;
         }
 
-        yield return Directory.GetCurrentDirectory();
     }
 
     // Assembly.Location returns an empty string for assemblies embedded in a single-file app

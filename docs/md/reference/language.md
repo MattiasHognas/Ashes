@@ -3174,6 +3174,8 @@ The following capabilities are built into the compiler and require no declaratio
   `Ashes.IO.File.writeText` and `writeBytes`.
 - **`ProcessSpawn`** — creating a child process. Carried by `Ashes.IO.Process.spawn`.
 - **`TimeRead`** — observing a clock. Carried by `Ashes.IO.Console.monotonicMillis`.
+- **`EnvironmentRead`** — inspecting process environment variables and host-directory state. Carried
+  by every operation in `Ashes.IO.Environment`.
 - **`Entropy`** — acquiring nondeterministic seed material. No compiler builtin currently produces
   entropy; this reserved marker is available to an explicitly classified external declaration.
 - **`UnsafeFfi`** — an arbitrary user external call whose declaration has no explicit `needs` row.
@@ -3232,9 +3234,9 @@ destructor defaults to the empty row because destruction uses authority already 
 possession. Other borrow/consume externals still default to `UnsafeFfi` unless explicitly
 classified.
 
-The names `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`, `Entropy`, `UnsafeFfi`,
-`NetListen`, `NetConnect`, and `Stop` are reserved. A user capability declaration with any of these
-names is a compile-time error.
+The names `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`, `EnvironmentRead`,
+`Entropy`, `UnsafeFfi`, `NetListen`, `NetConnect`, and `Stop` are reserved. A user capability
+declaration with any of these names is a compile-time error.
 
 Because a handler's `needs {Stop}` (or `{NetConnect}`, for a handler that dials out) must thread
 through `serve`, capability rows propagate correctly through higher-order library combinators and

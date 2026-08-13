@@ -32,8 +32,9 @@ imports work identically for all of them.
 
 Ambient acquisition is reflected in inferred capability rows. Console input/output requires
 `ConsoleIO`; filesystem acquisition requires `FileRead` or `FileWrite`; process creation requires
-`ProcessSpawn`; and reading the monotonic clock requires `TimeRead`. Operations on an already-owned
-`FileHandle` or `Process` are possession-only and add no ambient capability.
+`ProcessSpawn`; inspecting the process environment requires `EnvironmentRead`; and reading the
+monotonic clock requires `TimeRead`. Operations on an already-owned `FileHandle` or `Process` are
+possession-only and add no ambient capability.
 
 ### `Ashes.IO`
 
@@ -143,6 +144,27 @@ running on. These functions do not access the filesystem, resolve symlinks, or r
 - `relativeTo(style)(base)(target)` returning `Str` — normalized path from directory `base` to
   `target`. Different Unix/relative roots or different Windows drive/UNC roots return normalized
   `target` unchanged. Windows root and component comparison is ASCII case-insensitive.
+
+### `Ashes.IO.Environment`
+
+Process-environment and host-directory discovery. Every operation carries the `EnvironmentRead`
+marker capability. Returned text is valid UTF-8; an operating-system value that cannot be represented
+as UTF-8 produces `Error(message)` rather than an invalid `Str`.
+
+- `currentDirectory(unit)` returning `Result(Str, Str)` — the process working directory.
+- `executableDirectory(unit)` returning `Result(Str, Str)` — the directory containing the running
+  executable, independent of the process working directory.
+- `temporaryDirectory(unit)` returning `Result(Str, Str)` — the host temporary directory. Linux uses
+  the first non-empty `TMPDIR`, then `/tmp`; Windows uses the directory reported by the operating
+  system.
+- `cacheDirectory(unit)` returning `Result(Str, Str)` — the per-user cache directory. Linux uses the
+  first non-empty `XDG_CACHE_HOME`, then `$HOME/.cache`; Windows uses the first non-empty
+  `LOCALAPPDATA`, then `$USERPROFILE/AppData/Local`. Missing required fallback variables produce an
+  error.
+- `get(name)` returning `Result(Str, Maybe(Str))` — `Ok(Some(value))` when the variable is set,
+  including when its value is empty, and `Ok(None)` when it is unset. An empty name is an error.
+
+Supported on Linux x64, Linux arm64, Windows x64, and Windows arm64.
 
 ### `Ashes.IO.Process`
 

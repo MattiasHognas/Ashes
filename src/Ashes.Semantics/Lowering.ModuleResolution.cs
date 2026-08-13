@@ -317,6 +317,7 @@ public sealed partial class Lowering
         // disjoint and tried in declaration order.
         var member = module.Members[name];
         return ResolveIoTextAndBigIntBuiltinMember(name, member.Kind)
+            ?? ResolveEnvironmentBuiltinMember(name, member.Kind)
             ?? ResolveNetworkBuiltinMember(name, member.Kind)
             ?? ResolveAsyncBuiltinMember(name, member.Kind)
             ?? ResolveBytesBuiltinMember(name, member.Kind)
@@ -386,6 +387,16 @@ public sealed partial class Lowering
             _ => null
         };
     }
+
+    private (int, TypeRef)? ResolveEnvironmentBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentCurrentDirectory).S.Body),
+        BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentExecutableDirectory).S.Body),
+        BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentTemporaryDirectory).S.Body),
+        BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentDirectoryBinding(IntrinsicKind.EnvironmentCacheDirectory).S.Body),
+        BuiltinRegistry.BuiltinValueKind.EnvironmentGet => LowerQualifiedBuiltinFunctionReference(name, CreateEnvironmentGetBinding().S.Body),
+        _ => null
+    };
 
     private (int, TypeRef) ResolveBufferedIoBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)
         => LowerQualifiedBuiltinFunctionReference(name, kind switch

@@ -46,6 +46,7 @@ internal static partial class LlvmImageLinker
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["getenv"] = "libc.so.6",
+            ["getcwd"] = "libc.so.6",
             ["getpid"] = "libc.so.6",
             ["strlen"] = "libc.so.6",
             ["memchr"] = "libc.so.6",
@@ -65,6 +66,7 @@ internal static partial class LlvmImageLinker
             ["gmtime_r"] = "libc.so.6",
             ["inet_pton"] = "libc.so.6",
             ["printf"] = "libc.so.6",
+            ["readlink"] = "libc.so.6",
             ["puts"] = "libc.so.6",
             ["remove"] = "libc.so.6",
             ["rename"] = "libc.so.6",
