@@ -11,49 +11,48 @@ items may improve performance or ergonomics but do not block the first self-host
 tag names the consumer, not the project that must implement the prerequisite. `Tests` covers the
 component unit-test projects, `TestRunner` the end-to-end `.ash` runner, and `Fuzzing` both
 `Ashes.Fuzzing` and `Ashes.Fuzzing.Tests`. Tests are required for every delivered change; those tags
-appear only where the test infrastructure itself consumes the capability. Every capability links to
-the work package that explains how it is used or what remains. A `Complete` status means the
-language/stdlib substrate exists; its linked package still records the self-hosted port and
-differential-validation work.
+appear only where the test infrastructure itself consumes the capability. `Complete` capabilities
+link to the normative documentation for the shipped surface. `Partial`, `Required`, `Design
+required`, and `Optional` capabilities link to actionable work packages below.
 
 | Capability | Status | Areas |
 |---|---|---|
-| [Unsigned integer support (`u8`, `u16`, `u32`, `u64`)](#gap-numeric-primitives) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
-| [Byte type (`u8`) and byte literals](#gap-numeric-primitives) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
-| [Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`)](#gap-numeric-primitives) | Complete | `Compiler/Backend`, `Compiler/Linker` |
-| [Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`)](#gap-numeric-primitives) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
+| [Unsigned integer support (`u8`, `u16`, `u32`, `u64`)](../reference/language.md#_2-1-integers) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| [Byte type (`u8`) and byte literals](../reference/language.md#_2-1-integers) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| [Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`)](../reference/language.md#_3-5-bitwise) | Complete | `Compiler/Backend`, `Compiler/Linker` |
+| [Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
 | [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | Partial | `Compiler/Backend` |
 | [LLVM native arrays, out parameters, returned strings, and foreign buffers](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | Required | `Compiler/Backend` |
-| [Immutable `Bytes` with indexed reads and append helpers](#gap-efficient-immutable-binary-construction) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
-| [Little-endian byte encode/decode helpers (`u16/u32/u64`)](#gap-efficient-immutable-binary-construction) | Complete | `Compiler/Linker`, `DAP` |
+| [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
+| [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
-| [Binary file output (`Ashes.IO.File.writeBytes`)](#gap-efficient-immutable-binary-construction) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
+| [Binary file output (`Ashes.IO.File.writeBytes`)](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
 | [Path normalization, joining, parent/basename, and relative paths](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Current/executable/temp/cache directories and environment lookup](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | [Directory enumeration, creation, deletion, and atomic rename](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
 | [Marking emitted ELF files executable](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `TestRunner`, `Fuzzing` |
 | [stderr output and controlled process exit codes](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
-| [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](#gap-text-unicode-and-source-coordinates) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
-| [Unicode scalar classification through `Rune`](#gap-text-unicode-and-source-coordinates) | Complete; self-hosted lexer migration pending | `Compiler/Frontend`, `Formatter`, `LSP` |
+| [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| [Unicode scalar classification through `Rune`](../reference/standard-library.md#ashes-rune) | Complete | `Compiler/Frontend`, `Formatter`, `LSP` |
 | [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](#gap-text-unicode-and-source-coordinates) | Design required | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
-| [Persistent immutable map (`Ashes.Collection.Map`)](#gap-persistent-collections) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
-| [Persistent immutable array (`Ashes.Collection.Array`)](#gap-persistent-collections) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
+| [Persistent immutable map (`Ashes.Collection.Map`)](../reference/standard-library.md#ashes-collection-map) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
+| [Persistent immutable array (`Ashes.Collection.Array`)](../reference/standard-library.md#ashes-collection-array) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
 | [Persistent immutable set](#gap-persistent-collections) | Optional — use `Map(K, Unit)` initially | `Compiler/Semantics`, `LSP` |
 | [Generic hashing for non-`Str` keys](#gap-persistent-collections) | Optional — use `Map` initially | `Compiler/Semantics`, `LSP` |
 | [Named string-builder or rope](#gap-text-construction-performance) | Optional — `Text.join` and affine-growth reuse are workable initially | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
-| [Records, named patterns, and record-update syntax](#gap-compiler-data-modeling) | Complete | `Compiler`, `Formatter`, `LSP` |
-| [User-written type annotations, aliases, and zero-cost nominal types](#gap-compiler-data-modeling) | Complete | `Compiler`, `Formatter`, `LSP` |
-| [Project/module compilation with explicit exports and path dependencies](#gap-project-and-module-hosting) | Complete in the C# compiler; host path APIs still required by the port | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
-| [Catchable error propagation for compile-pipeline flows](#gap-errors-and-deterministic-memory) | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
-| [RC-Perceus deterministic memory without cyclic graphs](#gap-errors-and-deterministic-memory) | Complete; the port must avoid parent/back-reference cycles | `Compiler`, `Formatter`, `LSP`, `DAP` |
+| [Records, named patterns, and record-update syntax](../reference/language.md#_4-3-record-types) | Complete | `Compiler`, `Formatter`, `LSP` |
+| [User-written type annotations, aliases, and zero-cost nominal types](../reference/language.md#_4-2-zero-cost-nominal-types) | Complete | `Compiler`, `Formatter`, `LSP` |
+| [Project/module compilation with explicit exports and path dependencies](#gap-project-and-module-hosting) | Partial — compiler semantics complete; host path APIs still required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [Catchable error propagation for compile-pipeline flows](../reference/language.md#_13-4-error-handling) | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| [RC-Perceus deterministic memory without cyclic graphs](../internals/architecture.md#memory-model) | Complete; the port must avoid parent/back-reference cycles | `Compiler`, `Formatter`, `LSP`, `DAP` |
 | [Persistent immutable substitution and unification architecture](#gap-hm-type-inference-is-built-on-mutable-union-find) | Required | `Compiler/Semantics` |
-| [Large-ADT exhaustiveness and performance hardening](#gap-large-adt-semantics) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
-| [JSON parsing/serialization for `ashes.json` and JSON-RPC](#gap-tooling-protocols-and-processes) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
-| [Stdio JSON-RPC Content-Length framing](#gap-tooling-protocols-and-processes) | Complete | `LSP`, `DAP` |
-| [Interactive subprocess control with piped streams and timeouts](#gap-tooling-protocols-and-processes) | Complete | `DAP`, `TestRunner`, `Fuzzing` |
-| [Regex utilities for tooling text](#gap-tooling-protocols-and-processes) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
+| [Large-ADT exhaustiveness and performance hardening](../reference/language.md#_11-pattern-matching) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
+| [JSON parsing/serialization for `ashes.json` and JSON-RPC](../reference/standard-library.md#ashes-text-json) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
+| [Stdio JSON-RPC Content-Length framing](../reference/standard-library.md#ashes-net-rpc) | Complete | `LSP`, `DAP` |
+| [Interactive subprocess control with piped streams and timeouts](../reference/standard-library.md#ashes-io-process) | Complete | `DAP`, `TestRunner`, `Fuzzing` |
+| [Regex utilities for tooling text](../reference/standard-library.md#ashes-text-regex) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
 | [Unit assertions plus deterministic test discovery/execution](#gap-self-hosted-validation-infrastructure) | Partial — `Ashes.Test` is complete; discovery still needs the host APIs above | `Tests`, `TestRunner` |
-| [Deterministic fuzz generation, replay, shrinking, corpus, and artifacts](#gap-self-hosted-validation-infrastructure) | Complete in the C# harness; porting it is not a compiler-core gate | `Fuzzing` |
+| [Deterministic fuzz generation, replay, shrinking, corpus, and artifacts](../guide/fuzz-testing.md#seeds-replay-shrinking-and-artifacts) | Complete in the C# harness; porting it is not a compiler-core gate | `Fuzzing` |
 | [Tar/gzip, SHA-256, authenticated HTTP, and multipart upload](#gap-registry-and-distribution-cli) | Required only for a full CLI replacement | `CLI/Registry` |
 | [Defined stage-0/stage-1/stage-2 bootstrap and reproducibility gate](#gap-bootstrap-completion-gate) | Design required | `Compiler`, `CLI`, `Tests`, `TestRunner`, `Fuzzing` |
 
@@ -67,26 +66,6 @@ Each package below is the implementation hand-off for one or more rows in the ta
 language or stdlib facilities; others describe how already-shipped facilities must be applied and
 validated in the self-hosted toolchain. Complete a package in reviewable slices, updating the
 normative documentation before any language or API change.
-
-### Gap: numeric primitives
-
-Unsigned integers, `u8`, byte literals, bitwise operators, and numeric text conversion are already
-shipped. The remaining gap is adoption and parity in the Ashes implementation of the compiler,
-especially at file-format and LLVM boundaries where signed coercions are not interchangeable.
-
-Workable tasks:
-
-1. Inventory every numeric type and conversion used by the C# frontend, LLVM backend, ELF/PE linkers,
-   and diagnostics; assign an exact Ashes type instead of defaulting offsets and masks to `Int`.
-2. Port numeric-literal decoding with explicit overflow handling for every suffix, including `u64`
-   values above `i64::MAX`; remove the historical lexer exemption for `u64::MAX`.
-3. Port bit masks, shifts, alignment arithmetic, endian fields, and checked narrowing without routing
-   them through signed values.
-4. Add shared boundary fixtures for zero, maximum values, overflow, shift widths, and conversion
-   failures, then compare the C# and Ashes frontend/linker results.
-
-Done when the self-hosted frontend accepts and rejects the same numeric literals as stage 0, and the
-self-hosted linker produces structurally identical integer fields for all four targets.
 
 ### Gap: HM type inference is built on mutable union-find
 
@@ -322,23 +301,21 @@ for ASCII and Unicode sources, and the self-hosted lexer builds against the curr
 
 ### Gap: persistent collections
 
-`Ashes.Collection.Map` and `Ashes.Collection.Array` are shipped; a first compiler can represent sets
-as `Map(K, Unit)` and does not require generic hashing. The risk is algorithmic behavior at compiler
-scale, not basic availability.
+`Ashes.Collection.Map` and `Ashes.Collection.Array` are shipped. A dedicated persistent set and
+generic hashing are optional: the first compiler can use `Map(K, Unit)` and ordered `Map` keys.
 
 Workable tasks:
 
-1. Map C# dictionaries, hash sets, lists, stacks, and indexed tables to `Map`, `Map(K, Unit)`, `List`,
-   or `Array`, documenting ordering requirements and expected operation complexity.
-2. Port symbol tables, module maps, AST/IR sequences, work queues, and visited sets using those
-   choices; add deterministic-order tests anywhere output is serialized.
-3. Benchmark lookup/update-heavy inference and large indexed IR workloads. Confirm uniquely owned
-   update chains receive the intended Perceus reuse.
-4. Add a persistent set or generic hashing only if measurements show the `Map` representation blocks
-   a milestone; specify key equality/hash coherence before doing so.
+1. Use `Map(K, Unit)` and ordered keys in the initial port; add deterministic-order tests anywhere a
+   set or map contributes to serialized output.
+2. Benchmark set-heavy Semantics and LSP workloads against the existing C# implementation.
+3. If measurements show the fallback blocks a milestone, specify a persistent set API and implement
+   it with the same unique-update reuse guarantees as `Map`.
+4. Add generic hashing only for a measured non-`Str` key workload, after specifying equality/hash
+   coherence, deterministic seeding, collision behavior, and iteration-order guarantees.
 
-Done when representative frontend and Semantics workloads have deterministic output and acceptable
-time/memory without relying on a mutable collection escape hatch.
+Done without new APIs if the `Map` fallback meets the agreed performance budget. Otherwise, done when
+the measured blocker passes with the smallest added collection surface and deterministic tests.
 
 ### Gap: text construction performance
 
@@ -360,25 +337,6 @@ Workable tasks:
 Done when doubling representative output does not cause accidental quadratic growth and output is
 byte-for-byte equal to the stage-0 component.
 
-### Gap: compiler data modeling
-
-Records, named patterns, record updates, type annotations, aliases, and zero-cost nominal `type`
-declarations are shipped. The work is to use them to preserve phase boundaries and prevent accidental
-mixing of identifiers, offsets, and handles in the port.
-
-Workable tasks:
-
-1. Define separate nominal types for source ids, symbol ids, type-variable ids, byte offsets, target
-   offsets, and LLVM handles; do not use bare `Int` or raw opaque handles across module boundaries.
-2. Port AST, typed-tree, IR, diagnostic, and target-layout records with exhaustive named patterns and
-   record updates.
-3. Add serialization round trips and compile-time negative fixtures proving incompatible nominal
-   values cannot be mixed.
-4. Keep conversion functions at explicit boundaries and compare serialized records with stage 0.
-
-Done when the self-hosted phase models cover the current C# model without untyped identifier/offset
-shortcuts and their stable serializations match the differential harness.
-
 ### Gap: project and module hosting
 
 The compiler already supports sequential top-level declarations, explicit exports, imports, and path
@@ -399,70 +357,10 @@ Workable tasks:
 Done when stage 0 and the self-hosted project loader choose the same ordered source set, visible
 exports, and diagnostics for the full project fixture suite.
 
-### Gap: errors and deterministic memory
-
-Catchable effects and RC-Perceus are shipped. A compiler port must shape expected failures as values,
-keep panics for violated invariants, and avoid cyclic graphs that deterministic reference counting
-cannot reclaim.
-
-Workable tasks:
-
-1. Classify stage-0 exceptions and error returns into user diagnostics, recoverable host failures, and
-   internal invariants; model the first two with typed results/effects.
-2. Design parent/child compiler structures without strong back-references; use ids plus central maps
-   for scopes, syntax parents, type graphs, and control-flow graphs where cycles would otherwise form.
-3. Run `--explain ownership`, `--explain rc`, and `--explain memory` on representative compiler paths;
-   add regressions for closure captures, recursive collections, and error unwinding.
-4. Stress repeated compile/format/protocol requests in one process and compare stable memory use and
-   cleanup of files, processes, and LLVM resources.
-
-Done when expected bad input never crashes the tool, repeated workloads do not grow without bound,
-and sanitizers/resource counters show balanced cleanup on success and failure.
-
-### Gap: large ADT semantics
-
-Large-ADT exhaustiveness and performance hardening is shipped, but the self-hosted parser and
-Semantics implementation will exercise it with token, AST, type, IR, and diagnostic unions much
-larger than ordinary application code.
-
-Workable tasks:
-
-1. Port the largest compiler ADTs and their matches without replacing structural matches with ad-hoc
-   integer tag logic.
-2. Differentially test exhaustiveness, redundancy, payload typing, and diagnostics using generated
-   ADTs around representation and decision-tree thresholds.
-3. Benchmark compile time and generated-code size for lexer/parser dispatch and IR visitors.
-4. Add targeted fuzz generation for deep/nested patterns and large constructor sets, preserving any
-   minimized failure as a regression.
-
-Done when large compiler unions compile and run within agreed limits and match stage-0 behavior for
-exhaustiveness and diagnostics.
-
-### Gap: tooling protocols and processes
-
-JSON, stdio JSON-RPC framing, interactive subprocesses, and regex are shipped. Their remaining gap is
-tool-specific integration and long-lived-process correctness.
-
-Workable tasks:
-
-1. Port `ashes.json`, LSP, and DAP codecs with explicit schemas and golden messages; distinguish a
-   missing field, JSON null, malformed data, and unknown forward-compatible fields.
-2. Share one incremental Content-Length framer across LSP and DAP and test fragmented headers/bodies,
-   multiple messages per read, invalid lengths, EOF, and non-ASCII payload byte counts.
-3. Port debugger/test subprocess control with piped stdin/stdout/stderr, timeouts, cancellation,
-   process-tree cleanup, and platform-specific quoting.
-4. Use regex only for external/tooling text already defined that way; retain structural parsers for
-   Ashes source and protocols. Differentially test representative compiler and debugger output.
-5. Run multi-request soak tests and fuzz JSON/framing/regex inputs for hangs, unbounded allocation,
-   crashes, and nondeterministic responses.
-
-Done when self-hosted protocol transcripts and subprocess outcomes match the current LSP, DAP, and
-TestRunner fixtures on supported hosts.
-
 ### Gap: self-hosted validation infrastructure
 
-`Ashes.Test` assertions and the C# fuzzing framework exist. Deterministic discovery depends on the
-host APIs, and porting TestRunner/fuzzing is a toolchain-parity layer rather than a compiler-core gate.
+`Ashes.Test` assertions are shipped. Deterministic discovery and end-to-end execution still depend on
+the host APIs, and porting TestRunner is a toolchain-parity layer rather than a compiler-core gate.
 
 Workable tasks:
 
@@ -470,15 +368,12 @@ Workable tasks:
    stdin/files/network fixtures, timeout handling, output comparison, and cleanup.
 2. Reuse the existing `.ash` corpus and extract component edge cases into shared fixtures consumed by
    both stage 0 and self-hosted differential drivers.
-3. Port deterministic seed derivation, generation registries, replay, shrinking, corpus promotion,
-   artifact layout, and unique-error classification without changing replay identity.
-4. Extend generators whenever a prerequisite adds syntax, types, IR shapes, ownership behavior, or
-   ABI lowering; LLVM FFI work specifically needs declaration/parser, semantic, and lowering fuzzing.
-5. Run the same fixed seeds twice and compare results/artifacts byte-for-byte before adding bounded CI
-   campaigns.
+3. Match directive validation, output normalization, failure reporting, and exit codes against the C#
+   TestRunner on success, compile failure, runtime failure, and timeout cases.
+4. Run discovery twice in clean temporary workspaces and prove identical ordering and reports.
 
-Done when tests are discovered and reported identically and a failure produced by the self-hosted
-fuzzer can be replayed and minimized by seed with stable artifacts.
+Done when the self-hosted TestRunner discovers, executes, and reports the existing corpus identically
+to the C# TestRunner on supported hosts.
 
 ### Gap: registry and distribution CLI
 
