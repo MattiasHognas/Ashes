@@ -641,6 +641,7 @@ public static partial class DocumentService
         typeNames.UnionWith(program.ExternalDecls.OfType<ExternalDecl.OpaqueType>()
             .Select(declaration => declaration.Name));
         typeNames.Add("FfiBuffer");
+        typeNames.Add("FfiStr");
         var ctorNames = lowering.ConstructorSymbols.Keys.ToHashSet(StringComparer.Ordinal);
         var traitNames = lowering.TraitSymbols.Values
             .SelectMany(trait => new[] { trait.Name, trait.QualifiedName })
@@ -813,6 +814,7 @@ public static partial class DocumentService
         if (declarations.Count > 0)
         {
             completionNames.Add("FfiBuffer");
+            completionNames.Add("FfiStr");
             completionNames.Add("out");
         }
         completionNames.UnionWith(declarations.Select(declaration => declaration switch
@@ -1568,7 +1570,8 @@ public static partial class DocumentService
         Lowering.ExternalOwnershipInfo? ownership = lowering.GetExternalOwnershipInfo(
             identifier.Value.Token.Text);
         bool hasSpecialFfiParameter = declaration is ExternalDecl.Function function
-            && function.ParameterTypes.Any(type => type is ParsedType.Buffer or ParsedType.Out);
+            && (function.ReturnType is ParsedType.NativeString
+                || function.ParameterTypes.Any(type => type is ParsedType.Buffer or ParsedType.Out));
         if (ownership is null && !hasSpecialFfiParameter)
         {
             return null;
@@ -1618,6 +1621,7 @@ public static partial class DocumentService
             {
                 AppendFfiBufferHover(markdown, function);
                 AppendFfiOutHover(markdown, function);
+                AppendFfiStringHover(markdown, function);
             }
         }
 
@@ -1648,7 +1652,7 @@ public static partial class DocumentService
     {
         IReadOnlyList<(int Index, ParsedType.Out Out)> outputs = [.. function.ParameterTypes
             .Select((type, index) => (Index: index, Type: type))
-            .Where(parameter => parameter.Type is ParsedType.Out)
+            .Where(parameter => parameter.Type is ParsedType.Out { Element: not ParsedType.NativeString })
             .Select(parameter => (parameter.Index, (ParsedType.Out)parameter.Type))];
         if (outputs.Count == 0)
         {
@@ -1668,8 +1672,48 @@ public static partial class DocumentService
     {
         ParsedType.Named named => named.Name,
         ParsedType.Pointer pointer => "*" + FormatExternalHoverType(pointer.Pointee),
+        ParsedType.NativeString native => FormatFfiStringHoverType(native),
         _ => "T",
     };
+
+    private static void AppendFfiStringHover(StringBuilder markdown, ExternalDecl.Function function)
+    {
+        List<string> contracts = [];
+        if (function.ReturnType is ParsedType.NativeString returned)
+        {
+            contracts.Add($"return `{FormatFfiStringHoverType(returned)}`: copied to `Result(Str, "
+                + (returned.Nullable ? "Maybe(Str))`" : "Str)`"));
+        }
+
+        foreach ((ParsedType type, int index) in function.ParameterTypes.Select((type, index) => (type, index)))
+        {
+            if (type is ParsedType.Out { Element: ParsedType.NativeString output })
+            {
+                contracts.Add($"#{index + 1} `out {FormatFfiStringHoverType(output)}`: copied to `Result(Str, Maybe(Str))`");
+            }
+        }
+
+        if (contracts.Count == 0)
+        {
+            return;
+        }
+
+        markdown.Append("\n\n**Native UTF-8 strings**");
+        foreach (string contract in contracts)
+        {
+            markdown.Append("\n\n- ");
+            markdown.Append(contract);
+        }
+    }
+
+    private static string FormatFfiStringHoverType(ParsedType.NativeString native)
+    {
+        string nullable = native.Nullable ? "nullable " : string.Empty;
+        string ownership = native.Ownership == FfiStringOwnership.Borrowed
+            ? "borrowed"
+            : "owned " + native.DestructorName;
+        return $"FfiStr({nullable}{ownership})";
+    }
 
     private static string? ResolveCanonicalHoverName(
         string? name,

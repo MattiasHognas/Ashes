@@ -77,6 +77,8 @@ public static class DiagnosticCodes
     public const string InvalidFfiBuffer = "ASH044";
     /// <summary>An external out parameter has an unsupported type, position, or ownership marker.</summary>
     public const string InvalidFfiOutParameter = "ASH045";
+    /// <summary>A native FFI string has an invalid position, ownership, or destructor contract.</summary>
+    public const string InvalidFfiString = "ASH046";
 }
 
 /// <summary>

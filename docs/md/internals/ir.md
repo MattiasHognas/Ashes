@@ -283,10 +283,14 @@ ordinary-value lifetime.
 | `AllocFfiOut` | `Target`, `ElementType` | Allocate and null-initialize a non-escaping opaque/pointer output slot |
 | `CallExternal` | `Target`, symbol/library, argument temps, parameter types, return type | Invoke a declared native function using its target ABI |
 | `LoadFfiOut` | `Target`, `SlotTemp`, `ElementType` | Load an output slot exactly once after its external call |
+| `CopyFfiString` | `Target`, `PointerTemp`, `StringType` | Validate and copy a native NUL-terminated UTF-8 string into an Ashes `Result` |
 
 `AllocFfiOut` produces the address passed at the corresponding `FfiType.Out` position. Lowering
 materializes each loaded null as `None` and each non-null value as `Some(value)`; the slot address
 never becomes a source-language pointer or survives the direct call.
+`CopyFfiString` scans at most 1 GiB, validates UTF-8, and copies before returning. For owned
+contracts it invokes the validated destructor exactly once for every non-null pointer, including
+conversion failures; nullable contracts map null to `Ok(None)` and never dispose null.
 
 ### Console I/O
 

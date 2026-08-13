@@ -22,7 +22,8 @@ packages below.
 | [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend` |
 | [Call-scoped native arrays of opaque handles](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
 | [LLVM out parameters](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `LSP`, `Fuzzing` |
-| [Returned native strings and foreign buffers](#gap-returned-native-strings-and-foreign-buffers) | Required | `Compiler/Backend` |
+| [Returned native strings](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [Foreign pointer-plus-length buffers](#gap-foreign-pointer-plus-length-buffers) | Required | `Compiler/Backend` |
 | [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
@@ -60,40 +61,20 @@ Each package below is the implementation hand-off for one or more incomplete row
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
 
-### Gap: Returned native strings and foreign buffers
+### Gap: Foreign pointer-plus-length buffers
 
 `Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
 (`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
-own `external` mechanism can now materialize call-scoped contiguous arrays of opaque handles and
-nullable opaque/pointer out parameters, but Ashes code still cannot copy a returned
-pointer-plus-length buffer into `Bytes` or decode and dispose a returned native string. The current
-C# adapter handles these shapes with explicit `Marshal`/copy operations. Representative calls
-include host CPU discovery, module printing, and `LLVMTargetMachineEmitToMemoryBuffer`.
+own `external` mechanism can now materialize call-scoped contiguous arrays of opaque handles,
+nullable opaque/pointer out parameters, and borrowed or owned native UTF-8 strings. Ashes code still
+cannot copy a returned pointer-plus-length buffer into `Bytes`. The current C# adapter handles this
+shape with explicit `Marshal`/copy operations; the representative blocker is
+`LLVMTargetMachineEmitToMemoryBuffer`.
 
 **Decision (2026-07-24): extend Ashes' FFI rather than require an Ashes compiler to use textual LLVM
 IR plus a subprocess.** This preserves direct access to LLVM-C and avoids making process spawning an
 accidental backend requirement. Specify the extension in the
 [language reference](../reference/language.md) before implementation.
-
-#### Returned native strings
-
-LLVM returns owned C strings for host CPU names/features, data layouts, module printing, and several
-error messages. Returning those as the existing FFI `Str` type is incorrect: an Ashes `Str` has its
-own runtime representation, and the native allocation must be disposed with `LLVMDisposeMessage`.
-
-Workable tasks:
-
-1. Specify declaration metadata for borrowed versus owned UTF-8 C strings, including nullable forms;
-   do not treat an arbitrary `*u8` return as an Ashes `Str`.
-2. For owned strings, scan to the terminator with a documented bound policy, copy into a new Ashes
-   `Str`, validate UTF-8 with deterministic replacement/error semantics, then call the declared
-   destructor exactly once on every success and error path.
-3. For borrowed strings, copy before the owning call/resource can end and never schedule a
-   destructor. Encode nullability as `Maybe(Str)` rather than language-level null.
-4. Test empty, null, malformed UTF-8, embedded-boundary, successful disposal, and conversion failure
-   using an instrumented C fixture, then cover the LLVM CPU/data-layout/print/error cases.
-
-#### Foreign pointer-plus-length buffers
 
 Object emission returns an owning `LLVMMemoryBufferRef`; `LLVMGetBufferStart` and
 `LLVMGetBufferSize` expose a borrowed pointer and length. The safe Ashes operation is an immediate,
@@ -119,12 +100,8 @@ lifetime invariant inside the opaque LLVM module initially. Record consuming API
 `LLVMLinkModules2` explicitly. In external declarations, `borrow` means the native call does not take
 Ashes ownership; it does not claim that LLVM leaves the native object unmodified.
 
-Deliver the remaining work as two reviewable slices:
-
-1. owned/borrowed C strings; and
-2. foreign binary buffers plus a minimal private LLVM facade.
-
-Each slice updates the language reference first, then Frontend, Formatter, Semantics/IR, Backend,
+Deliver the remaining work as one reviewable slice: foreign binary buffers plus a minimal private
+LLVM facade. It updates the language reference first, then Frontend, Formatter, Semantics/IR, Backend,
 diagnostics, LSP, unit/e2e tests, and relevant fuzz generators. Do not add C structs by value,
 callbacks, varargs, scalar out parameters, or public pointer arithmetic until an audited LLVM call
 actually requires them. The package is done when an Ashes program uses the facade to construct a tiny

@@ -62,15 +62,21 @@ internal sealed class ProgramGenerator
                 ? Enum.GetValues<OwnershipInterest>()
                 : profile.OwnershipInterests);
         FrontendProgram measuredPrelude = new(prelude.Items, new Expr.IntLit(0));
+        GenerationBudgetUsage preludeUsage = GenerationBudgetValidator.Measure(
+            measuredPrelude,
+            prelude.Trace,
+            sourceLength: 0);
+        budget = budget with
+        {
+            // BuildFeatureDeclarations can add one capability declaration after expression generation.
+            RemainingDeclarations = Math.Max(budget.RemainingDeclarations, preludeUsage.Declarations + 1),
+        };
         int preludeNodes = AstCoverageMetrics.Measure(measuredPrelude).Nodes - 1;
         int availableExpressionNodes = Math.Max(2, maximumNodes - preludeNodes - 2);
         GenerationBudget selectionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
         AshesType type = SelectType(profile, preferredCombination, forcePreferredCombination, context, selectionBudget, random);
         GenerationBudget baseBudget = budget;
-        int preludeFunctions = GenerationBudgetValidator.Measure(
-            measuredPrelude,
-            prelude.Trace,
-            sourceLength: 0).Functions;
+        int preludeFunctions = preludeUsage.Functions;
         budget = EnsureMinimumFunctionBudget(baseBudget, type, context, preludeFunctions, profile.GenerateTraits);
         GenerationBudget expressionBudget = budget.Descend(2).LimitNodes(availableExpressionNodes);
         GenerationResult<Expr> generated = expressions.Generate(type, context, expressionBudget, random);

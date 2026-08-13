@@ -794,6 +794,9 @@ public static class StateMachineTransform
         return inst switch
         {
             IrInst.Alloc i => [i.Target],
+            IrInst.AllocFfiOut i => [i.Target],
+            IrInst.LoadFfiOut i => [i.Target],
+            IrInst.CopyFfiString i => [i.Target],
             IrInst.AllocStack i => [i.Target],
             IrInst.AllocAdt i => [i.Target],
             IrInst.AllocAdtToSpace i => [i.Target],
@@ -1017,6 +1020,8 @@ public static class StateMachineTransform
         return inst switch
         {
             IrInst.SetAdtField sf => [sf.Ptr, sf.Source],
+            IrInst.LoadFfiOut load => [load.SlotTemp],
+            IrInst.CopyFfiString copy => [copy.PointerTemp],
             IrInst.GetAdtTag gt => [gt.Ptr],
             IrInst.GetAdtField gf => [gf.Ptr],
             IrInst.PrintInt p => [p.Source],

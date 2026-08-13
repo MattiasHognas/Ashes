@@ -1488,6 +1488,8 @@ public abstract record IrInst
     /// <param name="SlotTemp">Temp holding the address produced by <see cref="AllocFfiOut"/>.</param>
     /// <param name="ElementType">Opaque handle or pointer type stored in the slot.</param>
     public sealed record LoadFfiOut(int Target, int SlotTemp, FfiType ElementType) : IrInst;
+    /// <summary>Copies and validates a native UTF-8 pointer, disposing owned storage afterward.</summary>
+    public sealed record CopyFfiString(int Target, int PointerTemp, FfiType.NativeString StringType) : IrInst;
     /// <summary>Calls an external (FFI) function, marshalling arguments and the result per the declared
     /// <see cref="FfiType"/> signature.</summary>
     /// <param name="Target">Temp receiving the (marshalled) return value.</param>
@@ -1846,8 +1848,23 @@ public abstract record FfiType
     /// <summary>A compiler-owned nullable output slot passed by address to the native call.</summary>
     /// <param name="Element">The opaque handle or pointer value loaded from the slot.</param>
     public sealed record Out(FfiType Element) : FfiType;
+    /// <summary>A native NUL-terminated UTF-8 pointer copied into an Ashes string after the call.</summary>
+    public sealed record NativeString(
+        bool Nullable,
+        FfiNativeStringOwnership Ownership,
+        string? DestructorSymbol,
+        string? DestructorLibrary) : FfiType;
     /// <summary>No value (a <c>void</c> return).</summary>
     public sealed record Void : FfiType;
+}
+
+/// <summary>Native ownership contract carried through semantic IR for an FFI string pointer.</summary>
+public enum FfiNativeStringOwnership
+{
+    /// <summary>Copy the pointer contents without releasing the native allocation.</summary>
+    Borrowed,
+    /// <summary>Release each non-null pointer through the recorded destructor after conversion.</summary>
+    Owned,
 }
 
 /// <summary>A declared external (FFI) function: the Ashes-visible <paramref name="Name"/> bound to the native

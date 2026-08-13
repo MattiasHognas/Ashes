@@ -756,6 +756,8 @@ public static class IrOptimizer
                     : R(ck.RuntimeManagedArgumentFlagTemp),
             },
             IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
+            IrInst.LoadFfiOut load => load with { SlotTemp = R(load.SlotTemp) },
+            IrInst.CopyFfiString copy => copy with { PointerTemp = R(copy.PointerTemp) },
             IrInst.CallExternal c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
             // ADTs.
@@ -2002,6 +2004,8 @@ public static class IrOptimizer
     {
         switch (inst)
         {
+            case IrInst.LoadFfiOut load: usedTemps.Add(load.SlotTemp); break;
+            case IrInst.CopyFfiString copy: usedTemps.Add(copy.PointerTemp); break;
             case IrInst.SetAdtField sf: usedTemps.Add(sf.Ptr); usedTemps.Add(sf.Source); break;
             case IrInst.GetAdtTag gt: usedTemps.Add(gt.Ptr); break;
             case IrInst.GetAdtField gf: usedTemps.Add(gf.Ptr); break;

@@ -816,6 +816,12 @@ passes its address to the native call, and loads it exactly once after the call.
 `None`; a non-null opaque handle or pointer materializes as `Some(value)`. A non-void native result
 comes first, followed by out results in declaration order; the source result is the sole component
 directly or a tuple when there are multiple components. The native status value is never interpreted.
+An external `FfiStr` result remains a raw pointer only inside the direct-call lowering sequence. The
+backend performs a bounded NUL scan, validates UTF-8, and copies successful bytes into a fresh Ashes
+string. Conversion failures are explicit `Result` errors. Borrowed pointers are never freed; an owned
+non-null pointer is passed exactly once to its declaration-validated external destructor after the
+copy or failed conversion and before the result becomes visible to Ashes. Nullable returns and
+string-valued out slots materialize null as `Ok(None)`.
 Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
 or waits for and releases its process handle on Windows.
 

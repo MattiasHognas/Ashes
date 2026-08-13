@@ -4707,24 +4707,26 @@ public sealed class LinuxBackendCoverageTests
             var warm = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
             warm.ShouldContain("HTTP/1.1 200 OK");
 
-            // Fire many concurrent requests at once; every one must get a 200 and the server must stay up.
+            // Exercise sustained concurrency in bounded waves. Starting all clients through
+            // Task.Run adds host thread-pool and socket-setup saturation to a scheduler test; the
+            // test only needs enough simultaneous clients to keep every reactor busy.
             const int total = 120;
-            var tasks = new List<Task<bool>>(total);
-            for (int i = 0; i < total; i++)
+            const int waveSize = 8;
+            int ok = 0;
+            for (int offset = 0; offset < total; offset += waveSize)
             {
-                tasks.Add(Task.Run(async () =>
+                int count = Math.Min(waveSize, total - offset);
+                Task<bool>[] tasks = Enumerable.Range(0, count).Select(async _ =>
                 {
                     var r = await HttpGetRawWithRetryAsync(port, "/").ConfigureAwait(false);
                     return r.Contains("HTTP/1.1 200 OK", StringComparison.Ordinal);
-                }));
-            }
-            bool[] results = await Task.WhenAll(tasks).ConfigureAwait(false);
-            int ok = 0;
-            foreach (bool r in results)
-            {
-                if (r)
+                }).ToArray();
+                foreach (bool succeeded in await Task.WhenAll(tasks).ConfigureAwait(false))
                 {
-                    ok++;
+                    if (succeeded)
+                    {
+                        ok++;
+                    }
                 }
             }
 

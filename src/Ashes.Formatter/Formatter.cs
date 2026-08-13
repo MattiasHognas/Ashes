@@ -594,8 +594,18 @@ public static class Formatter
             ParsedType.Pointer pointer => $"*{WriteParsedType(pointer.Pointee)}",
             ParsedType.Buffer buffer => $"FfiBuffer({WriteParsedType(buffer.Element)})",
             ParsedType.Out output => $"out {WriteParsedType(output.Element)}",
+            ParsedType.NativeString native => FormatNativeStringType(native),
             _ => throw new InvalidOperationException($"Unexpected parsed type: {type}")
         };
+    }
+
+    private static string FormatNativeStringType(ParsedType.NativeString native)
+    {
+        string nullable = native.Nullable ? "nullable " : string.Empty;
+        string ownership = native.Ownership == FfiStringOwnership.Borrowed
+            ? "borrowed"
+            : $"owned {native.DestructorName}";
+        return $"FfiStr({nullable}{ownership})";
     }
 
     private static void WriteTypeExpr(StringBuilder sb, TypeExpr typeExpr)

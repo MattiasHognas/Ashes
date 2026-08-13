@@ -809,6 +809,10 @@ external type LLVMModuleRef
 external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef
 external LLVMGetTargetFromTriple(Str, out LLVMTargetRef, out *u8) -> Bool
+external LLVMDisposeMessage(*u8) -> void
+external LLVMGetHostCPUName() -> FfiStr(owned LLVMDisposeMessage)
+external LLVMGetTargetName(LLVMTargetRef) -> FfiStr(nullable borrowed)
+external LLVMVerifyModule(LLVMModuleRef, u32, out FfiStr(owned LLVMDisposeMessage)) -> Bool
 external type Database resource destructor databaseClose
 external databaseClose(consume Database) -> void = "db_close@libdb"
 external databaseVersion(borrow Database) -> Int = "db_version@libdb"
@@ -872,6 +876,20 @@ Rules:
   `borrow` or `consume`, or used in an ordinary type annotation. An external function with an `out`
   parameter must be called directly; the temporary address is never observable in Ashes and cannot
   escape the call boundary.
+- `FfiStr(borrowed)` declares a non-null borrowed, NUL-terminated UTF-8 pointer return and has source
+  type `Result(Str, Str)`. `FfiStr(nullable borrowed)` admits null and has source type
+  `Result(Str, Maybe(Str))`. The compiler scans at most 1 GiB for the terminator, strictly validates
+  UTF-8, and copies valid bytes into a fresh Ashes `Str` before the call result can escape. A null
+  non-nullable pointer, invalid UTF-8, or a missing terminator within the bound returns `Error`.
+- `FfiStr(owned disposeName)` and `FfiStr(nullable owned disposeName)` use the same result shapes but
+  name an external destructor in the same file. The destructor must have exactly one `*u8` parameter
+  and a `void` return. Every non-null pointer is copied or rejected first and then passed to the
+  destructor exactly once, including invalid UTF-8 and over-bound failures; null is never disposed.
+- `FfiStr(...)` may also be the element of an `out` parameter. The out slot supplies nullability, so
+  `out FfiStr(nullable ...)` is redundant and rejected. Its source result component is
+  `Result(Str, Maybe(Str))`. `FfiStr` is declaration-only, cannot be nested beneath `*`, cannot be an
+  ordinary parameter, and makes the external function direct-call-only so conversion and disposal
+  remain attached to the native call boundary.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows external imports require an explicit DLL name.

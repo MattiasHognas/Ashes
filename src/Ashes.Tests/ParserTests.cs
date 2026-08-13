@@ -477,6 +477,38 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_native_string_contracts()
+    {
+        Program program = ParseProgram("""
+            external dispose(*u8) -> void
+            external owned() -> FfiStr(owned dispose)
+            external borrowed() -> FfiStr(nullable borrowed)
+            external verify(out FfiStr(owned dispose)) -> Bool
+            0
+            """);
+
+        ExternalDecl.Function owned = program.ExternalDecls[1].ShouldBeOfType<ExternalDecl.Function>();
+        owned.ReturnType.ShouldBe(new ParsedType.NativeString(false, FfiStringOwnership.Owned, "dispose"));
+        ExternalDecl.Function borrowed = program.ExternalDecls[2].ShouldBeOfType<ExternalDecl.Function>();
+        borrowed.ReturnType.ShouldBe(new ParsedType.NativeString(true, FfiStringOwnership.Borrowed, null));
+        program.ExternalDecls[3].ShouldBeOfType<ExternalDecl.Function>().ParameterTypes.ShouldBe([
+            new ParsedType.Out(new ParsedType.NativeString(false, FfiStringOwnership.Owned, "dispose"))
+        ]);
+    }
+
+    [Arguments("external value() -> FfiStr()\n0")]
+    [Arguments("external value() -> FfiStr(owned)\n0")]
+    [Arguments("external value() -> FfiStr(shared)\n0")]
+    [Test]
+    public void ParseProgram_should_report_ash046_for_malformed_native_string_contracts(string source)
+    {
+        var diagnostics = new Diagnostics();
+        _ = new Parser(source, diagnostics).ParseProgram();
+
+        diagnostics.StructuredErrors.ShouldContain(error => error.Code == DiagnosticCodes.InvalidFfiString);
+    }
+
+    [Test]
     public void ParseProgram_should_reject_out_in_an_ordinary_type_annotation()
     {
         var diagnostics = new Diagnostics();
@@ -485,6 +517,17 @@ public sealed class ParserTests
         DiagnosticEntry error = diagnostics.StructuredErrors.ShouldHaveSingleItem();
         error.Code.ShouldBe(DiagnosticCodes.InvalidFfiOutParameter);
         error.Message.ShouldBe("out T is supported only as a direct external parameter.");
+    }
+
+    [Test]
+    public void ParseProgram_should_reject_ffi_string_in_an_ordinary_type_annotation()
+    {
+        var diagnostics = new Diagnostics();
+        _ = new Parser("let value : FfiStr(borrowed) = 1\nvalue", diagnostics).ParseProgram();
+
+        diagnostics.StructuredErrors.ShouldContain(error =>
+            error.Code == DiagnosticCodes.InvalidFfiString
+            && error.Message.Contains("direct external return", StringComparison.Ordinal));
     }
 
     [Test]

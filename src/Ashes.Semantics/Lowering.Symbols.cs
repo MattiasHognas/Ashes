@@ -394,6 +394,11 @@ public sealed partial class Lowering
 
     private void RegisterExternalFunctions(IReadOnlyList<ExternalDecl> externalDecls)
     {
+        foreach (ExternalDecl.Function function in externalDecls.OfType<ExternalDecl.Function>())
+        {
+            _externalFunctionDeclarations[function.Name] = function;
+        }
+
         foreach (var function in externalDecls.OfType<ExternalDecl.Function>())
         {
             RegisterExternalFunction(function);
@@ -420,14 +425,16 @@ public sealed partial class Lowering
                 type,
                 allowVoid: false,
                 allowBuffer: true,
-                allowOut: true))
+                allowOut: true,
+                allowNativeString: false))
             .ToList();
         ResolvedExternalType? returnType = ResolveExternalParsedType(
             function,
             function.ReturnType,
             allowVoid: true,
             allowBuffer: false,
-            allowOut: false);
+            allowOut: false,
+            allowNativeString: true);
         if (parameterTypes.Any(type => type is null) || returnType is null)
         {
             return;
@@ -634,7 +641,8 @@ public sealed partial class Lowering
         ParsedType parsedType,
         bool allowVoid,
         bool allowBuffer,
-        bool allowOut)
+        bool allowOut,
+        bool allowNativeString)
     {
         if (parsedType is ParsedType.Pointer pointer)
         {
@@ -643,7 +651,8 @@ public sealed partial class Lowering
                 pointer.Pointee,
                 allowVoid: false,
                 allowBuffer: false,
-                allowOut: false);
+                allowOut: false,
+                allowNativeString: false);
             return pointee is null
                 ? null
                 : new ResolvedExternalType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
@@ -657,6 +666,11 @@ public sealed partial class Lowering
         if (parsedType is ParsedType.Out output)
         {
             return ResolveExternalOutType(externalDecl, output, allowOut);
+        }
+
+        if (parsedType is ParsedType.NativeString nativeString)
+        {
+            return ResolveExternalNativeStringType(externalDecl, nativeString, allowNativeString);
         }
 
         if (parsedType is not ParsedType.Named named)
@@ -702,7 +716,8 @@ public sealed partial class Lowering
             buffer.Element,
             allowVoid: false,
             allowBuffer: false,
-            allowOut: false);
+            allowOut: false,
+            allowNativeString: false);
         if (element is null)
         {
             return null;
@@ -751,12 +766,13 @@ public sealed partial class Lowering
             output.Element,
             allowVoid: false,
             allowBuffer: false,
-            allowOut: false);
+            allowOut: false,
+            allowNativeString: true);
         if (element is null)
         {
             return null;
         }
-        if (element.FfiType is not (FfiType.Opaque or FfiType.Ptr))
+        if (element.FfiType is not (FfiType.Opaque or FfiType.Ptr or FfiType.NativeString))
         {
             ReportDiagnostic(
                 GetSpan(externalDecl),
@@ -765,10 +781,74 @@ public sealed partial class Lowering
             return null;
         }
 
-        return new ResolvedExternalType(
-            CreateMaybeType(element.SourceType),
-            new FfiType.Out(element.FfiType));
+        if (element.FfiType is FfiType.NativeString nativeString)
+        {
+            if (nativeString.Nullable)
+            {
+                ReportDiagnostic(
+                    GetSpan(externalDecl),
+                    "out FfiStr(...) is already nullable and cannot also specify 'nullable'.",
+                    DiagnosticCodes.InvalidFfiString);
+                return null;
+            }
+            return new ResolvedExternalType(
+                CreateStringResultType(CreateMaybeType(new TypeRef.TStr())),
+                new FfiType.Out(nativeString));
+        }
+
+        return new ResolvedExternalType(CreateMaybeType(element.SourceType), new FfiType.Out(element.FfiType));
     }
+
+    private ResolvedExternalType? ResolveExternalNativeStringType(
+        ExternalDecl declaration,
+        ParsedType.NativeString nativeString,
+        bool allowNativeString)
+    {
+        if (!allowNativeString)
+        {
+            ReportDiagnostic(
+                GetSpan(declaration),
+                "FfiStr(...) is supported only as an external return or out-parameter element.",
+                DiagnosticCodes.InvalidFfiString);
+            return null;
+        }
+
+        string? destructorSymbol = null;
+        string? destructorLibrary = null;
+        if (nativeString.Ownership == FfiStringOwnership.Owned)
+        {
+            if (nativeString.DestructorName is null
+                || !_externalFunctionDeclarations.TryGetValue(nativeString.DestructorName, out ExternalDecl.Function? destructor)
+                || !IsValidNativeStringDestructor(destructor))
+            {
+                ReportDiagnostic(
+                    GetSpan(declaration),
+                    $"Owned FfiStr destructor '{nativeString.DestructorName}' must be an external (*u8) -> void function in the same file.",
+                    DiagnosticCodes.InvalidFfiString);
+                return null;
+            }
+            (destructorSymbol, destructorLibrary) = SplitExternalSymbol(destructor);
+        }
+
+        TypeRef success = nativeString.Nullable
+            ? CreateMaybeType(new TypeRef.TStr())
+            : new TypeRef.TStr();
+        return new ResolvedExternalType(
+            CreateStringResultType(success),
+            new FfiType.NativeString(
+                nativeString.Nullable,
+                nativeString.Ownership == FfiStringOwnership.Owned
+                    ? FfiNativeStringOwnership.Owned
+                    : FfiNativeStringOwnership.Borrowed,
+                destructorSymbol,
+                destructorLibrary));
+    }
+
+    private static bool IsValidNativeStringDestructor(ExternalDecl.Function destructor) =>
+        destructor.ParameterTypes.Count == 1
+        && destructor.ParameterTypes[0] is ParsedType.Pointer { Pointee: ParsedType.Named { Name: "u8" } }
+        && destructor.ParameterOwnerships.All(ownership => ownership == ExternalParameterOwnership.Unspecified)
+        && destructor.ReturnType is ParsedType.Named { Name: "void" };
 
     private ResolvedExternalType? ResolveDeclaredExternalType(ExternalDecl declaration, string name)
     {

@@ -35,6 +35,7 @@
     <Content Include="Fixtures/affine_resource.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/ffi_buffer.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/ffi_out.c" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Fixtures/ffi_string.c" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
