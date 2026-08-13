@@ -12,8 +12,8 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 The RC Perceus memory-model migration and the challenge-regression sweep that followed it — every
 correctness, performance-scaling, and peak-RSS fix, with measurements — are recorded in
 [`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md); each fix ships with a
-regression test under `tests/`, and the remaining forward-looking benchmark gaps are tracked in that
-file's [Roadmap](../docs/md/internals/changelog.md#roadmap) section. Every benchmark below is
+regression test under `tests/`; the audit's roadmap now has no remaining verified compiler gaps.
+Every benchmark below is
 written in its natural, workaround-free form.
 
 ## The suite
@@ -42,7 +42,7 @@ that revision. See the linked RC Perceus sweep for the current regression status
 | [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
 | [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
 | [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
-| [reverse-complement](reverse-complement/README.md) | fasta 25M input | 8.22 s | 4.27 GB | `List(Rune)` live set; standard workload and byte-exact involution verified after the TCO ownership fix |
+| [reverse-complement](reverse-complement/README.md) | fasta 25M input | 7.09 s | 3.91 GB | buffered line output; `List(Rune)` live set and byte-exact involution verified |
 | [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 11.3 s | 123 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
 | [regex-redux](regex-redux/README.md) | fasta 5M input | 63.7 s | 1.3 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
 

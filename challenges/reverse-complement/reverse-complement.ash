@@ -40,11 +40,11 @@ let recursive emit chars col buf =
         | [] ->
             if col == 0
             then Unit
-            else io.write(buf + "\n")
+            else io.writeBufferedLine(buf)
         | c :: rest ->
             if col == 60
             then
-                let _ = io.write(buf + "\n")
+                let _ = io.writeBufferedLine(buf)
                 in emit(rest)(1)(rune.toText(c))
             else emit(rest)(col + 1)(buf + rune.toText(c))
 
@@ -56,7 +56,7 @@ let recursive loop revcomp =
                 | Some(('>', _)) ->
                     let _ = emit(revcomp)(0)("")
                     in
-                        let _ = io.writeLine(line)
+                        let _ = io.writeBufferedLine(line)
                         in loop([])
                 | _ -> loop(compLine(line)(revcomp))
 in loop([])

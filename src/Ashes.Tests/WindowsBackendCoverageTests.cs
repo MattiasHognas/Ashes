@@ -149,6 +149,12 @@ public sealed class WindowsBackendCoverageTests
     }
 
     [Test]
+    public void Windows_backend_llvm_support_check_should_accept_buffered_stdout_programs()
+    {
+        AssertWindowsLlvmCompiles(LowerExpression("let _ = Ashes.IO.writeBufferedLine(\"hi\") in Ashes.IO.flush(Unit)"));
+    }
+
+    [Test]
     public void Windows_backend_llvm_support_check_should_accept_program_args_programs()
     {
         AssertWindowsLlvmCompiles(LowerExpression("match Ashes.IO.args with | a :: b :: [] -> 1 | _ -> 0"));
@@ -617,6 +623,24 @@ public sealed class WindowsBackendCoverageTests
 
         var result = await CompileRunWithWindowsLlvmAsync("Ashes.IO.write(\"hi\")").ConfigureAwait(false);
         result.Stdout.ShouldBe("hi");
+    }
+
+    [Test]
+    public async Task Windows_backend_llvm_should_preserve_buffered_stdout_order_and_flush_on_exit()
+    {
+        if (!CanRunWindowsRuntimePrograms())
+        {
+            return;
+        }
+
+        var result = await CompileRunWithWindowsLlvmAsync("""
+            let _ = Ashes.IO.writeBuffered("a")
+            in let _ = Ashes.IO.flush(Unit)
+            in let _ = Ashes.IO.writeBuffered("b")
+            in let _ = Ashes.IO.write("c")
+            in Ashes.IO.writeBufferedLine("d")
+            """).ConfigureAwait(false);
+        result.Stdout.ShouldBe("abcd\n");
     }
 
     [Test]

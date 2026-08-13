@@ -1954,6 +1954,37 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_buffered_stdout_should_bypass_for_oversized_values_and_keep_order()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(LowerProgram("""
+            let recursive grow : Int -> Str -> Str -> Str =
+                given (n) -> given (piece) -> given (text) ->
+                if n <= 0 then text else grow(n - 1)(piece)(text + piece)
+            let first = grow(40000)("a")("")
+            let second = grow(30000)("b")("")
+            let exact = grow(65536)("c")("")
+            let oversized = grow(70000)("d")("")
+            let bufferedFirst = Ashes.IO.writeBuffered(first)
+            let bufferedSecond = Ashes.IO.writeBuffered(second)
+            let bufferedExact = Ashes.IO.writeBuffered(exact)
+            let bufferedOversized = Ashes.IO.writeBuffered(oversized)
+            let direct = Ashes.IO.write("|")
+            Ashes.IO.writeBufferedLine("done")
+            """)).ConfigureAwait(false);
+        result.Stdout.ShouldBe(
+            new string('a', 40000)
+            + new string('b', 30000)
+            + new string('c', 65536)
+            + new string('d', 70000)
+            + "|done\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_run_adt_field_programs()
     {
         if (!OperatingSystem.IsLinux())

@@ -38,6 +38,12 @@ public static class BuiltinRegistry
         Write,
         /// <summary>Writes text to standard output followed by a newline.</summary>
         WriteLine,
+        /// <summary>Appends text to the buffered standard-output path.</summary>
+        WriteBuffered,
+        /// <summary>Appends text and a newline to the buffered standard-output path.</summary>
+        WriteBufferedLine,
+        /// <summary>Flushes pending buffered standard output.</summary>
+        FlushStdout,
         /// <summary>Reads one line from standard input.</summary>
         ReadLine,
         /// <summary>Reads a file's entire contents as text.</summary>
@@ -435,6 +441,9 @@ public static class BuiltinRegistry
                     ["write"] = new("write", BuiltinValueKind.Write, IsCallable: true, Arity: 1),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.IoWriteBytes, IsCallable: true, Arity: 1),
                     ["writeLine"] = new("writeLine", BuiltinValueKind.WriteLine, IsCallable: true, Arity: 1),
+                    ["writeBuffered"] = new("writeBuffered", BuiltinValueKind.WriteBuffered, IsCallable: true, Arity: 1),
+                    ["writeBufferedLine"] = new("writeBufferedLine", BuiltinValueKind.WriteBufferedLine, IsCallable: true, Arity: 1),
+                    ["flush"] = new("flush", BuiltinValueKind.FlushStdout, IsCallable: true, Arity: 1),
                     ["readLine"] = new("readLine", BuiltinValueKind.ReadLine, IsCallable: true, Arity: 1),
                     ["readExact"] = new("readExact", BuiltinValueKind.IoReadExact, IsCallable: true, Arity: 1)
                 }),

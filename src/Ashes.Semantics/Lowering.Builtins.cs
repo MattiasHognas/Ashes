@@ -77,6 +77,50 @@ public sealed partial class Lowering
         return LowerUnitValue();
     }
 
+    private (int, TypeRef) LowerBufferedWrite(Expr arg, bool appendNewline)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        var loweredType = Prune(valueType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        if (loweredType is TypeRef.TVar)
+        {
+            Unify(loweredType, new TypeRef.TStr());
+            loweredType = new TypeRef.TStr();
+        }
+
+        if (loweredType is not TypeRef.TStr)
+        {
+            string function = appendNewline ? "writeBufferedLine" : "writeBuffered";
+            ReportDiagnostic(GetSpan(arg), $"{function}() expects Str but got {Pretty(loweredType)}.");
+            return (valueTemp, loweredType);
+        }
+
+        Emit(new IrInst.WriteBufferedStr(valueTemp, appendNewline));
+        return LowerUnitValue();
+    }
+
+    private (int, TypeRef) LowerFlushStdout(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (unitTemp, unitType) = LowerExpr(arg);
+        var loweredType = Prune(unitType);
+
+        if (loweredType is TypeRef.TNever)
+        {
+            return (unitTemp, loweredType);
+        }
+
+        Unify(loweredType, _resolvedTypes["Unit"]);
+        Emit(new IrInst.FlushStdout());
+        return LowerUnitValue();
+    }
+
     // Ashes.IO.writeBytes : Bytes -> Unit. Writes a raw Bytes buffer to stdout verbatim (no UTF-8
     // constraint, unlike write, which takes a Str). Bytes and Str share the same [len][payload] heap
     // layout and WriteStr writes exactly `len` bytes with no encoding validation, so it carries the raw
@@ -2764,6 +2808,22 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.WriteLine,
             BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateWriteBufferedBinding(bool appendNewline)
+    {
+        return new Binding.Intrinsic(
+            appendNewline ? IntrinsicKind.WriteBufferedLine : IntrinsicKind.WriteBuffered,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateFlushStdoutBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FlushStdout,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
         );
     }
 

@@ -846,6 +846,20 @@ internal static partial class LlvmCodegen
 
     private static void EmitWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
     {
+        if (!HasStdoutBuffer(state))
+        {
+            EmitWriteBytesRaw(state, bytePtr, len);
+            return;
+        }
+
+        EmitStdoutLockAcquire(state);
+        EmitFlushStdoutLocked(state);
+        EmitWriteBytesRaw(state, bytePtr, len);
+        EmitStdoutLockRelease(state);
+    }
+
+    private static void EmitWriteBytesRaw(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
+    {
         if (IsLinuxFlavor(state.Flavor))
         {
             EmitLinuxSyscall(

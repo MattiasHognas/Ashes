@@ -185,7 +185,7 @@ The final exit gates were:
 > below and locked by a regression test under `tests/`. A later `Rune` API
 > migration temporarily left fasta and reverse-complement stale; the renewed
 > full-suite sweep fixed both sources and one associated TCO ownership bug. The
-> verified output-buffering gap remains under [Roadmap](#roadmap).
+> subsequent buffered-stdout work closed the final verified roadmap gap.
 
 The `Rune` challenge repair also closed the last unexplained reverse-complement memory result.
 Both challenges now convert the `Rune` returned by `Text.uncons` explicitly, and
@@ -198,6 +198,16 @@ regression rejects that redundant copy. At the standard fasta N=25,000,000 workl
 reverse-complement completes in 8.22 seconds at 4.27 GB peak RSS and a second transform reproduces
 the 254,166,745-byte input exactly. The roughly 34 bytes per base in the largest live sequence
 matches the isolated `List(Rune)` working set; no unexplained retained temporary remains.
+
+The final challenge-suite gap was line-oriented stdout. `Ashes.IO.writeBuffered` and
+`writeBufferedLine` now share a process-wide 64 KiB buffer, with `Ashes.IO.flush` for explicit
+delivery. Pending output is also flushed when full, before direct stdout operations, on normal
+exit, and before panic/runtime termination; oversized values bypass the empty buffer. A fair ticket
+lock serializes access on linux-x64, linux-arm64, win-x64, and win-arm64. Boundary, mixed-order,
+exit, panic, cross-target, and oversized-write regressions cover the behavior. A 1,000-line trace
+dropped from 2,000 `write` syscalls to one, while reverse-complement at fasta N=125,000 dropped from
+20,840 to 20 with byte-identical output. On the standard N=25,000,000 workload, three runs improved
+from 7.55 s to 7.09 s mean (1.06x), and the buffered output remains an exact involution.
 
 The first post-migration scaling correction removed repeated RC graph normalization across ordinary
 closure calls. A second ownership bit in the closure's packed metadata now advertises that the
@@ -431,6 +441,4 @@ the paper's formal calculus.
 Only verified, reproducible gaps are listed here. Completed work belongs in the chronology above, and
 speculative capabilities without a measured workload are intentionally excluded.
 
-| Gap | Current evidence | Completion gate |
-|-----|------------------|-----------------|
-| **Provide a batched stdout path for line-oriented output** | `Ashes.IO.write` lowers directly to one Linux `write(1, ptr, len)` syscall or one Windows `WriteFile` call. `writeLine` performs two low-level writes: payload and newline. A three-call trace produced exactly three syscalls, so fasta and reverse-complement currently issue one call per emitted line, plus separate newline calls when using `writeLine`. | Add buffering or an explicit batched-output API without weakening observable ordering. Define flush behavior for normal exit, errors, and explicit flush; cover Linux and Windows; and demonstrate the syscall reduction and throughput effect on a line-oriented benchmark. |
+No verified compiler gaps remain from this audit.

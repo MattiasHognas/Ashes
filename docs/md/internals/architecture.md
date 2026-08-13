@@ -950,6 +950,15 @@ watermark, and there is no owned child to transfer out of a discarded cell.
 Lists with owned pointer-bearing elements retain the RC path so pattern
 payload transfer can preserve child ownership.
 
+### Buffered standard output
+
+`Ashes.IO.writeBuffered` and `writeBufferedLine` append to a process-wide 64 KiB stdout buffer.
+The generated runtime flushes it when full, before direct stdout writes, on explicit
+`Ashes.IO.flush`, on normal entry-point return, and before panic/runtime failure output. Values
+larger than the buffer flush pending bytes and bypass it. A fair ticket lock serializes buffer and
+direct-write access across threads on every native target; ordering between concurrent source calls
+is unspecified.
+
 ### Task and capability regions
 
 Task frames and capability-handler state are scheduler-owned regions rather

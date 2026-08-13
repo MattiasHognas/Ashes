@@ -77,4 +77,14 @@ public sealed class WindowsArm64BackendTests
         machine.ShouldBe(ImageFileMachineArm64);
         image.Length.ShouldBeGreaterThan(1024);
     }
+
+    [Test]
+    public void WindowsArm64_links_buffered_stdout_and_atomic_serialization()
+    {
+        byte[] image = CompileArm64("let _ = Ashes.IO.writeBufferedLine(\"hello\") in Ashes.IO.flush(Unit)");
+
+        int peOffset = BinaryPrimitives.ReadInt32LittleEndian(image.AsSpan(60, 4));
+        BinaryPrimitives.ReadUInt16LittleEndian(image.AsSpan(peOffset + 4, 2)).ShouldBe(ImageFileMachineArm64);
+        image.Length.ShouldBeGreaterThan(1024);
+    }
 }
