@@ -8,6 +8,32 @@ namespace Ashes.Cli.Tests;
 public sealed class CompileCommandTests
 {
     [Test]
+    public async Task Hermetic_runtime_assets_resolve_outside_repository_working_directory()
+    {
+        string root = TempDir();
+        try
+        {
+            string sourcePath = Path.Combine(root, "Main.ash");
+            string outputPath = Path.Combine(root, OperatingSystem.IsWindows() ? "Main.exe" : "Main");
+            File.WriteAllText(sourcePath, "import Ashes.Number.Math\nAshes.IO.print(Ashes.Number.Math.floorToInt(Ashes.Number.Math.sqrt(81.0)))\n");
+
+            (int exitCode, string output) = await RunCliAsync(
+                root,
+                "compile",
+                sourcePath,
+                "-o",
+                outputPath).ConfigureAwait(false);
+
+            exitCode.ShouldBe(0, output);
+            File.Exists(outputPath).ShouldBeTrue();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Compile_debug_output_is_executable_on_unix()
     {
         if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())

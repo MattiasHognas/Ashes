@@ -595,6 +595,38 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
+    private (int, TypeRef) LowerEnvironmentDirectory(Expr unitArg, EnvironmentDirectoryKind kind)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(unitArg);
+        var (unitTemp, unitType) = LowerExpr(unitArg);
+        TypeRef loweredType = Prune(unitType);
+        if (loweredType is TypeRef.TNever)
+        {
+            return (unitTemp, loweredType);
+        }
+
+        Unify(loweredType, _resolvedTypes["Unit"]);
+        int target = NewTemp();
+        Emit(new IrInst.EnvironmentDirectory(target, kind));
+        return (target, CreateStringResultType(new TypeRef.TStr()));
+    }
+
+    private (int, TypeRef) LowerEnvironmentGet(Expr nameArg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(nameArg);
+        var (nameTemp, nameType) = LowerExpr(nameArg);
+        TypeRef loweredType = Prune(nameType);
+        if (loweredType is TypeRef.TNever)
+        {
+            return (nameTemp, loweredType);
+        }
+
+        Unify(loweredType, new TypeRef.TStr());
+        int target = NewTemp();
+        Emit(new IrInst.EnvironmentGet(target, nameTemp));
+        return (target, CreateStringResultType(CreateMaybeType(new TypeRef.TStr())));
+    }
+
     private (int, TypeRef) LowerTextUncons(Expr textArg, LoweredValueRequest request = default) =>
         LowerTextUnconsCore(textArg, stringHead: false, request);
 
@@ -3317,6 +3349,22 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.FileExists,
             BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(new TypeRef.TBool())), FileReadCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateEnvironmentDirectoryBinding(IntrinsicKind kind)
+    {
+        return new Binding.Intrinsic(
+            kind,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(_resolvedTypes["Unit"], CreateStringResultType(new TypeRef.TStr())), EnvironmentReadCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateEnvironmentGetBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.EnvironmentGet,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(CreateMaybeType(new TypeRef.TStr()))), EnvironmentReadCapabilityName)
         );
     }
 

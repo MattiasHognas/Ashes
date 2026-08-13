@@ -29,6 +29,11 @@ public sealed class AmbientAuthorityCapabilityTests
     [Arguments("Ashes.IO.File.writeBytes(\"x\")(Ashes.Byte.empty(Unit))", "FileWrite")]
     [Arguments("Ashes.IO.Process.spawn(\"tool\")([])", "ProcessSpawn")]
     [Arguments("Ashes.IO.Console.monotonicMillis(Unit)", "TimeRead")]
+    [Arguments("Ashes.IO.Environment.currentDirectory(Unit)", "EnvironmentRead")]
+    [Arguments("Ashes.IO.Environment.executableDirectory(Unit)", "EnvironmentRead")]
+    [Arguments("Ashes.IO.Environment.temporaryDirectory(Unit)", "EnvironmentRead")]
+    [Arguments("Ashes.IO.Environment.cacheDirectory(Unit)", "EnvironmentRead")]
+    [Arguments("Ashes.IO.Environment.get(\"PATH\")", "EnvironmentRead")]
     public void Ambient_acquisition_builtin_exposes_expected_public_capability(
         string expression,
         string expected)
@@ -65,6 +70,7 @@ public sealed class AmbientAuthorityCapabilityTests
     [Arguments("Ashes.IO.File.writeText(\"x\")(\"y\")", "FileWrite", "")]
     [Arguments("Ashes.IO.Process.spawn(\"tool\")([])", "ProcessSpawn", "")]
     [Arguments("Ashes.IO.Console.monotonicMillis(Unit)", "TimeRead", "")]
+    [Arguments("Ashes.IO.Environment.currentDirectory(Unit)", "EnvironmentRead", "")]
     [Arguments("entropy(1)", "Entropy", "external entropy(Int) -> Int needs {Entropy}")]
     [Arguments("unknown(1)", "UnsafeFfi", "external unknown(Int) -> Int")]
     [Arguments("Ashes.Ffi.copyBytes(pointer())(0u64)", "UnsafeFfi", "external pointer() -> *u8 needs {}")]
@@ -228,7 +234,7 @@ public sealed class AmbientAuthorityCapabilityTests
     {
         string[] names =
         [
-            "ConsoleIO", "FileRead", "FileWrite", "ProcessSpawn", "TimeRead", "Entropy",
+            "ConsoleIO", "FileRead", "FileWrite", "ProcessSpawn", "TimeRead", "EnvironmentRead", "Entropy",
             "UnsafeFfi", "NetListen", "NetConnect", "Stop",
         ];
 

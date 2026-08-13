@@ -112,6 +112,21 @@ public sealed class BuiltinRegistryEdgeCaseTests
     }
 
     [Test]
+    public void Ashes_environment_module_should_contain_host_discovery_members()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.IO.Environment", out BuiltinRegistry.BuiltinModule module).ShouldBeTrue();
+
+        module.Members.Keys.Order(StringComparer.Ordinal).ShouldBe([
+            "cacheDirectory",
+            "currentDirectory",
+            "executableDirectory",
+            "get",
+            "temporaryDirectory",
+        ]);
+        module.Members.Values.ShouldAllBe(member => member.IsCallable && member.Arity == 1);
+    }
+
+    [Test]
     public void TryGetType_should_return_true_for_unit()
     {
         BuiltinRegistry.TryGetType("Unit", out var type).ShouldBeTrue();

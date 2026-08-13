@@ -785,6 +785,7 @@ public static class IrOptimizer
             IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.EnvironmentGet e => e with { NameTemp = R(e.NameTemp) },
             IrInst.FileOpen f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileReadChunk f => f with { HandleTemp = R(f.HandleTemp), CountTemp = R(f.CountTemp) },
             IrInst.FileReadLine f => f with { HandleTemp = R(f.HandleTemp) },
@@ -2029,9 +2030,19 @@ public static class IrOptimizer
             case IrInst.PrintStr p: usedTemps.Add(p.Source); break;
             case IrInst.PrintBool p: usedTemps.Add(p.Source); break;
             case IrInst.WriteStr or IrInst.WriteBufferedStr: usedTemps.Add(GetWriteSource(inst)); break;
+        }
+
+        CollectFileAndEnvironmentUsedTemps(inst, usedTemps);
+    }
+
+    private static void CollectFileAndEnvironmentUsedTemps(IrInst inst, HashSet<int> usedTemps)
+    {
+        switch (inst)
+        {
             case IrInst.FileReadText f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.EnvironmentGet e: usedTemps.Add(e.NameTemp); break;
             case IrInst.FileOpen f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileReadChunk f: usedTemps.Add(f.HandleTemp); usedTemps.Add(f.CountTemp); break;
             case IrInst.FileReadLine f: usedTemps.Add(f.HandleTemp); break;

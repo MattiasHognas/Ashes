@@ -56,6 +56,16 @@ public static class BuiltinRegistry
         FileWriteText,
         /// <summary>Tests whether a file exists.</summary>
         FileExists,
+        /// <summary>Reads the process working directory.</summary>
+        EnvironmentCurrentDirectory,
+        /// <summary>Reads the running executable's directory.</summary>
+        EnvironmentExecutableDirectory,
+        /// <summary>Reads the host temporary directory.</summary>
+        EnvironmentTemporaryDirectory,
+        /// <summary>Reads the per-user cache directory.</summary>
+        EnvironmentCacheDirectory,
+        /// <summary>Reads one process environment variable.</summary>
+        EnvironmentGet,
         /// <summary>Opens a file, returning a <c>FileHandle</c> resource.</summary>
         FileOpen,
         /// <summary>Reads a fixed-size chunk of bytes from an open file handle.</summary>
@@ -571,6 +581,17 @@ public static class BuiltinRegistry
                 "Ashes.IO.Path",
                 "Ashes.Semantics.StdLib.Ashes.IO.Path.ash",
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)),
+            ["Ashes.IO.Environment"] = new(
+                "Ashes.IO.Environment",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["currentDirectory"] = new("currentDirectory", BuiltinValueKind.EnvironmentCurrentDirectory, IsCallable: true, Arity: 1),
+                    ["executableDirectory"] = new("executableDirectory", BuiltinValueKind.EnvironmentExecutableDirectory, IsCallable: true, Arity: 1),
+                    ["temporaryDirectory"] = new("temporaryDirectory", BuiltinValueKind.EnvironmentTemporaryDirectory, IsCallable: true, Arity: 1),
+                    ["cacheDirectory"] = new("cacheDirectory", BuiltinValueKind.EnvironmentCacheDirectory, IsCallable: true, Arity: 1),
+                    ["get"] = new("get", BuiltinValueKind.EnvironmentGet, IsCallable: true, Arity: 1)
+                }),
             ["Ashes.Text"] = new(
                 "Ashes.Text",
                 "Ashes.Semantics.StdLib.Ashes.Text.ash",

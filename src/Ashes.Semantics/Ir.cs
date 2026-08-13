@@ -231,6 +231,19 @@ public sealed record IrFunctionOrigin(
     string? StableDiscriminator = null,
     SourceLocation? GenerationLocation = null);
 
+/// <summary>Host directories discoverable through <c>Ashes.IO.Environment</c>.</summary>
+public enum EnvironmentDirectoryKind
+{
+    /// <summary>The process working directory.</summary>
+    Current,
+    /// <summary>The running executable's containing directory.</summary>
+    Executable,
+    /// <summary>The host temporary directory.</summary>
+    Temporary,
+    /// <summary>The per-user cache directory.</summary>
+    Cache
+}
+
 /// <summary>Base of the linear intermediate representation. Each nested case is one IR instruction,
 /// most producing a value into a numbered <c>Target</c> temp and reading operand temps; the backend
 /// lowers the instruction stream to LLVM. Semantics lowering emits these, and
@@ -867,6 +880,12 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the existence flag.</param>
     /// <param name="PathTemp">Temp holding the file path.</param>
     public sealed record FileExists(int Target, int PathTemp) : IrInst;
+
+    /// <summary>Discovers a host directory from process state.</summary>
+    public sealed record EnvironmentDirectory(int Target, EnvironmentDirectoryKind Kind) : IrInst;
+
+    /// <summary>Reads the environment variable named by <paramref name="NameTemp"/>.</summary>
+    public sealed record EnvironmentGet(int Target, int NameTemp) : IrInst;
     /// <summary>Opens a file, yielding a file handle into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the file handle.</param>
     /// <param name="PathTemp">Temp holding the file path.</param>

@@ -9025,6 +9025,9 @@ public sealed partial class Lowering
         IntrinsicKind.FileReadText or IntrinsicKind.FileReadAllBytes or IntrinsicKind.FileMmap
             or IntrinsicKind.FileExists or IntrinsicKind.FileOpen => FileReadCapabilityName,
         IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes => FileWriteCapabilityName,
+        IntrinsicKind.EnvironmentCurrentDirectory or IntrinsicKind.EnvironmentExecutableDirectory
+            or IntrinsicKind.EnvironmentTemporaryDirectory or IntrinsicKind.EnvironmentCacheDirectory
+            or IntrinsicKind.EnvironmentGet => EnvironmentReadCapabilityName,
         IntrinsicKind.SpawnProcess => ProcessSpawnCapabilityName,
         IntrinsicKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
         IntrinsicKind.FfiCopyBytes => UnsafeFfiCapabilityName,
@@ -9056,6 +9059,11 @@ public sealed partial class Lowering
             IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+            IntrinsicKind.EnvironmentCurrentDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Current),
+            IntrinsicKind.EnvironmentExecutableDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Executable),
+            IntrinsicKind.EnvironmentTemporaryDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Temporary),
+            IntrinsicKind.EnvironmentCacheDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Cache),
+            IntrinsicKind.EnvironmentGet => LowerEnvironmentGet(collectedArgs[0]),
             IntrinsicKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
             IntrinsicKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),
             IntrinsicKind.RuneToText => LowerRuneToText(collectedArgs[0], request),
@@ -9240,6 +9248,11 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.FileOpen => FileReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.FileWriteText
             or BuiltinRegistry.BuiltinValueKind.FileWriteBytes => FileWriteCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory
+            or BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory
+            or BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory
+            or BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory
+            or BuiltinRegistry.BuiltinValueKind.EnvironmentGet => EnvironmentReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.SpawnProcess => ProcessSpawnCapabilityName,
         BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.FfiCopyBytes => UnsafeFfiCapabilityName,
@@ -9272,6 +9285,11 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
+            BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Current),
+            BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Executable),
+            BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Temporary),
+            BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Cache),
+            BuiltinRegistry.BuiltinValueKind.EnvironmentGet => LowerEnvironmentGet(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.RuneToText => LowerRuneToText(collectedArgs[0], request),

@@ -109,6 +109,28 @@ public sealed class LspCompletionTests
         }
     }
 
+    [Test]
+    public async Task Completion_should_return_environment_module_intrinsics()
+    {
+        const string source = "Ashes.IO.Environment.";
+        var document = TempDocument.Create("CompletionEnvironment.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
+
+                completions.ShouldContain("currentDirectory");
+                completions.ShouldContain("executableDirectory");
+                completions.ShouldContain("temporaryDirectory");
+                completions.ShouldContain("cacheDirectory");
+                completions.ShouldContain("get");
+            }
+        }
+    }
+
     private sealed class TempDocument : IAsyncDisposable
     {
         private readonly string _directory;

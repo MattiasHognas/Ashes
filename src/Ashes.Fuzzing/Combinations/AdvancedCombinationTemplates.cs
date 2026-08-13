@@ -306,3 +306,38 @@ internal sealed class DeterministicResourceTemplate : ICombinationTemplate
 
     private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
+
+internal sealed class DeterministicEnvironmentTemplate : ICombinationTemplate
+{
+    public string Id => "ambient.environment-missing";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.AmbientAuthority,
+        GeneratedFeature.Match,
+        GeneratedFeature.ResultShortCircuit,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        budget.RemainingNodes >= 12;
+
+    public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
+    {
+        GenerationResult<Expr> fallback = expressions.Generate(resultType, context, budget.Descend(7), random);
+        string resultName = Name("environmentFallback", random);
+        Expr get = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.IO.Environment", "get"),
+            new Expr.StrLit("ASHES_FUZZ_VARIABLE_THAT_MUST_NOT_EXIST_7A8EC7E8"));
+        Expr matched = new Expr.Match(get,
+        [
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Constructor("None", [])]), new Expr.Var(resultName)),
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Constructor("Some", [new Pattern.Wildcard()])]), new Expr.Var(resultName)),
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), new Expr.Var(resultName)),
+        ]);
+        Expr value = new Expr.Let(resultName, fallback.Value, matched);
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(fallback.Features);
+        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("ambient:environment-missing", fallback.Trace), fallback.NodeCount + 11);
+    }
+
+    private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
