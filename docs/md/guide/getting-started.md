@@ -10,7 +10,8 @@ binary.
 
 Download the archive for your platform from the
 [latest GitHub release](https://github.com/MattiasHognas/Ashes/releases/latest)
-(`ashes-linux-x64.zip`, `ashes-linux-arm64.zip`, or `ashes-win-x64.zip`), unpack it, and put
+(`ashes-linux-x64.zip`, `ashes-linux-arm64.zip`, `ashes-win-x64.zip`, or
+`ashes-win-arm64.zip`), unpack it, and put
 the `ashes` executable on your `PATH`:
 
 ```sh
