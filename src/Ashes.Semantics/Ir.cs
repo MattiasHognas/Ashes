@@ -60,6 +60,8 @@ public abstract record TypeRef
     public sealed record TBigInt : TypeRef;
     /// <summary>The immutable UTF-8 string type (<c>Str</c>).</summary>
     public sealed record TStr : TypeRef;
+    /// <summary>A Unicode scalar value stored inline as its integer code point.</summary>
+    public sealed record TRune : TypeRef;
     // Immutable byte buffer: layout is identical to TStr → {length:i64, data:u8[length]}.
     /// <summary>The immutable byte-buffer type (<c>Bytes</c>), sharing <see cref="TStr"/>'s heap layout.</summary>
     public sealed record TBytes : TypeRef;
@@ -882,6 +884,15 @@ public abstract record IrInst
     /// <param name="TextTemp">Temp holding the string to deconstruct.</param>
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
     public sealed record TextUncons(int Target, int TextTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Compatibility string-headed variant of <see cref="TextUncons"/>.</summary>
+    public sealed record TextUnconsText(int Target, int TextTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Encodes one Unicode scalar as a freshly allocated UTF-8 string.</summary>
+    public sealed record RuneToText(int Target, int RuneTemp, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Validates an integer code point and returns an optional Unicode scalar.</summary>
+    public sealed record RuneFromInt(int Target, int IntTemp, bool RuntimeManaged = false)
         : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Parses a string as an integer, yielding a result option into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the parse result.</param>

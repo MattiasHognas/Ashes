@@ -462,7 +462,7 @@ public sealed partial class Lowering
         var pruned = Prune(type);
         return pruned switch
         {
-            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool => true,
             TypeRef.TStr or TypeRef.TBytes => true,
             TypeRef.TList list => CanArenaReset(Prune(list.Element))
                 || Prune(list.Element) is TypeRef.TStr
@@ -551,9 +551,16 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(new TypeRef.TBool()));
     }
 
-    private (int, TypeRef) LowerTextUncons(
+    private (int, TypeRef) LowerTextUncons(Expr textArg, LoweredValueRequest request = default) =>
+        LowerTextUnconsCore(textArg, stringHead: false, request);
+
+    private (int, TypeRef) LowerTextUnconsText(Expr textArg, LoweredValueRequest request = default) =>
+        LowerTextUnconsCore(textArg, stringHead: true, request);
+
+    private (int, TypeRef) LowerTextUnconsCore(
         Expr textArg,
-        LoweredValueRequest request = default)
+        bool stringHead,
+        LoweredValueRequest request)
     {
         using var diagnosticSpan = PushDiagnosticSpan(textArg);
         var (textTemp, textType) = LowerExpr(textArg);
@@ -577,13 +584,144 @@ public sealed partial class Lowering
         }
 
         var target = NewTemp();
-        Emit(new IrInst.TextUncons(
-            target,
-            textTemp,
-            request.EmitsRuntime(
-                LoweredValueRuntimeRepresentation.TextUnconsResult)));
-        return (target, CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])));
+        bool runtimeManaged = request.EmitsRuntime(LoweredValueRuntimeRepresentation.TextUnconsResult);
+        Emit(stringHead
+            ? new IrInst.TextUnconsText(target, textTemp, runtimeManaged)
+            : new IrInst.TextUncons(target, textTemp, runtimeManaged));
+        TypeRef headType = stringHead ? new TypeRef.TStr() : new TypeRef.TRune();
+        return (target, CreateMaybeType(new TypeRef.TTuple([headType, new TypeRef.TStr()])));
     }
+
+    private (int, TypeRef) LowerRuneToText(Expr argument, LoweredValueRequest request)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, "Ashes.Rune.toText()");
+        if (Prune(runeType) is TypeRef.TNever)
+        {
+            return (runeTemp, runeType);
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.RuneToText(target, runeTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
+        return (target, new TypeRef.TStr());
+    }
+
+    private (int, TypeRef) LowerRuneToInt(Expr argument)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, "Ashes.Rune.toInt()");
+        return (runeTemp, Prune(runeType) is TypeRef.TNever ? runeType : new TypeRef.TInt());
+    }
+
+    private (int, TypeRef) LowerRuneFromInt(Expr argument, LoweredValueRequest request)
+    {
+        var (valueTemp, valueType) = LowerExpr(argument);
+        TypeRef pruned = Prune(valueType);
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not (TypeRef.TInt or TypeRef.TNever))
+        {
+            ReportDiagnostic(GetSpan(argument), $"Ashes.Rune.fromInt() expects Int but got {Pretty(pruned)}.");
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.RuneFromInt(target, valueTemp,
+            request.EmitsRuntime(LoweredValueRuntimeRepresentation.Adt)));
+        return (target, CreateMaybeType(new TypeRef.TRune()));
+    }
+
+    private (int, TypeRef) LowerRunePredicate(Expr argument, IntrinsicKind kind)
+    {
+        var (runeTemp, runeType) = LowerRuneArgument(argument, $"Ashes.Rune.{RunePredicateName(kind)}()");
+        if (Prune(runeType) is TypeRef.TNever)
+        {
+            return (runeTemp, runeType);
+        }
+
+        int result = kind switch
+        {
+            IntrinsicKind.RuneIsAsciiLetter => EmitRuneAsciiLetter(runeTemp),
+            IntrinsicKind.RuneIsAsciiDigit => EmitRuneRange(runeTemp, '0', '9'),
+            IntrinsicKind.RuneIsAsciiWhiteSpace => EmitRuneAsciiWhiteSpace(runeTemp),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+        return (result, new TypeRef.TBool());
+    }
+
+    private (int Temp, TypeRef Type) LowerRuneArgument(Expr argument, string label)
+    {
+        var lowered = LowerExpr(argument);
+        TypeRef pruned = Prune(lowered.Type);
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TRune());
+            pruned = new TypeRef.TRune();
+        }
+        else if (pruned is not (TypeRef.TRune or TypeRef.TNever))
+        {
+            ReportDiagnostic(GetSpan(argument), $"{label} expects Rune but got {Pretty(pruned)}.");
+        }
+
+        return (lowered.Temp, pruned);
+    }
+
+    private int EmitRuneRange(int runeTemp, int lower, int upper)
+    {
+        int lowerTemp = NewTemp();
+        int upperTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(lowerTemp, lower));
+        Emit(new IrInst.LoadConstInt(upperTemp, upper));
+        int atLeast = NewTemp();
+        int atMost = NewTemp();
+        Emit(new IrInst.CmpIntGe(atLeast, runeTemp, lowerTemp));
+        Emit(new IrInst.CmpIntLe(atMost, runeTemp, upperTemp));
+        int result = NewTemp();
+        Emit(new IrInst.AndInt(result, atLeast, atMost));
+        return result;
+    }
+
+    private int EmitRuneAsciiLetter(int runeTemp)
+    {
+        int upper = EmitRuneRange(runeTemp, 'A', 'Z');
+        int lower = EmitRuneRange(runeTemp, 'a', 'z');
+        int result = NewTemp();
+        Emit(new IrInst.OrInt(result, upper, lower));
+        return result;
+    }
+
+    private int EmitRuneAsciiWhiteSpace(int runeTemp)
+    {
+        int result = EmitRuneEquals(runeTemp, ' ');
+        foreach (int value in new[] { '\t', '\n', '\r' })
+        {
+            int equals = EmitRuneEquals(runeTemp, value);
+            int combined = NewTemp();
+            Emit(new IrInst.OrInt(combined, result, equals));
+            result = combined;
+        }
+
+        return result;
+    }
+
+    private int EmitRuneEquals(int runeTemp, int value)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(valueTemp, value));
+        int result = NewTemp();
+        Emit(new IrInst.CmpIntEq(result, runeTemp, valueTemp));
+        return result;
+    }
+
+    private static string RunePredicateName(IntrinsicKind kind) => kind switch
+    {
+        IntrinsicKind.RuneIsAsciiLetter => "isAsciiLetter",
+        IntrinsicKind.RuneIsAsciiDigit => "isAsciiDigit",
+        IntrinsicKind.RuneIsAsciiWhiteSpace => "isAsciiWhiteSpace",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
 
     // Ashes.Text.Regex.Native (PCRE2) primitives.
     // The compiled pattern is a pcre2_code* carried as an Int handle. Ashes.Text.Regex (Regex.ash) wraps
@@ -2635,9 +2773,29 @@ public sealed partial class Lowering
     {
         return new Binding.Intrinsic(
             IntrinsicKind.TextUncons,
-            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()]))))
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TRune(), new TypeRef.TStr()]))))
         );
     }
+
+    private Binding.Intrinsic CreateTextUnconsTextBinding() => new(
+        IntrinsicKind.TextUnconsText,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateMaybeType(new TypeRef.TTuple([new TypeRef.TStr(), new TypeRef.TStr()])))));
+
+    private Binding.Intrinsic CreateRuneToTextBinding() => new(
+        IntrinsicKind.RuneToText,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TStr())));
+
+    private Binding.Intrinsic CreateRuneToIntBinding() => new(
+        IntrinsicKind.RuneToInt,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TInt())));
+
+    private Binding.Intrinsic CreateRuneFromIntBinding() => new(
+        IntrinsicKind.RuneFromInt,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), CreateMaybeType(new TypeRef.TRune()))));
+
+    private Binding.Intrinsic CreateRunePredicateBinding(IntrinsicKind kind) => new(
+        kind,
+        new TypeScheme([], new TypeRef.TFun(new TypeRef.TRune(), new TypeRef.TBool())));
 
     private Binding.Intrinsic CreateTextParseIntBinding()
     {

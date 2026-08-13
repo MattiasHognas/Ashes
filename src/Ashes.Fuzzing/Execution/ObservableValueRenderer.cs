@@ -67,6 +67,7 @@ internal static class ObservableValueRenderer
         AshesType.Primitive { Name: "Int" } => Call("Ashes.Text", "fromInt", value),
         AshesType.Primitive { Name: "Bool" } => new Expr.If(value, Text("true"), Text("false")),
         AshesType.Primitive { Name: "Str" } => Concat(Text("\""), value, Text("\"")),
+        AshesType.Primitive { Name: "Rune" } => Call("Ashes.Rune", "toText", value),
         AshesType.Primitive { Name: "Float" } => Call("Ashes.Text", "fromFloat", value),
         AshesType.Primitive { Name: "BigInt" } => Call("Ashes.Text", "fromBigInt", value),
         AshesType.UInt => Call("Ashes.Text", "fromInt", Call("Ashes.Number.UInt", "toInt", value)),

@@ -726,7 +726,13 @@ public sealed partial class Lowering
     private static bool IsRuntimeManagedTextUnconsResult(TypeRef.TNamedType named)
     {
         return string.Equals(named.Symbol.Name, "Maybe", StringComparison.Ordinal)
-            && named.TypeArgs is [TypeRef.TTuple { Elements: [TypeRef.TStr, TypeRef.TStr] }];
+            && named.TypeArgs is
+            [
+                TypeRef.TTuple
+            {
+                Elements: [TypeRef.TStr or TypeRef.TRune, TypeRef.TStr]
+            }
+            ];
     }
 
     private void EmitRuntimeManagedTextUnconsResultDrop(int valueTemp, TypeRef.TNamedType named)
@@ -745,7 +751,9 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(someLabel));
         int tupleTemp = NewTemp();
         Emit(new IrInst.GetAdtField(tupleTemp, valueTemp, 0));
-        for (int offset = 0; offset <= 8; offset += 8)
+        TypeRef.TTuple tupleType = (TypeRef.TTuple)named.TypeArgs[0];
+        int firstStringOffset = tupleType.Elements[0] is TypeRef.TStr ? 0 : 8;
+        for (int offset = firstStringOffset; offset <= 8; offset += 8)
         {
             int stringTemp = NewTemp();
             Emit(new IrInst.LoadMemOffset(stringTemp, tupleTemp, offset));
@@ -1611,7 +1619,7 @@ public sealed partial class Lowering
     private bool CanArenaReset(TypeRef type)
     {
         TypeRef pruned = EraseZeroCostTypeRepresentation(type);
-        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool;
+        return pruned is TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool;
     }
 
     /// <summary>
@@ -2558,7 +2566,7 @@ public sealed partial class Lowering
         TypeRef captureType = Prune(type);
         return captureType switch
         {
-            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TBool => true,
+            TypeRef.TInt or TypeRef.TUInt or TypeRef.TFloat or TypeRef.TRune or TypeRef.TBool => true,
             TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt => true,
             TypeRef.TList list => CanArenaReset(Prune(list.Element)),
             TypeRef.TTuple tuple => CanRuntimeManageOwnedTupleType(tuple),

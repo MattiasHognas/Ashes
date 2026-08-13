@@ -15,6 +15,8 @@ public enum TokenKind
     Float,
     /// <summary>A double-quoted string literal.</summary>
     String,
+    /// <summary>A single-quoted Unicode scalar literal.</summary>
+    Rune,
     /// <summary>An identifier that is not a reserved keyword.</summary>
     Ident,
 

@@ -61,7 +61,8 @@ Canonical built-ins available today include:
 - `Ashes.IO.File.readText(path)` returning `Result(Str, Str)`
 - `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)`
 - `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)`
-- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))`
+- `Ashes.Text.uncons(text)` returning `Maybe((Rune, Str))`
+- `Ashes.Rune.toText(rune)` returning `Str`
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)`
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)`
 - `Ashes.Text.fromInt(value)` returning `Str`
@@ -1850,7 +1851,7 @@ Other built-in runtime modules are also always available through qualified acces
 - `Ashes.IO.File.readText(path)` returning `Result(Str, Str)` - UTF-8 file read.
 - `Ashes.IO.File.writeText(path, text)` returning `Result(Str, Unit)` - UTF-8 file write.
 - `Ashes.IO.File.exists(path)` returning `Result(Str, Bool)` - filesystem existence check.
-- `Ashes.Text.uncons(text)` returning `Maybe((Str, Str))` - split one Unicode scalar from the front of a string.
+- `Ashes.Text.uncons(text)` returning `Maybe((Rune, Str))` - split one Unicode scalar from the front of a string.
 - `Ashes.Text.parseInt(text)` returning `Result(Str, Int)` - parse a decimal integer with optional leading `-`.
 - `Ashes.Text.parseFloat(text)` returning `Result(Str, Float)` - parse a decimal float with optional fraction and exponent.
 - `Ashes.Text.fromInt(value)` returning `Str` - format an integer as decimal text.
@@ -1910,10 +1911,46 @@ Rules:
 `Ashes.IO.readLine` has type `Unit -> Maybe(Str)` and `Ashes.IO.readLine()` is
 equivalent to `Ashes.IO.readLine(Unit)`.
 
-`Ashes.Text.uncons` has type `Str -> Maybe((Str, Str))` and returns `None` for
-the empty string. For non-empty strings it returns `Some((head, tail))`, where
-`head` is one Unicode scalar value encoded as a `Str` and `tail` is the
-remaining suffix.
+`Rune` is an inline copy type representing exactly one Unicode scalar value. It occupies one machine
+word containing the scalar's integer code point and never owns heap storage. A rune is not a grapheme
+cluster: a user-perceived character may contain several runes.
+
+Rune literals use single quotes. A literal must decode to exactly one scalar:
+
+```ash
+let latin = 'A'
+let emoji = '😀'
+let newline = '\n'
+let escaped = '\u{1F600}'
+```
+
+The escapes `\\`, `\'`, `\n`, `\r`, `\t`, `\0`, and `\u{H...}` are supported. A Unicode escape
+contains one to six hexadecimal digits. Empty and multi-scalar literals, unescaped line breaks,
+surrogate values U+D800–U+DFFF, and values above U+10FFFF are compile-time errors. Canonical
+formatting uses a printable scalar directly, the short escape for the listed control characters,
+and uppercase `\u{...}` hexadecimal for other non-printable scalars.
+
+`Ashes.Text.uncons` has type `Str -> Maybe((Rune, Str))` and returns `None` for the empty string. For
+non-empty strings it returns `Some((head, tail))`, where `head` is the first scalar and `tail` is the
+remaining suffix. Strings produced by Ashes APIs are valid UTF-8. If byte-level operations or an
+external function nevertheless create malformed UTF-8, `uncons` returns U+FFFD and consumes one
+invalid byte, so repeated traversal is total and always progresses. `Text.unconsText` is the
+one-release compatibility helper with the previous `Str -> Maybe((Str, Str))` result. The previous
+string-typed predicates remain for that release under the explicit names `Text.isLetterText`,
+`Text.isDigitText`, and `Text.isWhiteSpaceText`; the old ambiguous names are removed.
+
+The `Ashes.Rune` module provides:
+
+- `toText : Rune -> Str`, UTF-8 encoding of the scalar;
+- `toInt : Rune -> Int`, the exact code point;
+- `fromInt : Int -> Maybe(Rune)`, returning `None` for surrogates, negative values, and values above
+  U+10FFFF;
+- `isAsciiLetter : Rune -> Bool`, `isAsciiDigit : Rune -> Bool`, and
+  `isAsciiWhiteSpace : Rune -> Bool` for the deliberately ASCII-scoped classifications.
+
+`Rune` has built-in `Eq`, `Ord`, `Show`, and `Hash` evidence. Ordering and hashing use the scalar's
+integer code point; `Show` produces the same one-scalar text as `Rune.toText`. `Rune` deliberately has
+no `Default` evidence because there is no canonical default scalar.
 
 `Ashes.Text.parseInt` has type `Str -> Result(Str, Int)`. It accepts an
 optional leading `-` followed by decimal digits. Malformed input and overflow
@@ -2041,9 +2078,9 @@ zero, or a positive integer.
 - `Ashes.Text.contains : Str -> Str -> Bool`
 - `Ashes.Text.split : Str -> Str -> List<Str>`
 - `Ashes.Text.trim : Str -> Str`
-- `Ashes.Text.isLetter : Str -> Bool`
-- `Ashes.Text.isDigit : Str -> Bool`
-- `Ashes.Text.isWhiteSpace : Str -> Bool`
+- `Ashes.Rune.isAsciiLetter : Rune -> Bool`
+- `Ashes.Rune.isAsciiDigit : Rune -> Bool`
+- `Ashes.Rune.isAsciiWhiteSpace : Rune -> Bool`
 
 `Ashes.Test` currently exports:
 

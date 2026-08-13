@@ -969,6 +969,7 @@ must add cycle handling or be explicitly excluded from RC admission.
 
 | Value | Payload addressed by the value pointer |
 |---|---|
+| Rune | Inline `i64` Unicode scalar value; no allocation |
 | String / Bytes | `[length_and_view_flag:i64][bytes...]` |
 | BigInt | `[sign_and_limb_count:i64][limb0:i64]...` |
 | List cons | `[head:i64][tail:i64]`; nil is zero |

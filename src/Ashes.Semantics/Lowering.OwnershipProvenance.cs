@@ -714,7 +714,7 @@ public sealed partial class Lowering
     {
         return argument switch
         {
-            Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit or Expr.BigIntLit or Expr.StrLit => true,
+            Expr.IntLit or Expr.UIntLit or Expr.FloatLit or Expr.BoolLit or Expr.BigIntLit or Expr.StrLit or Expr.RuneLit => true,
             Expr.Add => true,
             _ => IsDirectRcConstruction(argument, letBindings) || IsRuntimeRcFreshBuiltinProducer(argument),
         };

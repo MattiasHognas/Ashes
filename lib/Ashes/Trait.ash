@@ -132,6 +132,11 @@ implement Eq(Str) =
         given (left) ->
             given (right) -> left == right
 
+implement Eq(Rune) =
+    | equal =
+        given (left) ->
+            given (right) -> left == right
+
 implement Ord(Int) =
     | compare =
         given (left) ->
@@ -223,6 +228,17 @@ implement Ord(Str) =
                     then Greater
                     else Equal
 
+implement Ord(Rune) =
+    | compare =
+        given (left) ->
+            given (right) ->
+                if left < right
+                then Less
+                else
+                    if left > right
+                    then Greater
+                    else Equal
+
 implement Show(Int) =
     | show =
         given (value) -> Ashes.Text.fromInt(value)
@@ -261,6 +277,10 @@ implement Show(Bool) =
 implement Show(Str) =
     | show =
         given (value) -> "\"" + value + "\""
+
+implement Show(Rune) =
+    | show =
+        given (value) -> Ashes.Rune.toText(value)
 
 implement Hash(Int) =
     | hash =
@@ -303,6 +323,10 @@ implement Hash(Bool) =
 implement Hash(Str) =
     | hash =
         given (value) -> Ashes.Byte.hash(Ashes.Byte.fromText(value))
+
+implement Hash(Rune) =
+    | hash =
+        given (value) -> Ashes.Rune.toInt(value)
 
 implement Default(Int) =
     | default =

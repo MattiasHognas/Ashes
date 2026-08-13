@@ -57,6 +57,15 @@ public sealed class LiteralPatternTests
     }
 
     [Test]
+    public void Parse_should_support_rune_literal_pattern()
+    {
+        var match = Parse("match rune with | '😀' -> 1 | _ -> 0")
+            .ShouldBeOfType<Expr.Match>();
+
+        match.Cases[0].Pattern.ShouldBeOfType<Pattern.RuneLit>().Value.ShouldBe(0x1F600);
+    }
+
+    [Test]
     public void Parse_should_support_boolean_literal_pattern()
     {
         var match = Parse("match b with | true -> 1 | false -> 0")

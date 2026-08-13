@@ -503,6 +503,16 @@ public sealed class LspDocumentServiceTests
     }
 
     [Test]
+    public void GetHover_should_return_type_for_rune_literal()
+    {
+        const string source = "let x = '😀' in x";
+        var hover = DocumentService.GetHover(source, source.IndexOf("😀", StringComparison.Ordinal));
+
+        hover.ShouldNotBeNull();
+        hover.Value.Contents.ShouldBe("```ashes\nRune\n```\n\n*expression*");
+    }
+
+    [Test]
     public void GetHover_should_return_type_for_imported_standard_library_symbol()
     {
         const string source = "import Ashes.IO\nlet p = print in p(1)";

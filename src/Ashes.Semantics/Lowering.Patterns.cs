@@ -1612,6 +1612,9 @@ public sealed partial class Lowering
             case Pattern.StrLit:
                 return new TypeRef.TStr();
 
+            case Pattern.RuneLit:
+                return new TypeRef.TRune();
+
             case Pattern.BoolLit:
                 return new TypeRef.TBool();
 
@@ -1715,6 +1718,10 @@ public sealed partial class Lowering
 
             case Pattern.StrLit strLit:
                 EmitRequireStrEqual(valueTemp, strLit.Value, failLabel);
+                return;
+
+            case Pattern.RuneLit runeLit:
+                EmitRequireIntEqual(valueTemp, runeLit.Value, failLabel);
                 return;
 
             case Pattern.BoolLit boolLit:
@@ -2465,7 +2472,7 @@ public sealed partial class Lowering
     private static bool TryGetMissingLiteralPattern(IReadOnlyList<Pattern> patterns, out Pattern missingPattern)
     {
         missingPattern = new Pattern.Wildcard();
-        if (patterns.Any(p => p is Pattern.IntLit or Pattern.StrLit))
+        if (patterns.Any(p => p is Pattern.IntLit or Pattern.StrLit or Pattern.RuneLit))
         {
             // Already checked for catch-all in the caller — reaching here means
             // there are literal patterns without a catch-all, which is non-exhaustive.
@@ -2532,6 +2539,7 @@ public sealed partial class Lowering
                 : $"{ctor.Name}({string.Join(", ", ctor.Patterns.Select(FormatPattern))})",
             Pattern.IntLit intLit => intLit.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             Pattern.StrLit strLit => $"\"{strLit.Value}\"",
+            Pattern.RuneLit runeLit => $"U+{runeLit.Value:X}",
             Pattern.BoolLit boolLit => boolLit.Value ? "true" : "false",
             _ => "_"
         };
@@ -2624,6 +2632,12 @@ public sealed partial class Lowering
                 if (!seenStrLiterals.Add(strLit.Value))
                 {
                     ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: string literal \"{strLit.Value}\" is already matched earlier.");
+                }
+                return true;
+            case Pattern.RuneLit runeLit:
+                if (!seenIntLiterals.Add(runeLit.Value))
+                {
+                    ReportDiagnostic(GetSpan(matchCase.Pattern), $"Unreachable match arm: rune literal U+{runeLit.Value:X} is already matched earlier.");
                 }
                 return true;
             case Pattern.BoolLit boolLit:

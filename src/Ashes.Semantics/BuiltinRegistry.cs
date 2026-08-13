@@ -14,6 +14,7 @@ public static class BuiltinRegistry
     {
         "Float",
         "Bytes",
+        "Rune",
         "u8",
         "u16",
         "u32",
@@ -65,6 +66,20 @@ public static class BuiltinRegistry
         ParallelWithWorkers,
         /// <summary>Splits text into its first character and the remaining tail.</summary>
         TextUncons,
+        /// <summary>Compatibility split returning the first scalar encoded as text.</summary>
+        TextUnconsText,
+        /// <summary>Encodes one Unicode scalar as text.</summary>
+        RuneToText,
+        /// <summary>Returns a Unicode scalar's integer code point.</summary>
+        RuneToInt,
+        /// <summary>Validates and converts an integer code point to a Unicode scalar.</summary>
+        RuneFromInt,
+        /// <summary>Tests whether a rune is an ASCII letter.</summary>
+        RuneIsAsciiLetter,
+        /// <summary>Tests whether a rune is an ASCII digit.</summary>
+        RuneIsAsciiDigit,
+        /// <summary>Tests whether a rune is ASCII whitespace.</summary>
+        RuneIsAsciiWhiteSpace,
         /// <summary>Parses text into an integer.</summary>
         TextParseInt,
         /// <summary>Parses text into a floating-point number.</summary>
@@ -535,6 +550,7 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["uncons"] = new("uncons", BuiltinValueKind.TextUncons, IsCallable: true, Arity: 1),
+                    ["unconsText"] = new("unconsText", BuiltinValueKind.TextUnconsText, IsCallable: true, Arity: 1),
                     ["parseInt"] = new("parseInt", BuiltinValueKind.TextParseInt, IsCallable: true, Arity: 1),
                     ["parseFloat"] = new("parseFloat", BuiltinValueKind.TextParseFloat, IsCallable: true, Arity: 1),
                     ["fromInt"] = new("fromInt", BuiltinValueKind.TextFromInt, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
@@ -546,6 +562,18 @@ public static class BuiltinRegistry
                     ["byteLength"] = new("byteLength", BuiltinValueKind.TextByteLength, IsCallable: true, Arity: 1),
                     ["asciiUpper"] = new("asciiUpper", BuiltinValueKind.TextAsciiUpper, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
                     ["asciiLower"] = new("asciiLower", BuiltinValueKind.TextAsciiLower, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String)
+                }),
+            ["Ashes.Rune"] = new(
+                "Ashes.Rune",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["toText"] = new("toText", BuiltinValueKind.RuneToText, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.String),
+                    ["toInt"] = new("toInt", BuiltinValueKind.RuneToInt, IsCallable: true, Arity: 1),
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.RuneFromInt, IsCallable: true, Arity: 1),
+                    ["isAsciiLetter"] = new("isAsciiLetter", BuiltinValueKind.RuneIsAsciiLetter, IsCallable: true, Arity: 1),
+                    ["isAsciiDigit"] = new("isAsciiDigit", BuiltinValueKind.RuneIsAsciiDigit, IsCallable: true, Arity: 1),
+                    ["isAsciiWhiteSpace"] = new("isAsciiWhiteSpace", BuiltinValueKind.RuneIsAsciiWhiteSpace, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Number.BigInt"] = new(
                 "Ashes.Number.BigInt",
@@ -871,6 +899,12 @@ public static class BuiltinRegistry
         if (string.Equals(typeName, "Bytes", StringComparison.Ordinal))
         {
             type = new TypeRef.TBytes();
+            return true;
+        }
+
+        if (string.Equals(typeName, "Rune", StringComparison.Ordinal))
+        {
+            type = new TypeRef.TRune();
             return true;
         }
 

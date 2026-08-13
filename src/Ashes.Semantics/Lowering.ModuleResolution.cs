@@ -348,7 +348,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerQualifiedBuiltinFunctionReference(name, CreateParallelWithWorkersBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.TextUncons => LowerQualifiedBuiltinFunctionReference(name, CreateTextUnconsBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.TextUncons or BuiltinRegistry.BuiltinValueKind.TextUnconsText =>
+                LowerQualifiedBuiltinFunctionReference(name, (kind == BuiltinRegistry.BuiltinValueKind.TextUncons ? CreateTextUnconsBinding() : CreateTextUnconsTextBinding()).S.Body),
+            BuiltinRegistry.BuiltinValueKind.RuneToText or BuiltinRegistry.BuiltinValueKind.RuneToInt or BuiltinRegistry.BuiltinValueKind.RuneFromInt or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiLetter or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiDigit or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiWhiteSpace => ResolveRuneBuiltinMember(kind, name),
             BuiltinRegistry.BuiltinValueKind.RegexCompile => LowerQualifiedBuiltinFunctionReference(name, CreateRegexCompileBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.RegexCompileError => LowerQualifiedBuiltinFunctionReference(name, CreateRegexCompileErrorBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.RegexFind => LowerQualifiedBuiltinFunctionReference(name, CreateRegexFindBinding().S.Body),
@@ -384,6 +386,21 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
             _ => null
         };
+    }
+
+    private (int, TypeRef) ResolveRuneBuiltinMember(BuiltinRegistry.BuiltinValueKind kind, string name)
+    {
+        TypeRef type = kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.RuneToText => CreateRuneToTextBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.RuneToInt => CreateRuneToIntBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.RuneFromInt => CreateRuneFromIntBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiLetter => CreateRunePredicateBinding(IntrinsicKind.RuneIsAsciiLetter).S.Body,
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiDigit => CreateRunePredicateBinding(IntrinsicKind.RuneIsAsciiDigit).S.Body,
+            BuiltinRegistry.BuiltinValueKind.RuneIsAsciiWhiteSpace => CreateRunePredicateBinding(IntrinsicKind.RuneIsAsciiWhiteSpace).S.Body,
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+        return LowerQualifiedBuiltinFunctionReference(name, type);
     }
 
     private (int, TypeRef)? ResolveNetworkBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind)

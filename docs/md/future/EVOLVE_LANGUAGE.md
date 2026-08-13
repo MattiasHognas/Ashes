@@ -331,6 +331,8 @@ servers. Documentation should steer ordinary user code toward scoped concurrency
 
 ## Milestone 6: Unicode scalar values (`Rune`)
 
+Status: completed.
+
 ### Current limitation
 
 Text APIs represent a single character as `Str`. A caller can pass `""` or `"several"` to character
@@ -360,6 +362,11 @@ segmentation in this milestone.
 Changing `Text.uncons` is source-breaking. Either provide a compatibility helper under a distinct
 name for one release or land the signature change in the same declared compatibility release as the
 ambient-capability changes.
+
+This milestone uses single-quoted literals (`'a'`, `'😀'`, `'\n'`, `'\u{1F600}'`) and provides
+`Text.unconsText : Str -> Maybe((Str, Str))` as the one-release compatibility helper. Character
+classification moves to the explicitly scoped `Rune.isAsciiLetter`, `Rune.isAsciiDigit`, and
+`Rune.isAsciiWhiteSpace` APIs.
 
 ### Work items
 

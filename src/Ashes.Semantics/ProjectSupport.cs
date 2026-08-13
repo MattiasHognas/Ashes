@@ -4313,7 +4313,7 @@ public static class ProjectSupport
             case Expr.UIntLit:
             case Expr.BigIntLit:
             case Expr.FloatLit:
-            case Expr.StrLit:
+            case Expr.StrLit or Expr.RuneLit:
             case Expr.BoolLit:
                 break;
             default:

@@ -14,7 +14,7 @@ let isWhitespace head =
                 else false
 in
     let recursive skipWhitespace text =
-        match Ashes.Text.uncons(text) with
+        match Ashes.Text.unconsText(text) with
             | None -> ""
             | Some((head, tail)) ->
                 if isWhitespace(head)
@@ -27,10 +27,10 @@ in
                 | Error(_) -> false
         in
             let recursive consumeExact expected text =
-                match Ashes.Text.uncons(expected) with
+                match Ashes.Text.unconsText(expected) with
                     | None -> Ok(text)
                     | Some((wanted, wantedRest)) ->
-                        match Ashes.Text.uncons(text) with
+                        match Ashes.Text.unconsText(text) with
                             | None -> Error("unexpected end of input")
                             | Some((actual, actualRest)) ->
                                 if actual == wanted
@@ -38,7 +38,7 @@ in
                                 else Error("unexpected token")
             in
                 let recursive parseStringBody acc text =
-                    match Ashes.Text.uncons(text) with
+                    match Ashes.Text.unconsText(text) with
                         | None -> Error("unterminated string")
                         | Some((head, tail)) ->
                             if head == "\""
@@ -49,7 +49,7 @@ in
                                 else parseStringBody(acc + head)(tail)
                 in
                     let parseString text =
-                        match Ashes.Text.uncons(text) with
+                        match Ashes.Text.unconsText(text) with
                             | None -> Error("expected string")
                             | Some((head, tail)) ->
                                 if head == "\""
@@ -57,7 +57,7 @@ in
                                 else Error("expected string")
                     in
                         let recursive takeNumberToken acc text =
-                            match Ashes.Text.uncons(text) with
+                            match Ashes.Text.unconsText(text) with
                                 | None -> (acc, "")
                                 | Some((head, tail)) ->
                                     match Ashes.Text.parseInt(head) with
@@ -80,7 +80,7 @@ in
                                                             else (acc, text)
                         in
                             let recursive containsFloatMarker text =
-                                match Ashes.Text.uncons(text) with
+                                match Ashes.Text.unconsText(text) with
                                     | None -> false
                                     | Some((head, tail)) ->
                                         if head == "."
@@ -99,7 +99,7 @@ in
                                         let recursive parseArrayItems current acc hasValues =
                                             let currentTrimmed = skipWhitespace(current)
                                             in
-                                                match Ashes.Text.uncons(currentTrimmed) with
+                                                match Ashes.Text.unconsText(currentTrimmed) with
                                                     | None -> Error("unterminated array")
                                                     | Some((head, tail)) ->
                                                         if head == "]"
@@ -115,7 +115,7 @@ in
                                                                     in
                                                                         let afterValueTrimmed = skipWhitespace(afterValue)
                                                                         in
-                                                                            match Ashes.Text.uncons(afterValueTrimmed) with
+                                                                            match Ashes.Text.unconsText(afterValueTrimmed) with
                                                                                 | None -> Error("unterminated array")
                                                                                 | Some((separator, separatorTail)) ->
                                                                                     if separator == ","
@@ -129,7 +129,7 @@ in
                                                 let currentTrimmed = skipWhitespace(current)
                                                 in
                                                     let recursive parseKeyBody keyAcc keyText =
-                                                        match Ashes.Text.uncons(keyText) with
+                                                        match Ashes.Text.unconsText(keyText) with
                                                             | None -> Error("unterminated string")
                                                             | Some((keyHead, keyTail)) ->
                                                                 if keyHead == "\""
@@ -139,7 +139,7 @@ in
                                                                     then Error("string escapes not supported in this demo")
                                                                     else parseKeyBody(keyAcc + keyHead)(keyTail)
                                                     in
-                                                        match Ashes.Text.uncons(currentTrimmed) with
+                                                        match Ashes.Text.unconsText(currentTrimmed) with
                                                             | None -> Error("unterminated object")
                                                             | Some((head, tail)) ->
                                                                 if head == "}"
@@ -152,7 +152,7 @@ in
                                                                             | Ok((key, afterKey)) ->
                                                                                 let afterKeyTrimmed = skipWhitespace(afterKey)
                                                                                 in
-                                                                                    match Ashes.Text.uncons(afterKeyTrimmed) with
+                                                                                    match Ashes.Text.unconsText(afterKeyTrimmed) with
                                                                                         | None -> Error("unexpected end of input")
                                                                                         | Some((separator, afterColon)) ->
                                                                                             if separator == ":"
@@ -167,7 +167,7 @@ in
                                                                                                         in
                                                                                                             let afterValueTrimmed = skipWhitespace(afterValue)
                                                                                                             in
-                                                                                                                match Ashes.Text.uncons(afterValueTrimmed) with
+                                                                                                                match Ashes.Text.unconsText(afterValueTrimmed) with
                                                                                                                     | None -> Error("unterminated object")
                                                                                                                     | Some((afterSeparator, separatorTail)) ->
                                                                                                                         if afterSeparator == ","
@@ -179,7 +179,7 @@ in
                                                                                             else Error("expected :")
                                                                     else Error("expected string")
                                             in
-                                                match Ashes.Text.uncons(trimmed) with
+                                                match Ashes.Text.unconsText(trimmed) with
                                                     | None -> Error("expected JSON value")
                                                     | Some((head, tail)) ->
                                                         if head == "\""
