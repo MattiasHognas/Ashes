@@ -1,19 +1,17 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-13. This tracks whether Ashes-the-language and its stdlib have what a
-from-scratch Ashes-the-compiler needs. See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how this
-fits the broader roadmap.
+Status as of 2026-08-13. This is a capability audit of what Ashes-the-language, its compiler/runtime,
+and its standard library must provide before a compiler can be written in Ashes. It deliberately does
+not track how much of the compiler has been ported, port milestones, or bootstrap progress. See
+[FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap.
 
 ## Language/stdlib prerequisites
 
-`Required` means a design or implementation is still needed for at least one tagged area. `Optional`
-items may improve performance or ergonomics but do not block the first self-hosted compiler. An area
-tag names the consumer, not the project that must implement the prerequisite. `Tests` covers the
-component unit-test projects, `TestRunner` the end-to-end `.ash` runner, and `Fuzzing` both
-`Ashes.Fuzzing` and `Ashes.Fuzzing.Tests`. Tests are required for every delivered change; those tags
-appear only where the test infrastructure itself consumes the capability. `Complete` capabilities
-link to the normative documentation for the shipped surface. `Partial`, `Required`, `Design
-required`, and `Optional` capabilities link to actionable work packages below.
+`Required` means Ashes still needs a design or implementation. An area tag names the eventual
+consumer, not the project that must implement the prerequisite. Tests are required for every
+delivered change. `Complete` capabilities link to the normative documentation for the shipped
+surface; `Partial`, `Required`, and `Design required` capabilities link to actionable Ashes work
+packages below.
 
 | Capability | Status | Areas |
 |---|---|---|
@@ -37,63 +35,28 @@ required`, and `Optional` capabilities link to actionable work packages below.
 | [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](#gap-text-unicode-and-source-coordinates) | Design required | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
 | [Persistent immutable map (`Ashes.Collection.Map`)](../reference/standard-library.md#ashes-collection-map) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
 | [Persistent immutable array (`Ashes.Collection.Array`)](../reference/standard-library.md#ashes-collection-array) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
-| [Persistent immutable set](#gap-persistent-collections) | Optional — use `Map(K, Unit)` initially | `Compiler/Semantics`, `LSP` |
-| [Generic hashing for non-`Str` keys](#gap-persistent-collections) | Optional — use `Map` initially | `Compiler/Semantics`, `LSP` |
-| [Named string-builder or rope](#gap-text-construction-performance) | Optional — `Text.join` and affine-growth reuse are workable initially | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | [Records, named patterns, and record-update syntax](../reference/language.md#_4-3-record-types) | Complete | `Compiler`, `Formatter`, `LSP` |
 | [User-written type annotations, aliases, and zero-cost nominal types](../reference/language.md#_4-2-zero-cost-nominal-types) | Complete | `Compiler`, `Formatter`, `LSP` |
-| [Project/module compilation with explicit exports and path dependencies](#gap-project-and-module-hosting) | Partial — compiler semantics complete; host path APIs still required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| [Project/module compilation with explicit exports and path dependencies](../guide/projects.md) | Complete | `Compiler/Semantics`, `CLI`, `LSP` |
 | [Catchable error propagation for compile-pipeline flows](../reference/language.md#_13-4-error-handling) | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
-| [RC-Perceus deterministic memory without cyclic graphs](../internals/architecture.md#memory-model) | Complete; the port must avoid parent/back-reference cycles | `Compiler`, `Formatter`, `LSP`, `DAP` |
-| [Persistent immutable substitution and unification architecture](#gap-hm-type-inference-is-built-on-mutable-union-find) | Required | `Compiler/Semantics` |
+| [RC-Perceus deterministic memory without cyclic graphs](../internals/architecture.md#memory-model) | Complete | `Compiler`, `Formatter`, `LSP`, `DAP` |
 | [Large-ADT exhaustiveness and performance hardening](../reference/language.md#_11-pattern-matching) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
 | [JSON parsing/serialization for `ashes.json` and JSON-RPC](../reference/standard-library.md#ashes-text-json) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
 | [Stdio JSON-RPC Content-Length framing](../reference/standard-library.md#ashes-net-rpc) | Complete | `LSP`, `DAP` |
 | [Interactive subprocess control with piped streams and timeouts](../reference/standard-library.md#ashes-io-process) | Complete | `DAP`, `TestRunner`, `Fuzzing` |
 | [Regex utilities for tooling text](../reference/standard-library.md#ashes-text-regex) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
-| [Unit assertions plus deterministic test discovery/execution](#gap-self-hosted-validation-infrastructure) | Partial — `Ashes.Test` is complete; discovery still needs the host APIs above | `Tests`, `TestRunner` |
-| [Deterministic fuzz generation, replay, shrinking, corpus, and artifacts](../guide/fuzz-testing.md#seeds-replay-shrinking-and-artifacts) | Complete in the C# harness; porting it is not a compiler-core gate | `Fuzzing` |
-| [Tar/gzip, SHA-256, authenticated HTTP, and multipart upload](#gap-registry-and-distribution-cli) | Required only for a full CLI replacement | `CLI/Registry` |
-| [Defined stage-0/stage-1/stage-2 bootstrap and reproducibility gate](#gap-bootstrap-completion-gate) | Design required | `Compiler`, `CLI`, `Tests`, `TestRunner`, `Fuzzing` |
+| [`Ashes.Test` unit assertions](../reference/standard-library.md#ashes-test) | Complete | `Tests` |
 
-The first self-hosted **compiler core** does not require `CLI/Registry`, `LSP`, `DAP`, `Fuzzing`, or
-`TestRunner` parity. Those are separate replacement layers. Set, generic hashing, and a named text
-builder are likewise not admission gates; measure the persistent alternatives before adding them.
+Registry/package commands, LSP, DAP, TestRunner, fuzz-harness parity, bootstrap staging, persistent
+sets, generic hashing, and a named text builder are not missing Ashes prerequisites. They may become
+separate port or optimization work later, but are outside this capability audit until a concrete
+language/runtime/stdlib blocker is demonstrated.
 
 ## Capability gaps and work packages
 
-Each package below is the implementation hand-off for one or more rows in the table. Some are missing
-language or stdlib facilities; others describe how already-shipped facilities must be applied and
-validated in the self-hosted toolchain. Complete a package in reviewable slices, updating the
-normative documentation before any language or API change.
-
-### Gap: HM type inference is built on mutable union-find
-
-`Lowering.TypeInference.cs` implements unification via a single mutable
-`Dictionary<int, TypeRef> _subst` field (`Lowering.cs:552`), with in-place path compression in
-`Prune` (`Lowering.TypeInference.cs:202`) and in-place binding in `Unify`
-(`Lowering.TypeInference.cs:218`). This is interleaved with mutable scope and ownership stacks.
-Porting this to pure-immutable Ashes means threading an immutable
-substitution map through every call site instead of mutating in place — well-understood CS
-(persistent union-find), but a genuine redesign of the inference core, not a mechanical translation.
-Budget this as its own milestone, most likely concurrent with or just before a self-hosted Semantics
-layer.
-
-Workable tasks:
-
-1. Define immutable inference state containing the next type-variable id, substitution map,
-   constraints, scope stack, and accumulated diagnostics.
-2. Implement `prune`, occurs-check, variable binding, and unification as state-returning functions;
-   path compression may return an updated map but must not introduce source-visible mutation.
-3. Port generalization, instantiation, recursive binding groups, traits, effects, and ownership facts
-   one subsystem at a time, keeping the current C# inference engine as the oracle.
-4. Serialize inferred types and diagnostics in a stable form and differentially run the semantic unit
-   fixtures plus the full `.ash` corpus.
-5. Benchmark large modules and large ADTs. If persistent-state churn is excessive, optimize through
-   compiler-proven unique reuse rather than a mutable language escape hatch.
-
-Done when inferred public types, accepted/rejected programs, diagnostic codes and spans, and ownership
-summaries match stage 0 across the corpus and extracted inference fixtures.
+Each package below is the implementation hand-off for one or more incomplete rows in the table. A
+package must add or specify an Ashes capability; work that only ports compiler code does not belong
+here. Update the normative documentation before any language or API implementation.
 
 ### Gap: FFI native arrays, out parameters, and foreign buffers
 
@@ -107,10 +70,9 @@ C# adapter does all of these with `out` parameters, pinned `ReadOnlySpan<T>` val
 `LLVMFunctionType`, `LLVMBuildCall2`, `LLVMBuildGEP2`, `LLVMVerifyModule`, and
 `LLVMTargetMachineEmitToMemoryBuffer`.
 
-**Decision (2026-07-24): extend Ashes' FFI rather than switch the self-hosted backend to
-textual-IR-plus-subprocess.** This keeps the self-hosted backend architecturally aligned with the
-current one (direct LLVM-C calls) instead of introducing a second codegen strategy. The extension is
-a parallel track independent of the Frontend and linker ports, and must be specified in the
+**Decision (2026-07-24): extend Ashes' FFI rather than require an Ashes compiler to use textual LLVM
+IR plus a subprocess.** This preserves direct access to LLVM-C and avoids making process spawning an
+accidental backend requirement. Specify the extension in the
 [language reference](../reference/language.md) before implementation.
 
 #### Native input arrays
@@ -218,13 +180,11 @@ The native ELF/PE linkers do much more than append bytes: they preallocate outpu
 sections into aligned offsets, patch headers and instructions, and apply relocations at arbitrary
 positions. `Ashes.Byte` currently exposes indexed reads, concatenation, and endian encode/decode, but
 no preallocation, range copy, or random-access write operation. Rebuilding the complete value for
-every patch would make a functional port accidentally quadratic.
+every patch would make any immutable binary builder accidentally quadratic.
 
-Specify a pure binary-building surface before the linker milestone. Operations such as allocation,
+Specify a pure binary-building surface. Operations such as allocation,
 range replacement, and `setU16Le`/`setU32Le`/`setU64Le` must return new `Bytes` values at the language
-level while allowing the compiler to reuse a uniquely owned buffer internally. The acceptance gate is
-not merely correct output: linking representative debug and release objects must stay bounded and
-within an agreed factor of the C# linker on every target.
+level while allowing the compiler to reuse a uniquely owned buffer internally.
 
 Workable tasks:
 
@@ -234,13 +194,15 @@ Workable tasks:
    `u32`, and `u64` in both endian orders actually used. Define out-of-range behavior explicitly.
 3. Lower update chains so uniquely owned buffers can be reused internally while aliases preserve the
    old value; add ownership regressions that prove both paths.
-4. Port one small object reader/writer, then the ELF and PE linkers. Write the completed value with
-   `Ashes.IO.File.writeBytes` rather than introducing linker-specific I/O.
-5. Differentially compare sections, symbols, relocations, headers, and final bytes for debug/release
-   objects on all targets; benchmark time and peak memory against the C# linker.
+4. Add model-based tests that compare every operation sequence with a simple list-backed reference,
+   including aliasing, overlap, alignment, boundaries, and invalid ranges.
+5. Extend builtin/lowering fuzz generators for the new operations and preserve minimized ownership or
+   codegen failures as regressions.
+6. Benchmark relocation-shaped patch workloads derived from the current ELF/PE linkers, measuring
+   scaling, peak memory, and output equality on every target.
 
-Done when representative links are byte-identical or have a documented deterministic-metadata
-difference, pass structural target validation, and remain within an agreed performance factor.
+Done when the public API is specified, its functional/aliasing properties pass, all targets produce
+identical bytes, and increasing patch counts does not produce quadratic time or memory growth.
 
 ### Gap: host-tool filesystem and process control
 
@@ -266,293 +228,32 @@ Workable tasks:
    documented no-op or equivalent on Windows.
 5. Add stderr writes and controlled process termination without turning expected compiler failures
    into `panic`; preserve cleanup of live resources on ordinary error-return paths.
-6. Exercise the APIs through project discovery, compiler output, TestRunner temporary workspaces, and
-   installed-layout integration tests on Linux and Windows hosts.
+6. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
+   from an installed-layout fixture, and atomically create output on Linux and Windows hosts.
 
-Done when the self-hosted CLI can compile a project from outside the repository, locate all shipped
-assets, atomically write an executable, report diagnostics on stderr, and return the same exit code as
-the C# CLI.
+Done when an Ashes program launched outside the repository can locate installed-layout fixtures,
+atomically write an executable file, report an expected failure on stderr, and return a controlled
+exit code on Linux and Windows.
 
 ### Gap: text, Unicode, and source coordinates
 
-The C# frontend records UTF-16 string-unit offsets while the self-hosted lexer walks UTF-8 bytes.
-Byte offsets are a natural internal identity for an UTF-8 compiler, but diagnostics, formatter edits,
-debug information, and LSP positions need deliberate conversions. Choose one canonical compiler span
-unit, specify line/column conversion (including malformed UTF-8), and negotiate or convert LSP UTF-8
-and UTF-16 positions. A differential test may normalize representations only after this contract is
-fixed; the divergence cannot remain an unexplained permanent exemption.
+The current compiler records UTF-16 string-unit offsets, while an Ashes program naturally encounters
+UTF-8 source bytes at file boundaries. Diagnostics, formatter edits, debug information, and LSP
+positions therefore need a specified conversion contract that Ashes code can call directly.
 
 Workable tasks:
 
-1. Migrate `selfhost/Frontend/Lexer.ash` from removed byte-oriented text predicates to `Rune`
-   classification while retaining ASCII fast paths where measured.
-2. Choose and document one canonical internal span unit, malformed-UTF-8 behavior, newline handling,
+1. Choose and document one canonical internal span unit, malformed-UTF-8 behavior, newline handling,
    and conversion rules for byte offsets, Unicode scalar columns, UTF-16/LSP positions, and debug
    locations.
-3. Implement a shared line index and conversion API consumed by diagnostics, formatter edits, LSP,
-   and DAP rather than duplicating conversions in each tool.
-4. Port the shipped substring/search/split/trim helpers wherever the compiler currently relies on C#
-   string methods; add empty, non-ASCII, combining-mark, astral, and malformed-input fixtures.
-5. Remove position normalizations from lexer/parser differential tests and rerun the full corpus plus
-   extracted edge cases.
+2. Implement a shared line index and conversion API usable from Ashes and consumed by diagnostics,
+   formatter edits, LSP, and DAP rather than duplicating conversions in each tool.
+3. Add empty, ASCII, non-ASCII, combining-mark, astral, mixed-newline, and malformed-input fixtures
+   for every conversion direction.
+4. Add property tests for round trips at valid boundaries, monotonic positions, bounded invalid
+   positions, and consistent line starts.
+5. Update the current compiler, formatter, LSP, and DAP to use the shared contract, proving that the
+   surface is sufficient for compiler tooling before self-hosting begins.
 
-Done when token, AST, diagnostic, formatter, LSP, and debug spans agree with the documented contract
-for ASCII and Unicode sources, and the self-hosted lexer builds against the current stdlib.
-
-### Gap: persistent collections
-
-`Ashes.Collection.Map` and `Ashes.Collection.Array` are shipped. A dedicated persistent set and
-generic hashing are optional: the first compiler can use `Map(K, Unit)` and ordered `Map` keys.
-
-Workable tasks:
-
-1. Use `Map(K, Unit)` and ordered keys in the initial port; add deterministic-order tests anywhere a
-   set or map contributes to serialized output.
-2. Benchmark set-heavy Semantics and LSP workloads against the existing C# implementation.
-3. If measurements show the fallback blocks a milestone, specify a persistent set API and implement
-   it with the same unique-update reuse guarantees as `Map`.
-4. Add generic hashing only for a measured non-`Str` key workload, after specifying equality/hash
-   coherence, deterministic seeding, collision behavior, and iteration-order guarantees.
-
-Done without new APIs if the `Map` fallback meets the agreed performance budget. Otherwise, done when
-the measured blocker passes with the smallest added collection surface and deterministic tests.
-
-### Gap: text construction performance
-
-`Text.join` plus affine-growth reuse is sufficient for the first port, so a named builder or rope is
-optional. Formatter output, diagnostics, IR dumps, JSON, and protocol messages still need measurement
-to ensure repeated concatenation does not become quadratic.
-
-Workable tasks:
-
-1. Centralize large-output construction on chunk accumulation plus one `Text.join`; avoid recursive
-   left-associated `+` in the self-hosted formatter and serializers.
-2. Add size-scaling benchmarks for formatting a large module, rendering many diagnostics, serializing
-   an AST, and emitting a large JSON-RPC message.
-3. Inspect lowered ownership/reuse reports for the hot paths and fix missed unique-buffer reuse where
-   possible.
-4. Introduce a named builder or rope only if benchmarks still exceed an agreed threshold, with a pure
-   API and deterministic flattening behavior.
-
-Done when doubling representative output does not cause accidental quadratic growth and output is
-byte-for-byte equal to the stage-0 component.
-
-### Gap: project and module hosting
-
-The compiler already supports sequential top-level declarations, explicit exports, imports, and path
-dependencies. The self-hosted implementation must reproduce graph construction and diagnostics using
-the host APIs above.
-
-Workable tasks:
-
-1. Port `ashes.json` loading, source-root discovery, module-name derivation, dependency namespacing,
-   export filtering, and deterministic topological ordering.
-2. Detect missing modules, duplicate names, dependency cycles, invalid entries, and attempts to use
-   non-exported declarations with the same diagnostic codes and source spans as stage 0.
-3. Build each self-hosted phase as a real separate project under `selfhost/` and declare only the
-   dependencies allowed by the repository DAG.
-4. Add project fixtures covering aliases, selector imports, path dependencies, diamond graphs, and
-   invocation from nested or unrelated working directories.
-
-Done when stage 0 and the self-hosted project loader choose the same ordered source set, visible
-exports, and diagnostics for the full project fixture suite.
-
-### Gap: self-hosted validation infrastructure
-
-`Ashes.Test` assertions are shipped. Deterministic discovery and end-to-end execution still depend on
-the host APIs, and porting TestRunner is a toolchain-parity layer rather than a compiler-core gate.
-
-Workable tasks:
-
-1. Define deterministic test discovery order and port directive parsing, temporary workspaces,
-   stdin/files/network fixtures, timeout handling, output comparison, and cleanup.
-2. Reuse the existing `.ash` corpus and extract component edge cases into shared fixtures consumed by
-   both stage 0 and self-hosted differential drivers.
-3. Match directive validation, output normalization, failure reporting, and exit codes against the C#
-   TestRunner on success, compile failure, runtime failure, and timeout cases.
-4. Run discovery twice in clean temporary workspaces and prove identical ordering and reports.
-
-Done when the self-hosted TestRunner discovers, executes, and reports the existing corpus identically
-to the C# TestRunner on supported hosts.
-
-### Gap: registry and distribution CLI
-
-Tar/gzip, SHA-256, authenticated HTTP, and multipart upload are needed only to replace the package and
-registry CLI, not to declare the compiler core self-hosted.
-
-Workable tasks:
-
-1. Port deterministic archive creation/extraction with path-traversal, duplicate-entry, size-limit,
-   and malformed-stream defenses.
-2. Verify streaming SHA-256 against published vectors and use it for package integrity before
-   extraction or installation.
-3. Port authenticated HTTP, token storage/redaction, multipart upload, retries, cancellation, and
-   server-error decoding without logging credentials.
-4. Differentially test `add`, `restore`, `publish`, `yank`, `search`, and `info` against a local fake
-   registry, including corrupt packages and interrupted operations.
-
-Done when the self-hosted registry CLI passes the existing package workflow suite and produces
-archives/checksums compatible with the C# CLI.
-
-### Gap: bootstrap completion gate
-
-Component differential tests prove compatibility but do not by themselves prove self-hosting. The
-bootstrap work package is:
-
-1. Define hermetic stage inputs: source ordering, target triple, compiler flags, environment, absolute
-   path remapping, timestamps/build ids, and discovery of `libLLVM`, stdlib, and vendored payloads.
-2. Add a command that records stage manifests and builds stage 1 with stage 0, stage 2 with stage 1,
-   and stage 3 with stage 2 without manually changing paths.
-3. Define byte-for-byte comparison as the default; enumerate and structurally normalize only metadata
-   proven nondeterministic, failing on every unexplained difference.
-4. Run compiler unit fixtures, the `.ash` corpus, project fixtures, and target structural checks with
-   the bootstrapped compiler, retaining stage logs and differing artifacts.
-5. Automate the gate per supported host in CI; execute emitted programs where the host supports them
-   and apply the documented structural validation elsewhere.
-
-The compiler-core roadmap completes only after:
-
-1. the current C# compiler (stage 0) builds the Ashes compiler (stage 1);
-2. stage 1 compiles the same compiler sources into stage 2;
-3. stage 2 repeats the build, with stage-2/stage-3 output compared byte-for-byte when deterministic
-   metadata permits it, otherwise by a documented structural equivalence;
-4. the bootstrapped compiler passes the full unit-fixture and `.ash` corpus differential gates; and
-5. the process is repeated for every supported host, with all four targets at least structurally
-   validated and executable where the host supports them.
-
-The gate must also prove that the compiler locates `libLLVM`, standard-library sources, and the
-vendored native/bitcode payloads from an installed layout. A compiler that can compile itself only
-from a repository-relative working directory is an intermediate milestone, not a completed bootstrap.
-
-## Recommended rewrite order
-
-Given the dependency DAG (`Frontend` → `Semantics` → `Backend`, `Frontend` has zero internal
-dependencies) and component size (`Frontend` ~3.9k LOC vs. `Semantics` ~43.7k vs. `Backend`
-~33.5k), the lowest-risk path to validate the self-hosting approach is:
-
-1. **Frontend (lexer + parser) first**, after migrating the existing lexer to `Rune` and deciding the
-   source-coordinate contract. It is the smallest surface and needs neither LLVM FFI nor HM
-   inference. Validate with a differential test: run the same corpus
-   (`tests/`, `lib/`, `examples/`) through both the existing C# frontend and the Ashes rewrite,
-   diff a serialized AST (the existing JSON module is sufficient) between them. This also answers
-   the open question of whether recursion-only/no-loop code performs acceptably at parser scale.
-2. **Formatter second.** It consumes only the frontend AST, adds an early round-trip differential
-   gate, and exercises large deterministic text construction without depending on Semantics.
-3. **Linker third**, after efficient binary construction lands. `LlvmImageLinkerElf*.cs` /
-   `LlvmImageLinkerPe*.cs` are otherwise pure algorithms — buffer parsing, relocation math, and
-   binary writing — and provide the first realistic performance test of the byte surface.
-4. **Semantics fourth**, once the immutable-substitution redesign for type inference is scoped as
-   its own milestone.
-5. **LLVM codegen fifth**, gated on the audited FFI extension.
-6. **Compiler CLI sixth**, gated on host paths/directories, stderr/exit, executable permissions, and
-   installed-asset discovery. This is the first stage eligible for the bootstrap completion gate.
-7. **TestRunner, Fuzzing, LSP, DAP, and registry/package CLI parity** follow as separately reviewable
-   toolchain layers; they are not prerequisites for declaring the compiler core self-hosted.
-
-### Landing this incrementally without merging a half-finished compiler
-
-Put the self-hosted implementation under a new top-level directory (e.g. `selfhost/`), separate
-from `lib/Ashes/` and the C# project DAG. Each milestone's differential-test harness (step 1's
-AST-diff, etc.) is small, purely additive, and non-gating — it can merge to `main` piece by piece
-because it's inert until the self-hosted compiler is complete enough to actually replace a stage,
-unlike the compiler itself. Follow the usual per-milestone worktree/PR workflow.
-
-Module layout mirrors the C# project DAG as **real, separate Ashes projects** under `selfhost/`
-— `selfhost/Frontend/`, `selfhost/Semantics/`, `selfhost/Backend/`, `selfhost/Formatter/`,
-`selfhost/Cli/`, `selfhost/Lsp/`, `selfhost/Dap/` — each with its own `ashes.json`, rather than one
-project with an internal namespace convention. Downstream projects consume upstream ones via
-`ashes.json` path dependencies (`docs/md/guide/projects.md` §3.7), which namespaces the dependency's
-modules automatically (e.g. `selfhost/Semantics/ashes.json` depends on `{"path": "../Frontend"}`,
-making its modules available as `Frontend.Tokens`, `Frontend.Lexer`, ...). This makes the DAG a
-structural property, not just a convention: `selfhost/Lsp/ashes.json` lists `Frontend`, `Semantics`,
-and `Formatter` as dependencies and simply has no way to resolve `Backend.*` unless it's added —
-mirroring the boundary rule this repo already enforces for the C# projects. Each project's own
-`entry` can double as a standalone smoke test/tool for that slice (e.g. `Frontend`'s entry is a
-token-dump CLI, useful both as a "does Frontend work standalone" check and as the differential-test
-harness's Ashes-side driver).
-
-### Test-coverage strategy: reuse the existing suite, don't re-derive it
-
-The C# suite (`Ashes.Tests` plus `Ashes.Lsp.Tests`, 2,126 `[Test]` methods) and the current `.ash`
-corpus (667 files in `tests/`, 18 in `lib/`, and 17 in `examples/` as of 2026-08-13) are the real
-spec. Each self-hosted
-milestone should validate against it two ways, not just "looks right on a few files":
-
-1. **Corpus differential testing** — run the self-hosted component over every `.ash` file already
-   in the repo and diff its output against the current C# component on the same input (e.g. token
-   stream for the lexer, AST for the parser). This reuses the full breadth of the existing e2e
-   corpus for free, without hand-porting anything, because token/AST-stream equivalence is a
-   precondition for those 579+ tests to ever pass once later stages are also self-hosted.
-2. **Edge-case fixture extraction** — component-specific C# unit tests (e.g. `LexerTests.cs`,
-   `LexerEdgeCaseTests.cs`, `AndKeywordLexerTests.cs` — 44 tests total for the lexer) encode
-   specific boundary behavior (suffix overflow, escape decoding, maximal-munch operator
-   disambiguation, malformed input) that may not appear in any real `.ash` source file. Pull the
-   literal input text out of each such test into a small shared fixture file, and run it through
-   the same differential-diff mechanism as the corpus — the C# implementation's current output *is*
-   the expected value, so there's no hand-transcribed "expected" to drift out of sync. This is the
-   repeatable template for every future milestone (parser, semantics, ...), not just the lexer.
-
-A milestone is "done" only when both checks are clean across the full corpus + fixture set, not a
-sample of it.
-
-### Compiler bugs found while writing the lexer
-
-Self-hosting exercises real language/stdlib surface that the existing ~2,000-test corpus
-apparently never covered in combination. Every bug found this way gets fixed, not just
-worked around — tracked here as they're found, updated once fixed:
-
-1. **Fixed, merged 2026-07-24 (PR #297).** Qualified alias access to ADT constructors failed
-   (`alias.Constructor(...)` reported "Unknown module", while `alias.function(...)` through the
-   identical alias worked). Root cause: `Lowering.ModuleResolution.cs`'s `LowerQualifiedVar` only
-   wired up qualified access for functions, never constructors — fixed by threading a
-   per-module constructor map through lowering, scoped so an alias not actually declaring a given
-   constructor still correctly errors. Follow-up gap found and deliberately left out of the fix:
-   qualified constructor *patterns* in `match` (`json.JsonInt(x) -> ...`) aren't parseable at all
-   (new syntax work, not a bug fix) — open for a future task.
-2. **Ownership/reuse-pass memory corruption** in code combining partial application (curried
-   multi-arg calls), tuple-destructuring over a `List`, and `::`-accumulation recursion — observed
-   as both silently wrong field values (a string from one token bleeding into another) and an OOM
-   crash from a corrupted length field breaking loop termination. Suspected regression from commit
-   `c59c9ff` (reuse-conservatism relaxation for partial-application folds). Fix in progress as of
-   2026-07-24; until landed, self-hosted code should avoid table-driven dispatch via curried helpers
-   over tuple lists — use explicit `if`/`match` chains instead.
-3. **Likely the same root cause as #2, smaller trigger**: in an expression that both calls a
-   large (~60-arm) `match`-returning-a-string-constant function on one field of a record and reads
-   a *different* field of that same record, the field read comes back corrupted — it reads back as
-   the match function's result instead of the actual field value. `t.text` alone is correct;
-   `tokenKindName(t.kind) + "/" + t.text` in the same expression corrupts `t.text`. Did not
-   reproduce in a hand-shrunk 2-constructor/2-field version, so scale (arm count, or going through
-   list-destructuring `t :: rest` rather than a directly-constructed record) seems to matter.
-   Reported as additional evidence to the bug-2 fix effort rather than opening a third, separate
-   one — folded into that fix's scope as of 2026-07-24. Doesn't affect any real corpus file (only
-   surfaces on malformed/`TokBad` input, which valid programs never produce), so non-blocking for
-   milestone 1's result below, but self-hosted code should avoid this shape too until it's fixed.
-
-### Milestone 1 (lexer) result — 2026-07-24
-
-`selfhost/Frontend/` (`ashes.json` + `Tokens.ash` + `Lexer.ash` + `Main.ash`) is a complete,
-working port of `src/Ashes.Frontend/Lexer.cs` + `Tokens.cs`, validated with the differential
-strategy above via `selfhost/tools/LexDump` (C# side) + `selfhost/tools/diff-lex.sh`:
-
-- **Full corpus** (616 `.ash` files: `tests/`, `lib/`, `examples/`): 572/616 exact token-stream
-  matches. All 44 differences are the UTF-8-byte-vs-UTF-16-char-unit position divergence scoped
-  in this doc's language/stdlib table above (`position`/`length` only; confirmed every mismatching
-  file contains non-ASCII bytes, almost always in comment headers) — not a lexer defect.
-- **41 edge-case fixtures** extracted verbatim from the C# lexer's own unit tests
-  (`src/Ashes.Tests/LexerTests.cs`, `LexerEdgeCaseTests.cs`, `AndKeywordLexerTests.cs`, one fixture
-  file per unique literal input under `selfhost/tests/lexer-fixtures/`): 37/41 exact matches. 2 are
-  the unsigned-literal-overflow scoping decision above (`256u8`, `18446744073709551615u64`
-  (`u64::MAX`) — Ashes' `Int` can't represent the full unsigned range so out-of-range values aren't
-  clamped/flagged the way the C# lexer's per-bit-width validation does). 2 are bug 3 above.
-
-Net: the self-hosted lexer is correct on every real program in the repository; the only gaps are
-the pre-declared scoping decisions plus bug 3 (malformed-input-only, folded into bug 2's fix).
-
-**Current status (2026-08-13):** the historical result above is no longer reproducible as-is. The
-`Rune` migration removed `Ashes.Text.isLetter`, `isDigit`, and `isWhiteSpace`, which the self-hosted
-lexer still imports, so the differential harness currently fails while compiling `Lexer.ash`. Migrate
-its byte-oriented ASCII recognition to the current `Rune`/byte APIs, decide the source-coordinate
-contract, then rerun all fixtures and the current 702-file corpus. Bug 1 is merged and no longer a
-blocker; bugs 2 and 3 must be reclassified from current evidence after that replay rather than kept as
-an indefinite “fix in progress.” The next implementation slice is the parser/remaining Frontend, not
-the linker, unless the binary-construction prerequisite lands first.
+Done when token, AST, diagnostic, formatter, LSP, and debug spans all use the documented contract and
+the conversion API is available to ordinary Ashes code.
