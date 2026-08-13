@@ -875,6 +875,35 @@ internal static partial class LlvmCodegen
         EmitWindowsWriteBytes(state, bytePtr, len);
     }
 
+    private static void EmitWriteErrorBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
+    {
+        if (HasStdoutBuffer(state))
+        {
+            EmitStdoutLockAcquire(state);
+            EmitFlushStdoutLocked(state);
+        }
+
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            EmitLinuxSyscall(
+                state,
+                SyscallWrite,
+                LlvmApi.ConstInt(state.I64, 2, 0),
+                LlvmApi.BuildPtrToInt(state.Target.Builder, bytePtr, state.I64, "stderr_write_ptr_i64"),
+                len,
+                "sys_stderr_write");
+        }
+        else
+        {
+            EmitWindowsWriteBytesToHandle(state, bytePtr, len, StdErrorHandle, "stderr");
+        }
+
+        if (HasStdoutBuffer(state))
+        {
+            EmitStdoutLockRelease(state);
+        }
+    }
+
     private static LlvmValueHandle EmitWindowsGetStdHandle(LlvmCodegenState state, uint handleKind, string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
@@ -922,11 +951,19 @@ internal static partial class LlvmCodegen
     }
 
     private static void EmitWindowsWriteBytes(LlvmCodegenState state, LlvmValueHandle bytePtr, LlvmValueHandle len)
+        => EmitWindowsWriteBytesToHandle(state, bytePtr, len, StdOutputHandle, "stdout");
+
+    private static void EmitWindowsWriteBytesToHandle(
+        LlvmCodegenState state,
+        LlvmValueHandle bytePtr,
+        LlvmValueHandle len,
+        uint handleKind,
+        string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle writeFileType = LlvmApi.FunctionType(state.I32, [state.I64, state.I8Ptr, state.I32, state.I32Ptr, state.I8Ptr]);
-        LlvmValueHandle stdoutHandle = EmitWindowsGetStdHandle(state, StdOutputHandle, "stdout_handle");
-        LlvmValueHandle bytesWritten = LlvmApi.BuildAlloca(builder, state.I32, "bytes_written");
+        LlvmValueHandle outputHandle = EmitWindowsGetStdHandle(state, handleKind, prefix + "_handle");
+        LlvmValueHandle bytesWritten = LlvmApi.BuildAlloca(builder, state.I32, prefix + "_bytes_written");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), bytesWritten);
         LlvmValueHandle writeFilePtr = LlvmApi.BuildLoad2(builder,
             LlvmApi.PointerTypeInContext(state.Target.Context, 0),
@@ -936,13 +973,13 @@ internal static partial class LlvmCodegen
             writeFileType,
             writeFilePtr,
             [
-                stdoutHandle,
+                outputHandle,
                 bytePtr,
                 LlvmApi.BuildTrunc(builder, NormalizeToI64(state, len), state.I32, "write_len_i32"),
                 bytesWritten,
                 LlvmApi.BuildIntToPtr(builder, LlvmApi.ConstInt(state.I64, 0, 0), state.I8Ptr, "null_overlapped")
             ],
-            "write_file");
+            prefix + "_write_file");
     }
 
     private static LlvmValueHandle EmitLinuxSyscall(LlvmCodegenState state, long nr, LlvmValueHandle arg1, LlvmValueHandle arg2, LlvmValueHandle arg3, string name)

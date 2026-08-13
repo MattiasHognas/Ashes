@@ -38,6 +38,12 @@ public static class BuiltinRegistry
         Write,
         /// <summary>Writes text to standard output followed by a newline.</summary>
         WriteLine,
+        /// <summary>Writes text to standard error without a trailing newline.</summary>
+        WriteError,
+        /// <summary>Writes text to standard error followed by a newline.</summary>
+        WriteErrorLine,
+        /// <summary>Terminates the current process with a controlled exit code.</summary>
+        Exit,
         /// <summary>Appends text to the buffered standard-output path.</summary>
         WriteBuffered,
         /// <summary>Appends text and a newline to the buffered standard-output path.</summary>
@@ -461,6 +467,9 @@ public static class BuiltinRegistry
                     ["write"] = new("write", BuiltinValueKind.Write, IsCallable: true, Arity: 1),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.IoWriteBytes, IsCallable: true, Arity: 1),
                     ["writeLine"] = new("writeLine", BuiltinValueKind.WriteLine, IsCallable: true, Arity: 1),
+                    ["writeError"] = new("writeError", BuiltinValueKind.WriteError, IsCallable: true, Arity: 1),
+                    ["writeErrorLine"] = new("writeErrorLine", BuiltinValueKind.WriteErrorLine, IsCallable: true, Arity: 1),
+                    ["exit"] = new("exit", BuiltinValueKind.Exit, IsCallable: true, Arity: 1),
                     ["writeBuffered"] = new("writeBuffered", BuiltinValueKind.WriteBuffered, IsCallable: true, Arity: 1),
                     ["writeBufferedLine"] = new("writeBufferedLine", BuiltinValueKind.WriteBufferedLine, IsCallable: true, Arity: 1),
                     ["flush"] = new("flush", BuiltinValueKind.FlushStdout, IsCallable: true, Arity: 1),

@@ -829,6 +829,17 @@ public static class IrOptimizer
             IrInst.NetTcpListen n => n with { PortTemp = R(n.PortTemp) },
             IrInst.NetTcpAccept n => n with { SocketTemp = R(n.SocketTemp) },
 
+            _ => RemapProcessOutputSourceTemps(inst, remap),
+        };
+    }
+
+    private static IrInst? RemapProcessOutputSourceTemps(IrInst inst, Dictionary<int, int> remap)
+    {
+        int R(int temp) => remap.TryGetValue(temp, out int resolved) ? resolved : temp;
+        return inst switch
+        {
+            IrInst.WriteErrorStr write => write with { Source = R(write.Source) },
+            IrInst.ExitProcess exit => exit with { Source = R(exit.Source) },
             _ => RemapDirectorySourceTemps(inst, remap),
         };
     }
@@ -2043,7 +2054,8 @@ public static class IrOptimizer
             case IrInst.PrintInt p: usedTemps.Add(p.Source); break;
             case IrInst.PrintStr p: usedTemps.Add(p.Source); break;
             case IrInst.PrintBool p: usedTemps.Add(p.Source); break;
-            case IrInst.WriteStr or IrInst.WriteBufferedStr: usedTemps.Add(GetWriteSource(inst)); break;
+            case IrInst.WriteStr or IrInst.WriteBufferedStr or IrInst.WriteErrorStr: usedTemps.Add(GetWriteSource(inst)); break;
+            case IrInst.ExitProcess e: usedTemps.Add(e.Source); break;
         }
 
         CollectFileAndEnvironmentUsedTemps(inst, usedTemps);
@@ -2073,6 +2085,7 @@ public static class IrOptimizer
     {
         IrInst.WriteStr write => write.Source,
         IrInst.WriteBufferedStr write => write.Source,
+        IrInst.WriteErrorStr write => write.Source,
         _ => throw new ArgumentOutOfRangeException(nameof(instruction))
     };
 

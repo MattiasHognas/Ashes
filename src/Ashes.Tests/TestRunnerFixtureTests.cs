@@ -72,6 +72,26 @@ public sealed class TestRunnerFixtureTests
     }
 
     [Test]
+    public void ParseTestDirectives_reads_expected_stderr_and_exit_code()
+    {
+        const string source = """
+            // expect: partial output
+            // expect-stderr: exact failure
+            // expect-stderr-contains: expected failure
+            // exit: 7
+            Ashes.IO.print(1)
+            """;
+
+        var directives = Runner.ParseTestDirectives(source);
+
+        directives.ExpectedStderr.ShouldBe("exact failure");
+        directives.HasExpectedStderr.ShouldBeTrue();
+        directives.ExpectedStderrContains.ShouldBe("expected failure");
+        directives.HasExpectedStderrContains.ShouldBeTrue();
+        directives.ExpectedExitCode.ShouldBe(7);
+    }
+
+    [Test]
     public void MaterializeTestFixtures_creates_nested_files()
     {
         var root = Path.Combine(Path.GetTempPath(), "ashes-test-runner-fixtures", Guid.NewGuid().ToString("N"));

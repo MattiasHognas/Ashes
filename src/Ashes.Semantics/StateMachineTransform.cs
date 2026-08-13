@@ -1043,6 +1043,8 @@ public static class StateMachineTransform
             IrInst.PrintStr p => [p.Source],
             IrInst.PrintBool p => [p.Source],
             IrInst.WriteStr w => [w.Source],
+            IrInst.WriteErrorStr w => [w.Source],
+            IrInst.ExitProcess e => [e.Source],
             IrInst.WriteBufferedStr w => [w.Source],
             IrInst.FileReadText f => [f.PathTemp],
             IrInst.FileWriteText f => [f.PathTemp, f.TextTemp],

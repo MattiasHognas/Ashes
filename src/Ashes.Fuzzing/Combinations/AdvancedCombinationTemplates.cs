@@ -379,3 +379,31 @@ internal sealed class DeterministicDirectoryTemplate : ICombinationTemplate
 
     private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
 }
+
+internal sealed class StderrProcessExitTemplate : ICombinationTemplate
+{
+    public string Id => "process.stderr-exit";
+    public IReadOnlySet<GeneratedFeature> AdvertisedFeatures { get; } = new SortedSet<GeneratedFeature>
+    {
+        GeneratedFeature.AmbientAuthority,
+    };
+
+    public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
+        budget.RemainingNodes >= 10;
+
+    public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
+    {
+        GenerationResult<Expr> fallback = expressions.Generate(resultType, context, budget.Descend(6), random);
+        Expr writeError = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.IO", "writeErrorLine"),
+            new Expr.StrLit("expected fuzz failure"));
+        Expr exit = new Expr.Call(new Expr.QualifiedVar("Ashes.IO", "exit"), new Expr.IntLit(7));
+        Expr unreachableExit = new Expr.If(new Expr.BoolLit(false), exit, fallback.Value);
+        Expr value = new Expr.Let(Name("stderrUnit", random), writeError, unreachableExit);
+        GeneratedFeatureSet features = new(AdvertisedFeatures);
+        features.UnionWith(fallback.Features);
+        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("process:stderr-exit", fallback.Trace), fallback.NodeCount + 9);
+    }
+
+    private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);
+}

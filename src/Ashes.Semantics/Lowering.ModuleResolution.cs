@@ -333,7 +333,8 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.Print => LowerQualifiedBuiltinFunctionReference(name, CreatePrintBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.Panic => LowerQualifiedBuiltinFunctionReference(name, CreatePanicBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.Args => LowerProgramArgs(NewTemp(), CreateArgsBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes or BuiltinRegistry.BuiltinValueKind.WriteLine => ResolveDirectIoBuiltinMember(name, kind),
+            BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes or BuiltinRegistry.BuiltinValueKind.WriteLine
+                or BuiltinRegistry.BuiltinValueKind.WriteError or BuiltinRegistry.BuiltinValueKind.WriteErrorLine or BuiltinRegistry.BuiltinValueKind.Exit => ResolveDirectIoBuiltinMember(name, kind),
             BuiltinRegistry.BuiltinValueKind.WriteBuffered or BuiltinRegistry.BuiltinValueKind.WriteBufferedLine or BuiltinRegistry.BuiltinValueKind.FlushStdout => ResolveBufferedIoBuiltinMember(name, kind),
             BuiltinRegistry.BuiltinValueKind.ReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateReadLineBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerQualifiedBuiltinFunctionReference(name, CreateInternalDeepCopyBinding().S.Body),
@@ -423,6 +424,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.Write => CreateWriteBinding().S.Body,
             BuiltinRegistry.BuiltinValueKind.IoWriteBytes => CreateWriteBytesBinding().S.Body,
             BuiltinRegistry.BuiltinValueKind.WriteLine => CreateWriteLineBinding().S.Body,
+            BuiltinRegistry.BuiltinValueKind.WriteError => CreateWriteErrorBinding(appendNewline: false).S.Body,
+            BuiltinRegistry.BuiltinValueKind.WriteErrorLine => CreateWriteErrorBinding(appendNewline: true).S.Body,
+            BuiltinRegistry.BuiltinValueKind.Exit => CreateExitBinding().S.Body,
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         });
 

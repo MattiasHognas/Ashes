@@ -9018,7 +9018,8 @@ public sealed partial class Lowering
     private static string? AmbientCapabilityForIntrinsic(IntrinsicKind kind) => kind switch
     {
         IntrinsicKind.Print or IntrinsicKind.Panic or IntrinsicKind.Write or IntrinsicKind.WriteBytes
-            or IntrinsicKind.WriteLine or IntrinsicKind.WriteBuffered or IntrinsicKind.WriteBufferedLine
+            or IntrinsicKind.WriteLine or IntrinsicKind.WriteError or IntrinsicKind.WriteErrorLine
+            or IntrinsicKind.WriteBuffered or IntrinsicKind.WriteBufferedLine
             or IntrinsicKind.FlushStdout or IntrinsicKind.ReadLine or IntrinsicKind.ReadExact
             or IntrinsicKind.ConsoleEnableRaw or IntrinsicKind.ConsoleRestore or IntrinsicKind.ConsolePoll
             => ConsoleIoCapabilityName,
@@ -9031,6 +9032,7 @@ public sealed partial class Lowering
             or IntrinsicKind.EnvironmentTemporaryDirectory or IntrinsicKind.EnvironmentCacheDirectory
             or IntrinsicKind.EnvironmentGet => EnvironmentReadCapabilityName,
         IntrinsicKind.SpawnProcess => ProcessSpawnCapabilityName,
+        IntrinsicKind.Exit => ProcessExitCapabilityName,
         IntrinsicKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
         IntrinsicKind.FfiCopyBytes => UnsafeFfiCapabilityName,
         _ => null,
@@ -9102,9 +9104,15 @@ public sealed partial class Lowering
         };
 
     private (int, TypeRef)? LowerIntrinsicIoFallback(Expr argument, IntrinsicKind kind)
-        => kind is IntrinsicKind.DirectoryEntries or IntrinsicKind.DirectoryCreateAll or IntrinsicKind.DirectoryRemoveTree
-            ? LowerDirectoryOperation(argument, kind)
-            : null;
+        => kind switch
+        {
+            IntrinsicKind.WriteError => LowerWriteError(argument, appendNewline: false),
+            IntrinsicKind.WriteErrorLine => LowerWriteError(argument, appendNewline: true),
+            IntrinsicKind.Exit => LowerExitProcess(argument),
+            IntrinsicKind.DirectoryEntries or IntrinsicKind.DirectoryCreateAll or IntrinsicKind.DirectoryRemoveTree
+                => LowerDirectoryOperation(argument, kind),
+            _ => null,
+        };
 
     private (int, TypeRef)? LowerCallIntrinsicNetBytes(
         IntrinsicKind kind,
@@ -9243,7 +9251,8 @@ public sealed partial class Lowering
     {
         BuiltinRegistry.BuiltinValueKind.Print or BuiltinRegistry.BuiltinValueKind.Panic
             or BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes
-            or BuiltinRegistry.BuiltinValueKind.WriteLine or BuiltinRegistry.BuiltinValueKind.WriteBuffered
+            or BuiltinRegistry.BuiltinValueKind.WriteLine or BuiltinRegistry.BuiltinValueKind.WriteError
+            or BuiltinRegistry.BuiltinValueKind.WriteErrorLine or BuiltinRegistry.BuiltinValueKind.WriteBuffered
             or BuiltinRegistry.BuiltinValueKind.WriteBufferedLine or BuiltinRegistry.BuiltinValueKind.FlushStdout
             or BuiltinRegistry.BuiltinValueKind.ReadLine
             or BuiltinRegistry.BuiltinValueKind.IoReadExact
@@ -9268,6 +9277,7 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory
             or BuiltinRegistry.BuiltinValueKind.EnvironmentGet => EnvironmentReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.SpawnProcess => ProcessSpawnCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.Exit => ProcessExitCapabilityName,
         BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.FfiCopyBytes => UnsafeFfiCapabilityName,
         _ => null,
@@ -9338,6 +9348,16 @@ public sealed partial class Lowering
 
     private (int, TypeRef)? LowerBuiltinIoFallback(Expr argument, BuiltinRegistry.BuiltinValueKind kind)
     {
+        if (kind is BuiltinRegistry.BuiltinValueKind.WriteError or BuiltinRegistry.BuiltinValueKind.WriteErrorLine)
+        {
+            return LowerWriteError(argument, appendNewline: kind == BuiltinRegistry.BuiltinValueKind.WriteErrorLine);
+        }
+
+        if (kind == BuiltinRegistry.BuiltinValueKind.Exit)
+        {
+            return LowerExitProcess(argument);
+        }
+
         if (kind is BuiltinRegistry.BuiltinValueKind.DirectoryEntries or BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll
             or BuiltinRegistry.BuiltinValueKind.DirectoryRemoveTree)
         {

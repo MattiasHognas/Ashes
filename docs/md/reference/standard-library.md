@@ -32,8 +32,9 @@ imports work identically for all of them.
 
 Ambient acquisition is reflected in inferred capability rows. Console input/output requires
 `ConsoleIO`; filesystem acquisition requires `FileRead` or `FileWrite`; process creation requires
-`ProcessSpawn`; inspecting the process environment requires `EnvironmentRead`; and reading the
-monotonic clock requires `TimeRead`. Operations on an already-owned `FileHandle` or `Process` are
+`ProcessSpawn`; terminating the current process requires `ProcessExit`; inspecting the process
+environment requires `EnvironmentRead`; and reading the monotonic clock requires `TimeRead`.
+Operations on an already-owned `FileHandle` or `Process` are
 possession-only and add no ambient capability.
 
 ### `Ashes.IO`
@@ -46,6 +47,8 @@ possession-only and add no ambient capability.
   newline and no UTF-8 constraint (unlike `write`, which takes a `Str`). Use this for binary output such
   as a packed image or any non-text byte stream
 - `writeLine(text)` returning `Unit` — write `text` to stdout followed by a newline
+- `writeError(text)` returning `Unit` — write `text` to stderr with no trailing newline
+- `writeErrorLine(text)` returning `Unit` — write `text` to stderr followed by a newline
 - `writeBuffered(text)` returning `Unit` — append `text` to a process-wide 64 KiB stdout buffer
 - `writeBufferedLine(text)` returning `Unit` — append `text` and a newline to the stdout buffer
 - `flush(unit)` returning `Unit` — write pending buffered stdout immediately. The buffer also flushes
@@ -56,6 +59,11 @@ possession-only and add no ambient capability.
   unspecified.
 - `readLine()` returning `Maybe(Str)`
 - `readExact(n)` returning `Result(Str, Str)` — read exactly `n` bytes from stdin
+- `exit(code)` returning `a` — terminate immediately with the supplied process exit code. On Linux,
+  the parent observes the low eight bits; Windows preserves the platform exit value. Codes `0`–`255`
+  are therefore portable. This terminal operation does not unwind live scopes: propagate ordinary
+  errors with `Result`, let resource-owning functions return normally, and call `exit` only at the
+  outer program boundary after reporting the error. Carries `ProcessExit`.
 
 ### `Ashes.IO.Console`
 

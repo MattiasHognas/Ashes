@@ -1,6 +1,6 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-13. This is a capability audit of what Ashes-the-language, its compiler/runtime,
+Status as of 2026-08-14. This is a capability audit of what Ashes-the-language, its compiler/runtime,
 and its standard library must provide before a compiler can be written in Ashes. It deliberately does
 not track how much of the compiler has been ported, port milestones, or bootstrap progress. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap.
@@ -32,7 +32,8 @@ packages below.
 | [Current/executable/temp/cache directories and environment lookup](../reference/standard-library.md#ashes-io-environment) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | [Directory enumeration, creation, deletion, and atomic rename](../reference/standard-library.md#ashes-io-directory) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Marking emitted ELF files executable](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
-| [stderr output and controlled process exit codes](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| [stderr output and controlled process exit codes](../reference/standard-library.md#ashes-io) | Complete | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| [Installed-layout host-tool integration workflow](#gap-installed-layout-host-tool-integration) | Required | `Compiler`, `CLI`, `TestRunner`, `Fuzzing` |
 | [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | [Unicode scalar classification through `Rune`](../reference/standard-library.md#ashes-rune) | Complete | `Compiler/Frontend`, `Formatter`, `LSP` |
 | [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](../reference/language.md#source-encoding-and-coordinates) | Complete | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
@@ -61,25 +62,20 @@ Each package below is the implementation hand-off for one or more incomplete row
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
 
-### Gap: host-tool filesystem and process control
+### Gap: installed-layout host-tool integration
 
 Single-file frontend experiments need only `readText`, but a compatible compiler must discover
 projects, normalize paths, walk source roots, find its shipped `lib/` and runtime assets, create output
-directories, write temporary files, and mark Linux output executable. The surrounding tools also need
-stderr and controlled exit codes so a user compilation error is not reported as a language `panic`.
+directories, write temporary files, and mark Linux output executable.
 
-Add these as ordinary capability-tracked host APIs rather than ad-hoc compiler externals. Keep path
-operations pure; filesystem acquisition and mutation carry `FileRead`/`FileWrite`, environment lookup
-gets an explicit ambient-authority classification, and possession-based file-handle operations remain
-unchanged.
+Use the existing capability-tracked host APIs. Filesystem acquisition and mutation carry
+`FileRead`/`FileWrite`, environment lookup has explicit ambient-authority classification, and the
+integration programs must not introduce ad-hoc compiler externals.
 
 Workable tasks:
 
-1. Add stderr writes and controlled process termination without turning expected compiler failures
-   into `panic`; preserve cleanup of live resources on ordinary error-return paths.
-2. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
+1. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
    from an installed-layout fixture, and atomically create output on Linux and Windows hosts.
 
 Done when an Ashes program launched outside the repository can locate installed-layout fixtures,
-atomically write an executable file, report an expected failure on stderr, and return a controlled
-exit code on Linux and Windows.
+atomically write an executable file, and mark Linux output executable on Linux and Windows hosts.

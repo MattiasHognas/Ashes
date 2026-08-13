@@ -633,7 +633,7 @@ diagnostics and do not affect executable output.
 | Strings | `ConcatStr` |
 | Closures | `MakeClosure`, `CallClosure` |
 | Allocation | `Alloc`, `AllocAdt`, `SetAdtField`, `GetAdtTag`, `GetAdtField` |
-| Console I/O | `PrintInt`, `PrintStr`, `PrintBool`, `WriteStr`, `ReadLine`, `PanicStr` |
+| Console I/O | `PrintInt`, `PrintStr`, `PrintBool`, `WriteStr`, `WriteErrorStr`, `ReadLine`, `PanicStr`, `ExitProcess` |
 | File I/O | `FileReadText`, `FileReadAllBytes`, `FileMmap`, `FileWriteText`, `FileWriteBytes`, `FileExists`, `FileReplace`, `FileMakeExecutable`, `DirectoryEntries`, `DirectoryCreateAll`, `DirectoryRemoveTree`, `FileOpen`, `FileReadChunk`, `FileReadLine`, `FileClose` |
 | Networking | `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, `NetTcpClose` |
 | Control flow | `Label`, `Jump`, `JumpIfFalse`, `Return` |
@@ -1152,7 +1152,7 @@ environment (the row analog of the value restriction). Unsigned operations infer
 within the compilation unit by unifying all perform-sites and handler arms.
 
 Runtime-provided marker capabilities use the same rows without handler evidence. Direct and
-higher-order builtin calls insert `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`,
+higher-order builtin calls insert `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `ProcessExit`, `TimeRead`,
 `EnvironmentRead`, `NetListen`, `NetConnect`, or `Stop` at their acquisition site. External
 declarations carry a closed runtime row in `IrExternalFunction.RuntimeCapabilities`; ordinary
 externals default to `UnsafeFfi`, while declared resource destructors default to the empty row. The

@@ -12,6 +12,9 @@ public sealed class AmbientAuthorityCapabilityTests
     [Arguments("Ashes.IO.write(\"x\")", "ConsoleIO")]
     [Arguments("Ashes.IO.writeBytes(Ashes.Byte.empty(Unit))", "ConsoleIO")]
     [Arguments("Ashes.IO.writeLine(\"x\")", "ConsoleIO")]
+    [Arguments("Ashes.IO.writeError(\"x\")", "ConsoleIO")]
+    [Arguments("Ashes.IO.writeErrorLine(\"x\")", "ConsoleIO")]
+    [Arguments("Ashes.IO.exit(1)", "ProcessExit")]
     [Arguments("Ashes.IO.writeBuffered(\"x\")", "ConsoleIO")]
     [Arguments("Ashes.IO.writeBufferedLine(\"x\")", "ConsoleIO")]
     [Arguments("Ashes.IO.flush(Unit)", "ConsoleIO")]
@@ -239,7 +242,7 @@ public sealed class AmbientAuthorityCapabilityTests
     {
         string[] names =
         [
-            "ConsoleIO", "FileRead", "FileWrite", "ProcessSpawn", "TimeRead", "EnvironmentRead", "Entropy",
+            "ConsoleIO", "FileRead", "FileWrite", "ProcessSpawn", "ProcessExit", "TimeRead", "EnvironmentRead", "Entropy",
             "UnsafeFfi", "NetListen", "NetConnect", "Stop",
         ];
 

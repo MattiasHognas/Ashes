@@ -114,6 +114,10 @@ public static class Runner
     /// <param name="Expected">The expected stdout, exactly (trailing whitespace trimmed).</param>
     /// <param name="HasExpected">Whether an <c>// expect:</c> directive was present at all.</param>
     /// <param name="ExpectedExitCode">The expected process exit code.</param>
+    /// <param name="ExpectedStderr">The expected stderr, exactly (trailing whitespace trimmed).</param>
+    /// <param name="HasExpectedStderr">Whether an <c>// expect-stderr:</c> directive was present.</param>
+    /// <param name="ExpectedStderrContains">Text that stderr must contain.</param>
+    /// <param name="HasExpectedStderrContains">Whether an <c>// expect-stderr-contains:</c> directive was present.</param>
     /// <param name="IsCompileError">True when the test expects a compile error rather than a run.</param>
     /// <param name="Stdin">Text fed to the program's stdin, or null for none.</param>
     /// <param name="FileFixtures">Files to materialize before the program runs.</param>
@@ -124,6 +128,10 @@ public static class Runner
         string Expected,
         bool HasExpected,
         int ExpectedExitCode,
+        string ExpectedStderr,
+        bool HasExpectedStderr,
+        string ExpectedStderrContains,
+        bool HasExpectedStderrContains,
         bool IsCompileError,
         string? Stdin,
         IReadOnlyList<TestFileFixture> FileFixtures,
@@ -276,7 +284,11 @@ public static class Runner
                 file, targetId, backendOptions, effectiveProject, directives, rawSource, selectedPipeline);
             bool passed = exit == directives.ExpectedExitCode && (directives.IsCompileError
                 ? actualOutput.Contains(expected, StringComparison.Ordinal)
-                : string.Equals(actualOutput, expected, StringComparison.Ordinal));
+                : string.Equals(actualOutput, expected, StringComparison.Ordinal)
+                    && (!directives.HasExpectedStderr
+                        || string.Equals(stderr.TrimEnd(), directives.ExpectedStderr.TrimEnd(), StringComparison.Ordinal))
+                    && (!directives.HasExpectedStderrContains
+                        || stderr.Contains(directives.ExpectedStderrContains, StringComparison.Ordinal)));
             string actual = !string.IsNullOrWhiteSpace(stderr) && !passed
                 ? actualOutput + "\n[stderr]\n" + stderr.TrimEnd()
                 : actualOutput;
@@ -542,6 +554,10 @@ public static class Runner
             acc.Expected,
             acc.HasExpected,
             acc.ExpectedExitCode,
+            acc.ExpectedStderr,
+            acc.HasExpectedStderr,
+            acc.ExpectedStderrContains,
+            acc.HasExpectedStderrContains,
             acc.IsCompileError,
             acc.Stdin,
             acc.FileFixtures,
@@ -555,6 +571,10 @@ public static class Runner
         public string Expected = "";
         public bool HasExpected;
         public int ExpectedExitCode;
+        public string ExpectedStderr = "";
+        public bool HasExpectedStderr;
+        public string ExpectedStderrContains = "";
+        public bool HasExpectedStderrContains;
         public bool IsCompileError;
         public string? Stdin;
         public List<TestFileFixture> FileFixtures = new();
@@ -586,6 +606,20 @@ public static class Runner
             acc.HasExpected = true;
             acc.ExpectedExitCode = 1;
             acc.IsCompileError = true;
+            return;
+        }
+
+        if (commentText.StartsWith("expect-stderr:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.ExpectedStderr = commentText.Substring("expect-stderr:".Length).Trim();
+            acc.HasExpectedStderr = true;
+            return;
+        }
+
+        if (commentText.StartsWith("expect-stderr-contains:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.ExpectedStderrContains = commentText.Substring("expect-stderr-contains:".Length).Trim();
+            acc.HasExpectedStderrContains = true;
             return;
         }
 

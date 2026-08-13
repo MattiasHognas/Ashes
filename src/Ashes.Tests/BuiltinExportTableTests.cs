@@ -15,7 +15,7 @@ public sealed class BuiltinExportTableTests
     {
         BuiltinRegistry.TryGetModuleExports("Ashes.IO", out var exports).ShouldBeTrue();
 
-        foreach (var name in new[] { "print", "panic", "args", "write", "writeLine", "writeBuffered", "writeBufferedLine", "flush", "readLine" })
+        foreach (var name in new[] { "print", "panic", "args", "write", "writeLine", "writeError", "writeErrorLine", "exit", "writeBuffered", "writeBufferedLine", "flush", "readLine" })
         {
             exports.ShouldContain(name);
         }
