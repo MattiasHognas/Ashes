@@ -1,40 +1,61 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-07-24. This tracks whether Ashes-the-language and its stdlib have what a
+Status as of 2026-08-13. This tracks whether Ashes-the-language and its stdlib have what a
 from-scratch Ashes-the-compiler needs. See [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how this
 fits the broader roadmap.
 
 ## Language/stdlib prerequisites
 
-| Capability | Complete |
-|---|---|
-| Unsigned integer support (`u8`, `u16`, `u32`, `u64`) | Yes |
-| Byte type (`u8`) and byte literals | Yes |
-| Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`) | Yes |
-| Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`) | Yes |
-| FFI surface (`external` functions/types, pointer signatures, symbol@library imports) | Partial — see [FFI gap](#gap-ffi-struct-callback-varargs) |
-| Immutable `Bytes` type with indexed access and append helpers | Yes |
-| Little-endian byte encode/decode helpers (`u16/u32/u64`) | Yes |
-| Binary file output (`Ashes.IO.File.writeBytes`) | Yes |
-| String helper module (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`, char predicates) | Yes |
-| Persistent immutable map (`Ashes.Collection.Map`) | Yes |
-| Persistent immutable array (`Ashes.Collection.Array`) | Yes |
-| Persistent immutable set | No — no `Collection.Set` module; usable today as `Map(K, ())` |
-| Generic hashing (non-`Str` keys) | No — `HashMap`/`HashTrie` are `Str`-keyed only (FNV-1a via `Ashes.Byte.hash`); other key types fall back to the AVL `Map`, which is workable but not O(1) |
-| String-builder / rope type for large generated text | No explicit type, but `Text.join` does divide-and-conquer concat and the CO-36 affine-growth optimizer makes tail-recursive accumulator patterns amortized-linear — the *pattern* works, there's just no named abstraction |
-| Records and record-update syntax | Yes |
-| User-written type annotations | Yes |
-| Project/module compilation support across multiple files | Yes |
-| Catchable error propagation for compile pipeline flows | Yes |
-| Memory model: RC-Perceus (deterministic destruction, no GC) | Yes, shipped (PR #294) — but admission is acyclic-only ([architecture.md](../internals/architecture.md)); a self-hosted AST/symbol table is naturally tree-shaped so this is fine, but any back-references (e.g. parent pointers) need a design that avoids cycles |
-| Large-ADT exhaustiveness/performance hardening | Yes |
-| JSON parsing/serialization support for `ashes.json` and JSON-RPC (CLI/LSP/DAP) | Yes |
-| Stdio JSON-RPC framing utilities (Content-Length read/write over byte streams) for LSP/DAP | Yes |
-| Interactive subprocess control with piped stdin/stdout/stderr, async reads, and request timeouts (DAP debugger backends) | Yes |
-| Regex utilities/module for protocol and tooling text parsing (import/project/LSP/DAP parsing paths) | Yes |
+`Required` means a design or implementation is still needed for at least one tagged area. `Optional`
+items may improve performance or ergonomics but do not block the first self-hosted compiler. An area
+tag names the consumer, not the project that must implement the prerequisite. `Tests` covers the
+component unit-test projects, `TestRunner` the end-to-end `.ash` runner, and `Fuzzing` both
+`Ashes.Fuzzing` and `Ashes.Fuzzing.Tests`. Tests are required for every delivered change; those tags
+appear only where the test infrastructure itself consumes the capability.
 
-The stdlib gaps (Set, generic hashing, string-builder) are mechanical additions — not attempted yet,
-but nothing here is architecturally blocked.
+| Capability | Status | Areas |
+|---|---|---|
+| Unsigned integer support (`u8`, `u16`, `u32`, `u64`) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| Byte type (`u8`) and byte literals | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
+| Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`) | Complete | `Compiler/Backend`, `Compiler/Linker` |
+| Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
+| Basic FFI (`external` functions/types, pointers, resources, `symbol@library`) | Partial — see [LLVM FFI gap](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | `Compiler/Backend` |
+| LLVM native arrays, out parameters, returned strings, and foreign buffers | Required | `Compiler/Backend` |
+| Immutable `Bytes` with indexed reads and append helpers | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
+| Little-endian byte encode/decode helpers (`u16/u32/u64`) | Complete | `Compiler/Linker`, `DAP` |
+| Efficient preallocation, range copy, and random-access binary patching | Required | `Compiler/Linker` |
+| Binary file output (`Ashes.IO.File.writeBytes`) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
+| Path normalization, joining, parent/basename, and relative paths | Required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| Current/executable/temp/cache directories and environment lookup | Required | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| Directory enumeration, creation, deletion, and atomic rename | Required | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
+| Marking emitted ELF files executable | Required | `CLI`, `TestRunner`, `Fuzzing` |
+| stderr output and controlled process exit codes | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| Unicode scalar classification through `Rune` | Complete; self-hosted lexer migration pending | `Compiler/Frontend`, `Formatter`, `LSP` |
+| Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion | Design required | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
+| Persistent immutable map (`Ashes.Collection.Map`) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
+| Persistent immutable array (`Ashes.Collection.Array`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
+| Persistent immutable set | Optional — use `Map(K, Unit)` initially | `Compiler/Semantics`, `LSP` |
+| Generic hashing for non-`Str` keys | Optional — use `Map` initially | `Compiler/Semantics`, `LSP` |
+| Named string-builder or rope | Optional — `Text.join` and affine-growth reuse are workable initially | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| Records, named patterns, and record-update syntax | Complete | `Compiler`, `Formatter`, `LSP` |
+| User-written type annotations, aliases, and zero-cost nominal types | Complete | `Compiler`, `Formatter`, `LSP` |
+| Project/module compilation with explicit exports and path dependencies | Complete in the C# compiler; host path APIs still required by the port | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| Catchable error propagation for compile-pipeline flows | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
+| RC-Perceus deterministic memory without cyclic graphs | Complete; the port must avoid parent/back-reference cycles | `Compiler`, `Formatter`, `LSP`, `DAP` |
+| Large-ADT exhaustiveness and performance hardening | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
+| JSON parsing/serialization for `ashes.json` and JSON-RPC | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
+| Stdio JSON-RPC Content-Length framing | Complete | `LSP`, `DAP` |
+| Interactive subprocess control with piped streams and timeouts | Complete | `DAP`, `TestRunner`, `Fuzzing` |
+| Regex utilities for tooling text | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
+| Unit assertions plus deterministic test discovery/execution | Partial — `Ashes.Test` is complete; discovery still needs the host APIs above | `Tests`, `TestRunner` |
+| Deterministic fuzz generation, replay, shrinking, corpus, and artifacts | Complete in the C# harness; porting it is not a compiler-core gate | `Fuzzing` |
+| Tar/gzip, SHA-256, authenticated HTTP, and multipart upload | Required only for a full CLI replacement | `CLI/Registry` |
+| Defined stage-0/stage-1/stage-2 bootstrap and reproducibility gate | Design required | `Compiler`, `CLI`, `Tests`, `TestRunner`, `Fuzzing` |
+
+The first self-hosted **compiler core** does not require `CLI/Registry`, `LSP`, `DAP`, `Fuzzing`, or
+`TestRunner` parity. Those are separate replacement layers. Set, generic hashing, and a named text
+builder are likewise not admission gates; measure the persistent alternatives before adding them.
 
 ## Structural gaps (beyond stdlib checklist)
 
@@ -53,36 +74,90 @@ substitution map through every call site instead of mutating in place — well-u
 Budget this as its own milestone, most likely concurrent with or just before a self-hosted Semantics
 layer.
 
-### Gap: FFI — struct-by-value, callbacks, varargs {#gap-ffi-struct-callback-varargs}
+### Gap: FFI — native arrays, out parameters, and foreign buffers {#gap-ffi-native-arrays-out-parameters-and-foreign-buffers}
 
 `Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
 (`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
-own `external` mechanism only expresses `Int | UInt(bits) | Float | Float32 | Bool | Str |
-Opaque(name) | Ptr(pointee) | Void` (`src/Ashes.Semantics/Ir.cs:1605-1627`, enforced in
-`Lowering.Symbols.cs:347-404`) — no struct-by-value marshaling, no function-pointer/callback types,
-no varargs. A meaningful slice of the LLVM-C surface needs at least struct-by-value and callback
-support, so a self-hosted backend cannot bind libLLVM as-is today.
+own `external` mechanism can name opaque and pointer types, but Ashes code cannot construct a
+contiguous native array of opaque handles, allocate/read out-parameter storage, copy a returned
+pointer-plus-length buffer into `Bytes`, or decode and dispose a returned native string. The current
+C# adapter does all of these with `out` parameters, pinned `ReadOnlySpan<T>` values, and explicit
+`Marshal`/copy operations. Representative calls include `LLVMGetTargetFromTriple`,
+`LLVMFunctionType`, `LLVMBuildCall2`, `LLVMBuildGEP2`, `LLVMVerifyModule`, and
+`LLVMTargetMachineEmitToMemoryBuffer`.
 
 **Decision (2026-07-24): extend Ashes' FFI rather than switch the self-hosted backend to
 textual-IR-plus-subprocess.** This keeps the self-hosted backend architecturally aligned with the
 current one (direct LLVM-C calls) instead of introducing a second codegen strategy. Scope for the
-extension, to be turned into a proper spec change in `LANGUAGE_SPEC.md` before implementation
+extension, to be turned into a proper spec change in [the language reference](../reference/language.md) before implementation
 (per the project's normal feature-implementation flow):
 
-- **Struct-by-value**: a new `FfiType` variant for fixed-layout structs (field list with FFI
-  types), plus ABI-correct lowering in the backend (System V x86-64 / AArch64 AAPCS64 / Windows x64
-  classification rules for register-vs-memory passing — this is the hard part, not the type-system
-  surface).
-- **Callbacks / function pointers**: a way to declare a named FFI function-pointer *type*
-  (parameter/return `FfiType`s) usable as a parameter type in an `external` declaration, plus
-  codegen support for taking the address of an Ashes function and marshaling it as that pointer
-  type. LLVM-C's diagnostic-handler and pass-callback APIs need this.
-- **Varargs**: lower priority — check first whether the ~145 functions actually used by the
-  current backend include any varargs entry points before spending design effort here.
-- Out of scope for the first pass: the full generality of arbitrary C ABI (unions, bitfields,
-  variable-length arrays) — scope to exactly what LLVM-C's headers require.
+- **Native handle arrays**: marshal an Ashes collection of same-typed opaque handles as a stable
+  pointer plus element count for the duration of one external call.
+- **Out parameters**: return typed multiple results without exposing unrestricted source-level
+  pointer arithmetic or mutation.
+- **Foreign buffers and strings**: copy pointer-plus-length results into owned `Bytes`/`Str` values
+  and pair each owned native allocation with its declared destructor.
+- **Opaque binding facade**: keep raw LLVM externals file-local and export zero-cost nominal handle
+  types plus checked wrapper functions. Context-owned child handles remain a trusted binding
+  invariant unless a later scoped-borrow design can express their lifetime.
+- **Audit before expansion**: the current binding contains no managed callback registration, and its
+  LLVM struct construction passes arrays of handles rather than C structs by value. Do not add
+  struct-by-value, callbacks, or varargs until an actually used LLVM-C signature requires them.
 
 This is tracked as a parallel-track design item, independent of the Frontend/Linker milestones below.
+
+### Gap: efficient immutable binary construction
+
+The native ELF/PE linkers do much more than append bytes: they preallocate output images, copy
+sections into aligned offsets, patch headers and instructions, and apply relocations at arbitrary
+positions. `Ashes.Byte` currently exposes indexed reads, concatenation, and endian encode/decode, but
+no preallocation, range copy, or random-access write operation. Rebuilding the complete value for
+every patch would make a functional port accidentally quadratic.
+
+Specify a pure binary-building surface before the linker milestone. Operations such as allocation,
+range replacement, and `setU16Le`/`setU32Le`/`setU64Le` must return new `Bytes` values at the language
+level while allowing the compiler to reuse a uniquely owned buffer internally. The acceptance gate is
+not merely correct output: linking representative debug and release objects must stay bounded and
+within an agreed factor of the C# linker on every target.
+
+### Gap: host-tool filesystem and process control
+
+Single-file frontend experiments need only `readText`, but a compatible compiler must discover
+projects, normalize paths, walk source roots, find its shipped `lib/` and runtime assets, create output
+directories, write temporary files, and mark Linux output executable. The surrounding tools also need
+stderr and controlled exit codes so a user compilation error is not reported as a language `panic`.
+
+Add these as ordinary capability-tracked host APIs rather than ad-hoc compiler externals. Keep path
+operations pure; filesystem acquisition and mutation carry `FileRead`/`FileWrite`, environment lookup
+gets an explicit ambient-authority classification, and possession-based file-handle operations remain
+unchanged.
+
+### Gap: source-coordinate contract
+
+The C# frontend records UTF-16 string-unit offsets while the self-hosted lexer walks UTF-8 bytes.
+Byte offsets are a natural internal identity for an UTF-8 compiler, but diagnostics, formatter edits,
+debug information, and LSP positions need deliberate conversions. Choose one canonical compiler span
+unit, specify line/column conversion (including malformed UTF-8), and negotiate or convert LSP UTF-8
+and UTF-16 positions. A differential test may normalize representations only after this contract is
+fixed; the divergence cannot remain an unexplained permanent exemption.
+
+### Bootstrap completion gate
+
+Component differential tests prove compatibility but do not by themselves prove self-hosting. The
+compiler-core roadmap completes only after:
+
+1. the current C# compiler (stage 0) builds the Ashes compiler (stage 1);
+2. stage 1 compiles the same compiler sources into stage 2;
+3. stage 2 repeats the build, with stage-2/stage-3 output compared byte-for-byte when deterministic
+   metadata permits it, otherwise by a documented structural equivalence;
+4. the bootstrapped compiler passes the full unit-fixture and `.ash` corpus differential gates; and
+5. the process is repeated for every supported host, with all four targets at least structurally
+   validated and executable where the host supports them.
+
+The gate must also define how the compiler locates `libLLVM`, standard-library sources, and the
+vendored native/bitcode payloads. A compiler that can compile itself only from a repository-relative
+working directory is an intermediate milestone, not a completed bootstrap.
 
 ## Recommended rewrite order
 
@@ -90,18 +165,24 @@ Given the dependency DAG (`Frontend` → `Semantics` → `Backend`, `Frontend` h
 dependencies) and component size (`Frontend` ~3.9k LOC vs. `Semantics` ~43.7k vs. `Backend`
 ~33.5k), the lowest-risk path to validate the self-hosting approach is:
 
-1. **Frontend (lexer + parser) first.** Smallest surface, no FFI, no HM inference, so it hits
-   neither structural gap above. Validate with a differential test: run the same corpus
+1. **Frontend (lexer + parser) first**, after migrating the existing lexer to `Rune` and deciding the
+   source-coordinate contract. It is the smallest surface and needs neither LLVM FFI nor HM
+   inference. Validate with a differential test: run the same corpus
    (`tests/`, `lib/`, `examples/`) through both the existing C# frontend and the Ashes rewrite,
    diff a serialized AST (the existing JSON module is sufficient) between them. This also answers
    the open question of whether recursion-only/no-loop code performs acceptably at parser scale.
-2. **Linker second.** `LlvmImageLinkerElf*.cs` / `LlvmImageLinkerPe*.cs` (~4,550 lines total) are
-   pure algorithmic C# — buffer parsing, relocation math, binary writing — with no LLVM or OS API
-   dependency. Good second slice: exercises `Bytes`/`Byte` manipulation at real scale, independent
-   of both structural gaps.
-3. **Semantics third**, once the immutable-substitution redesign for type inference is scoped as
+2. **Formatter second.** It consumes only the frontend AST, adds an early round-trip differential
+   gate, and exercises large deterministic text construction without depending on Semantics.
+3. **Linker third**, after efficient binary construction lands. `LlvmImageLinkerElf*.cs` /
+   `LlvmImageLinkerPe*.cs` are otherwise pure algorithms — buffer parsing, relocation math, and
+   binary writing — and provide the first realistic performance test of the byte surface.
+4. **Semantics fourth**, once the immutable-substitution redesign for type inference is scoped as
    its own milestone.
-4. **Backend last**, gated on the FFI extension above landing.
+5. **LLVM codegen fifth**, gated on the audited FFI extension.
+6. **Compiler CLI sixth**, gated on host paths/directories, stderr/exit, executable permissions, and
+   installed-asset discovery. This is the first stage eligible for the bootstrap completion gate.
+7. **TestRunner, Fuzzing, LSP, DAP, and registry/package CLI parity** follow as separately reviewable
+   toolchain layers; they are not prerequisites for declaring the compiler core self-hosted.
 
 ### Landing this incrementally without merging a half-finished compiler
 
@@ -125,10 +206,11 @@ mirroring the boundary rule this repo already enforces for the C# projects. Each
 token-dump CLI, useful both as a "does Frontend work standalone" check and as the differential-test
 harness's Ashes-side driver).
 
-### Test-coverage strategy: reuse the existing ~2,000 tests, don't re-derive them
+### Test-coverage strategy: reuse the existing suite, don't re-derive it
 
-The C# suite (`Ashes.Tests`, ~1,570 `[Test]` methods) plus the e2e `.ash` corpus (579 files in
-`tests/`, 17 in `lib/`, 17 in `examples/` as of 2026-07-24) is the real spec. Each self-hosted
+The C# suite (`Ashes.Tests` plus `Ashes.Lsp.Tests`, 2,126 `[Test]` methods) and the current `.ash`
+corpus (667 files in `tests/`, 18 in `lib/`, and 17 in `examples/` as of 2026-08-13) are the real
+spec. Each self-hosted
 milestone should validate against it two ways, not just "looks right on a few files":
 
 1. **Corpus differential testing** — run the self-hosted component over every `.ash` file already
@@ -201,7 +283,11 @@ strategy above via `selfhost/tools/LexDump` (C# side) + `selfhost/tools/diff-lex
 Net: the self-hosted lexer is correct on every real program in the repository; the only gaps are
 the pre-declared scoping decisions plus bug 3 (malformed-input-only, folded into bug 2's fix).
 
-**Status**: paused pending bugs 1 and 2 landing (per-repo convention: fix real bugs found this way
-before continuing, not just work around and move on). Once fixed, next steps: swap the lexer's
-table-dispatch workaround back to the idiomatic tuple-table version bug 2 was originally found in
-(to confirm the fix), then start milestone 2 (the linker, per the rewrite order above).
+**Current status (2026-08-13):** the historical result above is no longer reproducible as-is. The
+`Rune` migration removed `Ashes.Text.isLetter`, `isDigit`, and `isWhiteSpace`, which the self-hosted
+lexer still imports, so the differential harness currently fails while compiling `Lexer.ash`. Migrate
+its byte-oriented ASCII recognition to the current `Rune`/byte APIs, decide the source-coordinate
+contract, then rerun all fixtures and the current 702-file corpus. Bug 1 is merged and no longer a
+blocker; bugs 2 and 3 must be reclassified from current evidence after that replay rather than kept as
+an indefinite “fix in progress.” The next implementation slice is the parser/remaining Frontend, not
+the linker, unless the binary-construction prerequisite lands first.
