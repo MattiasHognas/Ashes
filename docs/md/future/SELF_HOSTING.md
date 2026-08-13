@@ -20,19 +20,19 @@ appear only where the test infrastructure itself consumes the capability.
 | Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`) | Complete | `Compiler/Backend`, `Compiler/Linker` |
 | Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
 | Basic FFI (`external` functions/types, pointers, resources, `symbol@library`) | Partial — see [LLVM FFI gap](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | `Compiler/Backend` |
-| LLVM native arrays, out parameters, returned strings, and foreign buffers | Required | `Compiler/Backend` |
+| LLVM native arrays, out parameters, returned strings, and foreign buffers | Required — see [LLVM FFI gap](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | `Compiler/Backend` |
 | Immutable `Bytes` with indexed reads and append helpers | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | Little-endian byte encode/decode helpers (`u16/u32/u64`) | Complete | `Compiler/Linker`, `DAP` |
-| Efficient preallocation, range copy, and random-access binary patching | Required | `Compiler/Linker` |
+| Efficient preallocation, range copy, and random-access binary patching | Required — see [binary-construction gap](#gap-efficient-immutable-binary-construction) | `Compiler/Linker` |
 | Binary file output (`Ashes.IO.File.writeBytes`) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
-| Path normalization, joining, parent/basename, and relative paths | Required | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
-| Current/executable/temp/cache directories and environment lookup | Required | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
-| Directory enumeration, creation, deletion, and atomic rename | Required | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
-| Marking emitted ELF files executable | Required | `CLI`, `TestRunner`, `Fuzzing` |
-| stderr output and controlled process exit codes | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| Path normalization, joining, parent/basename, and relative paths | Required — see [host-tool API gap](#gap-host-tool-filesystem-and-process-control) | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
+| Current/executable/temp/cache directories and environment lookup | Required — see [host-tool API gap](#gap-host-tool-filesystem-and-process-control) | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
+| Directory enumeration, creation, deletion, and atomic rename | Required — see [host-tool API gap](#gap-host-tool-filesystem-and-process-control) | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
+| Marking emitted ELF files executable | Required — see [host-tool API gap](#gap-host-tool-filesystem-and-process-control) | `CLI`, `TestRunner`, `Fuzzing` |
+| stderr output and controlled process exit codes | Required — see [host-tool API gap](#gap-host-tool-filesystem-and-process-control) | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | Unicode scalar classification through `Rune` | Complete; self-hosted lexer migration pending | `Compiler/Frontend`, `Formatter`, `LSP` |
-| Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion | Design required | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
+| Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion | Design required — see [source-coordinate gap](#gap-source-coordinate-contract) | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
 | Persistent immutable map (`Ashes.Collection.Map`) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `LSP`, `DAP` |
 | Persistent immutable array (`Ashes.Collection.Array`) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Compiler/Backend`, `Formatter` |
 | Persistent immutable set | Optional — use `Map(K, Unit)` initially | `Compiler/Semantics`, `LSP` |
@@ -43,6 +43,7 @@ appear only where the test infrastructure itself consumes the capability.
 | Project/module compilation with explicit exports and path dependencies | Complete in the C# compiler; host path APIs still required by the port | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | Catchable error propagation for compile-pipeline flows | Complete | `Compiler`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | RC-Perceus deterministic memory without cyclic graphs | Complete; the port must avoid parent/back-reference cycles | `Compiler`, `Formatter`, `LSP`, `DAP` |
+| Persistent immutable substitution and unification architecture | Required — see [HM inference gap](#gap-hm-type-inference-is-built-on-mutable-union-find) | `Compiler/Semantics` |
 | Large-ADT exhaustiveness and performance hardening | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter` |
 | JSON parsing/serialization for `ashes.json` and JSON-RPC | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP` |
 | Stdio JSON-RPC Content-Length framing | Complete | `LSP`, `DAP` |
@@ -51,7 +52,7 @@ appear only where the test infrastructure itself consumes the capability.
 | Unit assertions plus deterministic test discovery/execution | Partial — `Ashes.Test` is complete; discovery still needs the host APIs above | `Tests`, `TestRunner` |
 | Deterministic fuzz generation, replay, shrinking, corpus, and artifacts | Complete in the C# harness; porting it is not a compiler-core gate | `Fuzzing` |
 | Tar/gzip, SHA-256, authenticated HTTP, and multipart upload | Required only for a full CLI replacement | `CLI/Registry` |
-| Defined stage-0/stage-1/stage-2 bootstrap and reproducibility gate | Design required | `Compiler`, `CLI`, `Tests`, `TestRunner`, `Fuzzing` |
+| Defined stage-0/stage-1/stage-2 bootstrap and reproducibility gate | Design required — see [bootstrap completion gate](#gap-bootstrap-completion-gate) | `Compiler`, `CLI`, `Tests`, `TestRunner`, `Fuzzing` |
 
 The first self-hosted **compiler core** does not require `CLI/Registry`, `LSP`, `DAP`, `Fuzzing`, or
 `TestRunner` parity. Those are separate replacement layers. Set, generic hashing, and a named text
@@ -62,7 +63,7 @@ builder are likewise not admission gates; measure the persistent alternatives be
 These aren't stdlib features — they're properties of how the *current C# compiler* is built that a
 pure-immutable, no-mutation Ashes rewrite has to work around.
 
-### Gap: HM type inference is built on mutable union-find
+### Gap: HM type inference is built on mutable union-find {#gap-hm-type-inference-is-built-on-mutable-union-find}
 
 `Lowering.TypeInference.cs` implements unification via a single mutable
 `Dictionary<int, TypeRef> _subst` field (`Lowering.cs:525`), with in-place path compression in
@@ -107,7 +108,7 @@ extension, to be turned into a proper spec change in [the language reference](..
 
 This is tracked as a parallel-track design item, independent of the Frontend/Linker milestones below.
 
-### Gap: efficient immutable binary construction
+### Gap: efficient immutable binary construction {#gap-efficient-immutable-binary-construction}
 
 The native ELF/PE linkers do much more than append bytes: they preallocate output images, copy
 sections into aligned offsets, patch headers and instructions, and apply relocations at arbitrary
@@ -121,7 +122,7 @@ level while allowing the compiler to reuse a uniquely owned buffer internally. T
 not merely correct output: linking representative debug and release objects must stay bounded and
 within an agreed factor of the C# linker on every target.
 
-### Gap: host-tool filesystem and process control
+### Gap: host-tool filesystem and process control {#gap-host-tool-filesystem-and-process-control}
 
 Single-file frontend experiments need only `readText`, but a compatible compiler must discover
 projects, normalize paths, walk source roots, find its shipped `lib/` and runtime assets, create output
@@ -133,7 +134,7 @@ operations pure; filesystem acquisition and mutation carry `FileRead`/`FileWrite
 gets an explicit ambient-authority classification, and possession-based file-handle operations remain
 unchanged.
 
-### Gap: source-coordinate contract
+### Gap: source-coordinate contract {#gap-source-coordinate-contract}
 
 The C# frontend records UTF-16 string-unit offsets while the self-hosted lexer walks UTF-8 bytes.
 Byte offsets are a natural internal identity for an UTF-8 compiler, but diagnostics, formatter edits,
@@ -142,7 +143,7 @@ unit, specify line/column conversion (including malformed UTF-8), and negotiate 
 and UTF-16 positions. A differential test may normalize representations only after this contract is
 fixed; the divergence cannot remain an unexplained permanent exemption.
 
-### Bootstrap completion gate
+### Bootstrap completion gate {#gap-bootstrap-completion-gate}
 
 Component differential tests prove compatibility but do not by themselves prove self-hosting. The
 compiler-core roadmap completes only after:
