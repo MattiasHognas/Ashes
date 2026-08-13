@@ -30,7 +30,7 @@ packages below.
 | [Binary file output (`Ashes.IO.File.writeBytes`)](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Linker`, `CLI`, `TestRunner`, `Fuzzing` |
 | [Path normalization, joining, parent/basename, and relative paths](../reference/standard-library.md#ashes-io-path) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Current/executable/temp/cache directories and environment lookup](../reference/standard-library.md#ashes-io-environment) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
-| [Directory enumeration, creation, deletion, and atomic rename](#gap-host-tool-filesystem-and-process-control) | Required | `Compiler/Semantics`, `CLI`, `TestRunner`, `Fuzzing` |
+| [Directory enumeration, creation, deletion, and atomic rename](../reference/standard-library.md#ashes-io-directory) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Marking emitted ELF files executable](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `TestRunner`, `Fuzzing` |
 | [stderr output and controlled process exit codes](#gap-host-tool-filesystem-and-process-control) | Required | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
 | [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
@@ -75,13 +75,11 @@ unchanged.
 
 Workable tasks:
 
-1. Add deterministic directory enumeration, recursive creation, deletion, and atomic same-filesystem
-   replacement. Specify ordering, missing paths, collisions, symlinks, and cross-device failures.
-2. Add a portable executable-permission operation that sets the required Unix mode bits and is a
+1. Add a portable executable-permission operation that sets the required Unix mode bits and is a
    documented no-op or equivalent on Windows.
-3. Add stderr writes and controlled process termination without turning expected compiler failures
+2. Add stderr writes and controlled process termination without turning expected compiler failures
    into `panic`; preserve cleanup of live resources on ordinary error-return paths.
-4. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
+3. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
    from an installed-layout fixture, and atomically create output on Linux and Windows hosts.
 
 Done when an Ashes program launched outside the repository can locate installed-layout fixtures,

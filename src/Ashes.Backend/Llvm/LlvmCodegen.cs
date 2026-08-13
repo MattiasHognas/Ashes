@@ -667,6 +667,10 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileMmap>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program)
+                || ProgramUsesInstruction<IrInst.FileReplace>(program)
+                || ProgramUsesInstruction<IrInst.DirectoryEntries>(program)
+                || ProgramUsesInstruction<IrInst.DirectoryCreateAll>(program)
+                || ProgramUsesInstruction<IrInst.DirectoryRemoveTree>(program)
                 || ProgramUsesInstruction<IrInst.FileWriteBytes>(program)
                 || ProgramUsesInstruction<IrInst.FileOpen>(program)
                 || ProgramUsesInstruction<IrInst.FileReadChunk>(program)
@@ -1808,9 +1812,19 @@ internal static partial class LlvmCodegen
             IrInst.BigIntFromString bigIntFromString => StoreTemp(state, bigIntFromString.Target, EmitBigIntFromString(state, LoadTemp(state, bigIntFromString.ValueTemp), bigIntFromString.RuntimeManaged)),
             IrInst.BigIntBinary bigIntBinary => EmitBigIntBinaryInstruction(state, bigIntBinary),
             IrInst.BigIntCompare bigIntCompare => StoreTemp(state, bigIntCompare.Target, EmitBigIntCompare(state, LoadTemp(state, bigIntCompare.Left), LoadTemp(state, bigIntCompare.Right))),
-            _ => (bool?)null,
+            _ => EmitFilesystemInstruction(state, instruction),
         };
     }
+
+    private static bool? EmitFilesystemInstruction(LlvmCodegenState state, IrInst instruction)
+        => instruction switch
+        {
+            IrInst.FileReplace operation => StoreTemp(state, operation.Target, EmitFileReplace(state, LoadTemp(state, operation.SourceTemp), LoadTemp(state, operation.DestinationTemp))),
+            IrInst.DirectoryEntries operation => StoreTemp(state, operation.Target, EmitDirectoryEntries(state, LoadTemp(state, operation.PathTemp))),
+            IrInst.DirectoryCreateAll operation => StoreTemp(state, operation.Target, EmitDirectoryCreateAll(state, LoadTemp(state, operation.PathTemp))),
+            IrInst.DirectoryRemoveTree operation => StoreTemp(state, operation.Target, EmitDirectoryRemoveTree(state, LoadTemp(state, operation.PathTemp))),
+            _ => null,
+        };
 
     private static bool EmitRuneInstruction(LlvmCodegenState state, IrInst instruction) => instruction switch
     {

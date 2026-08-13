@@ -785,6 +785,7 @@ public static class IrOptimizer
             IrInst.FileReadText f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
+            IrInst.FileReplace f => f with { SourceTemp = R(f.SourceTemp), DestinationTemp = R(f.DestinationTemp) },
             IrInst.EnvironmentGet e => e with { NameTemp = R(e.NameTemp) },
             IrInst.FileOpen f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileReadChunk f => f with { HandleTemp = R(f.HandleTemp), CountTemp = R(f.CountTemp) },
@@ -827,6 +828,18 @@ public static class IrOptimizer
             IrInst.NetTcpListen n => n with { PortTemp = R(n.PortTemp) },
             IrInst.NetTcpAccept n => n with { SocketTemp = R(n.SocketTemp) },
 
+            _ => RemapDirectorySourceTemps(inst, remap),
+        };
+    }
+
+    private static IrInst? RemapDirectorySourceTemps(IrInst inst, Dictionary<int, int> remap)
+    {
+        int R(int temp) => remap.TryGetValue(temp, out int resolved) ? resolved : temp;
+        return inst switch
+        {
+            IrInst.DirectoryEntries d => d with { PathTemp = R(d.PathTemp) },
+            IrInst.DirectoryCreateAll d => d with { PathTemp = R(d.PathTemp) },
+            IrInst.DirectoryRemoveTree d => d with { PathTemp = R(d.PathTemp) },
             _ => null,
         };
     }
@@ -2042,6 +2055,10 @@ public static class IrOptimizer
             case IrInst.FileReadText f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
+            case IrInst.FileReplace f: usedTemps.Add(f.SourceTemp); usedTemps.Add(f.DestinationTemp); break;
+            case IrInst.DirectoryEntries d: usedTemps.Add(d.PathTemp); break;
+            case IrInst.DirectoryCreateAll d: usedTemps.Add(d.PathTemp); break;
+            case IrInst.DirectoryRemoveTree d: usedTemps.Add(d.PathTemp); break;
             case IrInst.EnvironmentGet e: usedTemps.Add(e.NameTemp); break;
             case IrInst.FileOpen f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileReadChunk f: usedTemps.Add(f.HandleTemp); usedTemps.Add(f.CountTemp); break;

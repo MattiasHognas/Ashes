@@ -206,6 +206,7 @@ public sealed class CoverageExpansionTests
             .ShouldBe(expected);
         cycle.Count(profile => profile.Native).ShouldBe(5);
         all.EnabledCombinations.ShouldContain("resource.deterministic-file-handle");
+        all.EnabledCombinations.ShouldContain("resource.directory-operations");
         all.EffectiveResourceTypes.ShouldBe([AshesType.FileHandle]);
         campaign.ResolveProfile(all, 50).Id.ShouldBe(campaign.ResolveProfile(all, 0).Id);
     }

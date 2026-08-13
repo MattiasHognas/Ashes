@@ -121,6 +121,32 @@ Supported on Linux x64, Linux arm64, and Windows x64.
   holds: calling `readLine` on a different handle resets it (any read-ahead for the previous handle is
   discarded), so it is for reading one file to completion, not interleaving line-reads across handles.
 - `close(fh)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
+- `replace(source)(destination)` returning `Result(Str, Unit)` — atomically rename `source` over
+  `destination` on the same filesystem. An existing destination file or symlink is replaced; a
+  source or destination directory is an error. A missing source, cross-filesystem move, or other
+  collision is an error. The source entry itself is moved: if it is a symlink, the link is moved
+  without following its target. Carries `FileWrite`.
+
+### `Ashes.IO.Directory`
+
+Capability-tracked directory operations for host tools. Paths are native host paths. Directory
+entries are returned as basenames, excluding `.` and `..`, in ascending ordinal order of their UTF-8
+bytes; the order is therefore independent of filesystem and locale. A native name that is not valid
+UTF-8 produces `Error(message)` rather than an invalid `Str`.
+
+- `entries(path)` returning `Result(Str, List(Str))` — enumerate the immediate children of an
+  existing directory. A missing path, non-directory path, or symlink path is an error. Carries
+  `FileRead`.
+- `createAll(path)` returning `Result(Str, Unit)` — recursively create every missing directory
+  component. Existing directories succeed; an existing file or symlink at any component is a
+  collision error. Carries `FileWrite`.
+- `removeTree(path)` returning `Result(Str, Unit)` — recursively remove a directory tree. A missing
+  path succeeds. Symlinks encountered below the root are deleted as links and are never followed; a
+  symlink supplied as `path` is likewise deleted without touching its target. A non-directory root
+  file is deleted. Carries `FileWrite`.
+
+`replace`, `entries`, `createAll`, and `removeTree` are supported on Linux x64, Linux arm64, Windows
+x64, and Windows arm64.
 
 ### `Ashes.IO.Path`
 

@@ -9024,7 +9024,9 @@ public sealed partial class Lowering
             => ConsoleIoCapabilityName,
         IntrinsicKind.FileReadText or IntrinsicKind.FileReadAllBytes or IntrinsicKind.FileMmap
             or IntrinsicKind.FileExists or IntrinsicKind.FileOpen => FileReadCapabilityName,
-        IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes => FileWriteCapabilityName,
+        IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes or IntrinsicKind.FileReplace
+            or IntrinsicKind.DirectoryCreateAll or IntrinsicKind.DirectoryRemoveTree => FileWriteCapabilityName,
+        IntrinsicKind.DirectoryEntries => FileReadCapabilityName,
         IntrinsicKind.EnvironmentCurrentDirectory or IntrinsicKind.EnvironmentExecutableDirectory
             or IntrinsicKind.EnvironmentTemporaryDirectory or IntrinsicKind.EnvironmentCacheDirectory
             or IntrinsicKind.EnvironmentGet => EnvironmentReadCapabilityName,
@@ -9059,6 +9061,7 @@ public sealed partial class Lowering
             IntrinsicKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
+            IntrinsicKind.FileReplace => LowerFileReplace(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.EnvironmentCurrentDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Current),
             IntrinsicKind.EnvironmentExecutableDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Executable),
             IntrinsicKind.EnvironmentTemporaryDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Temporary),
@@ -9094,8 +9097,13 @@ public sealed partial class Lowering
             IntrinsicKind.TextToHex => LowerTextToHex(collectedArgs[0], request),
             IntrinsicKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true, request),
             IntrinsicKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false, request),
-            _ => null,
+            _ => LowerIntrinsicIoFallback(collectedArgs[0], kind),
         };
+
+    private (int, TypeRef)? LowerIntrinsicIoFallback(Expr argument, IntrinsicKind kind)
+        => kind is IntrinsicKind.DirectoryEntries or IntrinsicKind.DirectoryCreateAll or IntrinsicKind.DirectoryRemoveTree
+            ? LowerDirectoryOperation(argument, kind)
+            : null;
 
     private (int, TypeRef)? LowerCallIntrinsicNetBytes(
         IntrinsicKind kind,
@@ -9247,7 +9255,11 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.FileExists
             or BuiltinRegistry.BuiltinValueKind.FileOpen => FileReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.FileWriteText
-            or BuiltinRegistry.BuiltinValueKind.FileWriteBytes => FileWriteCapabilityName,
+            or BuiltinRegistry.BuiltinValueKind.FileWriteBytes
+            or BuiltinRegistry.BuiltinValueKind.FileReplace
+            or BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll
+            or BuiltinRegistry.BuiltinValueKind.DirectoryRemoveTree => FileWriteCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.DirectoryEntries => FileReadCapabilityName,
         BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory
             or BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory
             or BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory
@@ -9285,10 +9297,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerParallelWithWorkers(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
-            BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Current),
-            BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Executable),
-            BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Temporary),
-            BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Cache),
+            BuiltinRegistry.BuiltinValueKind.FileReplace => LowerFileReplace(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.EnvironmentGet => LowerEnvironmentGet(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),
@@ -9321,8 +9330,39 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.TextToHex => LowerTextToHex(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextAsciiUpper => LowerTextAsciiCase(collectedArgs[0], upper: true, request),
             BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerTextAsciiCase(collectedArgs[0], upper: false, request),
-            _ => null,
+            _ => LowerBuiltinIoFallback(collectedArgs[0], kind),
         };
+
+    private (int, TypeRef)? LowerBuiltinIoFallback(Expr argument, BuiltinRegistry.BuiltinValueKind kind)
+    {
+        if (kind is BuiltinRegistry.BuiltinValueKind.DirectoryEntries or BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll
+            or BuiltinRegistry.BuiltinValueKind.DirectoryRemoveTree)
+        {
+            return LowerDirectoryBuiltinOperation(argument, kind);
+        }
+
+        return kind is BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory or BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory
+            or BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory or BuiltinRegistry.BuiltinValueKind.EnvironmentCacheDirectory
+            ? LowerEnvironmentDirectoryBuiltin(argument, kind)
+            : null;
+    }
+
+    private (int, TypeRef) LowerDirectoryBuiltinOperation(Expr path, BuiltinRegistry.BuiltinValueKind kind)
+        => LowerDirectoryOperation(path, kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.DirectoryEntries => IntrinsicKind.DirectoryEntries,
+            BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll => IntrinsicKind.DirectoryCreateAll,
+            _ => IntrinsicKind.DirectoryRemoveTree,
+        });
+
+    private (int, TypeRef) LowerEnvironmentDirectoryBuiltin(Expr capability, BuiltinRegistry.BuiltinValueKind kind)
+        => LowerEnvironmentDirectory(capability, kind switch
+        {
+            BuiltinRegistry.BuiltinValueKind.EnvironmentCurrentDirectory => EnvironmentDirectoryKind.Current,
+            BuiltinRegistry.BuiltinValueKind.EnvironmentExecutableDirectory => EnvironmentDirectoryKind.Executable,
+            BuiltinRegistry.BuiltinValueKind.EnvironmentTemporaryDirectory => EnvironmentDirectoryKind.Temporary,
+            _ => EnvironmentDirectoryKind.Cache,
+        });
 
     private (int, TypeRef)? LowerCallBuiltinNetBytes(
         BuiltinRegistry.BuiltinValueKind kind,

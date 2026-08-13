@@ -56,6 +56,14 @@ public static class BuiltinRegistry
         FileWriteText,
         /// <summary>Tests whether a file exists.</summary>
         FileExists,
+        /// <summary>Atomically replaces a filesystem entry by renaming another entry over it.</summary>
+        FileReplace,
+        /// <summary>Enumerates immediate directory entries deterministically.</summary>
+        DirectoryEntries,
+        /// <summary>Recursively creates a directory path.</summary>
+        DirectoryCreateAll,
+        /// <summary>Recursively removes a filesystem tree without following symlinks.</summary>
+        DirectoryRemoveTree,
         /// <summary>Reads the process working directory.</summary>
         EnvironmentCurrentDirectory,
         /// <summary>Reads the running executable's directory.</summary>
@@ -572,10 +580,20 @@ public static class BuiltinRegistry
                     ["writeText"] = new("writeText", BuiltinValueKind.FileWriteText, IsCallable: true, Arity: 2),
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
+                    ["replace"] = new("replace", BuiltinValueKind.FileReplace, IsCallable: true, Arity: 2),
                     ["open"] = new("open", BuiltinValueKind.FileOpen, IsCallable: true, Arity: 1),
                     ["readChunk"] = new("readChunk", BuiltinValueKind.FileReadChunk, IsCallable: true, Arity: 2),
                     ["readLine"] = new("readLine", BuiltinValueKind.FileReadLine, IsCallable: true, Arity: 1),
                     ["close"] = new("close", BuiltinValueKind.FileClose, IsCallable: true, Arity: 1)
+                }),
+            ["Ashes.IO.Directory"] = new(
+                "Ashes.IO.Directory",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["entries"] = new("entries", BuiltinValueKind.DirectoryEntries, IsCallable: true, Arity: 1),
+                    ["createAll"] = new("createAll", BuiltinValueKind.DirectoryCreateAll, IsCallable: true, Arity: 1),
+                    ["removeTree"] = new("removeTree", BuiltinValueKind.DirectoryRemoveTree, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.IO.Path"] = new(
                 "Ashes.IO.Path",

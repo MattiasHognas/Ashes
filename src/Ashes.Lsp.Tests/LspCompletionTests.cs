@@ -131,6 +131,44 @@ public sealed class LspCompletionTests
         }
     }
 
+    [Test]
+    public async Task Completion_should_return_directory_module_intrinsics()
+    {
+        const string source = "Ashes.IO.Directory.";
+        var document = TempDocument.Create("CompletionDirectory.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
+
+                completions.ShouldContain("entries");
+                completions.ShouldContain("createAll");
+                completions.ShouldContain("removeTree");
+            }
+        }
+    }
+
+    [Test]
+    public async Task Completion_should_return_file_replacement_intrinsic()
+    {
+        const string source = "Ashes.IO.File.";
+        var document = TempDocument.Create("CompletionFile.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
+
+                completions.ShouldContain("replace");
+            }
+        }
+    }
+
     private sealed class TempDocument : IAsyncDisposable
     {
         private readonly string _directory;
