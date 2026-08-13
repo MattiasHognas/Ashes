@@ -316,6 +316,8 @@ a named, borrowed, or otherwise potentially shared destination is copied first, 
 | `PrintStr` | `Source` | Print string with newline to stdout |
 | `PrintBool` | `Source` | Print boolean with newline to stdout |
 | `WriteStr` | `Source` | Write string to stdout (no newline) |
+| `WriteErrorStr` | `Source`, `AppendNewline` | Write string to stderr |
+| `ExitProcess` | `Source` | Terminate with controlled exit code |
 | `ReadLine` | `Target` | Read line from stdin → `Maybe<String>` |
 | `PanicStr` | `Source` | Print error message and terminate |
 

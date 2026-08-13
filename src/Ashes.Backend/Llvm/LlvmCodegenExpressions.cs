@@ -784,6 +784,37 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildUnreachable(builder);
     }
 
+    private static bool EmitControlledExit(LlvmCodegenState state, LlvmValueHandle exitCode)
+    {
+        EmitFlushStdout(state);
+        if (IsLinuxFlavor(state.Flavor))
+        {
+            EmitExit(state, NormalizeToI64(state, exitCode));
+        }
+        else
+        {
+            EmitWindowsExitProcess(state, LlvmApi.BuildTrunc(state.Target.Builder, NormalizeToI64(state, exitCode), state.I32, "exit_code_i32"));
+        }
+
+        return true;
+    }
+
+    private static bool EmitWriteErrorStringFromTemp(LlvmCodegenState state, LlvmValueHandle stringRef, bool appendNewline)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle basePtr = LlvmApi.BuildIntToPtr(builder, stringRef, state.I64Ptr, "stderr_str_len_ptr");
+        LlvmValueHandle len = LlvmApi.BuildLoad2(builder, state.I64, basePtr, "stderr_str_len");
+        LlvmValueHandle byteAddress = LlvmApi.BuildAdd(builder, stringRef, LlvmApi.ConstInt(state.I64, 8, 0), "stderr_str_bytes_addr");
+        LlvmValueHandle bytePtr = LlvmApi.BuildIntToPtr(builder, byteAddress, state.I8Ptr, "stderr_str_bytes_ptr");
+        EmitWriteErrorBytes(state, bytePtr, len);
+        if (appendNewline)
+        {
+            EmitWriteErrorBytes(state, EmitStackByteArray(state, [10]), LlvmApi.ConstInt(state.I64, 1, 0));
+        }
+
+        return false;
+    }
+
     private static bool EmitPrintStringFromTemp(LlvmCodegenState state, LlvmValueHandle stringRef, bool appendNewline)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

@@ -38,6 +38,7 @@ public sealed partial class Lowering
     private const string FileReadCapabilityName = "FileRead";
     private const string FileWriteCapabilityName = "FileWrite";
     private const string ProcessSpawnCapabilityName = "ProcessSpawn";
+    private const string ProcessExitCapabilityName = "ProcessExit";
     private const string TimeReadCapabilityName = "TimeRead";
     private const string EnvironmentReadCapabilityName = "EnvironmentRead";
     private const string EntropyCapabilityName = "Entropy";
@@ -79,6 +80,7 @@ public sealed partial class Lowering
         || string.Equals(name, FileReadCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, FileWriteCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, ProcessSpawnCapabilityName, StringComparison.Ordinal)
+        || string.Equals(name, ProcessExitCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, TimeReadCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, EnvironmentReadCapabilityName, StringComparison.Ordinal)
         || string.Equals(name, EntropyCapabilityName, StringComparison.Ordinal)

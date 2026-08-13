@@ -111,6 +111,35 @@ Common mistakes:
 - Multi-line expected output is not supported as a single directive; only the
   remainder of the directive line is captured.
 
+### `// expect-stderr: ...`
+
+Syntax:
+
+```ash
+// expect-stderr: compilation failed
+```
+
+Meaning:
+
+- Declares the exact expected stderr, independently of `// expect:` stdout.
+- Trailing whitespace is trimmed in the same way as stdout.
+- May be combined with `// exit:` to test controlled failure reporting.
+
+### `// expect-stderr-contains: ...`
+
+Syntax:
+
+```ash
+// expect-stderr-contains: compilation failed
+```
+
+Meaning:
+
+- Requires stderr to contain the declared text.
+- Use this for cross-target tests launched through a host adapter such as Wine, which may write its
+  own diagnostics to the inherited stderr stream.
+- May be combined with `// expect:` and `// exit:`.
+
 ### `// expect-compile-error: ...`
 
 Syntax:

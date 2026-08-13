@@ -73,6 +73,8 @@ Canonical built-ins available today include:
 - `Ashes.IO.args` returning `List(Str)`
 - `Ashes.IO.write(expr)` returning `Unit`
 - `Ashes.IO.writeLine(expr)` returning `Unit`
+- `Ashes.IO.writeError(expr)` returning `Unit`
+- `Ashes.IO.writeErrorLine(expr)` returning `Unit`
 - `Ashes.IO.writeBuffered(expr)` returning `Unit`
 - `Ashes.IO.writeBufferedLine(expr)` returning `Unit`
 - `Ashes.IO.flush(Unit)` returning `Unit`
@@ -2002,10 +2004,14 @@ The built-in `Ashes.IO` module exports:
   compiled program (excluding the executable path/name at `argv[0]`).
 - `write("text")` - writes a string to standard output without adding a newline.
 - `writeLine("text")` - writes a string to standard output and then writes `\n`.
+- `writeError("text")` - writes a string to standard error without adding a newline.
+- `writeErrorLine("text")` - writes a string to standard error and then writes `\n`.
 - `writeBuffered("text")` - appends a string to the process-wide 64 KiB standard-output buffer.
 - `writeBufferedLine("text")` - appends a string followed by `\n` to that buffer.
 - `flush(Unit)` - writes all pending buffered standard output and returns `Unit`.
 - `readLine()` - reads one line from standard input and returns `Some(line)` or `None` on EOF.
+- `exit(code)` - immediately terminates with the supplied process exit code and has Never/Bottom
+  behavior. Codes from 0 through 255 are portable across supported hosts.
 
 Other built-in runtime modules are also always available through qualified access:
 
@@ -2067,9 +2073,10 @@ Rules:
 - `None` and `Some` participate in normal constructor resolution rules.
 - `Ok` and `Error` participate in normal constructor resolution rules.
 
-`Ashes.IO.write`, `Ashes.IO.writeLine`, `Ashes.IO.writeBuffered`, `Ashes.IO.writeBufferedLine`, and
-`Ashes.IO.flush` return `Unit`. Buffered output is written automatically when the 64 KiB buffer fills,
-before any direct `print`/`write`/`writeLine`/`writeBytes`, on normal program exit, and before a panic
+`Ashes.IO.write`, `Ashes.IO.writeLine`, `Ashes.IO.writeError`, `Ashes.IO.writeErrorLine`,
+`Ashes.IO.writeBuffered`, `Ashes.IO.writeBufferedLine`, and `Ashes.IO.flush` return `Unit`. Buffered
+output is written automatically when the 64 KiB buffer fills, before any direct
+`print`/`write`/`writeLine`/`writeBytes`/`writeError`/`writeErrorLine`, on normal program exit, and before a panic
 or runtime failure terminates the process. A single buffered value larger than the buffer flushes any
 pending bytes and is written directly. These rules preserve source ordering when buffered and direct
 operations are mixed. An external forced termination cannot run the automatic flush.
@@ -3165,7 +3172,7 @@ production-shaped demo with a logging handler is `examples/capabilities_producti
 The following capabilities are built into the compiler and require no declaration:
 
 - **`ConsoleIO`** — reading stdin or a terminal and writing stdout/stderr. Carried by
-  `Ashes.IO.print`, `panic`, `write`, `writeBytes`, `writeLine`, `writeBuffered`,
+  `Ashes.IO.print`, `panic`, `write`, `writeBytes`, `writeLine`, `writeError`, `writeErrorLine`, `writeBuffered`,
   `writeBufferedLine`, `flush`, `readLine`, and `readExact`, plus
   `Ashes.IO.Console.enableRawInput`, `restoreInput`, and `pollInput`.
 - **`FileRead`** — acquiring filesystem read authority. Carried by
@@ -3175,6 +3182,8 @@ The following capabilities are built into the compiler and require no declaratio
   `Ashes.IO.File.writeText`, `writeBytes`, `replace`, and `makeExecutable`, plus
   `Ashes.IO.Directory.createAll` and `removeTree`.
 - **`ProcessSpawn`** — creating a child process. Carried by `Ashes.IO.Process.spawn`.
+- **`ProcessExit`** — terminating the current process with a controlled status. Carried by
+  `Ashes.IO.exit`.
 - **`TimeRead`** — observing a clock. Carried by `Ashes.IO.Console.monotonicMillis`.
 - **`EnvironmentRead`** — inspecting process environment variables and host-directory state. Carried
   by every operation in `Ashes.IO.Environment`.
@@ -3236,7 +3245,7 @@ destructor defaults to the empty row because destruction uses authority already 
 possession. Other borrow/consume externals still default to `UnsafeFfi` unless explicitly
 classified.
 
-The names `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `TimeRead`, `EnvironmentRead`,
+The names `ConsoleIO`, `FileRead`, `FileWrite`, `ProcessSpawn`, `ProcessExit`, `TimeRead`, `EnvironmentRead`,
 `Entropy`, `UnsafeFfi`, `NetListen`, `NetConnect`, and `Stop` are reserved. A user capability
 declaration with any of these names is a compile-time error.
 

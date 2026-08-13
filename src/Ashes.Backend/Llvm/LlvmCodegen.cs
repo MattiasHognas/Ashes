@@ -14,6 +14,7 @@ internal static partial class LlvmCodegen
     private const int MaxFileReadBytes = 1024 * 1024;
     private const uint Utf8CodePage = 65001;
     private const uint StdOutputHandle = 0xFFFFFFF5;
+    private const uint StdErrorHandle = 0xFFFFFFF4;
     private const uint StdInputHandle = 0xFFFFFFF6;
     private const long SyscallRead = 0;
     private const long SyscallWrite = 1;
@@ -626,6 +627,7 @@ internal static partial class LlvmCodegen
             && (ProgramUsesInstruction<IrInst.PrintInt>(program)
                 || ProgramUsesInstruction<IrInst.PrintStr>(program)
                 || ProgramUsesInstruction<IrInst.WriteStr>(program)
+                || ProgramUsesInstruction<IrInst.WriteErrorStr>(program)
                 || ProgramUsesInstruction<IrInst.PrintBool>(program)
                 || ProgramUsesInstruction<IrInst.PanicStr>(program)
                 || usesBufferedStdout
@@ -2294,9 +2296,17 @@ internal static partial class LlvmCodegen
                 loadOwnership.Target,
                 LlvmApi.GetParam(state.Function, 2)),
             IrInst.ToCString toCString => StoreTemp(state, toCString.Target, EmitToCString(state, LoadTemp(state, toCString.StrTemp))),
-            _ => (bool?)null,
+            _ => EmitProcessControlInstruction(state, instruction),
         };
     }
+
+    private static bool? EmitProcessControlInstruction(LlvmCodegenState state, IrInst instruction)
+        => instruction switch
+        {
+            IrInst.WriteErrorStr write => EmitWriteErrorStringFromTemp(state, LoadTemp(state, write.Source), write.AppendNewline),
+            IrInst.ExitProcess exit => EmitControlledExit(state, LoadTemp(state, exit.Source)),
+            _ => null,
+        };
 
     private static LlvmValueHandle LoadRuntimeManagedArgumentFlag(
         LlvmCodegenState state,

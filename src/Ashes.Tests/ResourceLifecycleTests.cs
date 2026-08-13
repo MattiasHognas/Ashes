@@ -71,6 +71,30 @@ public sealed class ResourceLifecycleTests
         instructions.Any(inst => inst is IrInst.RcDrop { TypeName: "Maybe" }).ShouldBeTrue();
     }
 
+    [Test]
+    public void Ordinary_error_return_cleans_resource_before_outer_process_exit()
+    {
+        var ir = LowerProgram(
+            """
+            let work : Unit -> Result(Str, Unit) needs {FileRead} =
+                given unit ->
+                    match Ashes.IO.File.open("__ashes_missing_file__") with
+                        | Error(message) -> Error(message)
+                        | Ok(file) -> Error("expected failure")
+            match work(Unit) with
+                | Ok(_) -> 0
+                | Error(message) ->
+                    let _ = Ashes.IO.writeErrorLine(message)
+                    in Ashes.IO.exit(7)
+            """);
+
+        ir.Functions.SelectMany(function => function.Instructions)
+            .Any(instruction => instruction is IrInst.CleanupResource { TypeName: "FileHandle" })
+            .ShouldBeTrue("The worker must clean its file handle while returning an ordinary Error.");
+        ir.EntryFunction.Instructions.Any(instruction => instruction is IrInst.ExitProcess)
+            .ShouldBeTrue("Only the outer reporting boundary should terminate the process.");
+    }
+
     // --- Scope cleanup: socket bound via pattern match gets CleanupResource at scope exit ---
 
     [Test]

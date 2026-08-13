@@ -826,6 +826,10 @@ public abstract record IrInst
     /// <summary>Writes the string in <paramref name="Source"/> to standard output with no trailing newline.</summary>
     /// <param name="Source">Temp holding the string to write.</param>
     public sealed record WriteStr(int Source) : IrInst;
+    /// <summary>Writes the string in <paramref name="Source"/> to standard error.</summary>
+    public sealed record WriteErrorStr(int Source, bool AppendNewline) : IrInst;
+    /// <summary>Terminates the current process with the integer status in <paramref name="Source"/>.</summary>
+    public sealed record ExitProcess(int Source) : IrInst;
     /// <summary>Appends the string in <paramref name="Source"/> to the buffered standard-output path.</summary>
     /// <param name="Source">Temp holding the string to buffer.</param>
     /// <param name="AppendNewline">Whether to append a newline after the string.</param>

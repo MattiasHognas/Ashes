@@ -31,6 +31,9 @@ public sealed class BuiltinRegistryEdgeCaseTests
         module.Members.ContainsKey("args").ShouldBeTrue();
         module.Members.ContainsKey("write").ShouldBeTrue();
         module.Members.ContainsKey("writeLine").ShouldBeTrue();
+        module.Members.ContainsKey("writeError").ShouldBeTrue();
+        module.Members.ContainsKey("writeErrorLine").ShouldBeTrue();
+        module.Members.ContainsKey("exit").ShouldBeTrue();
         module.Members.ContainsKey("writeBuffered").ShouldBeTrue();
         module.Members.ContainsKey("writeBufferedLine").ShouldBeTrue();
         module.Members.ContainsKey("flush").ShouldBeTrue();

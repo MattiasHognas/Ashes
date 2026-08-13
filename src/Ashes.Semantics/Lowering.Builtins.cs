@@ -105,6 +105,30 @@ public sealed partial class Lowering
         return LowerUnitValue();
     }
 
+    private (int, TypeRef) LowerWriteError(Expr arg, bool appendNewline)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (valueTemp, valueType) = LowerExpr(arg);
+        TypeRef loweredType = Prune(valueType);
+        if (loweredType is TypeRef.TNever)
+        {
+            return (valueTemp, loweredType);
+        }
+
+        Unify(loweredType, new TypeRef.TStr());
+        Emit(new IrInst.WriteErrorStr(valueTemp, appendNewline));
+        return LowerUnitValue();
+    }
+
+    private (int, TypeRef) LowerExitProcess(Expr arg)
+    {
+        using var diagnosticSpan = PushDiagnosticSpan(arg);
+        var (codeTemp, codeType) = LowerExpr(arg);
+        Unify(codeType, new TypeRef.TInt());
+        Emit(new IrInst.ExitProcess(codeTemp));
+        return (codeTemp, new TypeRef.TNever());
+    }
+
     private (int, TypeRef) LowerFlushStdout(Expr arg)
     {
         using var diagnosticSpan = PushDiagnosticSpan(arg);
@@ -2903,6 +2927,22 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.WriteLine,
             BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateWriteErrorBinding(bool appendNewline)
+    {
+        return new Binding.Intrinsic(
+            appendNewline ? IntrinsicKind.WriteErrorLine : IntrinsicKind.WriteError,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), _resolvedTypes["Unit"]), ConsoleIoCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateExitBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.Exit,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TNever()), ProcessExitCapabilityName)
         );
     }
 
