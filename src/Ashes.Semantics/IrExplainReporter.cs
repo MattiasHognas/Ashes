@@ -29,6 +29,7 @@ internal static class IrExplainReporter
         bool wantsRepresentation = request.Includes(ExplainKind.Memory);
         bool wantsTraits = request.Includes(ExplainKind.Traits) || request.Includes(ExplainKind.Memory);
         bool wantsAuthority = request.Includes(ExplainKind.Authority);
+        bool wantsConcurrency = request.Includes(ExplainKind.Concurrency);
 
         return new CompilationExplainReport(
             wantsOwnership ? BuildOwnership(snapshot, request.FunctionFilter) : [],
@@ -46,7 +47,33 @@ internal static class IrExplainReporter
             ExternalAuthority = wantsAuthority
                 ? FilterExternalAuthority(snapshot.ExternalAuthority, request.FunctionFilter)
                 : [],
+            Concurrency = wantsConcurrency
+                ? BuildConcurrency(finalIr, request.FunctionFilter)
+                : [],
         };
+    }
+
+    private static IReadOnlyList<ConcurrencyFunctionReport> BuildConcurrency(IrProgram program, string? filter)
+    {
+        var reports = new List<ConcurrencyFunctionReport>();
+        foreach (IrFunction function in new[] { program.EntryFunction }.Concat(program.Functions))
+        {
+            if (!IrFunctionSelector.Matches(function.Origin, function.Label, filter))
+            {
+                continue;
+            }
+
+            int scopes = function.Instructions.Count(instruction => instruction is IrInst.CreateScopedTask);
+            int forks = function.Instructions.Count(instruction => instruction is IrInst.ForkScopedTask);
+            int joins = function.Instructions.Count(instruction => instruction is IrInst.JoinScopedTask);
+            int spawns = function.Instructions.Count(instruction => instruction is IrInst.SpawnTask);
+            if (scopes + forks + joins + spawns > 0)
+            {
+                reports.Add(new ConcurrencyFunctionReport(function.Label, function.Origin, scopes, forks, joins, spawns));
+            }
+        }
+
+        return reports;
     }
 
     private static IReadOnlyList<PublicAuthorityRecord> FilterPublicAuthority(

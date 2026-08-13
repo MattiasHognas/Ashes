@@ -18,6 +18,9 @@ public enum ExplainKind
     /// <summary>Inferred public and external ambient-authority requirements.</summary>
     Authority,
 
+    /// <summary>Structured task scopes, forks, joins, and deliberately detached spawns.</summary>
+    Concurrency,
+
     /// <summary>Ownership, reference counting, reuse, and representation, correlated.</summary>
     Memory,
 }
@@ -75,6 +78,7 @@ public sealed record ExplainRequest(
             case "reuse": kind = ExplainKind.Reuse; return true;
             case "traits": kind = ExplainKind.Traits; return true;
             case "authority": kind = ExplainKind.Authority; return true;
+            case "concurrency": kind = ExplainKind.Concurrency; return true;
             case "memory": kind = ExplainKind.Memory; return true;
             default:
                 error = $"Unknown explain type '{kindText}'.";
@@ -83,7 +87,7 @@ public sealed record ExplainRequest(
     }
 
     /// <summary>The valid values, in report order, for help text and error messages.</summary>
-    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "traits", "authority", "memory"];
+    public static IReadOnlyList<string> ValidValues { get; } = ["ownership", "rc", "reuse", "traits", "authority", "concurrency", "memory"];
 }
 
 /// <summary>The ambient-authority capabilities inferred for one exported binding.</summary>
@@ -91,6 +95,15 @@ internal sealed record PublicAuthorityRecord(string Binding, IReadOnlyList<strin
 
 /// <summary>The declared ambient-authority row of one external function.</summary>
 internal sealed record ExternalAuthorityRecord(string Function, IReadOnlyList<string> Capabilities);
+
+/// <summary>Structured and detached concurrency operations in the final semantic IR.</summary>
+internal sealed record ConcurrencyFunctionReport(
+    string Label,
+    IrFunctionOrigin? Origin,
+    int Scopes,
+    int Forks,
+    int Joins,
+    int DetachedSpawns);
 
 /// <summary>One function's ownership contract, as reported.</summary>
 internal sealed record OwnershipFunctionReport(
@@ -156,6 +169,8 @@ internal sealed record CompilationExplainReport(
     internal IReadOnlyList<PublicAuthorityRecord> Authority { get; init; } = [];
 
     internal IReadOnlyList<ExternalAuthorityRecord> ExternalAuthority { get; init; } = [];
+
+    internal IReadOnlyList<ConcurrencyFunctionReport> Concurrency { get; init; } = [];
 
     internal static CompilationExplainReport Empty { get; } = new([], [], [], [], TraitEvidenceAnnotations.Empty);
 }

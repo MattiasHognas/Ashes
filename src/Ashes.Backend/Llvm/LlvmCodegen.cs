@@ -554,6 +554,7 @@ internal static partial class LlvmCodegen
         bool UsesWindowsFileOps,
         bool UsesNetworkingRuntimeAbi,
         bool UseRunQueueScheduler,
+        bool UsesStructuredConcurrency,
         bool Arm64UsesTlsArena,
         bool UsesWindowsSockets,
         bool UsesWindowsSleep,
@@ -627,6 +628,10 @@ internal static partial class LlvmCodegen
         bool usesWindowsFileOps = isWindows && EmitProgramModuleUsesFileOps(program);
         bool usesNetworkingRuntimeAbi = EmitProgramModuleUsesNetworking(program);
         bool useRunQueueScheduler = ProgramUsesInstruction<IrInst.RunTask>(program);
+        bool usesStructuredConcurrency = ProgramUsesInstruction<IrInst.CreateTaskScope>(program)
+            || ProgramUsesInstruction<IrInst.CreateScopedTask>(program)
+            || ProgramUsesInstruction<IrInst.ForkScopedTask>(program)
+            || ProgramUsesInstruction<IrInst.JoinScopedTask>(program);
         bool arm64UsesTlsArena = flavor == LlvmCodegenFlavor.LinuxArm64;
         bool usesWindowsSockets = isWindows && usesNetworkingRuntimeAbi;
         bool usesWindowsSleep = isWindows
@@ -645,6 +650,7 @@ internal static partial class LlvmCodegen
         return new EmitProgramModuleFlags(
             usesProgramArgs, usesWindowsStdout, isWindows, isWindows && usesProgramArgs,
             isWindows && usesReadLine, usesWindowsFileOps, usesNetworkingRuntimeAbi, useRunQueueScheduler,
+            usesStructuredConcurrency,
             arm64UsesTlsArena, usesWindowsSockets, usesWindowsSleep, usesWindowsProcess, usesWindowsReadExact,
             usesWindowsConsole);
     }
@@ -1076,6 +1082,7 @@ internal static partial class LlvmCodegen
                 imports.WindowsSleepImport,
                 imports.WindowsVirtualAllocImport,
                 imports.WindowsVirtualFreeImport,
+                flags.UsesStructuredConcurrency,
                 usesTlsRuntime,
                 nounwindAttr);
         }
@@ -1167,7 +1174,7 @@ internal static partial class LlvmCodegen
         EmitFunctionBody(
             target, entryFunction, program.EntryFunction,
             stringLiterals, liftedFunctions, flavor,
-            flags.UsesProgramArgs, flags.UseRunQueueScheduler, i32,
+            flags.UsesProgramArgs, flags.UseRunQueueScheduler, flags.UsesStructuredConcurrency, i32,
             i32Ptr, arena.HeapCursorGlobal, arena.HeapEndGlobal,
             arena.ToSpaceCursorGlobal, arena.ToSpaceEndGlobal, imports.WindowsGetStdHandleImport,
             imports.WindowsWriteFileImport, imports.WindowsReadFileImport, imports.WindowsCreateFileImport,
@@ -1197,7 +1204,7 @@ internal static partial class LlvmCodegen
             EmitFunctionBody(
                 target, liftedFunctions[function.Label], function,
                 stringLiterals, liftedFunctions, flavor,
-                flags.UsesProgramArgs, flags.UseRunQueueScheduler, i32,
+                flags.UsesProgramArgs, flags.UseRunQueueScheduler, flags.UsesStructuredConcurrency, i32,
                 i32Ptr, arena.HeapCursorGlobal, arena.HeapEndGlobal,
                 arena.ToSpaceCursorGlobal, arena.ToSpaceEndGlobal, imports.WindowsGetStdHandleImport,
                 imports.WindowsWriteFileImport, imports.WindowsReadFileImport, imports.WindowsCreateFileImport,
@@ -1432,6 +1439,7 @@ internal static partial class LlvmCodegen
         LlvmCodegenFlavor flavor,
         bool usesProgramArgs,
         bool useRunQueueScheduler,
+        bool usesStructuredConcurrency,
         LlvmTypeHandle i32,
         LlvmTypeHandle i32Ptr,
         LlvmValueHandle heapCursorGlobal,
@@ -1514,6 +1522,7 @@ internal static partial class LlvmCodegen
             RcArenaCursorSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_arena_cursor"),
             RcArenaEndSlot = LlvmApi.GetNamedGlobal(target.Module, "__ashes_rc_arena_end"),
             UseRunQueueScheduler = useRunQueueScheduler,
+            UsesStructuredConcurrency = usesStructuredConcurrency,
         };
 
         state = EmitFunctionBodyLinuxArenaSetup(state, flavor, isEntry);
@@ -2005,9 +2014,8 @@ internal static partial class LlvmCodegen
                 state.UseRunQueueScheduler
                     ? EmitNetworkingRuntimeCall(state, "ashes_scheduler_run", [LoadTemp(state, runTask.TaskTemp)], "run_sched")
                     : EmitRunTask(state, LoadTemp(state, runTask.TaskTemp))),
-            // SpawnTask: detach a task (fire-and-forget); it advances while drivers wait.
-            IrInst.SpawnTask spawnTask => StoreTemp(state, spawnTask.Target,
-                EmitSpawnTask(state, LoadTemp(state, spawnTask.TaskTemp))),
+            IrInst.SpawnTask or IrInst.CreateTaskScope or IrInst.CreateScopedTask or IrInst.ForkScopedTask or IrInst.JoinScopedTask
+                => EmitStructuredTaskInstruction(state, instruction),
             // Structured parallelism (Ashes.Task.Parallel.both).
             IrInst.ParallelFork parallelFork => StoreTemp(state, parallelFork.DescTarget,
                 EmitParallelFork(state, LoadTemp(state, parallelFork.RightClosureTemp))),
@@ -2032,6 +2040,20 @@ internal static partial class LlvmCodegen
             _ => (bool?)null,
         };
     }
+
+    private static bool EmitStructuredTaskInstruction(LlvmCodegenState state, IrInst instruction) => instruction switch
+    {
+        IrInst.SpawnTask spawnTask => StoreTemp(state, spawnTask.Target,
+            EmitSpawnTask(state, LoadTemp(state, spawnTask.TaskTemp))),
+        IrInst.CreateTaskScope scope => StoreTemp(state, scope.Target, EmitCreateTaskScope(state, scope.IsExplicit)),
+        IrInst.CreateScopedTask scoped => StoreTemp(state, scoped.Target,
+            EmitCreateScopedTask(state, LoadTemp(state, scoped.ParentTaskTemp), LoadTemp(state, scoped.ScopeTemp))),
+        IrInst.ForkScopedTask fork => StoreTemp(state, fork.Target,
+            EmitForkScopedTask(state, LoadTemp(state, fork.OwnerTaskTemp), LoadTemp(state, fork.TaskTemp))),
+        IrInst.JoinScopedTask join => StoreTemp(state, join.Target,
+            EmitJoinScopedTask(state, LoadTemp(state, join.HandleTemp))),
+        _ => false,
+    };
 
     private static bool? EmitInstructionGroup4(LlvmCodegenState state, IrInst instruction)
     {
@@ -2378,6 +2400,8 @@ internal static partial class LlvmCodegen
         // (ashes_scheduler_run) instead of the legacy recursive driver. Set for every async program
         // (any RunTask use) on all targets.
         public bool UseRunQueueScheduler { get; init; }
+
+        public bool UsesStructuredConcurrency { get; init; }
 
         public LlvmBasicBlockHandle GetLabelBlock(string name) => LabelBlocks[name];
 

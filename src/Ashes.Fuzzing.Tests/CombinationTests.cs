@@ -290,6 +290,12 @@ public sealed class CombinationTests
             .ShouldContain(GeneratedFeature.CapturedReuseCandidate);
         fixture.Combinations.Get("async.task-result-reuse").AdvertisedFeatures
             .ShouldContain(GeneratedFeature.TaskResultReuse);
+        fixture.Combinations.Get("async.structured-fork-join").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.StructuredScope);
+        fixture.Combinations.Get("async.structured-fork-join").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.Fork);
+        fixture.Combinations.Get("async.structured-fork-join").AdvertisedFeatures
+            .ShouldContain(GeneratedFeature.Join);
         fixture.Combinations.Get("perceus.shared-reconstruction-fallback").AdvertisedFeatures
             .ShouldContain(GeneratedFeature.AliasedResultPreventsReuse);
         fixture.Combinations.Get("perceus.unique-record-update").AdvertisedFeatures

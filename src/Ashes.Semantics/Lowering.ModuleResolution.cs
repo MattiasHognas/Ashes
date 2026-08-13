@@ -420,6 +420,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncSpawn => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncSpawnBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncAll => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncAllBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.AsyncRace => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncRaceBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncScope => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncScopeBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncFork => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncForkBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.AsyncJoin => LowerQualifiedBuiltinFunctionReference(name, CreateAsyncJoinBinding().S.Body),
             _ => null
         };
     }

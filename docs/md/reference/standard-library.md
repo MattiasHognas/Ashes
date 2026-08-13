@@ -677,6 +677,16 @@ Asynchronous tasks: the `Task(E, A)` values consumed with `await` inside `async(
 - `race(tasks)` returning `Task(E, A)` — first task to complete wins
 - `spawn(task)` returning `Unit` — fire-and-forget a task on the scheduler (used by the
   socket servers to run one handler per connection)
+- `scope(task)` returning `Task(E, A)` — optionally introduce a structured lifetime shorter than the
+  enclosing async task
+- `fork(task)` returning `Task(E, JoinHandle(E, A))` — register a child in the nearest active scope
+- `join(handle)` returning `Task(E, A)` — consume one join handle and await its child result
+
+Every `async` activation establishes an implicit child-task scope. `JoinHandle(E, A)` is affine and
+cannot escape its owning async or explicit nested scope, including through detached `spawn`. Scope
+exit cancels and drains every unjoined child before its own result becomes observable; use `join`
+when the child result is required. Prefer this API for ordinary application concurrency, retaining
+`spawn` only for intentionally detached infrastructure.
 
 Supported on Linux x64, Linux arm64, and Windows x64 (run-queue scheduler on all three).
 
