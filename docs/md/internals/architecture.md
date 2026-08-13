@@ -810,6 +810,12 @@ allocates a target-pointer-width contiguous array in the current stack frame, wa
 copy each opaque handle, and passes the array address. Empty lists pass null. The address never exists
 as an Ashes value and the declaration cannot be called indirectly, returned, pointer-nested, or used
 with affine resource elements, so its storage cannot escape the call boundary.
+An external `out T` parameter is likewise a declaration-only call shape and consumes no Ashes
+argument. The compiler creates a naturally aligned, pointer-sized stack slot initialized to null,
+passes its address to the native call, and loads it exactly once after the call. Null materializes as
+`None`; a non-null opaque handle or pointer materializes as `Some(value)`. A non-void native result
+comes first, followed by out results in declaration order; the source result is the sole component
+directly or a tuple when there are multiple components. The native status value is never interpreted.
 Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
 or waits for and releases its process handle on Windows.
 

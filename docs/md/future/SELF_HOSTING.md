@@ -21,7 +21,8 @@ packages below.
 | [Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
 | [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend` |
 | [Call-scoped native arrays of opaque handles](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
-| [LLVM out parameters, returned strings, and foreign buffers](#gap-ffi-out-parameters-returned-strings-and-foreign-buffers) | Required | `Compiler/Backend` |
+| [LLVM out parameters](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [Returned native strings and foreign buffers](#gap-returned-native-strings-and-foreign-buffers) | Required | `Compiler/Backend` |
 | [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
@@ -59,42 +60,20 @@ Each package below is the implementation hand-off for one or more incomplete row
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
 
-### Gap: FFI out parameters, returned strings, and foreign buffers
+### Gap: Returned native strings and foreign buffers
 
 `Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
 (`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
-own `external` mechanism can now materialize a call-scoped contiguous array of opaque handles, but
-Ashes code still cannot allocate/read out-parameter storage, copy a returned pointer-plus-length
-buffer into `Bytes`, or decode and dispose a returned native string. The current C# adapter handles
-these shapes with `out` parameters and explicit `Marshal`/copy operations. Representative calls
-include `LLVMGetTargetFromTriple`, `LLVMVerifyModule`, and `LLVMTargetMachineEmitToMemoryBuffer`.
+own `external` mechanism can now materialize call-scoped contiguous arrays of opaque handles and
+nullable opaque/pointer out parameters, but Ashes code still cannot copy a returned
+pointer-plus-length buffer into `Bytes` or decode and dispose a returned native string. The current
+C# adapter handles these shapes with explicit `Marshal`/copy operations. Representative calls
+include host CPU discovery, module printing, and `LLVMTargetMachineEmitToMemoryBuffer`.
 
 **Decision (2026-07-24): extend Ashes' FFI rather than require an Ashes compiler to use textual LLVM
 IR plus a subprocess.** This preserves direct access to LLVM-C and avoids making process spawning an
 accidental backend requirement. Specify the extension in the
 [language reference](../reference/language.md) before implementation.
-
-#### Out parameters
-
-The current binding needs outputs from `LLVMGetTargetFromTriple`, `LLVMVerifyModule`,
-`LLVMTargetMachineEmitToMemoryBuffer`, and `LLVMParseIRInContext`. Do not expose general mutable
-references merely to model these signatures.
-
-Workable tasks:
-
-1. Add declaration-only `out` parameters whose source-level call result is a tuple containing the C
-   return value followed by each output (omitting `Unit` for a C `void` return). The compiler owns and
-   zero-initializes the temporary slots.
-2. Support nullable pointer and opaque-handle outputs first: null becomes `None`, non-null becomes
-   `Some(value)`. Defer scalar outputs until the spec defines whether a native function may leave a
-   slot unwritten, since zero is often a valid scalar value.
-3. Lower each slot with target-correct size and alignment, call the external, load the outputs once,
-   and make the temporary addresses non-escaping.
-4. Add diagnostics for `out` outside external declarations, unsupported element types, indirect use
-   of an ownership-sensitive external, and attempts to combine `out` with invalid `borrow`/`consume`
-   shapes.
-5. Test success, failure, null output, multiple output, and cross-target ABI layouts against small C
-   fixtures plus the four LLVM signatures.
 
 #### Returned native strings
 
@@ -140,11 +119,10 @@ lifetime invariant inside the opaque LLVM module initially. Record consuming API
 `LLVMLinkModules2` explicitly. In external declarations, `borrow` means the native call does not take
 Ashes ownership; it does not claim that LLVM leaves the native object unmodified.
 
-Deliver this as three reviewable slices:
+Deliver the remaining work as two reviewable slices:
 
-1. native input buffers;
-2. nullable opaque out parameters plus owned/borrowed C strings; and
-3. foreign binary buffers plus a minimal private LLVM facade.
+1. owned/borrowed C strings; and
+2. foreign binary buffers plus a minimal private LLVM facade.
 
 Each slice updates the language reference first, then Frontend, Formatter, Semantics/IR, Backend,
 diagnostics, LSP, unit/e2e tests, and relevant fuzz generators. Do not add C structs by value,

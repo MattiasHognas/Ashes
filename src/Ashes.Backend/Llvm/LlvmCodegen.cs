@@ -2237,6 +2237,14 @@ internal static partial class LlvmCodegen
     {
         return instruction switch
         {
+            IrInst.AllocFfiOut allocateOut => StoreTemp(
+                state,
+                allocateOut.Target,
+                EmitAllocFfiOut(state, allocateOut.ElementType)),
+            IrInst.LoadFfiOut loadOut => StoreTemp(
+                state,
+                loadOut.Target,
+                EmitLoadFfiOut(state, LoadTemp(state, loadOut.SlotTemp), loadOut.ElementType)),
             IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),

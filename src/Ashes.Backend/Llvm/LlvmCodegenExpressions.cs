@@ -291,7 +291,7 @@ internal static partial class LlvmCodegen
             FfiType.Float32 => state.F32,
             FfiType.Bool => state.I8,
             FfiType.Str => state.I8Ptr,
-            FfiType.Opaque { } or FfiType.Ptr { } or FfiType.Buffer { } => state.I8Ptr,
+            FfiType.Opaque { } or FfiType.Ptr { } or FfiType.Buffer { } or FfiType.Out { } => state.I8Ptr,
             FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
             FfiType.UInt uintType => throw new InvalidOperationException($"Unsupported unsigned FFI width '{uintType.Bits}'."),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
@@ -309,8 +309,35 @@ internal static partial class LlvmCodegen
             FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),
             FfiType.Opaque { } or FfiType.Ptr { } => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_ptr"),
             FfiType.Buffer buffer => EmitFfiBufferArgument(state, value, buffer),
+            FfiType.Out => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_out_arg"),
             _ => value
         };
+    }
+
+    private static LlvmValueHandle EmitAllocFfiOut(LlvmCodegenState state, FfiType elementType)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle llvmElementType = GetLlvmFfiType(state, elementType);
+        LlvmValueHandle slot = LlvmApi.BuildAlloca(builder, llvmElementType, "ffi_out_slot");
+        LlvmValueHandle nullValue = LlvmApi.BuildIntToPtr(
+            builder,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            llvmElementType,
+            "ffi_out_null");
+        LlvmApi.BuildStore(builder, nullValue, slot);
+        return LlvmApi.BuildPtrToInt(builder, slot, state.I64, "ffi_out_slot_address");
+    }
+
+    private static LlvmValueHandle EmitLoadFfiOut(
+        LlvmCodegenState state,
+        LlvmValueHandle slotAddress,
+        FfiType elementType)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmTypeHandle llvmElementType = GetLlvmFfiType(state, elementType);
+        LlvmValueHandle slot = LlvmApi.BuildIntToPtr(builder, slotAddress, state.I8Ptr, "ffi_out_slot_ptr");
+        LlvmValueHandle value = LlvmApi.BuildLoad2(builder, llvmElementType, slot, "ffi_out_value");
+        return LlvmApi.BuildPtrToInt(builder, value, state.I64, "ffi_out_value_word");
     }
 
     private static LlvmValueHandle EmitFfiBufferArgument(

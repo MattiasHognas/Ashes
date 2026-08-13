@@ -813,6 +813,7 @@ public static partial class DocumentService
         if (declarations.Count > 0)
         {
             completionNames.Add("FfiBuffer");
+            completionNames.Add("out");
         }
         completionNames.UnionWith(declarations.Select(declaration => declaration switch
         {
@@ -1566,9 +1567,9 @@ public static partial class DocumentService
 
         Lowering.ExternalOwnershipInfo? ownership = lowering.GetExternalOwnershipInfo(
             identifier.Value.Token.Text);
-        bool hasFfiBuffer = declaration is ExternalDecl.Function function
-            && function.ParameterTypes.Any(type => type is ParsedType.Buffer);
-        if (ownership is null && !hasFfiBuffer)
+        bool hasSpecialFfiParameter = declaration is ExternalDecl.Function function
+            && function.ParameterTypes.Any(type => type is ParsedType.Buffer or ParsedType.Out);
+        if (ownership is null && !hasSpecialFfiParameter)
         {
             return null;
         }
@@ -1616,6 +1617,7 @@ public static partial class DocumentService
             if (declaration is ExternalDecl.Function function)
             {
                 AppendFfiBufferHover(markdown, function);
+                AppendFfiOutHover(markdown, function);
             }
         }
 
@@ -1641,6 +1643,33 @@ public static partial class DocumentService
                 $"\n\n- `#{index + 1} FfiBuffer({elementName}): List({elementName})`");
         }
     }
+
+    private static void AppendFfiOutHover(StringBuilder markdown, ExternalDecl.Function function)
+    {
+        IReadOnlyList<(int Index, ParsedType.Out Out)> outputs = [.. function.ParameterTypes
+            .Select((type, index) => (Index: index, Type: type))
+            .Where(parameter => parameter.Type is ParsedType.Out)
+            .Select(parameter => (parameter.Index, (ParsedType.Out)parameter.Type))];
+        if (outputs.Count == 0)
+        {
+            return;
+        }
+
+        markdown.Append("\n\n**Compiler-owned outputs**");
+        foreach ((int index, ParsedType.Out output) in outputs)
+        {
+            string elementName = FormatExternalHoverType(output.Element);
+            markdown.Append(System.Globalization.CultureInfo.InvariantCulture,
+                $"\n\n- `#{index + 1} out {elementName}: Maybe({elementName})`");
+        }
+    }
+
+    private static string FormatExternalHoverType(ParsedType type) => type switch
+    {
+        ParsedType.Named named => named.Name,
+        ParsedType.Pointer pointer => "*" + FormatExternalHoverType(pointer.Pointee),
+        _ => "T",
+    };
 
     private static string? ResolveCanonicalHoverName(
         string? name,

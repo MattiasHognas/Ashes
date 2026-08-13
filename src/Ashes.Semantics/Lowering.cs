@@ -2749,15 +2749,21 @@ public sealed partial class Lowering
             return EmitExternalFunctionThunk(externalFunction.Function, externalFunction.Type, GetSpan(variable));
         }
 
-        string contract = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer)
+        bool hasBuffer = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer);
+        bool hasOut = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Out);
+        string contract = hasBuffer
             ? "a call-scoped FFI buffer parameter"
-            : "a resource ownership contract";
+            : hasOut
+                ? "a compiler-owned FFI out parameter"
+                : "a resource ownership contract";
         ReportDiagnostic(
             GetSpan(variable),
             $"External function '{variable.Name}' has {contract} and must be called directly.",
-            externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer)
+            hasBuffer
                 ? DiagnosticCodes.InvalidFfiBuffer
-                : DiagnosticCodes.InvalidExternalOwnershipMarker);
+                : hasOut
+                    ? DiagnosticCodes.InvalidFfiOutParameter
+                    : DiagnosticCodes.InvalidExternalOwnershipMarker);
         Emit(new IrInst.LoadConstInt(fallbackTemp, 0));
         return (fallbackTemp, externalFunction.Type);
     }
@@ -2769,7 +2775,7 @@ public sealed partial class Lowering
 
     private bool RequiresDirectExternalCall(IrExternalFunction function) =>
         HasExternalResourceOwnershipContract(function)
-        || function.ParameterTypes.Any(type => type is FfiType.Buffer);
+        || function.ParameterTypes.Any(type => type is FfiType.Buffer or FfiType.Out);
 
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
     {
@@ -10297,52 +10303,24 @@ public sealed partial class Lowering
         List<Expr> args)
     {
         args = NormalizeNullaryExternalArguments(externalFunction, args);
+        int expectedArgumentCount = ExternalInputParameterCount(externalFunction);
 
-        if (args.Count != externalFunction.ParameterTypes.Count)
+        if (args.Count != expectedArgumentCount)
         {
-            return ReportArityMismatch(rootExpr, externalFunction.ParameterTypes.Count, args.Count);
+            return ReportArityMismatch(rootExpr, expectedArgumentCount, args.Count);
         }
 
         RequireExternalRuntimeCapabilities(externalFunction, GetSpan(rootExpr));
 
-        var loweredArgTemps = new List<int>(args.Count);
-        TypeRef sourceCursor = sourceFunctionType;
-        for (int i = 0; i < args.Count; i++)
-        {
-            FfiParameterOwnership ownership = GetExternalParameterOwnership(externalFunction, i);
-            bool explicitDestructor = externalFunction.DestructorForResource is not null
-                && ownership == FfiParameterOwnership.Consume;
-            CheckExternalResourceArgument(args[i], ownership, explicitDestructor);
+        (List<int> loweredArgTemps, List<(int SlotTemp, FfiType ElementType)> outputSlots, TypeRef sourceCursor) =
+            LowerExternalArguments(externalFunction, sourceFunctionType, args);
 
-            var (argTemp, argType) = LowerExpr(args[i]);
-            TypeRef.TFun sourceFunction = (TypeRef.TFun)Prune(sourceCursor);
-            TypeRef expectedType = sourceFunction.Arg;
-            sourceCursor = sourceFunction.Ret;
-            using (PushDiagnosticContext($"in argument #{i + 1} of external call to '{externalFunction.Name}'"))
-            {
-                Unify(expectedType, argType);
-            }
-
-            if (externalFunction.ParameterTypes[i] is FfiType.Str)
-            {
-                int cStringTemp = NewTemp();
-                Emit(new IrInst.ToCString(cStringTemp, argTemp));
-                loweredArgTemps.Add(cStringTemp);
-            }
-            else
-            {
-                loweredArgTemps.Add(argTemp);
-            }
-
-            ApplyExternalResourceTransfer(args[i], ownership, explicitDestructor);
-        }
-
-        int target = NewTemp();
-        Emit(new IrInst.CallExternal(target, externalFunction.SymbolName, externalFunction.LibraryName, loweredArgTemps, externalFunction.ParameterTypes, externalFunction.ReturnType));
-        if (externalFunction.ReturnType is FfiType.Void)
-        {
-            return LowerUnitValue();
-        }
+        int nativeResult = NewTemp();
+        Emit(new IrInst.CallExternal(nativeResult, externalFunction.SymbolName, externalFunction.LibraryName, loweredArgTemps, externalFunction.ParameterTypes, externalFunction.ReturnType));
+        int target = MaterializeExternalOutResult(
+            nativeResult,
+            externalFunction.ReturnType,
+            outputSlots);
 
         TypeRef resultType = Prune(sourceCursor);
         RecordCallResultTempOwnership(
@@ -10354,13 +10332,132 @@ public sealed partial class Lowering
         return (target, resultType);
     }
 
+    private (List<int> Args, List<(int SlotTemp, FfiType ElementType)> Outputs, TypeRef SourceCursor)
+        LowerExternalArguments(IrExternalFunction function, TypeRef sourceType, IReadOnlyList<Expr> args)
+    {
+        var loweredArgs = new List<int>(function.ParameterTypes.Count);
+        var outputs = new List<(int SlotTemp, FfiType ElementType)>();
+        TypeRef sourceCursor = sourceType;
+        int argumentIndex = 0;
+        for (int parameterIndex = 0; parameterIndex < function.ParameterTypes.Count; parameterIndex++)
+        {
+            FfiType parameterType = function.ParameterTypes[parameterIndex];
+            if (parameterType is FfiType.Out output)
+            {
+                int slotTemp = NewTemp();
+                Emit(new IrInst.AllocFfiOut(slotTemp, output.Element));
+                loweredArgs.Add(slotTemp);
+                outputs.Add((slotTemp, output.Element));
+                continue;
+            }
+
+            Expr argument = args[argumentIndex];
+            FfiParameterOwnership ownership = GetExternalParameterOwnership(function, parameterIndex);
+            bool explicitDestructor = function.DestructorForResource is not null
+                && ownership == FfiParameterOwnership.Consume;
+            CheckExternalResourceArgument(argument, ownership, explicitDestructor);
+
+            var (argTemp, argType) = LowerExpr(argument);
+            TypeRef.TFun sourceFunction = (TypeRef.TFun)Prune(sourceCursor);
+            sourceCursor = sourceFunction.Ret;
+            using (PushDiagnosticContext($"in argument #{argumentIndex + 1} of external call to '{function.Name}'"))
+            {
+                Unify(sourceFunction.Arg, argType);
+            }
+
+            if (parameterType is FfiType.Str)
+            {
+                int cStringTemp = NewTemp();
+                Emit(new IrInst.ToCString(cStringTemp, argTemp));
+                loweredArgs.Add(cStringTemp);
+            }
+            else
+            {
+                loweredArgs.Add(argTemp);
+            }
+
+            ApplyExternalResourceTransfer(argument, ownership, explicitDestructor);
+            argumentIndex++;
+        }
+
+        return (loweredArgs, outputs, sourceCursor);
+    }
+
     private static List<Expr> NormalizeNullaryExternalArguments(
         IrExternalFunction function,
-        List<Expr> arguments) => function.ParameterTypes.Count == 0
+        List<Expr> arguments) => ExternalInputParameterCount(function) == 0
             && arguments.Count == 1
             && arguments[0] is Expr.Var { Name: "Unit" }
                 ? []
                 : arguments;
+
+    private static int ExternalInputParameterCount(IrExternalFunction function) =>
+        function.ParameterTypes.Count(type => type is not FfiType.Out);
+
+    private int MaterializeExternalOutResult(
+        int nativeResult,
+        FfiType returnType,
+        IReadOnlyList<(int SlotTemp, FfiType ElementType)> outputSlots)
+    {
+        var components = new List<(int Temp, TypeRef Type)>();
+        if (returnType is not FfiType.Void)
+        {
+            components.Add((nativeResult, FromFfiType(returnType)));
+        }
+        foreach ((int slotTemp, FfiType elementType) in outputSlots)
+        {
+            components.Add(MaterializeNullableExternalOut(slotTemp, elementType));
+        }
+
+        if (components.Count == 0)
+        {
+            return LowerUnitValue().Item1;
+        }
+        if (components.Count == 1)
+        {
+            return components[0].Temp;
+        }
+
+        int tupleTemp = NewTemp();
+        Emit(new IrInst.Alloc(tupleTemp, components.Count * 8, RuntimeManaged: false));
+        for (int i = 0; i < components.Count; i++)
+        {
+            Emit(new IrInst.StoreMemOffset(tupleTemp, i * 8, components[i].Temp));
+        }
+        return tupleTemp;
+    }
+
+    private (int Temp, TypeRef Type) MaterializeNullableExternalOut(int slotTemp, FfiType elementType)
+    {
+        int valueTemp = NewTemp();
+        Emit(new IrInst.LoadFfiOut(valueTemp, slotTemp, elementType));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int isNullTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(isNullTemp, valueTemp, zeroTemp));
+
+        int resultSlot = NewLocal();
+        string someLabel = NewLabel("ffi_out_some");
+        string endLabel = NewLabel("ffi_out_end");
+        Emit(new IrInst.JumpIfFalse(isNullTemp, someLabel));
+        ConstructorSymbol none = _constructorSymbols["None"];
+        int noneTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(noneTemp, GetConstructorTag(none), 0));
+        Emit(new IrInst.StoreLocal(resultSlot, noneTemp));
+        Emit(new IrInst.Jump(endLabel));
+
+        Emit(new IrInst.Label(someLabel));
+        ConstructorSymbol some = _constructorSymbols["Some"];
+        int someTemp = NewTemp();
+        Emit(new IrInst.AllocAdt(someTemp, GetConstructorTag(some), 1));
+        Emit(new IrInst.SetAdtField(someTemp, 0, valueTemp));
+        Emit(new IrInst.StoreLocal(resultSlot, someTemp));
+
+        Emit(new IrInst.Label(endLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return (resultTemp, CreateMaybeType(FromFfiType(elementType)));
+    }
 
     private void RequireExternalRuntimeCapabilities(IrExternalFunction function, TextSpan span)
     {

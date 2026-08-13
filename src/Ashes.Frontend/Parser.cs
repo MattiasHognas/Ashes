@@ -402,6 +402,13 @@ public sealed class Parser
 
     private ParsedType ParseFfiType()
     {
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "out", StringComparison.Ordinal))
+        {
+            Consume(TokenKind.Ident);
+            return new ParsedType.Out(ParseFfiType());
+        }
+
         if (_current.Kind == TokenKind.Star)
         {
             Consume(TokenKind.Star);
@@ -1081,6 +1088,17 @@ public sealed class Parser
 
     private TypeExpr ParseTypeExprPrimary()
     {
+        if (_current.Kind == TokenKind.Ident
+            && string.Equals(_current.Text, "out", StringComparison.Ordinal))
+        {
+            Token output = Consume(TokenKind.Ident);
+            _diag.Error(
+                output.Span,
+                "out T is supported only as a direct external parameter.",
+                DiagnosticCodes.InvalidFfiOutParameter);
+            return ParseTypeExprPrimary();
+        }
+
         if (_current.Kind == TokenKind.LParen)
         {
             Consume(TokenKind.LParen);

@@ -45,6 +45,7 @@ internal enum GeneratedFeature
     MultiParameterTrait,
     ExternalResource,
     FfiBuffer,
+    FfiOut,
     AmbientAuthority,
     TypeAlias,
     ZeroCostType,

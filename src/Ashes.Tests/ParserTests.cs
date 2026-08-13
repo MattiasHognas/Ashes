@@ -464,6 +464,30 @@ public sealed class ParserTests
     }
 
     [Test]
+    public void ParseProgram_should_parse_external_out_parameters()
+    {
+        Program program = ParseProgram("external resolve(Str, out Handle, out *u8) -> Bool\n0");
+
+        ExternalDecl.Function resolve = program.ExternalDecls.Single().ShouldBeOfType<ExternalDecl.Function>();
+        resolve.ParameterTypes.ShouldBe([
+            new ParsedType.Named("Str"),
+            new ParsedType.Out(new ParsedType.Named("Handle")),
+            new ParsedType.Out(new ParsedType.Pointer(new ParsedType.Named("u8")))
+        ]);
+    }
+
+    [Test]
+    public void ParseProgram_should_reject_out_in_an_ordinary_type_annotation()
+    {
+        var diagnostics = new Diagnostics();
+        _ = new Parser("let value : out Int = 1\nvalue", diagnostics).ParseProgram();
+
+        DiagnosticEntry error = diagnostics.StructuredErrors.ShouldHaveSingleItem();
+        error.Code.ShouldBe(DiagnosticCodes.InvalidFfiOutParameter);
+        error.Message.ShouldBe("out T is supported only as a direct external parameter.");
+    }
+
+    [Test]
     public void ParseProgram_should_parse_multiline_type_declaration()
     {
         var program = ParseProgram("type Maybe =\n  | None\n  | Some(T)\nprint(1)");

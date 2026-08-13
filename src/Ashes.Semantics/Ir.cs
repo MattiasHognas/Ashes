@@ -1479,6 +1479,15 @@ public abstract record IrInst
     /// <param name="Target">Temp receiving the C-string pointer.</param>
     /// <param name="StrTemp">Temp holding the source string.</param>
     public sealed record ToCString(int Target, int StrTemp) : IrInst;
+    /// <summary>Allocates and null-initializes one compiler-owned native output slot.</summary>
+    /// <param name="Target">Temp receiving the non-escaping native slot address.</param>
+    /// <param name="ElementType">Opaque handle or pointer type stored in the slot.</param>
+    public sealed record AllocFfiOut(int Target, FfiType ElementType) : IrInst;
+    /// <summary>Loads one compiler-owned native output slot exactly once after its external call.</summary>
+    /// <param name="Target">Temp receiving the nullable pointer-sized value.</param>
+    /// <param name="SlotTemp">Temp holding the address produced by <see cref="AllocFfiOut"/>.</param>
+    /// <param name="ElementType">Opaque handle or pointer type stored in the slot.</param>
+    public sealed record LoadFfiOut(int Target, int SlotTemp, FfiType ElementType) : IrInst;
     /// <summary>Calls an external (FFI) function, marshalling arguments and the result per the declared
     /// <see cref="FfiType"/> signature.</summary>
     /// <param name="Target">Temp receiving the (marshalled) return value.</param>
@@ -1834,6 +1843,9 @@ public abstract record FfiType
     /// <summary>A call-scoped contiguous input array of copyable opaque handles.</summary>
     /// <param name="Element">The opaque handle element type.</param>
     public sealed record Buffer(FfiType.Opaque Element) : FfiType;
+    /// <summary>A compiler-owned nullable output slot passed by address to the native call.</summary>
+    /// <param name="Element">The opaque handle or pointer value loaded from the slot.</param>
+    public sealed record Out(FfiType Element) : FfiType;
     /// <summary>No value (a <c>void</c> return).</summary>
     public sealed record Void : FfiType;
 }
