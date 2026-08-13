@@ -415,13 +415,19 @@ public sealed partial class Lowering
     private void RegisterExternalFunction(ExternalDecl.Function function)
     {
         List<ResolvedExternalType?> parameterTypes = function.ParameterTypes
-            .Select(type => ResolveExternalParsedType(function, type, allowVoid: false, allowBuffer: true))
+            .Select(type => ResolveExternalParsedType(
+                function,
+                type,
+                allowVoid: false,
+                allowBuffer: true,
+                allowOut: true))
             .ToList();
         ResolvedExternalType? returnType = ResolveExternalParsedType(
             function,
             function.ReturnType,
             allowVoid: true,
-            allowBuffer: false);
+            allowBuffer: false,
+            allowOut: false);
         if (parameterTypes.Any(type => type is null) || returnType is null)
         {
             return;
@@ -453,9 +459,11 @@ public sealed partial class Lowering
         irFunction = irFunction with { RuntimeCapabilities = runtimeCapabilities };
         _externalFunctions.Add(irFunction);
 
-        TypeRef type = BuildFunctionType(
-            resolvedParameters.Select(parameter => parameter.SourceType).ToList(),
-            returnType.SourceType);
+        IReadOnlyList<TypeRef> sourceParameters = [.. resolvedParameters
+            .Where(parameter => parameter.FfiType is not FfiType.Out)
+            .Select(parameter => parameter.SourceType)];
+        TypeRef sourceResult = BuildExternalResultType(resolvedParameters, returnType);
+        TypeRef type = BuildFunctionType(sourceParameters, sourceResult);
         if (type is TypeRef.TFun)
         {
             type = WithCapabilityRow(type, BuiltinCapabilityRow(runtimeCapabilities));
@@ -553,6 +561,18 @@ public sealed partial class Lowering
             ExternalParameterOwnership written = i < function.ParameterOwnerships.Count
                 ? function.ParameterOwnerships[i]
                 : ExternalParameterOwnership.Unspecified;
+            if (parameterTypes[i].FfiType is FfiType.Out)
+            {
+                if (written != ExternalParameterOwnership.Unspecified)
+                {
+                    ReportDiagnostic(
+                        GetSpan(function),
+                        $"External out parameter #{i + 1} of '{function.Name}' cannot use 'borrow' or 'consume'.",
+                        DiagnosticCodes.InvalidFfiOutParameter);
+                }
+                result.Add(FfiParameterOwnership.Unspecified);
+                continue;
+            }
             bool isResource = IsDeclaredExternalResourceType(parameterTypes[i].SourceType);
             if (isResource && written == ExternalParameterOwnership.Unspecified)
             {
@@ -613,7 +633,8 @@ public sealed partial class Lowering
         ExternalDecl externalDecl,
         ParsedType parsedType,
         bool allowVoid,
-        bool allowBuffer)
+        bool allowBuffer,
+        bool allowOut)
     {
         if (parsedType is ParsedType.Pointer pointer)
         {
@@ -621,7 +642,8 @@ public sealed partial class Lowering
                 externalDecl,
                 pointer.Pointee,
                 allowVoid: false,
-                allowBuffer: false);
+                allowBuffer: false,
+                allowOut: false);
             return pointee is null
                 ? null
                 : new ResolvedExternalType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
@@ -630,6 +652,11 @@ public sealed partial class Lowering
         if (parsedType is ParsedType.Buffer buffer)
         {
             return ResolveExternalBufferType(externalDecl, buffer, allowBuffer);
+        }
+
+        if (parsedType is ParsedType.Out output)
+        {
+            return ResolveExternalOutType(externalDecl, output, allowOut);
         }
 
         if (parsedType is not ParsedType.Named named)
@@ -674,7 +701,8 @@ public sealed partial class Lowering
             externalDecl,
             buffer.Element,
             allowVoid: false,
-            allowBuffer: false);
+            allowBuffer: false,
+            allowOut: false);
         if (element is null)
         {
             return null;
@@ -702,6 +730,44 @@ public sealed partial class Lowering
         return new ResolvedExternalType(
             new TypeRef.TList(element.SourceType),
             new FfiType.Buffer(opaque));
+    }
+
+    private ResolvedExternalType? ResolveExternalOutType(
+        ExternalDecl externalDecl,
+        ParsedType.Out output,
+        bool allowOut)
+    {
+        if (!allowOut)
+        {
+            ReportDiagnostic(
+                GetSpan(externalDecl),
+                "out T is supported only as a direct external parameter.",
+                DiagnosticCodes.InvalidFfiOutParameter);
+            return null;
+        }
+
+        ResolvedExternalType? element = ResolveExternalParsedType(
+            externalDecl,
+            output.Element,
+            allowVoid: false,
+            allowBuffer: false,
+            allowOut: false);
+        if (element is null)
+        {
+            return null;
+        }
+        if (element.FfiType is not (FfiType.Opaque or FfiType.Ptr))
+        {
+            ReportDiagnostic(
+                GetSpan(externalDecl),
+                "out T requires an opaque external type or pointer type T.",
+                DiagnosticCodes.InvalidFfiOutParameter);
+            return null;
+        }
+
+        return new ResolvedExternalType(
+            CreateMaybeType(element.SourceType),
+            new FfiType.Out(element.FfiType));
     }
 
     private ResolvedExternalType? ResolveDeclaredExternalType(ExternalDecl declaration, string name)
@@ -766,6 +832,26 @@ public sealed partial class Lowering
         }
 
         return result;
+    }
+
+    private static TypeRef BuildExternalResultType(
+        IReadOnlyList<ResolvedExternalType> parameterTypes,
+        ResolvedExternalType returnType)
+    {
+        List<TypeRef> components = [];
+        if (returnType.FfiType is not FfiType.Void)
+        {
+            components.Add(returnType.SourceType);
+        }
+        components.AddRange(parameterTypes
+            .Where(parameter => parameter.FfiType is FfiType.Out)
+            .Select(parameter => parameter.SourceType));
+        return components.Count switch
+        {
+            0 => returnType.SourceType,
+            1 => components[0],
+            _ => new TypeRef.TTuple(components),
+        };
     }
 
     private sealed record ResolvedExternalType(TypeRef SourceType, FfiType FfiType);

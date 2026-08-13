@@ -275,6 +275,19 @@ tag identifying the variant. Each field occupies 8 bytes. Total size is
 the persistent `Map`/`HashMap` specialization and do not represent general
 ordinary-value lifetime.
 
+### Foreign calls
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `ToCString` | `Target`, `StrTemp` | Produce a null-terminated pointer for a call-scoped `Str` argument |
+| `AllocFfiOut` | `Target`, `ElementType` | Allocate and null-initialize a non-escaping opaque/pointer output slot |
+| `CallExternal` | `Target`, symbol/library, argument temps, parameter types, return type | Invoke a declared native function using its target ABI |
+| `LoadFfiOut` | `Target`, `SlotTemp`, `ElementType` | Load an output slot exactly once after its external call |
+
+`AllocFfiOut` produces the address passed at the corresponding `FfiType.Out` position. Lowering
+materializes each loaded null as `None` and each non-null value as `Some(value)`; the slot address
+never becomes a source-language pointer or survives the direct call.
+
 ### Console I/O
 
 | Instruction | Fields | Description |

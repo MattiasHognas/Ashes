@@ -808,6 +808,7 @@ external getpid() -> Int = "getpid"
 external type LLVMModuleRef
 external LLVMModuleCreateWithName(Str) -> LLVMModuleRef
 external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef
+external LLVMGetTargetFromTriple(Str, out LLVMTargetRef, out *u8) -> Bool
 external type Database resource destructor databaseClose
 external databaseClose(consume Database) -> void = "db_close@libdb"
 external databaseVersion(borrow Database) -> Int = "db_version@libdb"
@@ -858,6 +859,19 @@ Rules:
   an ordinary type annotation. An external function with an `FfiBuffer` parameter must be called
   directly and cannot be used as a first-class function value, because materialization is tied to the
   call boundary.
+- `out T` is supported only in an external parameter list, where `T` is an opaque external type or a
+  pointer type. It consumes no Ashes call argument. The compiler allocates a naturally aligned,
+  pointer-sized slot, initializes it to null, passes its address to C, then loads it exactly once after
+  the call. Null becomes `None`; a non-null value becomes `Some(value)`.
+- An out-taking call returns an ordered aggregate containing the non-`void` C return first, followed
+  by each `Maybe(T)` output in declaration order. One component is returned directly, two or more are
+  returned as a tuple, and no components produce `Unit`. The C status value is not interpreted by the
+  compiler, so a failure status and a populated output remain observable exactly as C produced them.
+- Scalar outputs are not supported because zero is a valid scalar value and the declaration cannot
+  prove whether C initialized the slot. `out` cannot be returned, nested beneath `*`, combined with
+  `borrow` or `consume`, or used in an ordinary type annotation. An external function with an `out`
+  parameter must be called directly; the temporary address is never observable in Ashes and cannot
+  escape the call boundary.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows external imports require an explicit DLL name.

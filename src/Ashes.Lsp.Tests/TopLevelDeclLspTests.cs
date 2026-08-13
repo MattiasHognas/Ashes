@@ -217,6 +217,33 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Ffi_out_external_supports_hover_completion_and_semantic_tokens()
+    {
+        const string source =
+            "external type Handle\n" +
+            "external resolve(Str, out Handle, out *u8) -> Bool\n" +
+            "0";
+
+        IReadOnlyList<string> completions = DocumentService.GetCompletions(source, source.Length);
+        completions.ShouldContain("out");
+        completions.ShouldContain("Handle");
+        completions.ShouldContain("resolve");
+
+        DocumentService.HoverItem? hover = DocumentService.GetHover(
+            source,
+            source.IndexOf("resolve", StringComparison.Ordinal));
+        hover.ShouldNotBeNull();
+        hover.Value.Contents.ShouldContain("external resolve(Str, out Handle, out *u8) -> Bool");
+        hover.Value.Contents.ShouldContain("#2 out Handle: Maybe(Handle)");
+        hover.Value.Contents.ShouldContain("#3 out *u8: Maybe(*u8)");
+
+        IReadOnlyList<DocumentService.SemanticTokenItem> tokens = DocumentService.GetSemanticTokens(source);
+        tokens.ShouldContain(token => token.Line == 1
+            && token.Character == "external resolve(Str, out ".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

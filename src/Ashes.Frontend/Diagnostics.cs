@@ -75,6 +75,8 @@ public static class DiagnosticCodes
     public const string StructuredTaskEscape = "ASH043";
     /// <summary>An FFI buffer is declared or used in a shape that cannot remain call-scoped.</summary>
     public const string InvalidFfiBuffer = "ASH044";
+    /// <summary>An external out parameter has an unsupported type, position, or ownership marker.</summary>
+    public const string InvalidFfiOutParameter = "ASH045";
 }
 
 /// <summary>

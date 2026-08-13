@@ -235,6 +235,95 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void External_out_parameters_are_omitted_from_source_arity_and_appended_to_the_result()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle
+            external resolve(Str, out Handle, out *u8) -> Bool
+            resolve("x")
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrExternalFunction resolve = program.ExternalFunctions.Single();
+        resolve.ParameterTypes.ShouldBe([
+            new FfiType.Str(),
+            new FfiType.Out(new FfiType.Opaque("Handle")),
+            new FfiType.Out(new FfiType.Ptr(new FfiType.UInt(8)))
+        ]);
+        IrInst.CallExternal call = program.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single();
+        call.ArgTemps.Count.ShouldBe(3);
+        program.EntryFunction.Instructions.OfType<IrInst.AllocFfiOut>().Count().ShouldBe(2);
+        program.EntryFunction.Instructions.OfType<IrInst.LoadFfiOut>().Count().ShouldBe(2);
+        program.EntryFunction.Instructions.OfType<IrInst.AllocAdt>().Count().ShouldBe(4);
+    }
+
+    [Test]
+    public void Void_external_with_one_out_parameter_returns_maybe_directly()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle
+            external create(out Handle) -> void
+            create()
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrInst.CallExternal call = program.EntryFunction.Instructions.OfType<IrInst.CallExternal>().Single();
+        call.ArgTemps.Count.ShouldBe(1);
+        program.EntryFunction.Instructions.OfType<IrInst.AllocFfiOut>().Count().ShouldBe(1);
+        program.EntryFunction.Instructions.OfType<IrInst.LoadFfiOut>().Count().ShouldBe(1);
+    }
+
+    [Test]
+    public void External_out_rejects_invalid_positions_elements_ownership_and_first_class_use()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle
+            external primitive(out Int) -> Bool
+            external returned() -> out Handle
+            external nested(*out Handle) -> Bool
+            external owned(borrow out Handle) -> Bool
+            external valid(out Handle) -> Bool
+            let f = valid in 0
+            """);
+
+        program.ExternalFunctions.Select(function => function.Name).ShouldBe(["owned", "valid"]);
+        diagnostics.StructuredErrors.Count(error => string.Equals(
+            error.Code,
+            DiagnosticCodes.InvalidFfiOutParameter,
+            StringComparison.Ordinal))
+            .ShouldBe(5);
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "out T requires an opaque external type or pointer type T.",
+            StringComparison.Ordinal));
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "out T is supported only as a direct external parameter.",
+            StringComparison.Ordinal));
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "cannot use 'borrow' or 'consume'",
+            StringComparison.Ordinal));
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "compiler-owned FFI out parameter and must be called directly",
+            StringComparison.Ordinal));
+    }
+
+    [Test]
+    public void External_out_resource_result_participates_in_aggregate_cleanup()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Resource resource destructor closeResource
+            external closeResource(consume Resource) -> void
+            external create(out Resource) -> Bool
+            let result = create() in 0
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        program.EntryFunction.Instructions.OfType<IrInst.CleanupResource>()
+            .Any(cleanup => cleanup.Destructor is not null
+                && string.Equals(cleanup.Destructor.Name, "closeResource", StringComparison.Ordinal))
+            .ShouldBeTrue();
+    }
+
+    [Test]
     public void Void_is_rejected_as_an_external_parameter_type()
     {
         var (program, diagnostics) = LowerProgram("""

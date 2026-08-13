@@ -378,8 +378,8 @@ public sealed record NeedsRowSyntax(IReadOnlyList<CapabilityRefSyntax> Capabilit
 
 /// <summary>
 /// A type as written in an <c>external</c> FFI signature. Deliberately narrower than
-/// <see cref="TypeExpr"/>: only named types, pointer-to types, and declaration-only FFI buffers,
-/// matching what the C ABI surface needs.
+/// <see cref="TypeExpr"/>: only named types, pointer-to types, declaration-only FFI buffers, and
+/// declaration-only out parameters, matching what the C ABI surface needs.
 /// </summary>
 public abstract record ParsedType
 {
@@ -392,6 +392,9 @@ public abstract record ParsedType
     /// <summary>A call-scoped contiguous input buffer, written <c>FfiBuffer(T)</c>.</summary>
     /// <param name="Element">The opaque handle element type.</param>
     public sealed record Buffer(ParsedType Element) : ParsedType;
+    /// <summary>A compiler-owned nullable output slot, written <c>out T</c>.</summary>
+    /// <param name="Element">The opaque handle or pointer value written by the native call.</param>
+    public sealed record Out(ParsedType Element) : ParsedType;
 }
 
 /// <summary>A type expression written by the user in an annotation, e.g. <c>Int -> Str</c>.</summary>

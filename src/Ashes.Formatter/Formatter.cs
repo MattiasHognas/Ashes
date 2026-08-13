@@ -593,6 +593,7 @@ public static class Formatter
             ParsedType.Named named => named.Name,
             ParsedType.Pointer pointer => $"*{WriteParsedType(pointer.Pointee)}",
             ParsedType.Buffer buffer => $"FfiBuffer({WriteParsedType(buffer.Element)})",
+            ParsedType.Out output => $"out {WriteParsedType(output.Element)}",
             _ => throw new InvalidOperationException($"Unexpected parsed type: {type}")
         };
     }

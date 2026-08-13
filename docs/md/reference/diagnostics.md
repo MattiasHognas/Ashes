@@ -53,6 +53,7 @@ Current codes:
 | `ASH042` | Invalid external ownership contract                         |
 | `ASH043` | A structured-concurrency join handle escapes its owning task scope |
 | `ASH044` | Invalid FFI buffer contract                                |
+| `ASH045` | Invalid FFI out-parameter contract                         |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -219,6 +220,11 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
 - `ASH044` — **Invalid FFI buffer contract.** `FfiBuffer(T)` is used outside a direct external
   parameter, `T` is not a copyable opaque external type, `T` is an affine external resource, or the
   buffer-taking function is used as a first-class value instead of being called directly.
+
+- `ASH045` — **Invalid FFI out-parameter contract.** `out T` is used outside a direct external
+  parameter, `T` is not an opaque external type or pointer type, `borrow` or `consume` is attached
+  to the compiler-owned slot, or the declaring function is used as a first-class value instead of
+  being called directly.
 
 ## Record diagnostics
 
