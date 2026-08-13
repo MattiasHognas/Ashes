@@ -12,8 +12,8 @@ dotnet run --project src/Ashes.Cli -- fmt <file> -w
 The RC Perceus memory-model migration and the challenge-regression sweep that followed it — every
 correctness, performance-scaling, and peak-RSS fix, with measurements — are recorded in
 [`docs/md/internals/changelog.md`](../docs/md/internals/changelog.md); each fix ships with a
-regression test under `tests/`; the audit's roadmap now has no remaining verified compiler gaps.
-Every benchmark below is
+regression test under `tests/`; that audit now has no remaining verified compiler gaps. Every
+benchmark below is
 written in its natural, workaround-free form.
 
 ## The suite
