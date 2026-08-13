@@ -769,8 +769,10 @@ lifetime operations from lexical anchors to control-flow-precise positions:
 - `RcDrop` is emitted after the last use or at the start of a branch where the
   owner is dead;
 - match payloads receive their own reference before a parent is consumed;
-- TCO back-edges drop replaced owners, and function exit transfers only the
-  returned root while dropping every other active owner.
+- TCO back-edges drop replaced owners, and function exit transfers the returned root while dropping
+  every other active owner. When an active TCO parameter is stored inside a returned tuple or ADT,
+  construction retains the field reference before the parameter owner is dropped; this applies even
+  when post-body inference is what first proves the parameter runtime-managed.
 
 A task frame carries its own ownership description. The transform publishes
 where it saves each value; lowering turns those offsets and the capture words

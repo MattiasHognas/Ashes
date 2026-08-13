@@ -121,6 +121,8 @@ public static class Runner
     /// <param name="IsCompileError">True when the test expects a compile error rather than a run.</param>
     /// <param name="Stdin">Text fed to the program's stdin, or null for none.</param>
     /// <param name="FileFixtures">Files to materialize before the program runs.</param>
+    /// <param name="ExecutableDirectory">Fixture-relative directory for the generated executable.</param>
+    /// <param name="WorkingDirectory">Fixture-relative directory from which the executable starts.</param>
     /// <param name="TcpServer">The TCP loopback fixture configuration.</param>
     /// <param name="TlsServer">The TLS loopback fixture configuration.</param>
     /// <param name="SkipOnTargets">Target RIDs on which this test is skipped.</param>
@@ -135,6 +137,8 @@ public static class Runner
         bool IsCompileError,
         string? Stdin,
         IReadOnlyList<TestFileFixture> FileFixtures,
+        string? ExecutableDirectory,
+        string? WorkingDirectory,
         TcpServerFixture TcpServer,
         TlsServerFixture TlsServer,
         IReadOnlyList<string> SkipOnTargets);
@@ -324,6 +328,8 @@ public static class Runner
                 targetId,
                 directives.Stdin,
                 directives.FileFixtures,
+                directives.ExecutableDirectory,
+                directives.WorkingDirectory,
                 environmentVariables);
             exit = runExit;
             actual = (stdout ?? "").TrimEnd();
@@ -561,6 +567,8 @@ public static class Runner
             acc.IsCompileError,
             acc.Stdin,
             acc.FileFixtures,
+            acc.ExecutableDirectory,
+            acc.WorkingDirectory,
             new TcpServerFixture(acc.TcpServerEnabled, acc.TcpExpectedText, acc.TcpSendText),
             new TlsServerFixture(acc.TlsServerEnabled, acc.TlsExpectedText, acc.TlsSendText, acc.TlsTrustMode, acc.TlsHandshakeMode, acc.TlsCertificateHost),
             acc.SkipOnTargets);
@@ -578,6 +586,8 @@ public static class Runner
         public bool IsCompileError;
         public string? Stdin;
         public List<TestFileFixture> FileFixtures = new();
+        public string? ExecutableDirectory;
+        public string? WorkingDirectory;
         public bool TcpServerEnabled;
         public string? TcpExpectedText;
         public string? TcpSendText;
@@ -647,6 +657,22 @@ public static class Runner
         if (commentText.StartsWith("file-bytes:", StringComparison.OrdinalIgnoreCase))
         {
             acc.FileFixtures.Add(ParseFileFixture(commentText.Substring("file-bytes:".Length), parseBytes: true));
+            return;
+        }
+
+        if (commentText.StartsWith("executable-directory:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.ExecutableDirectory = ParseFixtureDirectory(
+                commentText.Substring("executable-directory:".Length),
+                "executable-directory");
+            return;
+        }
+
+        if (commentText.StartsWith("working-directory:", StringComparison.OrdinalIgnoreCase))
+        {
+            acc.WorkingDirectory = ParseFixtureDirectory(
+                commentText.Substring("working-directory:".Length),
+                "working-directory");
             return;
         }
 
@@ -836,6 +862,17 @@ public static class Runner
         return bytes;
     }
 
+    private static string ParseFixtureDirectory(string directiveBody, string directiveName)
+    {
+        string path = directiveBody.Trim();
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new InvalidOperationException($"Test fixture {directiveName} cannot be empty.");
+        }
+
+        return path;
+    }
+
     private static string GetFixtureDestinationPath(string rootDirectory, string relativePath)
     {
         var normalizedRelativePath = relativePath
@@ -854,7 +891,7 @@ public static class Runner
 
         if (!candidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Test fixture path '{relativePath}' escapes the test working directory.");
+            throw new InvalidOperationException($"Test fixture path '{relativePath}' escapes the isolated test fixture.");
         }
 
         return candidate;
@@ -1064,6 +1101,8 @@ public static class Runner
         string targetId,
         string? stdin = null,
         IReadOnlyList<TestFileFixture>? fileFixtures = null,
+        string? executableDirectory = null,
+        string? workingDirectory = null,
         IReadOnlyDictionary<string, string>? environmentVariables = null)
     {
         var tempRoot = Path.Combine(Path.GetTempPath(), "ashes-tests");
@@ -1079,8 +1118,15 @@ public static class Runner
                 MaterializeTestFixtures(workDir, fileFixtures);
             }
 
+            (string executableRoot, string executionRoot) = ResolveExecutionLayout(
+                workDir,
+                executableDirectory,
+                workingDirectory);
+            Directory.CreateDirectory(executableRoot);
+            Directory.CreateDirectory(executionRoot);
+
             var exeName = TargetIds.IsWindows(targetId) ? "program.exe" : "program";
-            var exePath = Path.Combine(workDir, exeName);
+            var exePath = Path.Combine(executableRoot, exeName);
             using (var fs = new FileStream(exePath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
                 fs.Write(image);
@@ -1101,7 +1147,7 @@ public static class Runner
                 }
             }
 
-            var psi = BuildRunProcessStartInfo(exePath, workDir, targetId, stdin, environmentVariables);
+            var psi = BuildRunProcessStartInfo(exePath, executionRoot, targetId, stdin, environmentVariables);
             return RunProcessCaptureOutput(psi, stdin);
         }
         finally
@@ -1117,6 +1163,20 @@ public static class Runner
             {
             }
         }
+    }
+
+    private static (string ExecutableRoot, string WorkingRoot) ResolveExecutionLayout(
+        string fixtureRoot,
+        string? executableDirectory,
+        string? workingDirectory)
+    {
+        string executableRoot = executableDirectory is null
+            ? fixtureRoot
+            : GetFixtureDestinationPath(fixtureRoot, executableDirectory);
+        string workingRoot = workingDirectory is null
+            ? fixtureRoot
+            : GetFixtureDestinationPath(fixtureRoot, workingDirectory);
+        return (executableRoot, workingRoot);
     }
 
     private static ProcessStartInfo BuildRunProcessStartInfo(string exePath, string workDir, string targetId, string? stdin, IReadOnlyDictionary<string, string>? environmentVariables)

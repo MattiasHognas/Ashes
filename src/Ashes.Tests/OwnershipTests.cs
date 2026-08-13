@@ -1031,6 +1031,26 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Late_typed_tco_string_is_retained_when_wrapped_in_result()
+    {
+        IrProgram ir = LowerProgram(
+            """
+            let recursive wrap value count =
+                if count <= 0
+                then Ok(value)
+                else wrap(value + "")(count - 1)
+            wrap("value")(0)
+            """);
+
+        IrFunction wrapper = ir.Functions.Single(function =>
+            function.Instructions.Any(instruction => instruction is IrInst.AllocAdt { FieldCount: 1 })
+            && function.Instructions.Any(instruction => instruction is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true }));
+
+        wrapper.Instructions.Any(instruction => instruction is IrInst.RcDup { RuntimeManaged: true })
+            .ShouldBeTrue("The returned Result field needs its own reference before the TCO parameter owner is dropped.");
+    }
+
+    [Test]
     public void Copy_only_user_adt_consumed_by_match_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("type Choice = | Left(Int) | Right(Int)\nlet choice = Left(42) in match choice with | Left(value) -> Ashes.IO.print(value) | Right(value) -> Ashes.IO.print(value + 1)");

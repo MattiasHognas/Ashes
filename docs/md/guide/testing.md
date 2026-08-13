@@ -38,12 +38,18 @@ For each discovered test, the runner:
 
 1. Reads the leading directive block.
 2. Materializes any file fixtures into a temporary working directory.
-3. Compiles the test to a native executable.
-4. Runs the executable.
+3. Compiles the test to a native executable, optionally beneath a declared fixture-relative
+   executable directory.
+4. Runs the executable from the declared fixture-relative working directory, or the fixture root by
+   default.
 5. Compares the observed exit code and stdout with the directive expectations.
 6. Continues to the next test even if the current test fails.
 
 Tests run sequentially.
+
+`// executable-directory:` and `// working-directory:` let host-tool tests model an installed binary
+launched from an unrelated project directory. Both values are relative to the isolated fixture root;
+absolute paths and paths that escape it are rejected. The runner creates the declared directories.
 
 ## Matching Rules
 
@@ -190,6 +196,18 @@ Common mistakes:
 
 - If you expect a runtime failure, set both `// exit:` and `// expect:`.
 
+### `// executable-directory: path`
+
+Places the generated test executable beneath `path` in the isolated fixture. For example,
+`// executable-directory: install/bin` makes `Ashes.IO.Environment.executableDirectory(Unit)` report
+the fixture's `install/bin` directory. The default is the fixture root.
+
+### `// working-directory: path`
+
+Starts the generated executable from `path` in the isolated fixture. For example,
+`// working-directory: workspace/project/src` lets a test exercise upward project discovery while
+the executable remains in an installed layout. The default is the fixture root.
+
 ### `// stdin: ...`
 
 Syntax:
@@ -223,7 +241,7 @@ Syntax:
 
 Meaning:
 
-- Creates a UTF-8 text fixture file in the test working directory before
+- Creates a UTF-8 text fixture file beneath the isolated fixture root before
   execution.
 - Paths must be relative and cannot escape the temporary test directory.
 

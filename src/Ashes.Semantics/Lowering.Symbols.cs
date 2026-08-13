@@ -1416,13 +1416,12 @@ public sealed partial class Lowering
         {
             return (argTemps[0], resultType);
         }
-        if (runtimeManagedCandidate)
-        {
-            PrepareRuntimeManagedAdtChildArguments(
-                args,
-                argTemps,
-                request.RuntimeAdtChildBindings);
-        }
+        PrepareConstructorArgumentOwnership(
+            args,
+            argTypes,
+            argTemps,
+            runtimeManagedCandidate,
+            request.RuntimeAdtChildBindings);
 
         int tag = GetConstructorTag(ctor);
 
@@ -1448,6 +1447,67 @@ public sealed partial class Lowering
         }
 
         return (ptrTemp, resultType);
+    }
+
+    private void PrepareConstructorArgumentOwnership(
+        IReadOnlyList<Expr> arguments,
+        IReadOnlyList<TypeRef> argumentTypes,
+        List<int> argumentTemps,
+        bool runtimeManagedCandidate,
+        IReadOnlyDictionary<string, bool>? childBindings)
+    {
+        RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps);
+        if (runtimeManagedCandidate)
+        {
+            PrepareRuntimeManagedAdtChildArguments(arguments, argumentTemps, childBindings);
+        }
+    }
+
+    private void RetainRuntimeManagedTcoConstructorArguments(
+        IReadOnlyList<Expr> arguments,
+        IReadOnlyList<TypeRef> argumentTypes,
+        List<int> argumentTemps)
+    {
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            if (arguments[index] is not Expr.Var variable
+                || Lookup(variable.Name) is not Binding.Local local
+                || _tcoCtx?.ParamSlots.Contains(local.Slot) != true)
+            {
+                continue;
+            }
+
+            argumentTemps[index] = IsRuntimeManagedTcoParamSlot(local)
+                ? EmitRuntimeManagedConstructorFieldRetain(
+                    argumentTemps[index],
+                    MayUseEmptyListRepresentation(argumentTypes[index]))
+                : EmitPendingRuntimeManagedConstructorFieldRetain(argumentTemps[index], local.Slot);
+        }
+    }
+
+    private int EmitRuntimeManagedConstructorFieldRetain(int sourceTemp, bool mayBeEmpty)
+    {
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(retainedTemp, sourceTemp, RuntimeManaged: true, MayBeEmpty: mayBeEmpty));
+        return retainedTemp;
+    }
+
+    private int EmitPendingRuntimeManagedConstructorFieldRetain(int sourceTemp, int parameterSlot)
+    {
+        int runtimeManagedFlagTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(runtimeManagedFlagTemp, 1));
+        _pendingRuntimeArgumentFlags[runtimeManagedFlagTemp] = parameterSlot;
+
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, sourceTemp));
+        string doneLabel = NewLabel("rc_constructor_field_not_retained");
+        Emit(new IrInst.JumpIfFalse(runtimeManagedFlagTemp, doneLabel));
+        int retainedTemp = EmitRuntimeManagedConstructorFieldRetain(sourceTemp, mayBeEmpty: true);
+        Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
+        Emit(new IrInst.Label(doneLabel));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private (int Temp, TypeRef Type) ReportConstructorArityMismatch(

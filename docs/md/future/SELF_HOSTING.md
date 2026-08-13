@@ -10,8 +10,8 @@ not track how much of the compiler has been ported, port milestones, or bootstra
 `Required` means Ashes still needs a design or implementation. An area tag names the eventual
 consumer, not the project that must implement the prerequisite. Tests are required for every
 delivered change. `Complete` capabilities link to the normative documentation for the shipped
-surface; `Partial`, `Required`, and `Design required` capabilities link to actionable Ashes work
-packages below.
+surface. If a future audit finds an incomplete capability, its row must link to an actionable Ashes
+work package added to this document.
 
 | Capability | Status | Areas |
 |---|---|---|
@@ -33,7 +33,7 @@ packages below.
 | [Directory enumeration, creation, deletion, and atomic rename](../reference/standard-library.md#ashes-io-directory) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [Marking emitted ELF files executable](../reference/standard-library.md#ashes-io-file) | Complete | `Compiler/Semantics`, `Compiler/Backend`, `CLI`, `LSP`, `TestRunner`, `Fuzzing` |
 | [stderr output and controlled process exit codes](../reference/standard-library.md#ashes-io) | Complete | `CLI`, `LSP`, `DAP`, `TestRunner`, `Fuzzing` |
-| [Installed-layout host-tool integration workflow](#gap-installed-layout-host-tool-integration) | Required | `Compiler`, `CLI`, `TestRunner`, `Fuzzing` |
+| [Installed-layout host-tool integration workflow](../guide/testing.md#execution-model) | Complete | `Compiler`, `CLI`, `TestRunner`, `Fuzzing` |
 | [String helpers (`substring`, `length`, `indexOf`, `startsWith`, `contains`, `split`, `trim`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI`, `LSP`, `DAP` |
 | [Unicode scalar classification through `Rune`](../reference/standard-library.md#ashes-rune) | Complete | `Compiler/Frontend`, `Formatter`, `LSP` |
 | [Canonical UTF-8 source offsets and UTF-16/LSP coordinate conversion](../reference/language.md#source-encoding-and-coordinates) | Complete | `Compiler/Frontend`, `Formatter`, `LSP`, `DAP` |
@@ -51,31 +51,10 @@ packages below.
 | [Regex utilities for tooling text](../reference/standard-library.md#ashes-text-regex) | Complete | `Compiler/Semantics`, `CLI`, `LSP`, `DAP`, `TestRunner` |
 | [`Ashes.Test` unit assertions](../reference/standard-library.md#ashes-test) | Complete | `Tests` |
 
+All currently identified Ashes prerequisites for self-hosting are complete. This audit does not claim
+that compiler sources have been ported or that bootstrap staging has begun.
+
 Registry/package commands, LSP, DAP, TestRunner, fuzz-harness parity, bootstrap staging, persistent
 sets, generic hashing, and a named text builder are not missing Ashes prerequisites. They may become
 separate port or optimization work later, but are outside this capability audit until a concrete
 language/runtime/stdlib blocker is demonstrated.
-
-## Capability gaps and work packages
-
-Each package below is the implementation hand-off for one or more incomplete rows in the table. A
-package must add or specify an Ashes capability; work that only ports compiler code does not belong
-here. Update the normative documentation before any language or API implementation.
-
-### Gap: installed-layout host-tool integration
-
-Single-file frontend experiments need only `readText`, but a compatible compiler must discover
-projects, normalize paths, walk source roots, find its shipped `lib/` and runtime assets, create output
-directories, write temporary files, and mark Linux output executable.
-
-Use the existing capability-tracked host APIs. Filesystem acquisition and mutation carry
-`FileRead`/`FileWrite`, environment lookup has explicit ambient-authority classification, and the
-integration programs must not introduce ad-hoc compiler externals.
-
-Workable tasks:
-
-1. Exercise the APIs with Ashes integration programs that discover a project fixture, locate assets
-   from an installed-layout fixture, and atomically create output on Linux and Windows hosts.
-
-Done when an Ashes program launched outside the repository can locate installed-layout fixtures,
-atomically write an executable file, and mark Linux output executable on Linux and Windows hosts.

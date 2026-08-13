@@ -6208,8 +6208,12 @@ public sealed partial class Lowering
                 continue;
             }
 
-            int definitionIndex = _inst.FindIndex(instruction =>
-                instruction is IrInst.AndInt { Target: var target } && target == flagTemp);
+            int definitionIndex = _inst.FindIndex(instruction => instruction switch
+            {
+                IrInst.AndInt { Target: var target } => target == flagTemp,
+                IrInst.LoadConstInt { Target: var target } => target == flagTemp,
+                _ => false,
+            });
             if (definitionIndex >= 0)
             {
                 _inst[definitionIndex] = new IrInst.LoadConstInt(flagTemp, 0)
