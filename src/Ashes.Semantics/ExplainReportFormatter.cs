@@ -44,12 +44,38 @@ internal static class ExplainReportFormatter
             AppendAuthority(lines, report.Authority, report.ExternalAuthority);
         }
 
+        if (request.Includes(ExplainKind.Concurrency))
+        {
+            AppendConcurrency(lines, report.Concurrency);
+        }
+
         if (request.Includes(ExplainKind.Memory))
         {
             AppendMemory(lines, report);
         }
 
         return lines;
+    }
+
+    private static void AppendConcurrency(List<string> lines, IReadOnlyList<ConcurrencyFunctionReport> reports)
+    {
+        Heading(lines, "Concurrency report");
+        if (reports.Count == 0)
+        {
+            lines.Add("  (no task concurrency matched)");
+            return;
+        }
+
+        foreach (ConcurrencyFunctionReport report in reports)
+        {
+            lines.Add($"Function: {Describe(report.Origin, report.Label)}");
+            Counted(lines, "structured scopes", report.Scopes);
+            Counted(lines, "forks", report.Forks);
+            Counted(lines, "joins", report.Joins);
+            Counted(lines, "detached spawns", report.DetachedSpawns);
+        }
+
+        lines.Add(string.Empty);
     }
 
     private static void AppendAuthority(

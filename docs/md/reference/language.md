@@ -2612,6 +2612,9 @@ Desugars to:
 | `Ashes.Task.all(tasks)` | `List(Task(E, A)) -> Task(E, List(A))` |
 | `Ashes.Task.race(tasks)` | `List(Task(E, A)) -> Task(E, A)` |
 | `Ashes.Task.spawn(task)` | `Task(E, A) -> Unit` |
+| `Ashes.Task.scope(task)` | `Task(E, A) -> Task(E, A)` |
+| `Ashes.Task.fork(task)` | `Task(E, A) -> Task(E, JoinHandle(E, A))` |
+| `Ashes.Task.join(handle)` | `JoinHandle(E, A) -> Task(E, A)` |
 
 `Ashes.Task.spawn(task)` detaches a task for fire-and-forget execution: the task advances
 cooperatively whenever any `Ashes.Task.run` drive is blocked waiting (on a socket or timer), and
@@ -2621,7 +2624,42 @@ them, so the task must release its own resources. Detached tasks still in flight
 `run` completes (and the program exits) are abandoned. This is the concurrency primitive behind
 `Ashes.Net.Tcp.Server.serve`'s concurrent connection handling.
 
-#### 19.6.1 Ashes.Task.sleep
+#### 19.6.1 Structured task scopes
+
+Every `async` activation creates one implicit task group. `fork(task)` registers its child with the
+nearest active group and returns a task whose successful value is an affine `JoinHandle(E, A)`.
+`join(handle)` consumes the handle exactly once and returns a task with the child's original result.
+A second join or any later use of that handle is `ASH008`, the ordinary use-after-move resource
+diagnostic. Because the compiler supplies the active group, user code cannot pass the wrong scope.
+
+`Task.scope(task)` optionally introduces a shorter nested boundary inside an enclosing async task.
+It is useful when a parent should finish or cancel one group of children and then continue. It
+preserves the wrapped task's capability row and does not expose a scope token.
+
+Scope-bound values have an additional non-escape rule, checked after ordinary type inference:
+
+- `JoinHandle(E, A)` may not occur in the owning task's error or success result, including inside an
+  aggregate or closure;
+- a task passed to detached `Ashes.Task.spawn` may not capture a join handle; and
+- a nested scope owns distinct handles that cannot escape into its parent.
+
+An escaping value is `ASH043`. This is a semantic lifetime check because the ordinary HM type does
+not carry a source-visible scope parameter.
+
+Leaving a scope is deterministic. After the parent task produces a result, the runtime cancels every
+unjoined child in fork order, drains all children, runs each task-frame ownership descriptor, and only
+then exposes the parent result. A joined child is drained by `join` and is not cancelled again. If an
+unjoined child has already failed, the first such error in fork order becomes the scope result after
+the remaining children are cancelled and drained. If the parent fails, its error wins and all
+children are cancelled before it propagates. Cancellation recursively enters nested scopes and is
+observed only when a task suspends at an existing scheduler wait point.
+
+An empty scope is equivalent to its parent task. `all` and `race` remain task combinators: they may be
+forked as one child, and their existing cancellation rules run inside that child. `spawn` remains the
+explicit detached primitive for infrastructure; ordinary application concurrency should use
+`scope`, `fork`, and `join`.
+
+#### 19.6.2 Ashes.Task.sleep
 
 `Ashes.Task.sleep(ms)` creates a task that suspends for the given
 number of milliseconds, then completes with `0`:
@@ -2636,7 +2674,7 @@ number of milliseconds, then completes with `0`:
 - On Linux, `sleep` uses the `nanosleep` syscall.
 - On Windows, `sleep` uses the `Sleep` kernel32 function.
 
-#### 19.6.2 Ashes.Task.all
+#### 19.6.3 Ashes.Task.all
 
 `Ashes.Task.all(tasks)` takes a list of tasks and runs them all,
 collecting results into a list in the original order:
@@ -2654,7 +2692,7 @@ collecting results into a list in the original order:
 - Results are collected in the same order as the input list.
 - An empty input list produces an empty result list.
 
-#### 19.6.3 Ashes.Task.race
+#### 19.6.4 Ashes.Task.race
 
 `Ashes.Task.race(tasks)` takes a list of tasks and returns the result
 of the first task to complete:

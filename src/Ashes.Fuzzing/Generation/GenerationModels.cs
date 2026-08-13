@@ -49,6 +49,9 @@ internal enum GeneratedFeature
     ZeroCostType,
     RuneLiteral,
     RuneRoundTrip,
+    StructuredScope,
+    Fork,
+    Join,
 }
 
 internal enum OwnershipInterest

@@ -913,6 +913,9 @@ public static class IrOptimizer
             IrInst.CreateTlsCloseTask t => t with { SslTemp = R(t.SslTemp) },
             IrInst.AsyncAll aa => aa with { TaskListTemp = R(aa.TaskListTemp) },
             IrInst.AsyncRace ar => ar with { TaskListTemp = R(ar.TaskListTemp) },
+            IrInst.CreateScopedTask s => s with { ParentTaskTemp = R(s.ParentTaskTemp), ScopeTemp = R(s.ScopeTemp) },
+            IrInst.ForkScopedTask f => f with { OwnerTaskTemp = R(f.OwnerTaskTemp), TaskTemp = R(f.TaskTemp) },
+            IrInst.JoinScopedTask j => j with { HandleTemp = R(j.HandleTemp) },
             IrInst.Suspend s => s with
             {
                 StateStructTemp = R(s.StateStructTemp),
@@ -2179,6 +2182,9 @@ public static class IrOptimizer
             case IrInst.CreateTlsCloseTask t: usedTemps.Add(t.SslTemp); break;
             case IrInst.AsyncAll aa: usedTemps.Add(aa.TaskListTemp); break;
             case IrInst.AsyncRace ar: usedTemps.Add(ar.TaskListTemp); break;
+            case IrInst.CreateScopedTask s: usedTemps.Add(s.ParentTaskTemp); usedTemps.Add(s.ScopeTemp); break;
+            case IrInst.ForkScopedTask f: usedTemps.Add(f.OwnerTaskTemp); usedTemps.Add(f.TaskTemp); break;
+            case IrInst.JoinScopedTask j: usedTemps.Add(j.HandleTemp); break;
         }
     }
 

@@ -925,6 +925,10 @@ public static class StateMachineTransform
             IrInst.CreateTlsCloseTask i => [i.Target],
             IrInst.AsyncAll i => [i.Target],
             IrInst.AsyncRace i => [i.Target],
+            IrInst.CreateTaskScope i => [i.Target],
+            IrInst.CreateScopedTask i => [i.Target],
+            IrInst.ForkScopedTask i => [i.Target],
+            IrInst.JoinScopedTask i => [i.Target],
             // Structured parallelism (`both`). A `both`'s worker descriptor or joined result may be
             // live across an `await` split, so the transform must know these instructions define
             // temps — otherwise the value would be dropped from the coroutine save/restore set and
@@ -1145,6 +1149,17 @@ public static class StateMachineTransform
             IrInst.CreateTlsCloseTask t => [t.SslTemp],
             IrInst.AsyncAll aa => [aa.TaskListTemp],
             IrInst.AsyncRace ar => [ar.TaskListTemp],
+            IrInst.CreateScopedTask s => [s.ParentTaskTemp, s.ScopeTemp],
+            IrInst.ForkScopedTask f => [f.OwnerTaskTemp, f.TaskTemp],
+            IrInst.JoinScopedTask j => [j.HandleTemp],
+            _ => GetUsedTempsParallelAndControl(inst)
+        };
+    }
+
+    private static IEnumerable<int> GetUsedTempsParallelAndControl(IrInst inst)
+    {
+        return inst switch
+        {
             // Structured parallelism (`both`). The fork reads its right-thunk closure, and the join
             // and cleanup read the worker descriptor; any of these temps defined before an `await`
             // and read after it must be recognised as used or it would be dropped from the coroutine

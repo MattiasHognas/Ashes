@@ -28,7 +28,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle WindowsExitProcessImport, LlvmValueHandle WindowsGetCommandLineImport,
         LlvmValueHandle WindowsWideCharToMultiByteImport, LlvmValueHandle WindowsLocalFreeImport,
         LlvmValueHandle WindowsCommandLineToArgvImport, LlvmValueHandle WindowsSleepImport,
-        LlvmValueHandle WindowsVirtualAllocImport, LlvmValueHandle WindowsVirtualFreeImport);
+        LlvmValueHandle WindowsVirtualAllocImport, LlvmValueHandle WindowsVirtualFreeImport,
+        bool UsesStructuredConcurrency);
 
     private static LlvmValueHandle CreateNetworkingInternalI64Global(LlvmTargetContext target, LlvmTypeHandle i64, string symbolName)
     {
@@ -68,7 +69,10 @@ internal static partial class LlvmCodegen
             ctx.WindowsCommandLineToArgvImport, ctx.WindowsSleepImport, ctx.WindowsVirtualAllocImport, ctx.WindowsVirtualFreeImport,
             default, default, default, default, default,
             new Dictionary<string, LlvmValueHandle>(StringComparer.Ordinal),
-            ctx.Flavor, false, false);
+            ctx.Flavor, false, false) with
+        {
+            UsesStructuredConcurrency = ctx.UsesStructuredConcurrency,
+        };
     }
 
     private static (LlvmValueHandle Function, LlvmCodegenState State) PrepareNetworkingRuntimeFunction(
@@ -376,6 +380,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle windowsSleepImport,
         LlvmValueHandle windowsVirtualAllocImport,
         LlvmValueHandle windowsVirtualFreeImport,
+        bool usesStructuredConcurrency,
         bool usesTlsRuntime,
         LlvmAttributeHandle nounwindAttr)
     {
@@ -395,7 +400,8 @@ internal static partial class LlvmCodegen
             windowsBindImport, windowsSetSockOptImport, windowsWsaIoctlImport, windowsWsaSendImport,
             windowsWsaRecvImport, windowsCreateIoCompletionPortImport, windowsGetQueuedCompletionStatusImport, windowsIocpPortGlobal,
             windowsExitProcessImport, windowsGetCommandLineImport, windowsWideCharToMultiByteImport, windowsLocalFreeImport,
-            windowsCommandLineToArgvImport, windowsSleepImport, windowsVirtualAllocImport, windowsVirtualFreeImport);
+            windowsCommandLineToArgvImport, windowsSleepImport, windowsVirtualAllocImport, windowsVirtualFreeImport,
+            usesStructuredConcurrency);
 
         (LlvmValueHandle mbedTlsReadCallback, LlvmValueHandle mbedTlsWriteCallback) = EmitNetworkingMbedTlsCallbacks(ctx);
 

@@ -1548,6 +1548,18 @@ public abstract record IrInst
     /// </summary>
     public sealed record SpawnTask(int Target, int TaskTemp) : IrInst;
 
+    /// <summary>Allocates an empty runtime-owned structured task scope.</summary>
+    public sealed record CreateTaskScope(int Target, bool IsExplicit) : IrInst;
+
+    /// <summary>Wraps the callback's parent task in a scope-exit composite task.</summary>
+    public sealed record CreateScopedTask(int Target, int ParentTaskTemp, int ScopeTemp) : IrInst;
+
+    /// <summary>Registers a child in a scope and returns a completed task containing its join handle.</summary>
+    public sealed record ForkScopedTask(int Target, int OwnerTaskTemp, int TaskTemp) : IrInst;
+
+    /// <summary>Consumes a join handle and returns the registered child task.</summary>
+    public sealed record JoinScopedTask(int Target, int HandleTemp) : IrInst;
+
     /// <summary>
     /// Structured parallelism (Ashes.Task.Parallel.both). Spawns a worker thread to evaluate the
     /// <c>RightClosureTemp</c> thunk (applied to Unit) in its own per-thread arena, or — when
@@ -1967,6 +1979,8 @@ public static class TaskStructLayout
     /// the composite; later child completions are ignored).
     /// </summary>
     public const long StateRaceComposite = -41;
+    /// <summary>Structured scope composite that owns one parent task and its registered children.</summary>
+    public const long StateScopeComposite = -42;
 
     /// <summary>No pending wait is registered for the task.</summary>
     public const long WaitNone = 0;
