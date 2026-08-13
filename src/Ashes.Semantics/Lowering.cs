@@ -9027,6 +9027,7 @@ public sealed partial class Lowering
         IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes => FileWriteCapabilityName,
         IntrinsicKind.SpawnProcess => ProcessSpawnCapabilityName,
         IntrinsicKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
+        IntrinsicKind.FfiCopyBytes => UnsafeFfiCapabilityName,
         _ => null,
     };
 
@@ -9117,6 +9118,7 @@ public sealed partial class Lowering
             IntrinsicKind.AsyncFork => LowerAsyncFork(collectedArgs[0]),
             IntrinsicKind.AsyncJoin => LowerAsyncJoin(collectedArgs[0]),
             IntrinsicKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0], request),
+            IntrinsicKind.FfiCopyBytes => LowerFfiCopyBytes(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0], request),
             IntrinsicKind.BytesLength => LowerBytesLength(collectedArgs[0]),
             IntrinsicKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),
@@ -9229,6 +9231,7 @@ public sealed partial class Lowering
             or BuiltinRegistry.BuiltinValueKind.FileWriteBytes => FileWriteCapabilityName,
         BuiltinRegistry.BuiltinValueKind.SpawnProcess => ProcessSpawnCapabilityName,
         BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => TimeReadCapabilityName,
+        BuiltinRegistry.BuiltinValueKind.FfiCopyBytes => UnsafeFfiCapabilityName,
         _ => null,
     };
 
@@ -9320,6 +9323,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.AsyncFork => LowerAsyncFork(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.AsyncJoin => LowerAsyncJoin(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerBytesEmpty(collectedArgs[0], request),
+            BuiltinRegistry.BuiltinValueKind.FfiCopyBytes => LowerFfiCopyBytes(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerBytesSingleton(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.BytesLength => LowerBytesLength(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.BytesGet => LowerBytesGet(collectedArgs[0], collectedArgs[1]),

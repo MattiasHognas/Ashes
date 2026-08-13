@@ -19,11 +19,12 @@ These types are always available without imports:
 
 ## Module Overview
 
-The standard library is organized under eleven top-level namespaces: `Ashes.IO` (console, file, and
+The standard library is organized under twelve top-level namespaces: `Ashes.IO` (console, file, and
 process I/O), `Ashes.Net` (networking and wire protocols), `Ashes.Number` (numeric helpers),
 `Ashes.Collection` (containers), `Ashes.Text` (strings and text formats), `Ashes.Byte` (binary
-data), `Ashes.Task` (concurrency), `Ashes.Core` (core value helpers), `Ashes.Trait` (standard traits), `Ashes.Test` (assertions),
-and the internal-only `Ashes.Internal`. Some modules are compiler intrinsics, some are shipped
+data), `Ashes.Ffi` (trusted foreign-memory conversion), `Ashes.Task` (concurrency), `Ashes.Core`
+(core value helpers), `Ashes.Trait` (standard traits), `Ashes.Test` (assertions), and the
+internal-only `Ashes.Internal`. Some modules are compiler intrinsics, some are shipped
 Ashes code from `lib/Ashes/`, and some are both; that distinction is an implementation detail —
 imports work identically for all of them.
 
@@ -632,6 +633,16 @@ represented as their own cons-style ADT (no dependency on `Ashes.Collection.Map`
 - `index(i)(json)` returning `Json` — array element lookup (`JsonNull` when out of range)
 - `asStr` / `asInt` / `asFloat` / `asBool` — extract a scalar with a sensible default
 - `isNull(json)` returning `Bool`
+
+## `Ashes.Ffi` — trusted foreign-memory conversion
+
+### `Ashes.Ffi`
+
+- `copyBytes(pointer)(length)` returning `Result(Str, Bytes)` and requiring `UnsafeFfi` — immediately
+  copy up to 1 GiB from a foreign `*u8` range into fresh managed `Bytes`. Zero length succeeds even
+  for a null pointer; nonzero null pointers and over-bound lengths return `Error`. The caller must
+  keep the foreign owner live and guarantee that the declared range is readable until the copy
+  completes.
 
 ## `Ashes.Byte` — binary data
 

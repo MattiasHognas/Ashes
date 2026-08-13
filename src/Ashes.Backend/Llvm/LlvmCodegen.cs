@@ -2249,6 +2249,10 @@ internal static partial class LlvmCodegen
                 state,
                 copyString.Target,
                 EmitCopyFfiString(state, LoadTemp(state, copyString.PointerTemp), copyString.StringType)),
+            IrInst.CopyFfiBytes copyBytes => StoreTemp(
+                state,
+                copyBytes.Target,
+                EmitCopyFfiBytes(state, LoadTemp(state, copyBytes.PointerTemp), LoadTemp(state, copyBytes.LengthTemp))),
             IrInst.CallExternal callExternal => StoreTemp(state, callExternal.Target, EmitCallExternal(state, callExternal.SymbolName, callExternal.LibraryName, callExternal.ArgTemps, callExternal.ParameterTypes, callExternal.ReturnType)),
             IrInst.LoadMemOffset loadMemOffset => StoreTemp(state, loadMemOffset.Target, LoadMemory(state, LoadTemp(state, loadMemOffset.BasePtr), loadMemOffset.OffsetBytes, $"load_mem_{loadMemOffset.Target}")),
             IrInst.StoreMemOffset storeMemOffset => StoreMemory(state, LoadTemp(state, storeMemOffset.BasePtr), storeMemOffset.OffsetBytes, LoadTemp(state, storeMemOffset.Source), $"store_mem_{storeMemOffset.OffsetBytes}"),

@@ -815,13 +815,23 @@ argument. The compiler creates a naturally aligned, pointer-sized stack slot ini
 passes its address to the native call, and loads it exactly once after the call. Null materializes as
 `None`; a non-null opaque handle or pointer materializes as `Some(value)`. A non-void native result
 comes first, followed by out results in declaration order; the source result is the sole component
-directly or a tuple when there are multiple components. The native status value is never interpreted.
+directly or a tuple when there are multiple components. A non-null declared resource produced through
+an out slot is a new owned affine value and participates in the same automatic cleanup as a direct
+resource return. The native status value is never interpreted.
 An external `FfiStr` result remains a raw pointer only inside the direct-call lowering sequence. The
 backend performs a bounded NUL scan, validates UTF-8, and copies successful bytes into a fresh Ashes
 string. Conversion failures are explicit `Result` errors. Borrowed pointers are never freed; an owned
 non-null pointer is passed exactly once to its declaration-validated external destructor after the
 copy or failed conversion and before the result becomes visible to Ashes. Nullable returns and
 string-valued out slots materialize null as `Ok(None)`.
+`Ashes.Ffi.copyBytes` is the sole trusted escape hatch from a raw foreign byte range into an ordinary
+managed value. Lowering emits `CopyFfiBytes` after the pointer and `u64` length have been evaluated.
+The backend accepts null only for zero length, rejects lengths above 1 GiB with `Error` before pointer
+access, allocates an owned `Bytes` value, and performs one immediate copy. Because the owning resource
+remains live through the instruction and ordinary cleanup follows it, no foreign pointer is retained
+in the resulting value. The private LLVM facade uses this sequence for
+`LLVMTargetMachineEmitToMemoryBuffer`: the memory buffer is an affine resource, its start and size are
+borrowed reads, and `LLVMDisposeMemoryBuffer` runs after the object bytes have been materialized.
 Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
 or waits for and releases its process handle on Windows.
 

@@ -168,6 +168,8 @@ public static class BuiltinRegistry
         AsyncJoin,
         /// <summary>The empty byte sequence.</summary>
         BytesEmpty,
+        /// <summary>Copies a foreign pointer-plus-length range into managed bytes.</summary>
+        FfiCopyBytes,
         /// <summary>A single-byte sequence.</summary>
         BytesSingleton,
         /// <summary>The length of a byte sequence.</summary>
@@ -617,6 +619,13 @@ public static class BuiltinRegistry
                     ["getU16Le"] = new("getU16Le", BuiltinValueKind.BytesGetU16Le, IsCallable: true, Arity: 2),
                     ["getU32Le"] = new("getU32Le", BuiltinValueKind.BytesGetU32Le, IsCallable: true, Arity: 2),
                     ["getU64Le"] = new("getU64Le", BuiltinValueKind.BytesGetU64Le, IsCallable: true, Arity: 2)
+                }),
+            ["Ashes.Ffi"] = new(
+                "Ashes.Ffi",
+                null,
+                new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
+                {
+                    ["copyBytes"] = new("copyBytes", BuiltinValueKind.FfiCopyBytes, IsCallable: true, Arity: 2)
                 }),
             ["Ashes.Number.UInt"] = new(
                 "Ashes.Number.UInt",

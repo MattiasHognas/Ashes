@@ -866,7 +866,9 @@ Rules:
 - `out T` is supported only in an external parameter list, where `T` is an opaque external type or a
   pointer type. It consumes no Ashes call argument. The compiler allocates a naturally aligned,
   pointer-sized slot, initializes it to null, passes its address to C, then loads it exactly once after
-  the call. Null becomes `None`; a non-null value becomes `Some(value)`.
+  the call. Null becomes `None`; a non-null value becomes `Some(value)`. When `T` is a declared
+  external resource, the non-null `Some` payload is a newly owned affine value and is closed
+  automatically unless source code consumes it first.
 - An out-taking call returns an ordered aggregate containing the non-`void` C return first, followed
   by each `Maybe(T)` output in declaration order. One component is returned directly, two or more are
   returned as a tuple, and no components produce `Unit`. The C status value is not interpreted by the
@@ -890,6 +892,20 @@ Rules:
   `Result(Str, Maybe(Str))`. `FfiStr` is declaration-only, cannot be nested beneath `*`, cannot be an
   ordinary parameter, and makes the external function direct-call-only so conversion and disposal
   remain attached to the native call boundary.
+- Foreign pointer-plus-length results are copied into managed storage with the trusted
+  `Ashes.Ffi.copyBytes(pointer)(length)` intrinsic. It has type
+  `*u8 -> u64 -> Result(Str, Bytes) needs {UnsafeFfi}` and never creates a borrowed `Bytes` view. The
+  bytes are copied before the call returns, so the foreign allocation only needs to remain live for
+  the duration of `copyBytes`.
+- A zero length succeeds with empty `Bytes`, including when `pointer` is null. A nonzero length with
+  a null pointer returns `Error` without dereferencing it. Lengths above 1 GiB return `Error` before
+  allocation or pointer access, preventing overflow in the managed `Bytes` layout. For an accepted
+  non-null range, the caller remains responsible for proving that every byte is readable;
+  `UnsafeFfi` records that unavoidable foreign-memory obligation.
+- The intrinsic is intended to materialize borrowed buffers exposed by declarations such as
+  `LLVMGetBufferStart` plus `LLVMGetBufferSize`. The owning external resource must remain live until
+  both values have been read and the copy has completed; ordinary affine-resource liveness and
+  cleanup enforce that sequencing.
 - The optional string after `=` overrides the C symbol name. A symbol override
   may use `symbol@library` to request a dynamic import from that shared library
   or DLL. Windows external imports require an explicit DLL name.
