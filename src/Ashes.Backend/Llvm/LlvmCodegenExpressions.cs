@@ -374,6 +374,79 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "ffi_string_result_value");
     }
 
+    private static LlvmValueHandle EmitCopyFfiBytes(
+        LlvmCodegenState state,
+        LlvmValueHandle pointerAddress,
+        LlvmValueHandle length)
+    {
+        const ulong copyLimit = 1024UL * 1024UL * 1024UL;
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_bytes_result");
+        LlvmBasicBlockHandle sizeAccepted = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_size_accepted");
+        LlvmBasicBlockHandle empty = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_empty");
+        LlvmBasicBlockHandle checkPointer = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_check_pointer");
+        LlvmBasicBlockHandle copy = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_copy");
+        LlvmBasicBlockHandle nullPointer = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_null");
+        LlvmBasicBlockHandle tooLong = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_too_long");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "ffi_bytes_done");
+
+        LlvmValueHandle exceedsLimit = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Ugt,
+            length,
+            LlvmApi.ConstInt(state.I64, copyLimit, 0),
+            "ffi_bytes_exceeds_limit");
+        LlvmApi.BuildCondBr(builder, exceedsLimit, tooLong, sizeAccepted);
+
+        LlvmApi.PositionBuilderAtEnd(builder, sizeAccepted);
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            length,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "ffi_bytes_is_empty");
+        LlvmApi.BuildCondBr(builder, isEmpty, empty, checkPointer);
+
+        LlvmApi.PositionBuilderAtEnd(builder, empty);
+        LlvmApi.BuildStore(builder, EmitResultOk(state, EmitBytesEmpty(state)), resultSlot);
+        LlvmApi.BuildBr(builder, done);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkPointer);
+        LlvmValueHandle isNull = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            pointerAddress,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "ffi_bytes_is_null");
+        LlvmApi.BuildCondBr(builder, isNull, nullPointer, copy);
+
+        LlvmApi.PositionBuilderAtEnd(builder, copy);
+        LlvmValueHandle source = LlvmApi.BuildIntToPtr(builder, pointerAddress, state.I8Ptr, "ffi_bytes_pointer");
+        LlvmValueHandle copied = EmitHeapStringSliceFromBytesPointer(state, source, length, "ffi_bytes_copy");
+        LlvmApi.BuildStore(builder, EmitResultOk(state, copied), resultSlot);
+        LlvmApi.BuildBr(builder, done);
+
+        LlvmApi.PositionBuilderAtEnd(builder, nullPointer);
+        EmitFfiBytesError(state, resultSlot, done, "Foreign byte pointer was null for a nonzero length.");
+
+        LlvmApi.PositionBuilderAtEnd(builder, tooLong);
+        EmitFfiBytesError(state, resultSlot, done, "Foreign byte length exceeds 1073741824 bytes.");
+
+        LlvmApi.PositionBuilderAtEnd(builder, done);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "ffi_bytes_result_value");
+    }
+
+    private static void EmitFfiBytesError(
+        LlvmCodegenState state,
+        LlvmValueHandle resultSlot,
+        LlvmBasicBlockHandle done,
+        string message)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, message)), resultSlot);
+        LlvmApi.BuildBr(builder, done);
+    }
+
     private static LlvmValueHandle EmitFfiStringScan(
         LlvmCodegenState state,
         LlvmValueHandle pointer,

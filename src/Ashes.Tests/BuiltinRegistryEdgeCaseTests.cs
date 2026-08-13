@@ -46,6 +46,17 @@ public sealed class BuiltinRegistryEdgeCaseTests
     }
 
     [Test]
+    public void Ashes_Ffi_copyBytes_should_be_callable_with_arity_2()
+    {
+        BuiltinRegistry.TryGetModule("Ashes.Ffi", out BuiltinRegistry.BuiltinModule module).ShouldBeTrue();
+
+        BuiltinRegistry.BuiltinModuleMember copyBytes = module.Members["copyBytes"];
+        copyBytes.IsCallable.ShouldBeTrue();
+        copyBytes.Arity.ShouldBe(2);
+        copyBytes.Kind.ShouldBe(BuiltinRegistry.BuiltinValueKind.FfiCopyBytes);
+    }
+
+    [Test]
     public void Ashes_IO_args_should_not_be_callable()
     {
         BuiltinRegistry.TryGetModule("Ashes.IO", out var module).ShouldBeTrue();
@@ -119,6 +130,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         BuiltinRegistry.IsBuiltinModule("Ashes").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.IO").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.IO.File").ShouldBeTrue();
+        BuiltinRegistry.IsBuiltinModule("Ashes.Ffi").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Text").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Http").ShouldBeTrue();
         BuiltinRegistry.IsBuiltinModule("Ashes.Net.Tcp").ShouldBeTrue();
@@ -197,6 +209,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         names.ShouldContain("Ashes");
         names.ShouldContain("Ashes.IO");
         names.ShouldContain("Ashes.IO.File");
+        names.ShouldContain("Ashes.Ffi");
         names.ShouldContain("Ashes.Text");
         names.ShouldContain("Ashes.Net.Http");
         names.ShouldContain("Ashes.Net.Tcp");

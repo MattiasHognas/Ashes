@@ -64,6 +64,7 @@ public sealed class AmbientAuthorityCapabilityTests
     [Arguments("Ashes.IO.Console.monotonicMillis(Unit)", "TimeRead", "")]
     [Arguments("entropy(1)", "Entropy", "external entropy(Int) -> Int needs {Entropy}")]
     [Arguments("unknown(1)", "UnsafeFfi", "external unknown(Int) -> Int")]
+    [Arguments("Ashes.Ffi.copyBytes(pointer())(0u64)", "UnsafeFfi", "external pointer() -> *u8 needs {}")]
     [Arguments("Ashes.Net.Tcp.connect(\"localhost\")(80)", "NetConnect", "")]
     [Arguments("Ashes.Net.Tcp.Server.listen(8080)", "NetListen", "")]
     public void Closed_pure_row_rejects_each_ambient_authority_category(

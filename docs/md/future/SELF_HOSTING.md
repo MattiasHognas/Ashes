@@ -23,7 +23,7 @@ packages below.
 | [Call-scoped native arrays of opaque handles](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
 | [LLVM out parameters](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `LSP`, `Fuzzing` |
 | [Returned native strings](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
-| [Foreign pointer-plus-length buffers](#gap-foreign-pointer-plus-length-buffers) | Required | `Compiler/Backend` |
+| [Foreign pointer-plus-length buffers](../reference/standard-library.md#ashes-ffi) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
 | [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
@@ -60,52 +60,6 @@ language/runtime/stdlib blocker is demonstrated.
 Each package below is the implementation hand-off for one or more incomplete rows in the table. A
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
-
-### Gap: Foreign pointer-plus-length buffers
-
-`Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
-(`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
-own `external` mechanism can now materialize call-scoped contiguous arrays of opaque handles,
-nullable opaque/pointer out parameters, and borrowed or owned native UTF-8 strings. Ashes code still
-cannot copy a returned pointer-plus-length buffer into `Bytes`. The current C# adapter handles this
-shape with explicit `Marshal`/copy operations; the representative blocker is
-`LLVMTargetMachineEmitToMemoryBuffer`.
-
-**Decision (2026-07-24): extend Ashes' FFI rather than require an Ashes compiler to use textual LLVM
-IR plus a subprocess.** This preserves direct access to LLVM-C and avoids making process spawning an
-accidental backend requirement. Specify the extension in the
-[language reference](../reference/language.md) before implementation.
-
-Object emission returns an owning `LLVMMemoryBufferRef`; `LLVMGetBufferStart` and
-`LLVMGetBufferSize` expose a borrowed pointer and length. The safe Ashes operation is an immediate,
-bounded copy into owned `Bytes`, not a general foreign slice that may outlive its owner.
-
-Workable tasks:
-
-1. Model `LLVMMemoryBufferRef` as a declared affine external resource with
-   `LLVMDisposeMemoryBuffer` as its destructor.
-2. Add a trusted `Ffi.copyBytes : *u8 -> u64 -> Bytes` primitive (or equivalent declaration shape)
-   that validates length overflow, copies immediately, and requires `UnsafeFfi`.
-3. Keep the memory-buffer resource live across both pointer/length reads and the copy; make raw LLVM
-   functions file-local behind an exported nominal wrapper.
-4. Test zero-length, binary NUL bytes, large lengths, overflow rejection, and exactly-once cleanup,
-   then compare emitted object bytes with the current C# backend.
-
-#### Ownership facade and delivery order
-
-Owning LLVM objects—contexts, modules, builders, target machines, target data, DI builders, pass
-options, memory buffers, and messages—must be declared resources when they have a destructor.
-Types, values, basic blocks, metadata, and targets are non-owning handles tied to an owner; keep that
-lifetime invariant inside the opaque LLVM module initially. Record consuming APIs such as
-`LLVMLinkModules2` explicitly. In external declarations, `borrow` means the native call does not take
-Ashes ownership; it does not claim that LLVM leaves the native object unmodified.
-
-Deliver the remaining work as one reviewable slice: foreign binary buffers plus a minimal private
-LLVM facade. It updates the language reference first, then Frontend, Formatter, Semantics/IR, Backend,
-diagnostics, LSP, unit/e2e tests, and relevant fuzz generators. Do not add C structs by value,
-callbacks, varargs, scalar out parameters, or public pointer arithmetic until an audited LLVM call
-actually requires them. The package is done when an Ashes program uses the facade to construct a tiny
-LLVM module and emit object bytes identical to the C# adapter on all four targets.
 
 ### Gap: efficient immutable binary construction
 

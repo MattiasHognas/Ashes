@@ -1396,6 +1396,7 @@ public sealed partial class Lowering
         IntrinsicKind.BytesGetU16Le => 2,
         IntrinsicKind.BytesGetU32Le => 2,
         IntrinsicKind.BytesGetU64Le => 2,
+        IntrinsicKind.FfiCopyBytes => 2,
         IntrinsicKind.HttpPost => 2,
         IntrinsicKind.NetTcpConnect => 2,
         IntrinsicKind.NetTcpSend => 2,
@@ -4415,6 +4416,65 @@ public sealed partial class Lowering
     }
 
     // --- Ashes.Byte binding factories ---
+
+    private Binding.Intrinsic CreateFfiCopyBytesBinding()
+    {
+        TypeRef result = CreateStringResultType(new TypeRef.TBytes());
+        TypeRef function = new TypeRef.TFun(
+            new TypeRef.TPtr(new TypeRef.TUInt(8)),
+            new TypeRef.TFun(new TypeRef.TUInt(64), result));
+        return new Binding.Intrinsic(
+            IntrinsicKind.FfiCopyBytes,
+            BuiltinCapabilityScheme([], function, UnsafeFfiCapabilityName));
+    }
+
+    private (int, TypeRef) LowerFfiCopyBytes(Expr pointerArg, Expr lengthArg)
+    {
+        using var pointerSpan = PushDiagnosticSpan(pointerArg);
+        var (pointerTemp, pointerType) = LowerExpr(pointerArg);
+        TypeRef prunedPointer = Prune(pointerType);
+        if (prunedPointer is TypeRef.TNever)
+        {
+            return (pointerTemp, prunedPointer);
+        }
+
+        TypeRef expectedPointer = new TypeRef.TPtr(new TypeRef.TUInt(8));
+        if (prunedPointer is TypeRef.TVar)
+        {
+            Unify(prunedPointer, expectedPointer);
+            prunedPointer = expectedPointer;
+        }
+
+        if (prunedPointer is not TypeRef.TPtr { Pointee: TypeRef.TUInt { Bits: 8 } })
+        {
+            ReportDiagnostic(GetSpan(pointerArg), $"Ashes.Ffi.copyBytes() expects *u8 for pointer but got {Pretty(prunedPointer)}.");
+            return (pointerTemp, CreateStringResultType(new TypeRef.TBytes()));
+        }
+
+        using var lengthSpan = PushDiagnosticSpan(lengthArg);
+        var (lengthTemp, lengthType) = LowerExpr(lengthArg);
+        TypeRef prunedLength = Prune(lengthType);
+        if (prunedLength is TypeRef.TNever)
+        {
+            return (lengthTemp, prunedLength);
+        }
+
+        if (prunedLength is TypeRef.TVar)
+        {
+            Unify(prunedLength, new TypeRef.TUInt(64));
+            prunedLength = new TypeRef.TUInt(64);
+        }
+
+        if (prunedLength is not TypeRef.TUInt { Bits: 64 })
+        {
+            ReportDiagnostic(GetSpan(lengthArg), $"Ashes.Ffi.copyBytes() expects u64 for length but got {Pretty(prunedLength)}.");
+            return (lengthTemp, CreateStringResultType(new TypeRef.TBytes()));
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.CopyFfiBytes(target, pointerTemp, lengthTemp));
+        return (target, CreateStringResultType(new TypeRef.TBytes()));
+    }
 
     private Binding.Intrinsic CreateBytesEmptyBinding()
     {

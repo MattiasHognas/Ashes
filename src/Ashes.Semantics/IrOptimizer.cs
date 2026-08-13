@@ -758,6 +758,7 @@ public static class IrOptimizer
             IrInst.ToCString c => c with { StrTemp = R(c.StrTemp) },
             IrInst.LoadFfiOut load => load with { SlotTemp = R(load.SlotTemp) },
             IrInst.CopyFfiString copy => copy with { PointerTemp = R(copy.PointerTemp) },
+            IrInst.CopyFfiBytes copy => copy with { PointerTemp = R(copy.PointerTemp), LengthTemp = R(copy.LengthTemp) },
             IrInst.CallExternal c => c with { ArgTemps = c.ArgTemps.Select(R).ToList() },
 
             // ADTs.
@@ -2006,6 +2007,7 @@ public static class IrOptimizer
         {
             case IrInst.LoadFfiOut load: usedTemps.Add(load.SlotTemp); break;
             case IrInst.CopyFfiString copy: usedTemps.Add(copy.PointerTemp); break;
+            case IrInst.CopyFfiBytes copy: usedTemps.Add(copy.PointerTemp); usedTemps.Add(copy.LengthTemp); break;
             case IrInst.SetAdtField sf: usedTemps.Add(sf.Ptr); usedTemps.Add(sf.Source); break;
             case IrInst.GetAdtTag gt: usedTemps.Add(gt.Ptr); break;
             case IrInst.GetAdtField gf: usedTemps.Add(gf.Ptr); break;

@@ -597,6 +597,7 @@ public sealed partial class Lowering
         AsyncFork,
         AsyncJoin,
         BytesEmpty,
+        FfiCopyBytes,
         BytesSingleton,
         BytesLength,
         BytesGet,

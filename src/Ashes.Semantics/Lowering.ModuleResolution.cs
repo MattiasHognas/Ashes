@@ -449,6 +449,7 @@ public sealed partial class Lowering
         return kind switch
         {
             BuiltinRegistry.BuiltinValueKind.BytesEmpty => LowerQualifiedBuiltinFunctionReference(name, CreateBytesEmptyBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.FfiCopyBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFfiCopyBytesBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesSingleton => LowerQualifiedBuiltinFunctionReference(name, CreateBytesSingletonBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesLength => LowerQualifiedBuiltinFunctionReference(name, CreateBytesLengthBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.BytesGet => LowerQualifiedBuiltinFunctionReference(name, CreateBytesGetBinding().S.Body),

@@ -40,6 +40,7 @@ internal static class ProgramPreludeGenerator
             AddFfiBuffer(caseIndex, items, features, trace);
             AddFfiOut(caseIndex, items, features, trace);
             AddFfiString(caseIndex, items, features, trace);
+            AddForeignBuffer(caseIndex, items, features, trace);
         }
 
         switch (caseIndex % 3)
@@ -153,6 +154,32 @@ internal static class ProgramPreludeGenerator
         features.Add(GeneratedFeature.AmbientAuthority);
         trace.Add("program:external-resource");
         trace.Add("program:ambient-authority");
+    }
+
+    private static void AddForeignBuffer(
+        int caseIndex,
+        List<TopLevelItem> items,
+        GeneratedFeatureSet features,
+        List<string> trace)
+    {
+        string suffix = caseIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string resourceName = "FuzzResource" + suffix;
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            "fuzzBufferStart" + suffix,
+            [new ParsedType.Named(resourceName)],
+            new ParsedType.Pointer(new ParsedType.Named("u8")))
+        {
+            ParameterOwnerships = [ExternalParameterOwnership.Borrow],
+        }));
+        items.Add(new TopLevelItem.External(new ExternalDecl.Function(
+            "fuzzBufferSize" + suffix,
+            [new ParsedType.Named(resourceName)],
+            new ParsedType.Named("u64"))
+        {
+            ParameterOwnerships = [ExternalParameterOwnership.Borrow],
+        }));
+        features.Add(GeneratedFeature.ForeignBuffer);
+        trace.Add("program:foreign-buffer");
     }
 
     private static void AddEvolvedTypes(

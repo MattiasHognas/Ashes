@@ -1490,6 +1490,8 @@ public abstract record IrInst
     public sealed record LoadFfiOut(int Target, int SlotTemp, FfiType ElementType) : IrInst;
     /// <summary>Copies and validates a native UTF-8 pointer, disposing owned storage afterward.</summary>
     public sealed record CopyFfiString(int Target, int PointerTemp, FfiType.NativeString StringType) : IrInst;
+    /// <summary>Copies a bounded foreign pointer-plus-length range into fresh managed bytes.</summary>
+    public sealed record CopyFfiBytes(int Target, int PointerTemp, int LengthTemp) : IrInst;
     /// <summary>Calls an external (FFI) function, marshalling arguments and the result per the declared
     /// <see cref="FfiType"/> signature.</summary>
     /// <param name="Target">Temp receiving the (marshalled) return value.</param>
