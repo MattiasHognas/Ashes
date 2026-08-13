@@ -6,6 +6,7 @@
     { "include": "#comments" },
     { "include": "#imports" },
     { "include": "#traits" },
+    { "include": "#ffi" },
     { "include": "#keywords" },
     { "include": "#constants" },
     { "include": "#strings" },
@@ -44,7 +45,48 @@
         },
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|module|await|external|capability|provide|needs|perform|handle)\\b"
+          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|alias|module|await|external|capability|provide|needs|perform|handle)\\b"
+        }
+      ]
+    },
+    "ffi": {
+      "patterns": [
+        {
+          "match": "\\b(resource)\\s+(destructor)\\b",
+          "captures": {
+            "1": { "name": "storage.modifier.resource.ashes" },
+            "2": { "name": "storage.modifier.destructor.ashes" }
+          }
+        },
+        {
+          "name": "storage.modifier.ownership.ashes",
+          "match": "\\b(borrow|consume|out)(?=\\s+(?:\\*|[A-Z]))"
+        },
+        {
+          "begin": "\\b(FfiStr)(\\()",
+          "beginCaptures": {
+            "1": { "name": "support.type.ffi.ashes" },
+            "2": { "name": "punctuation.paren.open.ashes" }
+          },
+          "end": "(\\))",
+          "endCaptures": {
+            "1": { "name": "punctuation.paren.close.ashes" }
+          },
+          "patterns": [
+            {
+              "name": "storage.modifier.ffi-string.ashes",
+              "match": "\\b(nullable|owned|borrowed)\\b"
+            },
+            { "include": "#identifiers" }
+          ]
+        },
+        {
+          "name": "support.type.ffi.ashes",
+          "match": "\\b(FfiBuffer|FfiStr)\\b"
+        },
+        {
+          "name": "support.type.builtin.ashes",
+          "match": "\\b(u8|u16|u32|u64|void)\\b"
         }
       ]
     },

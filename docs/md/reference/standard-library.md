@@ -121,6 +121,29 @@ Supported on Linux x64, Linux arm64, and Windows x64.
   discarded), so it is for reading one file to completion, not interleaving line-reads across handles.
 - `close(fh)` returning `Result(Str, Unit)` — close explicitly (also automatic on scope exit).
 
+### `Ashes.IO.Path`
+
+Pure lexical path manipulation. Every operation takes an explicit `Style` (`Unix` or `Windows`), so
+results are deterministic when a compiler manipulates paths for a platform other than the one it is
+running on. These functions do not access the filesystem, resolve symlinks, or require capabilities.
+
+- `separator(style)` returning `Str` — `/` for `Unix`, `\` for `Windows`.
+- `normalize(style)(path)` returning `Str` — collapse repeated separators and `.` components and
+  resolve lexical `..` components. Absolute paths never traverse above their root; leading `..`
+  components are retained for relative paths. An empty relative path normalizes to `.`. Windows
+  accepts both separator characters and preserves drive roots and UNC `server/share` roots.
+- `join(style)(left)(right)` returning `Str` — join and normalize two paths. An absolute `right`
+  operand replaces `left`; a Windows drive-qualified `right` operand also replaces it.
+- `parent(style)(path)` returning `Str` — normalized lexical parent. A root is its own parent and a
+  relative single-component path has parent `.`.
+- `basename(style)(path)` returning `Str` — final normalized component, or the empty string for a
+  root.
+- `extension(style)(path)` returning `Str` — suffix beginning at the final dot in the basename;
+  empty for a dotfile, a trailing dot, or a name without an extension.
+- `relativeTo(style)(base)(target)` returning `Str` — normalized path from directory `base` to
+  `target`. Different Unix/relative roots or different Windows drive/UNC roots return normalized
+  `target` unchanged. Windows root and component comparison is ASCII case-insensitive.
+
 ### `Ashes.IO.Process`
 
 Synchronous subprocess control with piped stdin/stdout/stderr.

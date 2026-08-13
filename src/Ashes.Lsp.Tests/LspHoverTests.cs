@@ -18,6 +18,40 @@ public sealed class LspHoverTests
             out StandardLibraryDocumentation.Entry print).ShouldBeTrue();
         print.Summary.ShouldContain("Write a printable scalar");
         StandardLibraryDocumentation.TryGet("Ashes.IO.Unit", out _).ShouldBeFalse();
+
+        StandardLibraryDocumentation.TryGet(
+            "Ashes.IO.Path.normalize",
+            out StandardLibraryDocumentation.Entry normalize).ShouldBeTrue();
+        normalize.Summary.ShouldContain("Collapse repeated separators");
+        normalize.Url.ShouldEndWith("standard-library#ashes-io-path");
+    }
+
+    [Test]
+    public async Task Hover_should_document_path_module_functions()
+    {
+        const string source = "import Ashes.IO.Path\n\nAshes.IO.Path.normalize(Ashes.IO.Path.Unix)(\"a/../b\")";
+        var document = TempDocument.Create("HoverPath.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var hover = await harness.HoverAsync(
+                    document.Uri,
+                    line: 2,
+                    character: "Ashes.IO.Path.".Length);
+
+                hover.ShouldNotBeNull();
+                string markdown = hover.Value
+                    .GetProperty("contents")
+                    .GetProperty("value")
+                    .GetString()!;
+                markdown.ShouldContain("Ashes.IO.Path.normalize");
+                markdown.ShouldContain("Collapse repeated separators");
+                markdown.ShouldContain("standard-library#ashes-io-path");
+            }
+        }
     }
 
     [Test]
