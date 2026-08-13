@@ -8,7 +8,6 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| [Language Evolution](EVOLVE_LANGUAGE.md) | Exploratory | Strengthen abstraction, resource safety, authority tracking, structured concurrency, Unicode text, and zero-cost domain modeling |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
 
@@ -31,3 +30,16 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
    updates visible to user code.
 6. **No tracing GC.** Ordinary lifetime operations are compiler-inserted;
    resource cleanup remains statically verified.
+
+## Library Backlog
+
+The completed language-evolution milestones enable several useful library additions that do not
+require new core syntax:
+
+- A pure deterministic PRNG value, with nondeterministic seeding behind `Entropy`.
+- Property-based testing built from pure generators, deterministic seeds, shrinking, and replay.
+- Zero-cost nominal `Duration`, `Instant`, and `Path` domain types.
+- A concurrent task-collection combinator built on structured task scopes, distinct from the current
+  sequential `Task.all` contract.
+- `NonEmptyList` and validation combinators as ordinary library ADTs.
+- A safe `Ashes.Byte.getMaybe` alongside the existing panicking indexed operation.
