@@ -353,7 +353,7 @@ internal sealed class DeterministicDirectoryTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
-        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 22;
+        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 30;
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
@@ -371,10 +371,29 @@ internal sealed class DeterministicDirectoryTemplate : ICombinationTemplate
             new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Wildcard()]), permissionMatched),
             new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), permissionMatched),
         ]);
-        Expr value = new Expr.Let(resultName, fallback.Value, matched);
+        string executableDirectoryName = Name("executableDirectory", random);
+        Expr executableDirectory = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.IO.Environment", "executableDirectory"),
+            new Expr.Var("Unit"));
+        Expr runtimeEntries = new Expr.Call(
+            new Expr.QualifiedVar("Ashes.IO.Directory", "entries"),
+            new Expr.Var(executableDirectoryName));
+        Expr runtimeMatched = new Expr.Match(runtimeEntries,
+        [
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Wildcard()]), matched),
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), matched),
+        ]);
+        Expr installedLayout = new Expr.Match(executableDirectory,
+        [
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), matched),
+            new MatchCase(
+                new Pattern.Constructor("Ok", [new Pattern.Var(executableDirectoryName)]),
+                runtimeMatched),
+        ]);
+        Expr value = new Expr.Let(resultName, fallback.Value, installedLayout);
         GeneratedFeatureSet features = new(AdvertisedFeatures);
         features.UnionWith(fallback.Features);
-        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("resource:directory-operations", fallback.Trace), fallback.NodeCount + 18);
+        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("resource:installed-layout", fallback.Trace), fallback.NodeCount + 27);
     }
 
     private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);

@@ -34,6 +34,22 @@ public sealed class TestRunnerFixtureTests
     }
 
     [Test]
+    public void ParseTestDirectives_reads_execution_layout_directories()
+    {
+        const string source = """
+            // executable-directory: install/bin
+            // working-directory: workspace/project/src
+            // expect: ok
+            Ashes.IO.print("ok")
+            """;
+
+        Runner.TestDirectives directives = Runner.ParseTestDirectives(source);
+
+        directives.ExecutableDirectory.ShouldBe("install/bin");
+        directives.WorkingDirectory.ShouldBe("workspace/project/src");
+    }
+
+    [Test]
     public void ParseTestDirectives_reads_tls_fixture_directives()
     {
         const string source = """
@@ -129,7 +145,7 @@ public sealed class TestRunnerFixtureTests
                     root,
                     [new Runner.TestFileFixture("..\\escape.txt", System.Text.Encoding.UTF8.GetBytes("bad"))]));
 
-            ex.Message.ShouldContain("escapes the test working directory");
+            ex.Message.ShouldContain("escapes the isolated test fixture");
         }
         finally
         {
