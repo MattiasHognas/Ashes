@@ -190,6 +190,18 @@ public static class BuiltinRegistry
         BytesAppend,
         /// <summary>Appends a single byte to a sequence.</summary>
         BytesAppendByte,
+        /// <summary>Allocates a zero-filled byte sequence.</summary>
+        BytesAllocate,
+        /// <summary>Copies a checked range into a byte sequence.</summary>
+        BytesCopyRange,
+        /// <summary>Replaces one byte at a checked offset.</summary>
+        BytesSet,
+        /// <summary>Replaces a little-endian 16-bit field at a checked offset.</summary>
+        BytesSetU16Le,
+        /// <summary>Replaces a little-endian 32-bit field at a checked offset.</summary>
+        BytesSetU32Le,
+        /// <summary>Replaces a little-endian 64-bit field at a checked offset.</summary>
+        BytesSetU64Le,
         /// <summary>Builds a byte sequence from a list of byte values.</summary>
         BytesFromList,
         /// <summary>Encodes text as its UTF-8 byte sequence.</summary>
@@ -610,6 +622,12 @@ public static class BuiltinRegistry
                     ["subView"] = new("subView", BuiltinValueKind.BytesSubView, IsCallable: true, Arity: 3, BytesProvenance: BytesOwnershipProvenance.BorrowedView),
                     ["append"] = new("append", BuiltinValueKind.BytesAppend, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
                     ["appendByte"] = new("appendByte", BuiltinValueKind.BytesAppendByte, IsCallable: true, Arity: 2, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["allocate"] = new("allocate", BuiltinValueKind.BytesAllocate, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["copyRange"] = new("copyRange", BuiltinValueKind.BytesCopyRange, IsCallable: true, Arity: 5, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["set"] = new("set", BuiltinValueKind.BytesSet, IsCallable: true, Arity: 3, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["setU16Le"] = new("setU16Le", BuiltinValueKind.BytesSetU16Le, IsCallable: true, Arity: 3, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["setU32Le"] = new("setU32Le", BuiltinValueKind.BytesSetU32Le, IsCallable: true, Arity: 3, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
+                    ["setU64Le"] = new("setU64Le", BuiltinValueKind.BytesSetU64Le, IsCallable: true, Arity: 3, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
                     ["fromList"] = new("fromList", BuiltinValueKind.BytesFromList, IsCallable: true, Arity: 1, ProducesFreshRcResult: FreshRcResultKind.Bytes, BytesProvenance: BytesOwnershipProvenance.FreshOwnedBuffer),
                     ["fromText"] = new("fromText", BuiltinValueKind.BytesFromText, IsCallable: true, Arity: 1, BytesProvenance: BytesOwnershipProvenance.BorrowedView),
                     ["hash"] = new("hash", BuiltinValueKind.BytesHash, IsCallable: true, Arity: 1),

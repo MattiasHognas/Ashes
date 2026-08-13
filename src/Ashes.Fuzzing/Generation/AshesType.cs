@@ -22,6 +22,7 @@ internal abstract record AshesType
     internal static Primitive Rune { get; } = new("Rune");
     internal static Primitive Float { get; } = new("Float");
     internal static Primitive BigInt { get; } = new("BigInt");
+    internal static Primitive Bytes { get; } = new("Bytes");
     internal static Primitive Unit { get; } = new("Unit");
     internal static Resource FileHandle { get; } = new("FileHandle");
     internal static Resource Socket { get; } = new("Socket");

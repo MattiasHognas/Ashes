@@ -846,6 +846,19 @@ public static class IrOptimizer
             IrInst.BytesSubView b => b with { BytesTemp = R(b.BytesTemp), StartTemp = R(b.StartTemp), LenTemp = R(b.LenTemp) },
             IrInst.BytesAppend b => b with { LeftTemp = R(b.LeftTemp), RightTemp = R(b.RightTemp) },
             IrInst.BytesAppendByte b => b with { BytesTemp = R(b.BytesTemp), ByteTemp = R(b.ByteTemp) },
+            IrInst.BytesAllocate b => b with { LengthTemp = R(b.LengthTemp) },
+            IrInst.BytesCopyRange b => b with
+            {
+                BytesTemp = R(b.BytesTemp),
+                OffsetTemp = R(b.OffsetTemp),
+                SourceTemp = R(b.SourceTemp),
+                SourceOffsetTemp = R(b.SourceOffsetTemp),
+                LengthTemp = R(b.LengthTemp),
+            },
+            IrInst.BytesSet b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp), ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesSetU16Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp), ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesSetU32Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp), ValueTemp = R(b.ValueTemp) },
+            IrInst.BytesSetU64Le b => b with { BytesTemp = R(b.BytesTemp), OffsetTemp = R(b.OffsetTemp), ValueTemp = R(b.ValueTemp) },
             IrInst.BytesFromList b => b with { ListTemp = R(b.ListTemp) },
             IrInst.BytesHash b => b with { BytesTemp = R(b.BytesTemp) },
             IrInst.BytesU16Le b => b with { ValueTemp = R(b.ValueTemp) },
@@ -2084,6 +2097,11 @@ public static class IrOptimizer
 
     private static void CollectBytesUsedTemps(IrInst inst, HashSet<int> usedTemps)
     {
+        if (CollectBytesUpdateUsedTemps(inst, usedTemps))
+        {
+            return;
+        }
+
         switch (inst)
         {
             case IrInst.BytesEmpty: break;
@@ -2100,6 +2118,48 @@ public static class IrOptimizer
             case IrInst.BytesFromList b: usedTemps.Add(b.ListTemp); break;
             case IrInst.BytesHash b: usedTemps.Add(b.BytesTemp); break;
         }
+    }
+
+    private static bool CollectBytesUpdateUsedTemps(IrInst inst, HashSet<int> usedTemps)
+    {
+        switch (inst)
+        {
+            case IrInst.BytesAllocate value:
+                usedTemps.Add(value.LengthTemp);
+                return true;
+            case IrInst.BytesCopyRange value:
+                usedTemps.Add(value.BytesTemp);
+                usedTemps.Add(value.OffsetTemp);
+                usedTemps.Add(value.SourceTemp);
+                usedTemps.Add(value.SourceOffsetTemp);
+                usedTemps.Add(value.LengthTemp);
+                return true;
+            case IrInst.BytesSet value:
+                CollectBytesSetterUsedTemps(value.BytesTemp, value.OffsetTemp, value.ValueTemp, usedTemps);
+                return true;
+            case IrInst.BytesSetU16Le value:
+                CollectBytesSetterUsedTemps(value.BytesTemp, value.OffsetTemp, value.ValueTemp, usedTemps);
+                return true;
+            case IrInst.BytesSetU32Le value:
+                CollectBytesSetterUsedTemps(value.BytesTemp, value.OffsetTemp, value.ValueTemp, usedTemps);
+                return true;
+            case IrInst.BytesSetU64Le value:
+                CollectBytesSetterUsedTemps(value.BytesTemp, value.OffsetTemp, value.ValueTemp, usedTemps);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void CollectBytesSetterUsedTemps(
+        int bytesTemp,
+        int offsetTemp,
+        int valueTemp,
+        HashSet<int> usedTemps)
+    {
+        usedTemps.Add(bytesTemp);
+        usedTemps.Add(offsetTemp);
+        usedTemps.Add(valueTemp);
     }
 
     private static void CollectBytesEncodingUsedTemps(IrInst inst, HashSet<int> usedTemps)

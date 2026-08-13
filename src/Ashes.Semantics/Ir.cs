@@ -1045,6 +1045,31 @@ public abstract record IrInst
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
     public sealed record BytesAppendByte(int Target, int BytesTemp, int ByteTemp, bool RuntimeManaged = false)
         : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Allocates a checked zero-filled byte buffer.</summary>
+    public sealed record BytesAllocate(int Target, int LengthTemp, bool RuntimeManaged = true)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Copies a checked source range into a pure destination update.</summary>
+    public sealed record BytesCopyRange(
+        int Target,
+        int BytesTemp,
+        int OffsetTemp,
+        int SourceTemp,
+        int SourceOffsetTemp,
+        int LengthTemp,
+        bool ReuseInput,
+        bool RuntimeManaged = true) : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Replaces a checked byte in a pure destination update.</summary>
+    public sealed record BytesSet(int Target, int BytesTemp, int OffsetTemp, int ValueTemp, bool ReuseInput, bool RuntimeManaged = true)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Replaces a checked little-endian 16-bit field.</summary>
+    public sealed record BytesSetU16Le(int Target, int BytesTemp, int OffsetTemp, int ValueTemp, bool ReuseInput, bool RuntimeManaged = true)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Replaces a checked little-endian 32-bit field.</summary>
+    public sealed record BytesSetU32Le(int Target, int BytesTemp, int OffsetTemp, int ValueTemp, bool ReuseInput, bool RuntimeManaged = true)
+        : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>Replaces a checked little-endian 64-bit field.</summary>
+    public sealed record BytesSetU64Le(int Target, int BytesTemp, int OffsetTemp, int ValueTemp, bool ReuseInput, bool RuntimeManaged = true)
+        : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Builds a byte buffer from a list of byte values into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the built buffer.</param>
     /// <param name="ListTemp">Temp holding the source list.</param>

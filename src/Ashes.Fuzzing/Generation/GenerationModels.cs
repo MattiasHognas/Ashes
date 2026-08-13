@@ -48,6 +48,7 @@ internal enum GeneratedFeature
     FfiOut,
     FfiString,
     ForeignBuffer,
+    BinaryConstruction,
     AmbientAuthority,
     TypeAlias,
     ZeroCostType,

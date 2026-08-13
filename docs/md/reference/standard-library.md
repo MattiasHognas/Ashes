@@ -673,6 +673,18 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
   Prefer it for transient per-record slices in hot scan loops.
 - `append(left, right)` returning `Bytes` — concatenate two sequences
 - `appendByte(bytes, byte)` returning `Bytes` — append one byte
+- `allocate(length)` returning `Bytes` — allocate a zero-filled sequence of exactly `length` bytes.
+  The length must be between 0 and 1 GiB inclusive; invalid lengths panic.
+- `copyRange(bytes)(offset)(source)(sourceOffset)(length)` returning `Bytes` — replace `length`
+  bytes beginning at `offset` with the range beginning at `sourceOffset`. All offsets and the length
+  are checked without clamping; a negative value or a range outside either buffer panics. Source and
+  destination may be the same value and their ranges may overlap.
+- `set(bytes)(offset)(value)` returning `Bytes` — replace one byte at `offset`; an invalid offset
+  panics.
+- `setU16Le(bytes)(offset)(value)`, `setU32Le(bytes)(offset)(value)`, and
+  `setU64Le(bytes)(offset)(value)` returning `Bytes` — replace a checked range with the fixed-width
+  little-endian encoding of `value`; an insufficient destination range panics. The supported ELF and
+  PE targets are all little-endian, so no unused big-endian setter surface is provided.
 - `fromList(list)` returning `Bytes` — convert `List(u8)` to `Bytes`
 - `fromText(text)` returning `Bytes` — expose a `Str`'s UTF-8 bytes (O(1); `Str` and `Bytes`
   share an in-memory layout). Byte order over the result equals Unicode codepoint order, so this is
@@ -685,6 +697,11 @@ An immutable byte sequence with O(1) indexed access and O(1) length.
 - `getU16Le(bytes, offset)` returning `u16` — decode little-endian `u16` at offset
 - `getU32Le(bytes, offset)` returning `u32` — decode little-endian `u32` at offset
 - `getU64Le(bytes, offset)` returning `u64` — decode little-endian `u64` at offset
+
+Every update is pure: aliases continue to observe the old byte sequence. The compiler may update the
+allocation in place only when ownership proves the input buffer is unique; otherwise it first copies
+the complete buffer. This makes a linear chain of relocation-style patches linear in the image size
+plus patch count without exposing mutation in the language.
 
 ## `Ashes.Task` — concurrency
 

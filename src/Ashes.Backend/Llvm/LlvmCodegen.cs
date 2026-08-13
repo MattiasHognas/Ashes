@@ -1731,6 +1731,7 @@ internal static partial class LlvmCodegen
     private static bool EmitInstruction(LlvmCodegenState state, IrInst instruction, int index, IReadOnlyList<IrInst> instructions)
     {
         return EmitInstructionGroup1(state, instruction)
+            ?? EmitBytesUpdateInstruction(state, instruction)
             ?? EmitInstructionGroup2(state, instruction)
             ?? EmitInstructionGroup3(state, instruction)
             ?? EmitInstructionGroup4(state, instruction)
@@ -1899,6 +1900,52 @@ internal static partial class LlvmCodegen
             IrInst.RcDrop => false,
             _ => (bool?)null,
         };
+    }
+
+    private static bool? EmitBytesUpdateInstruction(LlvmCodegenState state, IrInst instruction)
+    {
+        return instruction switch
+        {
+            IrInst.BytesAllocate allocate => StoreTemp(
+                state, allocate.Target, EmitBytesAllocate(state, LoadTemp(state, allocate.LengthTemp))),
+            IrInst.BytesCopyRange copy => StoreTemp(state, copy.Target, EmitBytesCopyRange(
+                state,
+                LoadTemp(state, copy.BytesTemp),
+                LoadTemp(state, copy.OffsetTemp),
+                LoadTemp(state, copy.SourceTemp),
+                LoadTemp(state, copy.SourceOffsetTemp),
+                LoadTemp(state, copy.LengthTemp),
+                copy.ReuseInput)),
+            IrInst.BytesSet set => EmitBytesSetterInstruction(state, set.Target, set.BytesTemp,
+                set.OffsetTemp, set.ValueTemp, 1, set.ReuseInput, "bytes_set"),
+            IrInst.BytesSetU16Le set => EmitBytesSetterInstruction(state, set.Target, set.BytesTemp,
+                set.OffsetTemp, set.ValueTemp, 2, set.ReuseInput, "bytes_setu16"),
+            IrInst.BytesSetU32Le set => EmitBytesSetterInstruction(state, set.Target, set.BytesTemp,
+                set.OffsetTemp, set.ValueTemp, 4, set.ReuseInput, "bytes_setu32"),
+            IrInst.BytesSetU64Le set => EmitBytesSetterInstruction(state, set.Target, set.BytesTemp,
+                set.OffsetTemp, set.ValueTemp, 8, set.ReuseInput, "bytes_setu64"),
+            _ => (bool?)null,
+        };
+    }
+
+    private static bool EmitBytesSetterInstruction(
+        LlvmCodegenState state,
+        int target,
+        int bytesTemp,
+        int offsetTemp,
+        int valueTemp,
+        int byteCount,
+        bool reuseInput,
+        string prefix)
+    {
+        return StoreTemp(state, target, EmitBytesSetUnsigned(
+            state,
+            LoadTemp(state, bytesTemp),
+            LoadTemp(state, offsetTemp),
+            LoadTemp(state, valueTemp),
+            byteCount,
+            reuseInput,
+            prefix));
     }
 
     private static bool EmitCleanupResourceInstruction(

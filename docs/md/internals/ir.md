@@ -295,6 +295,19 @@ conversion failures; nullable contracts map null to `Ok(None)` and never dispose
 `CopyFfiBytes` accepts null only for a zero-length range, rejects lengths above 1 GiB before touching
 the pointer, and materializes an owned byte buffer before control returns to source code.
 
+### Immutable binary construction
+
+| Instruction | Fields | Description |
+|-------------|--------|-------------|
+| `BytesAllocate` | `Target`, `LengthTemp` | Allocate a checked, zero-filled owned buffer |
+| `BytesCopyRange` | `Target`, destination/offset, source/offset, length, ownership flags | Replace one checked byte range |
+| `BytesSet` | `Target`, bytes, offset, value, ownership flags | Replace one checked byte |
+| `BytesSetU16Le` / `BytesSetU32Le` / `BytesSetU64Le` | `Target`, bytes, offset, value, ownership flags | Patch a checked little-endian field |
+
+Update lowering normalizes the destination to reference-counted ownership and marks only a freshly
+produced, unaliased update temporary as reusable. Code generation forwards and patches that storage;
+a named, borrowed, or otherwise potentially shared destination is copied first, preserving aliases.
+
 ### Console I/O
 
 | Instruction | Fields | Description |

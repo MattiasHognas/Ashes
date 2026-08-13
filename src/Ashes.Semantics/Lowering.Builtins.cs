@@ -1382,6 +1382,11 @@ public sealed partial class Lowering
         IntrinsicKind.BytesSubView => 3,
         IntrinsicKind.BytesAppend => 2,
         IntrinsicKind.BytesAppendByte => 2,
+        IntrinsicKind.BytesCopyRange => 5,
+        IntrinsicKind.BytesSet => 3,
+        IntrinsicKind.BytesSetU16Le => 3,
+        IntrinsicKind.BytesSetU32Le => 3,
+        IntrinsicKind.BytesSetU64Le => 3,
         IntrinsicKind.TextFormatFloat => 2,
         IntrinsicKind.BigIntFromInt => 1,
         IntrinsicKind.BigIntToString => 1,
@@ -4165,6 +4170,195 @@ public sealed partial class Lowering
         return (target, new TypeRef.TBytes());
     }
 
+    private (int, TypeRef) LowerBytesAllocate(Expr lengthArg)
+    {
+        var (lengthTemp, lengthOk) = LowerIntArgument(lengthArg, "Ashes.Byte.allocate() length");
+        if (!lengthOk)
+        {
+            return (lengthTemp, new TypeRef.TBytes());
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.BytesAllocate(target, lengthTemp));
+        MarkRuntimeManagedTemp(target, type: new TypeRef.TBytes());
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesCopyRange(
+        Expr bytesArg,
+        Expr offsetArg,
+        Expr sourceArg,
+        Expr sourceOffsetArg,
+        Expr lengthArg)
+    {
+        LoweredValue destination = NormalizeBytesForPureUpdate(
+            LowerExpr(bytesArg),
+            bytesArg,
+            "Ashes.Byte.copyRange() destination");
+        if (Prune(destination.Type) is TypeRef.TNever)
+        {
+            return (destination.Temp, destination.Type);
+        }
+
+        var (offsetTemp, offsetOk) = LowerIntArgument(offsetArg, "Ashes.Byte.copyRange() offset");
+        if (!offsetOk)
+        {
+            return (offsetTemp, new TypeRef.TBytes());
+        }
+
+        var (sourceTemp, sourceOk) = LowerBytesArgument(sourceArg, "Ashes.Byte.copyRange() source");
+        if (!sourceOk)
+        {
+            return (sourceTemp, new TypeRef.TBytes());
+        }
+
+        var (sourceOffsetTemp, sourceOffsetOk) = LowerIntArgument(sourceOffsetArg, "Ashes.Byte.copyRange() source offset");
+        if (!sourceOffsetOk)
+        {
+            return (sourceOffsetTemp, new TypeRef.TBytes());
+        }
+
+        var (lengthTemp, lengthOk) = LowerIntArgument(lengthArg, "Ashes.Byte.copyRange() length");
+        if (!lengthOk)
+        {
+            return (lengthTemp, new TypeRef.TBytes());
+        }
+
+        int target = NewTemp();
+        Emit(new IrInst.BytesCopyRange(
+            target,
+            destination.Temp,
+            offsetTemp,
+            sourceTemp,
+            sourceOffsetTemp,
+            lengthTemp,
+            CanReusePureBytesUpdateInput(destination)));
+        MarkRuntimeManagedTemp(target, type: new TypeRef.TBytes());
+        return (target, new TypeRef.TBytes());
+    }
+
+    private (int, TypeRef) LowerBytesSet(Expr bytesArg, Expr offsetArg, Expr valueArg)
+        => LowerBytesSetUnsigned(
+            bytesArg,
+            offsetArg,
+            valueArg,
+            8,
+            "set",
+            (target, bytes, offset, value, reuse) => new IrInst.BytesSet(target, bytes, offset, value, reuse));
+
+    private (int, TypeRef) LowerBytesSetU16Le(Expr bytesArg, Expr offsetArg, Expr valueArg)
+        => LowerBytesSetUnsigned(
+            bytesArg,
+            offsetArg,
+            valueArg,
+            16,
+            "setU16Le",
+            (target, bytes, offset, value, reuse) => new IrInst.BytesSetU16Le(target, bytes, offset, value, reuse));
+
+    private (int, TypeRef) LowerBytesSetU32Le(Expr bytesArg, Expr offsetArg, Expr valueArg)
+        => LowerBytesSetUnsigned(
+            bytesArg,
+            offsetArg,
+            valueArg,
+            32,
+            "setU32Le",
+            (target, bytes, offset, value, reuse) => new IrInst.BytesSetU32Le(target, bytes, offset, value, reuse));
+
+    private (int, TypeRef) LowerBytesSetU64Le(Expr bytesArg, Expr offsetArg, Expr valueArg)
+        => LowerBytesSetUnsigned(
+            bytesArg,
+            offsetArg,
+            valueArg,
+            64,
+            "setU64Le",
+            (target, bytes, offset, value, reuse) => new IrInst.BytesSetU64Le(target, bytes, offset, value, reuse));
+
+    private (int, TypeRef) LowerBytesSetUnsigned(
+        Expr bytesArg,
+        Expr offsetArg,
+        Expr valueArg,
+        int bits,
+        string name,
+        Func<int, int, int, int, bool, IrInst> createInstruction)
+    {
+        LoweredValue bytes = NormalizeBytesForPureUpdate(
+            LowerExpr(bytesArg),
+            bytesArg,
+            $"Ashes.Byte.{name}()");
+        if (Prune(bytes.Type) is TypeRef.TNever)
+        {
+            return (bytes.Temp, bytes.Type);
+        }
+
+        var (offsetTemp, offsetOk) = LowerIntArgument(offsetArg, $"Ashes.Byte.{name}() offset");
+        if (!offsetOk)
+        {
+            return (offsetTemp, new TypeRef.TBytes());
+        }
+
+        using var valueSpan = PushDiagnosticSpan(valueArg);
+        var (valueTemp, valueType) = LowerExpr(valueArg);
+        TypeRef prunedValue = Prune(valueType);
+        TypeRef expected = new TypeRef.TUInt(bits);
+        if (prunedValue is TypeRef.TVar)
+        {
+            Unify(prunedValue, expected);
+            prunedValue = expected;
+        }
+
+        if (prunedValue is not TypeRef.TUInt { Bits: var actualBits } || actualBits != bits)
+        {
+            ReportDiagnostic(GetSpan(valueArg), $"Ashes.Byte.{name}() expects u{bits} for value but got {Pretty(prunedValue)}.");
+            return (valueTemp, new TypeRef.TBytes());
+        }
+
+        int target = NewTemp();
+        Emit(createInstruction(
+            target,
+            bytes.Temp,
+            offsetTemp,
+            valueTemp,
+            CanReusePureBytesUpdateInput(bytes)));
+        MarkRuntimeManagedTemp(target, type: new TypeRef.TBytes());
+        return (target, new TypeRef.TBytes());
+    }
+
+    private LoweredValue NormalizeBytesForPureUpdate(LoweredValue lowered, Expr expression, string operation)
+    {
+        TypeRef pruned = Prune(lowered.Type);
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TBytes());
+            pruned = new TypeRef.TBytes();
+        }
+
+        if (pruned is not TypeRef.TBytes)
+        {
+            ReportDiagnostic(GetSpan(expression), $"{operation} expects Bytes but got {Pretty(pruned)}.");
+            return lowered;
+        }
+
+        if (lowered.Ownership.Representation == LoweredTempRepresentation.RuntimeRc)
+        {
+            return lowered;
+        }
+
+        int normalized = NewTemp();
+        Emit(new IrInst.CopyOutArena(
+            normalized,
+            lowered.Temp,
+            StaticSizeBytes: -1,
+            RuntimeManaged: true,
+            IrInst.CopyOutPurpose.RcNormalization));
+        MarkRuntimeManagedTemp(normalized, type: new TypeRef.TBytes());
+        return CreateLoweredValue(normalized, new TypeRef.TBytes());
+    }
+
+    private static bool CanReusePureBytesUpdateInput(LoweredValue value)
+        => value.Ownership.Representation == LoweredTempRepresentation.RuntimeRc
+            && value.Ownership.Ownership == LoweredTempOwnershipKind.NewlyProduced
+            && value.Ownership.Producer != LoweredTempProducerKind.Borrow;
+
     private (int, TypeRef) LowerBytesFromList(
         Expr listArg,
         LoweredValueRequest request = default)
@@ -4863,6 +5057,49 @@ public sealed partial class Lowering
             IntrinsicKind.BytesAppendByte,
             new TypeScheme([], new TypeRef.TFun(new TypeRef.TBytes(), new TypeRef.TFun(new TypeRef.TUInt(8), new TypeRef.TBytes())))
         );
+    }
+
+    private Binding.Intrinsic CreateBytesAllocateBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.BytesAllocate,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TBytes())));
+    }
+
+    private Binding.Intrinsic CreateBytesCopyRangeBinding()
+    {
+        TypeRef body = new TypeRef.TFun(
+            new TypeRef.TBytes(),
+            new TypeRef.TFun(
+                new TypeRef.TInt(),
+                new TypeRef.TFun(
+                    new TypeRef.TBytes(),
+                    new TypeRef.TFun(
+                        new TypeRef.TInt(),
+                        new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TBytes())))));
+        return new Binding.Intrinsic(IntrinsicKind.BytesCopyRange, new TypeScheme([], body));
+    }
+
+    private Binding.Intrinsic CreateBytesSetBinding()
+        => CreateBytesSetterBinding(IntrinsicKind.BytesSet, 8);
+
+    private Binding.Intrinsic CreateBytesSetU16LeBinding()
+        => CreateBytesSetterBinding(IntrinsicKind.BytesSetU16Le, 16);
+
+    private Binding.Intrinsic CreateBytesSetU32LeBinding()
+        => CreateBytesSetterBinding(IntrinsicKind.BytesSetU32Le, 32);
+
+    private Binding.Intrinsic CreateBytesSetU64LeBinding()
+        => CreateBytesSetterBinding(IntrinsicKind.BytesSetU64Le, 64);
+
+    private static Binding.Intrinsic CreateBytesSetterBinding(IntrinsicKind kind, int bits)
+    {
+        TypeRef body = new TypeRef.TFun(
+            new TypeRef.TBytes(),
+            new TypeRef.TFun(
+                new TypeRef.TInt(),
+                new TypeRef.TFun(new TypeRef.TUInt(bits), new TypeRef.TBytes())));
+        return new Binding.Intrinsic(kind, new TypeScheme([], body));
     }
 
     private Binding.Intrinsic CreateBytesFromListBinding()
