@@ -604,6 +604,14 @@ public sealed partial class Lowering
         return (target, CreateStringResultType(_resolvedTypes["Unit"]));
     }
 
+    private (int, TypeRef) LowerFileMakeExecutable(Expr pathArg)
+    {
+        int pathTemp = LowerHostPathArgument(pathArg, "Ashes.IO.File.makeExecutable()");
+        int target = NewTemp();
+        Emit(new IrInst.FileMakeExecutable(target, pathTemp));
+        return (target, CreateStringResultType(_resolvedTypes["Unit"]));
+    }
+
     private (int, TypeRef) LowerDirectoryOperation(Expr pathArg, IntrinsicKind kind)
     {
         string operation = kind switch
@@ -1504,6 +1512,7 @@ public sealed partial class Lowering
         IntrinsicKind.FileWriteText => 2,
         IntrinsicKind.FileWriteBytes => 2,
         IntrinsicKind.FileReplace => 2,
+        IntrinsicKind.FileMakeExecutable => 1,
         IntrinsicKind.BytesGet => 2,
         IntrinsicKind.BytesIndexOf => 3,
         IntrinsicKind.BytesCompare => 2,
@@ -3411,6 +3420,14 @@ public sealed partial class Lowering
         return new Binding.Intrinsic(
             IntrinsicKind.FileReplace,
             BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"]))), FileWriteCapabilityName)
+        );
+    }
+
+    private Binding.Intrinsic CreateFileMakeExecutableBinding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.FileMakeExecutable,
+            BuiltinCapabilityScheme([], new TypeRef.TFun(new TypeRef.TStr(), CreateStringResultType(_resolvedTypes["Unit"])), FileWriteCapabilityName)
         );
     }
 

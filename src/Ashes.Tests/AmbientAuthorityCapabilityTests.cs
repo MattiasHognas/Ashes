@@ -28,6 +28,7 @@ public sealed class AmbientAuthorityCapabilityTests
     [Arguments("Ashes.IO.File.writeText(\"x\")(\"y\")", "FileWrite")]
     [Arguments("Ashes.IO.File.writeBytes(\"x\")(Ashes.Byte.empty(Unit))", "FileWrite")]
     [Arguments("Ashes.IO.File.replace(\"x\")(\"y\")", "FileWrite")]
+    [Arguments("Ashes.IO.File.makeExecutable(\"x\")", "FileWrite")]
     [Arguments("Ashes.IO.Directory.entries(\"x\")", "FileRead")]
     [Arguments("Ashes.IO.Directory.createAll(\"x\")", "FileWrite")]
     [Arguments("Ashes.IO.Directory.removeTree(\"x\")", "FileWrite")]

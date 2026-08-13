@@ -543,6 +543,7 @@ public sealed partial class Lowering
         FileWriteText,
         FileExists,
         FileReplace,
+        FileMakeExecutable,
         DirectoryEntries,
         DirectoryCreateAll,
         DirectoryRemoveTree,

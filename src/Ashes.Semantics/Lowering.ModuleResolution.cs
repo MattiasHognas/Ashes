@@ -336,19 +336,9 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.Write or BuiltinRegistry.BuiltinValueKind.IoWriteBytes or BuiltinRegistry.BuiltinValueKind.WriteLine => ResolveDirectIoBuiltinMember(name, kind),
             BuiltinRegistry.BuiltinValueKind.WriteBuffered or BuiltinRegistry.BuiltinValueKind.WriteBufferedLine or BuiltinRegistry.BuiltinValueKind.FlushStdout => ResolveBufferedIoBuiltinMember(name, kind),
             BuiltinRegistry.BuiltinValueKind.ReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateReadLineBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadAllBytesBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileMmap => LowerQualifiedBuiltinFunctionReference(name, CreateFileMmapBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileOpen => LowerQualifiedBuiltinFunctionReference(name, CreateFileOpenBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadChunkBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadLineBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileClose => LowerQualifiedBuiltinFunctionReference(name, CreateFileCloseBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.InternalDeepCopy => LowerQualifiedBuiltinFunctionReference(name, CreateInternalDeepCopyBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ParallelBoth => LowerQualifiedBuiltinFunctionReference(name, CreateParallelBothBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ParallelWithWorkers => LowerQualifiedBuiltinFunctionReference(name, CreateParallelWithWorkersBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileReplace => LowerQualifiedBuiltinFunctionReference(name, CreateFileReplaceBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextUncons or BuiltinRegistry.BuiltinValueKind.TextUnconsText =>
                 LowerQualifiedBuiltinFunctionReference(name, (kind == BuiltinRegistry.BuiltinValueKind.TextUncons ? CreateTextUnconsBinding() : CreateTextUnconsTextBinding()).S.Body),
             BuiltinRegistry.BuiltinValueKind.RuneToText or BuiltinRegistry.BuiltinValueKind.RuneToInt or BuiltinRegistry.BuiltinValueKind.RuneFromInt or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiLetter or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiDigit or BuiltinRegistry.BuiltinValueKind.RuneIsAsciiWhiteSpace => ResolveRuneBuiltinMember(kind, name),
@@ -378,16 +368,32 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntToIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntFromIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerQualifiedBuiltinFunctionReference(name, CreateLibmBinding(libmKind).S.Body),
-            BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleEnableRawBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ConsoleRestore => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleRestoreBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ConsolePoll => LowerQualifiedBuiltinFunctionReference(name, CreateConsolePollBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ConsoleMonotonicMillis => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleMonotonicMillisBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.TextByteLength => LowerQualifiedBuiltinFunctionReference(name, CreateTextByteLengthBinding().S.Body),
-            _ => null
+            _ => ResolveFileBuiltinMember(name, kind)
         };
     }
+
+    private (int, TypeRef)? ResolveFileBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind) => kind switch
+    {
+        BuiltinRegistry.BuiltinValueKind.FileReadText => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadTextBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileReadAllBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadAllBytesBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileMmap => LowerQualifiedBuiltinFunctionReference(name, CreateFileMmapBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileOpen => LowerQualifiedBuiltinFunctionReference(name, CreateFileOpenBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileReadChunk => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadChunkBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileReadLine => LowerQualifiedBuiltinFunctionReference(name, CreateFileReadLineBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileClose => LowerQualifiedBuiltinFunctionReference(name, CreateFileCloseBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteTextBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileWriteBytes => LowerQualifiedBuiltinFunctionReference(name, CreateFileWriteBytesBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileExists => LowerQualifiedBuiltinFunctionReference(name, CreateFileExistsBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileReplace => LowerQualifiedBuiltinFunctionReference(name, CreateFileReplaceBinding().S.Body),
+        BuiltinRegistry.BuiltinValueKind.FileMakeExecutable => LowerQualifiedBuiltinFunctionReference(name, CreateFileMakeExecutableBinding().S.Body),
+        _ => null
+    };
 
     private (int, TypeRef)? ResolveEnvironmentBuiltinMember(string name, BuiltinRegistry.BuiltinValueKind kind) => kind switch
     {

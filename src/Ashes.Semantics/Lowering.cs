@@ -9024,7 +9024,7 @@ public sealed partial class Lowering
             => ConsoleIoCapabilityName,
         IntrinsicKind.FileReadText or IntrinsicKind.FileReadAllBytes or IntrinsicKind.FileMmap
             or IntrinsicKind.FileExists or IntrinsicKind.FileOpen => FileReadCapabilityName,
-        IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes or IntrinsicKind.FileReplace
+        IntrinsicKind.FileWriteText or IntrinsicKind.FileWriteBytes or IntrinsicKind.FileReplace or IntrinsicKind.FileMakeExecutable
             or IntrinsicKind.DirectoryCreateAll or IntrinsicKind.DirectoryRemoveTree => FileWriteCapabilityName,
         IntrinsicKind.DirectoryEntries => FileReadCapabilityName,
         IntrinsicKind.EnvironmentCurrentDirectory or IntrinsicKind.EnvironmentExecutableDirectory
@@ -9062,6 +9062,7 @@ public sealed partial class Lowering
             IntrinsicKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             IntrinsicKind.FileExists => LowerFileExists(collectedArgs[0]),
             IntrinsicKind.FileReplace => LowerFileReplace(collectedArgs[0], collectedArgs[1]),
+            IntrinsicKind.FileMakeExecutable => LowerFileMakeExecutable(collectedArgs[0]),
             IntrinsicKind.EnvironmentCurrentDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Current),
             IntrinsicKind.EnvironmentExecutableDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Executable),
             IntrinsicKind.EnvironmentTemporaryDirectory => LowerEnvironmentDirectory(collectedArgs[0], EnvironmentDirectoryKind.Temporary),
@@ -9257,6 +9258,7 @@ public sealed partial class Lowering
         BuiltinRegistry.BuiltinValueKind.FileWriteText
             or BuiltinRegistry.BuiltinValueKind.FileWriteBytes
             or BuiltinRegistry.BuiltinValueKind.FileReplace
+            or BuiltinRegistry.BuiltinValueKind.FileMakeExecutable
             or BuiltinRegistry.BuiltinValueKind.DirectoryCreateAll
             or BuiltinRegistry.BuiltinValueKind.DirectoryRemoveTree => FileWriteCapabilityName,
         BuiltinRegistry.BuiltinValueKind.DirectoryEntries => FileReadCapabilityName,
@@ -9298,6 +9300,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.FileWriteText => LowerFileWriteText(collectedArgs[0], collectedArgs[1]),
             BuiltinRegistry.BuiltinValueKind.FileExists => LowerFileExists(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.FileReplace => LowerFileReplace(collectedArgs[0], collectedArgs[1]),
+            BuiltinRegistry.BuiltinValueKind.FileMakeExecutable => LowerFileMakeExecutable(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.EnvironmentGet => LowerEnvironmentGet(collectedArgs[0]),
             BuiltinRegistry.BuiltinValueKind.TextUncons => LowerTextUncons(collectedArgs[0], request),
             BuiltinRegistry.BuiltinValueKind.TextUnconsText => LowerTextUnconsText(collectedArgs[0], request),

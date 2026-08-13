@@ -353,22 +353,28 @@ internal sealed class DeterministicDirectoryTemplate : ICombinationTemplate
     };
 
     public bool CanApply(AshesType resultType, GenerationContext context, GenerationBudget budget) =>
-        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 14;
+        context.Allows(GenerationFlags.ResourcesAllowed) && budget.RemainingNodes >= 22;
 
     public GenerationResult<Expr> Generate(AshesType resultType, GenerationContext context, GenerationBudget budget, ExpressionGenerator expressions, FuzzRandom random)
     {
         GenerationResult<Expr> fallback = expressions.Generate(resultType, context, budget.Descend(8), random);
         string resultName = Name("directoryFallback", random);
-        Expr remove = new Expr.Call(new Expr.QualifiedVar("Ashes.IO.Directory", "removeTree"), new Expr.StrLit("__ashes_fuzz_missing_directory__"));
-        Expr matched = new Expr.Match(remove,
+        Expr makeExecutable = new Expr.Call(new Expr.QualifiedVar("Ashes.IO.File", "makeExecutable"), new Expr.StrLit("__ashes_fuzz_missing_executable__"));
+        Expr permissionMatched = new Expr.Match(makeExecutable,
         [
             new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Wildcard()]), new Expr.Var(resultName)),
             new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), new Expr.Var(resultName)),
         ]);
+        Expr remove = new Expr.Call(new Expr.QualifiedVar("Ashes.IO.Directory", "removeTree"), new Expr.StrLit("__ashes_fuzz_missing_directory__"));
+        Expr matched = new Expr.Match(remove,
+        [
+            new MatchCase(new Pattern.Constructor("Ok", [new Pattern.Wildcard()]), permissionMatched),
+            new MatchCase(new Pattern.Constructor("Error", [new Pattern.Wildcard()]), permissionMatched),
+        ]);
         Expr value = new Expr.Let(resultName, fallback.Value, matched);
         GeneratedFeatureSet features = new(AdvertisedFeatures);
         features.UnionWith(fallback.Features);
-        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("resource:directory-operations", fallback.Trace), fallback.NodeCount + 10);
+        return new GenerationResult<Expr>(value, resultType, features, GenerationTrace.Merge("resource:directory-operations", fallback.Trace), fallback.NodeCount + 18);
     }
 
     private static string Name(string prefix, FuzzRandom random) => prefix + random.Next(10000).ToString(System.Globalization.CultureInfo.InvariantCulture);

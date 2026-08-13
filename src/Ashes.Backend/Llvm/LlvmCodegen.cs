@@ -668,6 +668,7 @@ internal static partial class LlvmCodegen
                 || ProgramUsesInstruction<IrInst.FileWriteText>(program)
                 || ProgramUsesInstruction<IrInst.FileExists>(program)
                 || ProgramUsesInstruction<IrInst.FileReplace>(program)
+                || ProgramUsesInstruction<IrInst.FileMakeExecutable>(program)
                 || ProgramUsesInstruction<IrInst.DirectoryEntries>(program)
                 || ProgramUsesInstruction<IrInst.DirectoryCreateAll>(program)
                 || ProgramUsesInstruction<IrInst.DirectoryRemoveTree>(program)
@@ -1820,6 +1821,7 @@ internal static partial class LlvmCodegen
         => instruction switch
         {
             IrInst.FileReplace operation => StoreTemp(state, operation.Target, EmitFileReplace(state, LoadTemp(state, operation.SourceTemp), LoadTemp(state, operation.DestinationTemp))),
+            IrInst.FileMakeExecutable operation => StoreTemp(state, operation.Target, EmitFileMakeExecutable(state, LoadTemp(state, operation.PathTemp))),
             IrInst.DirectoryEntries operation => StoreTemp(state, operation.Target, EmitDirectoryEntries(state, LoadTemp(state, operation.PathTemp))),
             IrInst.DirectoryCreateAll operation => StoreTemp(state, operation.Target, EmitDirectoryCreateAll(state, LoadTemp(state, operation.PathTemp))),
             IrInst.DirectoryRemoveTree operation => StoreTemp(state, operation.Target, EmitDirectoryRemoveTree(state, LoadTemp(state, operation.PathTemp))),
