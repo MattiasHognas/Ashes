@@ -786,6 +786,7 @@ public static class IrOptimizer
             IrInst.FileWriteText f => f with { PathTemp = R(f.PathTemp), TextTemp = R(f.TextTemp) },
             IrInst.FileExists f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileReplace f => f with { SourceTemp = R(f.SourceTemp), DestinationTemp = R(f.DestinationTemp) },
+            IrInst.FileMakeExecutable f => f with { PathTemp = R(f.PathTemp) },
             IrInst.EnvironmentGet e => e with { NameTemp = R(e.NameTemp) },
             IrInst.FileOpen f => f with { PathTemp = R(f.PathTemp) },
             IrInst.FileReadChunk f => f with { HandleTemp = R(f.HandleTemp), CountTemp = R(f.CountTemp) },
@@ -2056,6 +2057,7 @@ public static class IrOptimizer
             case IrInst.FileWriteText f: usedTemps.Add(f.PathTemp); usedTemps.Add(f.TextTemp); break;
             case IrInst.FileExists f: usedTemps.Add(f.PathTemp); break;
             case IrInst.FileReplace f: usedTemps.Add(f.SourceTemp); usedTemps.Add(f.DestinationTemp); break;
+            case IrInst.FileMakeExecutable f: usedTemps.Add(f.PathTemp); break;
             case IrInst.DirectoryEntries d: usedTemps.Add(d.PathTemp); break;
             case IrInst.DirectoryCreateAll d: usedTemps.Add(d.PathTemp); break;
             case IrInst.DirectoryRemoveTree d: usedTemps.Add(d.PathTemp); break;

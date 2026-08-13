@@ -327,8 +327,20 @@ a named, borrowed, or otherwise potentially shared destination is copied first, 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
 | `FileReadText` | `Target`, `PathTemp` | Read file → `Result<String>` |
+| `FileReadAllBytes` | `Target`, `PathTemp` | Read file → `Result<Bytes>` |
+| `FileMmap` | `Target`, `PathTemp` | Map file → `Result<Bytes>` |
 | `FileWriteText` | `Target`, `PathTemp`, `TextTemp` | Write file → `Result<Unit>` |
+| `FileWriteBytes` | `Target`, `PathTemp`, `BytesTemp` | Write bytes → `Result<Unit>` |
 | `FileExists` | `Target`, `PathTemp` | Check existence → `Result<Bool>` |
+| `FileReplace` | `Target`, `SourceTemp`, `DestinationTemp` | Atomically replace file → `Result<Unit>` |
+| `FileMakeExecutable` | `Target`, `PathTemp` | Prepare regular file for execution → `Result<Unit>` |
+| `DirectoryEntries` | `Target`, `PathTemp` | Enumerate sorted basenames → `Result<List<String>>` |
+| `DirectoryCreateAll` | `Target`, `PathTemp` | Recursively create directories → `Result<Unit>` |
+| `DirectoryRemoveTree` | `Target`, `PathTemp` | Recursively remove without following symlinks → `Result<Unit>` |
+| `FileOpen` | `Target`, `PathTemp` | Open file → `Result<FileHandle>` |
+| `FileReadChunk` | `Target`, `HandleTemp`, `CountTemp` | Read bounded chunk → `Result<Bytes>` |
+| `FileReadLine` | `Target`, `HandleTemp` | Read line → `Result<Maybe<String>>` |
+| `FileClose` | `Target`, `HandleTemp` | Close handle → `Result<Unit>` |
 
 All file operations return `Result` ADTs: `Ok(value)` on success,
 `Error(message)` on failure.

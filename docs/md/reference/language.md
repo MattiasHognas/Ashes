@@ -3172,8 +3172,8 @@ The following capabilities are built into the compiler and require no declaratio
   `Ashes.IO.File.readText`, `readAllBytes`, `mmap`, `exists`, and `open`, plus
   `Ashes.IO.Directory.entries`.
 - **`FileWrite`** — creating or replacing filesystem data. Carried by
-  `Ashes.IO.File.writeText`, `writeBytes`, and `replace`, plus `Ashes.IO.Directory.createAll` and
-  `removeTree`.
+  `Ashes.IO.File.writeText`, `writeBytes`, `replace`, and `makeExecutable`, plus
+  `Ashes.IO.Directory.createAll` and `removeTree`.
 - **`ProcessSpawn`** — creating a child process. Carried by `Ashes.IO.Process.spawn`.
 - **`TimeRead`** — observing a clock. Carried by `Ashes.IO.Console.monotonicMillis`.
 - **`EnvironmentRead`** — inspecting process environment variables and host-directory state. Carried

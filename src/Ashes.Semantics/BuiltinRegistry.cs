@@ -58,6 +58,8 @@ public static class BuiltinRegistry
         FileExists,
         /// <summary>Atomically replaces a filesystem entry by renaming another entry over it.</summary>
         FileReplace,
+        /// <summary>Marks a regular file as directly executable where the host requires it.</summary>
+        FileMakeExecutable,
         /// <summary>Enumerates immediate directory entries deterministically.</summary>
         DirectoryEntries,
         /// <summary>Recursively creates a directory path.</summary>
@@ -581,6 +583,7 @@ public static class BuiltinRegistry
                     ["writeBytes"] = new("writeBytes", BuiltinValueKind.FileWriteBytes, IsCallable: true, Arity: 2),
                     ["exists"] = new("exists", BuiltinValueKind.FileExists, IsCallable: true, Arity: 1),
                     ["replace"] = new("replace", BuiltinValueKind.FileReplace, IsCallable: true, Arity: 2),
+                    ["makeExecutable"] = new("makeExecutable", BuiltinValueKind.FileMakeExecutable, IsCallable: true, Arity: 1),
                     ["open"] = new("open", BuiltinValueKind.FileOpen, IsCallable: true, Arity: 1),
                     ["readChunk"] = new("readChunk", BuiltinValueKind.FileReadChunk, IsCallable: true, Arity: 2),
                     ["readLine"] = new("readLine", BuiltinValueKind.FileReadLine, IsCallable: true, Arity: 1),

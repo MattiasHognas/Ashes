@@ -126,6 +126,10 @@ Supported on Linux x64, Linux arm64, and Windows x64.
   source or destination directory is an error. A missing source, cross-filesystem move, or other
   collision is an error. The source entry itself is moved: if it is a symlink, the link is moved
   without following its target. Carries `FileWrite`.
+- `makeExecutable(path)` returning `Result(Str, Unit)` — prepare an existing regular file for direct
+  process execution. On Linux its mode becomes `0755` (`rwxr-xr-x`). On Windows the operation
+  validates the path and succeeds without changing metadata. A missing path, directory, or symlink
+  is an error on both platforms. Carries `FileWrite`.
 
 ### `Ashes.IO.Directory`
 
@@ -145,8 +149,8 @@ UTF-8 produces `Error(message)` rather than an invalid `Str`.
   symlink supplied as `path` is likewise deleted without touching its target. A non-directory root
   file is deleted. Carries `FileWrite`.
 
-`replace`, `entries`, `createAll`, and `removeTree` are supported on Linux x64, Linux arm64, Windows
-x64, and Windows arm64.
+`replace`, `makeExecutable`, `entries`, `createAll`, and `removeTree` are supported on Linux x64,
+Linux arm64, Windows x64, and Windows arm64.
 
 ### `Ashes.IO.Path`
 

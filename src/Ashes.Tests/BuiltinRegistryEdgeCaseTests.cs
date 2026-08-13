@@ -135,6 +135,7 @@ public sealed class BuiltinRegistryEdgeCaseTests
         module.Members.Values.ShouldAllBe(member => member.IsCallable && member.Arity == 1);
         BuiltinRegistry.TryGetModule("Ashes.IO.File", out BuiltinRegistry.BuiltinModule file).ShouldBeTrue();
         file.Members["replace"].Arity.ShouldBe(2);
+        file.Members["makeExecutable"].Arity.ShouldBe(1);
     }
 
     [Test]

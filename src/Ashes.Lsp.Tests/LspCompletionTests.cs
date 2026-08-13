@@ -165,6 +165,7 @@ public sealed class LspCompletionTests
                 var completions = await harness.CompletionAsync(document.Uri, 0, source.Length);
 
                 completions.ShouldContain("replace");
+                completions.ShouldContain("makeExecutable");
             }
         }
     }

@@ -1553,6 +1553,38 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_file_make_executable_should_set_0755_and_reject_symlinks()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string tmpDir = CreateTempDirectory();
+        try
+        {
+            string file = Path.Combine(tmpDir, "tool");
+            await File.WriteAllTextAsync(file, "content").ConfigureAwait(false);
+            File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            File.CreateSymbolicLink(Path.Combine(tmpDir, "link"), file);
+
+            ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+                """match Ashes.IO.File.makeExecutable("tool") with | Error(message) -> Ashes.IO.print(message) | Ok(_) -> match Ashes.IO.File.makeExecutable("link") with | Ok(_) -> Ashes.IO.print("symlink-wrong") | Error(_) -> Ashes.IO.print("executable-ok")""",
+                workingDirectory: tmpDir).ConfigureAwait(false);
+
+            result.Stdout.ShouldBe("executable-ok\n");
+            File.GetUnixFileMode(file).ShouldBe(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+        finally
+        {
+            DeleteDirectoryIfExists(tmpDir);
+        }
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_should_uncons_unicode_scalars()
     {
         if (!OperatingSystem.IsLinux())

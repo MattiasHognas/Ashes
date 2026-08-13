@@ -54,6 +54,7 @@ internal static partial class LlvmImageLinker
             ["__errno_location"] = "libc.so.6",
             ["calloc"] = "libc.so.6",
             ["clock_gettime"] = "libc.so.6",
+            ["chmod"] = "libc.so.6",
             ["close"] = "libc.so.6",
             ["explicit_bzero"] = "libc.so.6",
             ["fclose"] = "libc.so.6",

@@ -9,6 +9,7 @@ internal static partial class LlvmCodegen
     private const string DirectoryCreateFailedMessage = "Ashes.IO.Directory.createAll: could not create directory";
     private const string DirectoryRemoveFailedMessage = "Ashes.IO.Directory.removeTree: could not remove tree";
     private const string FileReplaceFailedMessage = "Ashes.IO.File.replace: could not replace destination";
+    private const string FileMakeExecutableFailedMessage = "Ashes.IO.File.makeExecutable: could not mark file executable";
 
     private static LlvmValueHandle EmitFileReplace(
         LlvmCodegenState state,
@@ -18,6 +19,66 @@ internal static partial class LlvmCodegen
         return IsLinuxFlavor(state.Flavor)
             ? EmitLinuxFileReplace(state, sourceRef, destinationRef)
             : EmitWindowsFileReplace(state, sourceRef, destinationRef);
+    }
+
+    private static LlvmValueHandle EmitFileMakeExecutable(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        return IsLinuxFlavor(state.Flavor)
+            ? EmitLinuxFileMakeExecutable(state, pathRef)
+            : EmitWindowsFileMakeExecutable(state, pathRef);
+    }
+
+    private static LlvmValueHandle EmitLinuxFileMakeExecutable(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle path = EmitStringToCString(state, pathRef, "file_executable_path");
+        LlvmTypeHandle statBufferType = LlvmApi.ArrayType2(state.I8, 256);
+        LlvmValueHandle statBuffer = LlvmApi.BuildAlloca(builder, statBufferType, "file_executable_stat");
+        ulong modeOffset = state.Flavor == LlvmCodegenFlavor.LinuxX64 ? 24UL : 16UL;
+        LlvmValueHandle modePointer = LlvmApi.BuildBitCast(builder, LlvmApi.BuildGEP2(builder, state.I8, statBuffer, [LlvmApi.ConstInt(state.I64, modeOffset, 0)], "file_executable_mode_offset"), state.I32Ptr, "file_executable_mode_ptr");
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I32, 0, 0), modePointer);
+        LlvmTypeHandle lstatType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I8Ptr]);
+        LlvmValueHandle lstatStatus = EmitLinuxImportedCall(state, "lstat", lstatType, [path, LlvmApi.BuildBitCast(builder, statBuffer, state.I8Ptr, "file_executable_stat_ptr")], "file_executable_lstat");
+        LlvmValueHandle mode = LlvmApi.BuildLoad2(builder, state.I32, modePointer, "file_executable_mode");
+        LlvmValueHandle fileType = LlvmApi.BuildAnd(builder, mode, LlvmApi.ConstInt(state.I32, 0xF000, 0), "file_executable_type");
+        LlvmValueHandle regular = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, fileType, LlvmApi.ConstInt(state.I32, 0x8000, 0), "file_executable_regular");
+        LlvmValueHandle statOk = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, lstatStatus, LlvmApi.ConstInt(state.I32, 0, 0), "file_executable_stat_ok");
+        LlvmBasicBlockHandle chmodBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "file_executable_chmod");
+        LlvmBasicBlockHandle errorBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "file_executable_error");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "file_executable_done");
+        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "file_executable_result_slot");
+        LlvmApi.BuildCondBr(builder, LlvmApi.BuildAnd(builder, statOk, regular, "file_executable_supported"), chmodBlock, errorBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, chmodBlock);
+        LlvmTypeHandle chmodType = LlvmApi.FunctionType(state.I32, [state.I8Ptr, state.I32]);
+        LlvmValueHandle status = EmitLinuxImportedCall(state, "chmod", chmodType, [path, LlvmApi.ConstInt(state.I32, 0x1ED, 0)], "file_executable_chmod_call");
+        LlvmApi.BuildStore(builder, EmitFilesystemStatusResult(state, status, FileMakeExecutableFailedMessage, "file_executable_chmod_result"), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, errorBlock);
+        LlvmApi.BuildStore(builder, EmitResultError(state, EmitHeapStringLiteral(state, FileMakeExecutableFailedMessage)), resultSlot);
+        LlvmApi.BuildBr(builder, doneBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "file_executable_result");
+    }
+
+    private static LlvmValueHandle EmitWindowsFileMakeExecutable(LlvmCodegenState state, LlvmValueHandle pathRef)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        (LlvmValueHandle path, LlvmValueHandle count) = EmitWindowsWidePath(state, pathRef, "file_executable_path");
+        LlvmTypeHandle attrsType = LlvmApi.FunctionType(state.I32, [state.I8Ptr]);
+        LlvmValueHandle attrsFunction = EmitOrDeclareExternalFunction(state, "GetFileAttributesW", attrsType);
+        LlvmValueHandle attrs = LlvmApi.BuildCall2(builder, attrsType, attrsFunction, [path], "file_executable_attrs");
+        LlvmValueHandle exists = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, attrs, LlvmApi.ConstInt(state.I32, 0xffffffff, 0), "file_executable_exists");
+        LlvmValueHandle isDirectory = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildAnd(builder, attrs, LlvmApi.ConstInt(state.I32, 0x10, 0), "file_executable_dir_bits"), LlvmApi.ConstInt(state.I32, 0, 0), "file_executable_is_dir");
+        LlvmValueHandle isReparse = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, LlvmApi.BuildAnd(builder, attrs, LlvmApi.ConstInt(state.I32, 0x400, 0), "file_executable_reparse_bits"), LlvmApi.ConstInt(state.I32, 0, 0), "file_executable_is_reparse");
+        LlvmValueHandle validPath = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Sgt, count, LlvmApi.ConstInt(state.I32, 1, 0), "file_executable_valid_path");
+        LlvmValueHandle notDirectory = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, isDirectory, LlvmApi.ConstNull(LlvmApi.TypeOf(isDirectory)), "file_executable_not_dir");
+        LlvmValueHandle notReparse = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, isReparse, LlvmApi.ConstNull(LlvmApi.TypeOf(isReparse)), "file_executable_not_reparse");
+        LlvmValueHandle supported = LlvmApi.BuildAnd(builder, validPath, LlvmApi.BuildAnd(builder, exists, LlvmApi.BuildAnd(builder, notDirectory, notReparse, "file_executable_file"), "file_executable_existing_file"), "file_executable_supported");
+        LlvmValueHandle status = LlvmApi.BuildSelect(builder, supported, LlvmApi.ConstInt(state.I32, 0, 0), LlvmApi.ConstInt(state.I32, unchecked((uint)-1), 1), "file_executable_status");
+        return EmitFilesystemStatusResult(state, status, FileMakeExecutableFailedMessage, "file_executable");
     }
 
     private static LlvmValueHandle EmitDirectoryEntries(LlvmCodegenState state, LlvmValueHandle pathRef)

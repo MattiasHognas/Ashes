@@ -634,7 +634,7 @@ diagnostics and do not affect executable output.
 | Closures | `MakeClosure`, `CallClosure` |
 | Allocation | `Alloc`, `AllocAdt`, `SetAdtField`, `GetAdtTag`, `GetAdtField` |
 | Console I/O | `PrintInt`, `PrintStr`, `PrintBool`, `WriteStr`, `ReadLine`, `PanicStr` |
-| File I/O | `FileReadText`, `FileWriteText`, `FileExists` |
+| File I/O | `FileReadText`, `FileReadAllBytes`, `FileMmap`, `FileWriteText`, `FileWriteBytes`, `FileExists`, `FileReplace`, `FileMakeExecutable`, `DirectoryEntries`, `DirectoryCreateAll`, `DirectoryRemoveTree`, `FileOpen`, `FileReadChunk`, `FileReadLine`, `FileClose` |
 | Networking | `HttpGet`, `HttpPost`, `NetTcpConnect`, `NetTcpSend`, `NetTcpReceive`, `NetTcpClose` |
 | Control flow | `Label`, `Jump`, `JumpIfFalse`, `Return` |
 

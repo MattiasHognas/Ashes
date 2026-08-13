@@ -884,6 +884,9 @@ public abstract record IrInst
     /// <summary>Atomically renames one filesystem entry over another.</summary>
     public sealed record FileReplace(int Target, int SourceTemp, int DestinationTemp) : IrInst;
 
+    /// <summary>Marks an existing regular file as directly executable where required by the host.</summary>
+    public sealed record FileMakeExecutable(int Target, int PathTemp) : IrInst;
+
     /// <summary>Enumerates immediate directory entry basenames in deterministic order.</summary>
     public sealed record DirectoryEntries(int Target, int PathTemp) : IrInst;
 
