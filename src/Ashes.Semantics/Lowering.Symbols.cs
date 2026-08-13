@@ -415,9 +415,13 @@ public sealed partial class Lowering
     private void RegisterExternalFunction(ExternalDecl.Function function)
     {
         List<ResolvedExternalType?> parameterTypes = function.ParameterTypes
-            .Select(type => ResolveExternalParsedType(function, type, allowVoid: false))
+            .Select(type => ResolveExternalParsedType(function, type, allowVoid: false, allowBuffer: true))
             .ToList();
-        ResolvedExternalType? returnType = ResolveExternalParsedType(function, function.ReturnType, allowVoid: true);
+        ResolvedExternalType? returnType = ResolveExternalParsedType(
+            function,
+            function.ReturnType,
+            allowVoid: true,
+            allowBuffer: false);
         if (parameterTypes.Any(type => type is null) || returnType is null)
         {
             return;
@@ -605,14 +609,27 @@ public sealed partial class Lowering
             && _externalResourceTypes.ContainsKey(opaque.Name);
     }
 
-    private ResolvedExternalType? ResolveExternalParsedType(ExternalDecl externalDecl, ParsedType parsedType, bool allowVoid)
+    private ResolvedExternalType? ResolveExternalParsedType(
+        ExternalDecl externalDecl,
+        ParsedType parsedType,
+        bool allowVoid,
+        bool allowBuffer)
     {
         if (parsedType is ParsedType.Pointer pointer)
         {
-            var pointee = ResolveExternalParsedType(externalDecl, pointer.Pointee, allowVoid: false);
+            ResolvedExternalType? pointee = ResolveExternalParsedType(
+                externalDecl,
+                pointer.Pointee,
+                allowVoid: false,
+                allowBuffer: false);
             return pointee is null
                 ? null
                 : new ResolvedExternalType(new TypeRef.TPtr(pointee.SourceType), new FfiType.Ptr(pointee.FfiType));
+        }
+
+        if (parsedType is ParsedType.Buffer buffer)
+        {
+            return ResolveExternalBufferType(externalDecl, buffer, allowBuffer);
         }
 
         if (parsedType is not ParsedType.Named named)
@@ -637,6 +654,54 @@ public sealed partial class Lowering
             _ when _externalOpaqueTypes.Contains(named.Name) => new ResolvedExternalType(new TypeRef.TOpaque(named.Name), new FfiType.Opaque(named.Name)),
             _ => ResolveDeclaredExternalType(externalDecl, named.Name)
         };
+    }
+
+    private ResolvedExternalType? ResolveExternalBufferType(
+        ExternalDecl externalDecl,
+        ParsedType.Buffer buffer,
+        bool allowBuffer)
+    {
+        if (!allowBuffer)
+        {
+            ReportDiagnostic(
+                GetSpan(externalDecl),
+                "FfiBuffer(T) is supported only as a direct external parameter.",
+                DiagnosticCodes.InvalidFfiBuffer);
+            return null;
+        }
+
+        ResolvedExternalType? element = ResolveExternalParsedType(
+            externalDecl,
+            buffer.Element,
+            allowVoid: false,
+            allowBuffer: false);
+        if (element is null)
+        {
+            return null;
+        }
+
+        if (element.FfiType is not FfiType.Opaque opaque
+            || element.SourceType is not TypeRef.TOpaque sourceOpaque)
+        {
+            ReportDiagnostic(
+                GetSpan(externalDecl),
+                "FfiBuffer(T) requires a copyable opaque external type T.",
+                DiagnosticCodes.InvalidFfiBuffer);
+            return null;
+        }
+
+        if (_externalResourceTypes.ContainsKey(sourceOpaque.Name))
+        {
+            ReportDiagnostic(
+                GetSpan(externalDecl),
+                $"FfiBuffer({sourceOpaque.Name}) cannot contain affine external resources.",
+                DiagnosticCodes.InvalidFfiBuffer);
+            return null;
+        }
+
+        return new ResolvedExternalType(
+            new TypeRef.TList(element.SourceType),
+            new FfiType.Buffer(opaque));
     }
 
     private ResolvedExternalType? ResolveDeclaredExternalType(ExternalDecl declaration, string name)

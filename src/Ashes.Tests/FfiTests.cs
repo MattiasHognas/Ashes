@@ -170,6 +170,71 @@ public sealed class FfiTests
     }
 
     [Test]
+    public void External_ffi_buffer_accepts_a_list_of_copyable_opaque_handles()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type NativeHandle
+            external makeHandle(Int) -> NativeHandle
+            external inspect(FfiBuffer(NativeHandle), u64) -> Int
+            inspect([makeHandle(1), makeHandle(2)], 2u64)
+            """);
+
+        diagnostics.Errors.ShouldBeEmpty();
+        IrExternalFunction inspect = program.ExternalFunctions.Single(function =>
+            string.Equals(function.Name, "inspect", StringComparison.Ordinal));
+        inspect.ParameterTypes.ShouldBe([
+            new FfiType.Buffer(new FfiType.Opaque("NativeHandle")),
+            new FfiType.UInt(64)
+        ]);
+        program.EntryFunction.Instructions.OfType<IrInst.CallExternal>()
+            .Single(call => string.Equals(call.SymbolName, "inspect", StringComparison.Ordinal))
+            .ParameterTypes.ShouldBe(inspect.ParameterTypes);
+    }
+
+    [Test]
+    public void External_ffi_buffer_rejects_non_opaque_resource_nested_and_return_shapes()
+    {
+        var (program, diagnostics) = LowerProgram("""
+            external type Handle
+            external type Resource resource destructor closeResource
+            external closeResource(consume Resource) -> void
+            external primitive(FfiBuffer(Int)) -> Int
+            external resource(FfiBuffer(Resource)) -> Int
+            external nested(*FfiBuffer(Handle)) -> Int
+            external returned() -> FfiBuffer(Handle)
+            0
+            """);
+
+        program.ExternalFunctions.Select(function => function.Name).ShouldBe(["closeResource"]);
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "FfiBuffer(T) requires a copyable opaque external type T.",
+            StringComparison.Ordinal));
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "FfiBuffer(Resource) cannot contain affine external resources.",
+            StringComparison.Ordinal));
+        diagnostics.Errors.Count(error => error.Contains(
+            "FfiBuffer(T) is supported only as a direct external parameter.",
+            StringComparison.Ordinal)).ShouldBe(2);
+        diagnostics.StructuredErrors.Where(error => error.Message.StartsWith("FfiBuffer", StringComparison.Ordinal))
+            .ShouldAllBe(error => error.Code == DiagnosticCodes.InvalidFfiBuffer);
+    }
+
+    [Test]
+    public void External_ffi_buffer_function_cannot_be_used_as_a_first_class_value()
+    {
+        var (_, diagnostics) = LowerProgram("""
+            external type Handle
+            external inspect(FfiBuffer(Handle)) -> Int
+            let f = inspect in 0
+            """);
+
+        diagnostics.Errors.ShouldContain(error => error.Contains(
+            "External function 'inspect' has a call-scoped FFI buffer parameter and must be called directly.",
+            StringComparison.Ordinal));
+        diagnostics.StructuredErrors.ShouldContain(error => error.Code == DiagnosticCodes.InvalidFfiBuffer);
+    }
+
+    [Test]
     public void Void_is_rejected_as_an_external_parameter_type()
     {
         var (program, diagnostics) = LowerProgram("""

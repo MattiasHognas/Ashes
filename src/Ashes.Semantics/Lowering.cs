@@ -2744,15 +2744,20 @@ public sealed partial class Lowering
         Binding.ExternalFunction externalFunction,
         int fallbackTemp)
     {
-        if (!HasExternalResourceOwnershipContract(externalFunction.Function))
+        if (!RequiresDirectExternalCall(externalFunction.Function))
         {
             return EmitExternalFunctionThunk(externalFunction.Function, externalFunction.Type, GetSpan(variable));
         }
 
+        string contract = externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer)
+            ? "a call-scoped FFI buffer parameter"
+            : "a resource ownership contract";
         ReportDiagnostic(
             GetSpan(variable),
-            $"External function '{variable.Name}' has a resource ownership contract and must be called directly.",
-            DiagnosticCodes.InvalidExternalOwnershipMarker);
+            $"External function '{variable.Name}' has {contract} and must be called directly.",
+            externalFunction.Function.ParameterTypes.Any(type => type is FfiType.Buffer)
+                ? DiagnosticCodes.InvalidFfiBuffer
+                : DiagnosticCodes.InvalidExternalOwnershipMarker);
         Emit(new IrInst.LoadConstInt(fallbackTemp, 0));
         return (fallbackTemp, externalFunction.Type);
     }
@@ -2761,6 +2766,10 @@ public sealed partial class Lowering
         function.ParameterOwnerships.Any(ownership => ownership != FfiParameterOwnership.Unspecified)
         || function.ReturnType is FfiType.Opaque returned
             && _externalResourceTypes.ContainsKey(returned.Name);
+
+    private bool RequiresDirectExternalCall(IrExternalFunction function) =>
+        HasExternalResourceOwnershipContract(function)
+        || function.ParameterTypes.Any(type => type is FfiType.Buffer);
 
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
     {
@@ -10640,6 +10649,7 @@ public sealed partial class Lowering
             FfiType.Str => new TypeRef.TStr(),
             FfiType.Opaque opaque => new TypeRef.TOpaque(opaque.Name),
             FfiType.Ptr ptr => new TypeRef.TPtr(FromFfiType(ptr.Pointee)),
+            FfiType.Buffer buffer => new TypeRef.TList(FromFfiType(buffer.Element)),
             _ => throw new InvalidOperationException($"Unknown FFI type '{ffiType.GetType().Name}'.")
         };
     }

@@ -19,8 +19,9 @@ packages below.
 | [Byte type (`u8`) and byte literals](../reference/language.md#_2-1-integers) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker` |
 | [Bitwise operators (`&`, `\|`, `^`, `<<`, `>>`, `~`)](../reference/language.md#_3-5-bitwise) | Complete | `Compiler/Backend`, `Compiler/Linker` |
 | [Numeric text conversions (`parseInt`, `parseFloat`, `fromInt`, `fromFloat`, `toHex`)](../reference/standard-library.md#ashes-text) | Complete | `Compiler/Frontend`, `Compiler/Semantics`, `Formatter`, `CLI` |
-| [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | Partial | `Compiler/Backend` |
-| [LLVM native arrays, out parameters, returned strings, and foreign buffers](#gap-ffi-native-arrays-out-parameters-and-foreign-buffers) | Required | `Compiler/Backend` |
+| [Basic FFI (`external` functions/types, pointers, resources, `symbol@library`)](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend` |
+| [Call-scoped native arrays of opaque handles](../reference/language.md#_5-1-external-declarations) | Complete | `Compiler/Backend`, `LSP`, `Fuzzing` |
+| [LLVM out parameters, returned strings, and foreign buffers](#gap-ffi-out-parameters-returned-strings-and-foreign-buffers) | Required | `Compiler/Backend` |
 | [Immutable `Bytes` with indexed reads and append helpers](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Frontend`, `Compiler/Backend`, `Compiler/Linker`, `LSP`, `DAP` |
 | [Little-endian byte encode/decode helpers (`u16/u32/u64`)](../reference/standard-library.md#ashes-byte) | Complete | `Compiler/Linker`, `DAP` |
 | [Efficient preallocation, range copy, and random-access binary patching](#gap-efficient-immutable-binary-construction) | Required | `Compiler/Linker` |
@@ -58,43 +59,20 @@ Each package below is the implementation hand-off for one or more incomplete row
 package must add or specify an Ashes capability; work that only ports compiler code does not belong
 here. Update the normative documentation before any language or API implementation.
 
-### Gap: FFI native arrays, out parameters, and foreign buffers
+### Gap: FFI out parameters, returned strings, and foreign buffers
 
 `Ashes.Backend` talks to LLVM through ~145 direct LLVM-C API P/Invoke bindings
 (`src/Ashes.Backend/Llvm/Interop/LlvmApi.cs`), not textual IR + a `clang`/`llc` subprocess. Ashes'
-own `external` mechanism can name opaque and pointer types, but Ashes code cannot construct a
-contiguous native array of opaque handles, allocate/read out-parameter storage, copy a returned
-pointer-plus-length buffer into `Bytes`, or decode and dispose a returned native string. The current
-C# adapter does all of these with `out` parameters, pinned `ReadOnlySpan<T>` values, and explicit
-`Marshal`/copy operations. Representative calls include `LLVMGetTargetFromTriple`,
-`LLVMFunctionType`, `LLVMBuildCall2`, `LLVMBuildGEP2`, `LLVMVerifyModule`, and
-`LLVMTargetMachineEmitToMemoryBuffer`.
+own `external` mechanism can now materialize a call-scoped contiguous array of opaque handles, but
+Ashes code still cannot allocate/read out-parameter storage, copy a returned pointer-plus-length
+buffer into `Bytes`, or decode and dispose a returned native string. The current C# adapter handles
+these shapes with `out` parameters and explicit `Marshal`/copy operations. Representative calls
+include `LLVMGetTargetFromTriple`, `LLVMVerifyModule`, and `LLVMTargetMachineEmitToMemoryBuffer`.
 
 **Decision (2026-07-24): extend Ashes' FFI rather than require an Ashes compiler to use textual LLVM
 IR plus a subprocess.** This preserves direct access to LLVM-C and avoids making process spawning an
 accidental backend requirement. Specify the extension in the
 [language reference](../reference/language.md) before implementation.
-
-#### Native input arrays
-
-The first required shape is a same-typed, contiguous, call-scoped array. It covers
-`LLVMFunctionType`, `LLVMBuildCall2`, `LLVMBuildGEP2`, `LLVMConstArray2`,
-`LLVMConstStructInContext`, and `LLVMStructTypeInContext`.
-
-Workable tasks:
-
-1. Specify a compiler-supported immutable native-call buffer, provisionally `FfiBuffer(a)`, built
-   from an Ashes `List(a)` or `Array(a)`, plus `Ffi.length`. It exposes no indexing writes or pointer
-   arithmetic.
-2. Extend external parameter types so `FfiBuffer(TypeRef)` lowers to `LLVMTypeRef*`; the wrapper
-   passes `Ffi.length(buffer)` to the adjacent count parameter, and an empty buffer lowers to null
-   plus zero.
-3. Keep the storage stable for exactly the dynamic extent of the external call. Reject storing,
-   returning, or capturing its pointer in Ashes source.
-4. Implement parsing, formatting, type checking, IR metadata, target lowering, diagnostics, LSP
-   syntax/hover/completion, and parser/lowering fuzz generators for the chosen declaration surface.
-5. Add focused wrappers and ABI tests for all six LLVM calls, including empty and multi-element
-   arrays on every target.
 
 #### Out parameters
 

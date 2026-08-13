@@ -291,7 +291,7 @@ internal static partial class LlvmCodegen
             FfiType.Float32 => state.F32,
             FfiType.Bool => state.I8,
             FfiType.Str => state.I8Ptr,
-            FfiType.Opaque { } or FfiType.Ptr { } => state.I8Ptr,
+            FfiType.Opaque { } or FfiType.Ptr { } or FfiType.Buffer { } => state.I8Ptr,
             FfiType.Void => LlvmApi.VoidTypeInContext(state.Target.Context),
             FfiType.UInt uintType => throw new InvalidOperationException($"Unsupported unsigned FFI width '{uintType.Bits}'."),
             _ => throw new InvalidOperationException($"Unknown FFI type '{type.GetType().Name}'.")
@@ -308,8 +308,126 @@ internal static partial class LlvmCodegen
             FfiType.UInt { Bits: 8 or 16 or 32 } => LlvmApi.BuildTrunc(state.Target.Builder, value, GetLlvmFfiType(state, type), "ffi_arg_uint"),
             FfiType.Str => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_str"),
             FfiType.Opaque { } or FfiType.Ptr { } => LlvmApi.BuildIntToPtr(state.Target.Builder, value, state.I8Ptr, "ffi_arg_ptr"),
+            FfiType.Buffer buffer => EmitFfiBufferArgument(state, value, buffer),
             _ => value
         };
+    }
+
+    private static LlvmValueHandle EmitFfiBufferArgument(
+        LlvmCodegenState state,
+        LlvmValueHandle listValue,
+        FfiType.Buffer bufferType)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle cursorSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_buffer_cursor");
+        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_buffer_count");
+        LlvmValueHandle finalCount = EmitFfiBufferCount(state, listValue, cursorSlot, countSlot);
+        LlvmValueHandle isEmpty = LlvmApi.BuildICmp(
+            builder,
+            LlvmIntPredicate.Eq,
+            finalCount,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            "ffi_buffer_is_empty");
+        LlvmValueHandle allocationCount = LlvmApi.BuildSelect(
+            builder,
+            isEmpty,
+            LlvmApi.ConstInt(state.I64, 1, 0),
+            finalCount,
+            "ffi_buffer_allocation_count");
+        LlvmTypeHandle elementType = GetLlvmFfiType(state, bufferType.Element);
+        LlvmValueHandle nativeBuffer = LlvmApi.BuildArrayAlloca(
+            builder,
+            elementType,
+            allocationCount,
+            "ffi_buffer_storage");
+        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "ffi_buffer_index");
+        EmitFfiBufferFill(state, listValue, nativeBuffer, elementType, cursorSlot, indexSlot);
+        LlvmValueHandle nullPointer = LlvmApi.BuildIntToPtr(
+            builder,
+            LlvmApi.ConstInt(state.I64, 0, 0),
+            state.I8Ptr,
+            "ffi_buffer_null");
+        return LlvmApi.BuildSelect(builder, isEmpty, nullPointer, nativeBuffer, "ffi_buffer_argument");
+    }
+
+    private static LlvmValueHandle EmitFfiBufferCount(
+        LlvmCodegenState state,
+        LlvmValueHandle listValue,
+        LlvmValueHandle cursorSlot,
+        LlvmValueHandle countSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.BuildStore(builder, listValue, cursorSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), countSlot);
+        LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_count_loop");
+        LlvmBasicBlockHandle body = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_count_body");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_count_done");
+        LlvmApi.BuildBr(builder, loop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loop);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "ffi_buffer_count_cursor");
+        LlvmValueHandle atEnd = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Eq, cursor, LlvmApi.ConstInt(state.I64, 0, 0), "ffi_buffer_count_at_end");
+        LlvmApi.BuildCondBr(builder, atEnd, done, body);
+
+        LlvmApi.PositionBuilderAtEnd(builder, body);
+        LlvmValueHandle count = LlvmApi.BuildLoad2(builder, state.I64, countSlot, "ffi_buffer_count_value");
+        LlvmApi.BuildStore(
+            builder,
+            LlvmApi.BuildAdd(builder, count, LlvmApi.ConstInt(state.I64, 1, 0), "ffi_buffer_count_next"),
+            countSlot);
+        LlvmApi.BuildStore(builder, LoadListTail(state, cursor, "ffi_buffer_count_tail"), cursorSlot);
+        LlvmApi.BuildBr(builder, loop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, done);
+        return LlvmApi.BuildLoad2(builder, state.I64, countSlot, "ffi_buffer_final_count");
+    }
+
+    private static void EmitFfiBufferFill(
+        LlvmCodegenState state,
+        LlvmValueHandle listValue,
+        LlvmValueHandle nativeBuffer,
+        LlvmTypeHandle elementType,
+        LlvmValueHandle cursorSlot,
+        LlvmValueHandle indexSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmApi.BuildStore(builder, listValue, cursorSlot);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
+        LlvmBasicBlockHandle loop = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_fill_loop");
+        LlvmBasicBlockHandle body = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_fill_body");
+        LlvmBasicBlockHandle done = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "ffi_buffer_fill_done");
+        LlvmApi.BuildBr(builder, loop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loop);
+        LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "ffi_buffer_fill_cursor");
+        LlvmValueHandle atEnd = LlvmApi.BuildICmp(
+            builder, LlvmIntPredicate.Eq, cursor, LlvmApi.ConstInt(state.I64, 0, 0), "ffi_buffer_fill_at_end");
+        LlvmApi.BuildCondBr(builder, atEnd, done, body);
+
+        LlvmApi.PositionBuilderAtEnd(builder, body);
+        LlvmValueHandle index = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "ffi_buffer_index_value");
+        LlvmValueHandle elementPointer = LlvmApi.BuildGEP2(
+            builder, elementType, nativeBuffer, [index], "ffi_buffer_element_ptr");
+        LlvmValueHandle handle = LoadListHead(state, cursor, "ffi_buffer_handle");
+        LlvmApi.BuildStore(
+            builder,
+            LlvmApi.BuildIntToPtr(builder, handle, elementType, "ffi_buffer_handle_ptr"),
+            elementPointer);
+        LlvmApi.BuildStore(
+            builder,
+            LlvmApi.BuildAdd(builder, index, LlvmApi.ConstInt(state.I64, 1, 0), "ffi_buffer_index_next"),
+            indexSlot);
+        LlvmApi.BuildStore(builder, LoadListTail(state, cursor, "ffi_buffer_fill_tail"), cursorSlot);
+        LlvmApi.BuildBr(builder, loop);
+
+        LlvmApi.PositionBuilderAtEnd(builder, done);
     }
 
     private static bool EmitJump(LlvmCodegenState state, string targetLabel)

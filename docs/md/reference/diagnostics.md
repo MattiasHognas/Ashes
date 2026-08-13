@@ -52,6 +52,7 @@ Current codes:
 | `ASH041` | Invalid external resource destructor                        |
 | `ASH042` | Invalid external ownership contract                         |
 | `ASH043` | A structured-concurrency join handle escapes its owning task scope |
+| `ASH044` | Invalid FFI buffer contract                                |
 
 Codes are intended to stay stable even if diagnostic wording is improved over time.
 Code `ASH009` is reserved for future resource-lifecycle diagnostics.
@@ -214,6 +215,10 @@ reuse `ASH013`–`ASH016`. See [Language Reference](language.md) §13.1 for the 
   `consume`, either marker is written on a non-resource parameter, pointer, or return type, or an
   external function that borrows, consumes, or returns a declared resource is used as a first-class
   value instead of being called directly.
+
+- `ASH044` — **Invalid FFI buffer contract.** `FfiBuffer(T)` is used outside a direct external
+  parameter, `T` is not a copyable opaque external type, `T` is an affine external resource, or the
+  buffer-taking function is used as a first-class value instead of being called directly.
 
 ## Record diagnostics
 

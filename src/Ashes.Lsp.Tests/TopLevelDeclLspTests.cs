@@ -188,6 +188,35 @@ public sealed class TopLevelDeclLspTests
     }
 
     [Test]
+    public void Ffi_buffer_external_supports_hover_completion_and_semantic_tokens()
+    {
+        const string source =
+            "external type Handle\n" +
+            "external inspect(FfiBuffer(Handle), u64) -> Int\n" +
+            "0";
+
+        IReadOnlyList<string> completions = DocumentService.GetCompletions(source, source.Length);
+        completions.ShouldContain("FfiBuffer");
+        completions.ShouldContain("Handle");
+        completions.ShouldContain("inspect");
+
+        DocumentService.HoverItem? hover = DocumentService.GetHover(
+            source,
+            source.IndexOf("inspect", StringComparison.Ordinal));
+        hover.ShouldNotBeNull();
+        hover.Value.Contents.ShouldContain("external inspect(FfiBuffer(Handle), u64) -> Int");
+        hover.Value.Contents.ShouldContain("#1 FfiBuffer(Handle): List(Handle)");
+
+        IReadOnlyList<DocumentService.SemanticTokenItem> tokens = DocumentService.GetSemanticTokens(source);
+        tokens.ShouldContain(token => token.Line == 1
+            && token.Character == "external inspect(".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+        tokens.ShouldContain(token => token.Line == 1
+            && token.Character == "external inspect(FfiBuffer(".Length
+            && token.TokenType == DocumentService.TokenTypeType);
+    }
+
+    [Test]
     public void Completion_should_expose_earlier_top_level_binding_inside_a_later_declaration_value()
     {
         // Model-A: a binding is visible to the values of subsequent declarations.

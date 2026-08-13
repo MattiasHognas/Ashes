@@ -804,6 +804,12 @@ resource-bearing closures and remains governed by the `ASH006`-`ASH008` diagnost
 external resource carries its destructor symbol, library, ABI signature, and per-parameter
 borrow/consume metadata from frontend declarations through semantic ownership analysis into the IR;
 the backend emits automatic cleanup through the same external-call machinery as an explicit call.
+An external `FfiBuffer(T)` parameter has source type `List(T)` but records a distinct call-scoped
+buffer shape in IR. Immediately before the direct native call, the backend counts the immutable list,
+allocates a target-pointer-width contiguous array in the current stack frame, walks the list again to
+copy each opaque handle, and passes the array address. Empty lists pass null. The address never exists
+as an Ashes value and the declaration cannot be called indirectly, returned, pointer-nested, or used
+with affine resource elements, so its storage cannot escape the call boundary.
 Process cleanup closes all pipes, terminates a child that is still running, and then reaps it on Linux
 or waits for and releases its process handle on Windows.
 

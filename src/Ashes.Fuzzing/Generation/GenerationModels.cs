@@ -44,6 +44,7 @@ internal enum GeneratedFeature
     DerivedImplementation,
     MultiParameterTrait,
     ExternalResource,
+    FfiBuffer,
     AmbientAuthority,
     TypeAlias,
     ZeroCostType,

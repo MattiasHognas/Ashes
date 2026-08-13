@@ -255,8 +255,10 @@ public sealed class GeneratorInvariantTests
 
         diagnostics.Errors.ShouldBeEmpty(source);
         prelude.Features.Contains(GeneratedFeature.ExternalResource).ShouldBeTrue();
+        prelude.Features.Contains(GeneratedFeature.FfiBuffer).ShouldBeTrue();
         prelude.Features.Contains(GeneratedFeature.AmbientAuthority).ShouldBeTrue();
         prelude.Trace.Entries.ShouldContain("program:external-resource");
+        prelude.Trace.Entries.ShouldContain("program:ffi-buffer");
         prelude.Trace.Entries.ShouldContain("program:ambient-authority");
         source.ShouldContain("external type FuzzResource5 resource destructor fuzzResourceClose5");
         source.ShouldContain("borrow FuzzResource5");
@@ -268,6 +270,16 @@ public sealed class GeneratorInvariantTests
         inspect.ParameterOwnerships.ShouldBe([FfiParameterOwnership.Borrow]);
         inspect.RuntimeCapabilities.ShouldBe(["Entropy"]);
         source.ShouldContain("needs {Entropy}");
+        source.ShouldContain("external type FuzzOpaque5");
+        source.ShouldContain("external fuzzBufferInspect5(FfiBuffer(FuzzOpaque5), u64) -> Int");
+        IrExternalFunction bufferInspect = ir.ExternalFunctions.Single(function => string.Equals(
+            function.Name,
+            "fuzzBufferInspect5",
+            StringComparison.Ordinal));
+        bufferInspect.ParameterTypes.ShouldBe([
+            new FfiType.Buffer(new FfiType.Opaque("FuzzOpaque5")),
+            new FfiType.UInt(64)
+        ]);
     }
 
     [Test]
