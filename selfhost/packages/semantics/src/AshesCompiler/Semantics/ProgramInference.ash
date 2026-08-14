@@ -14,6 +14,11 @@ export (
 type ProgramInferenceError =
     | ProgramExpressionError(TypeInferenceError)
     | ProgramTypeResolutionError(TypeResolutionError)
+    | DuplicateCapabilityDeclaration(Str)
+    | ReservedCapabilityDeclaration(Str)
+    | DuplicateCapabilityOperation(Str, Str)
+    | ParameterizedCapabilityOperationRequiresSignature(Str, Str)
+    | CapabilityOperationRequiresFunction(Str, Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
 
@@ -65,6 +70,12 @@ type RecursiveInference =
 type AliasParameterRegistration =
     | context: TypeResolutionContext
     | parameterIds: List(Int)
+
+type CapabilityOperationRegistration =
+    | environment: TypeEnvironment
+    | operations: List(CapabilityOperationInferenceDefinition)
+    | supply: TypeVariableSupply
+    | error: Maybe(ProgramInferenceError)
 
 let recursive wrapSugarParameters parameters body =
     match parameters with
@@ -153,6 +164,108 @@ let recursive registerTypeParameters parameters context supply reversedTypes rev
                 | (SemVariable(variableId), nextSupply) -> registerTypeParameters(tail)(addTypeParameter(name)(SemVariable(variableId))(context))(nextSupply)(SemVariable(variableId) :: reversedTypes)((variableId, name) :: reversedQuantified)
                 | (_unexpected, nextSupply) -> registerTypeParameters(tail)(context)(nextSupply)(reversedTypes)(reversedQuantified)
 
+let recursive operationNameExists name operations =
+    match operations with
+        | [] -> false
+        | CapabilityOperationInferenceDefinition { name = candidateName, scheme = _scheme, hasExplicitSignature = _hasExplicitSignature } :: tail ->
+            if name == candidateName
+            then true
+            else operationNameExists(name)(tail)
+
+let isBuiltinRuntimeCapability name =
+    if name == "ConsoleIO"
+    then true
+    else
+        if name == "FileRead"
+        then true
+        else
+            if name == "FileWrite"
+            then true
+            else
+                if name == "ProcessSpawn"
+                then true
+                else
+                    if name == "ProcessExit"
+                    then true
+                    else
+                        if name == "TimeRead"
+                        then true
+                        else
+                            if name == "EnvironmentRead"
+                            then true
+                            else
+                                if name == "Entropy"
+                                then true
+                                else
+                                    if name == "UnsafeFfi"
+                                    then true
+                                    else
+                                        if name == "NetListen"
+                                        then true
+                                        else
+                                            if name == "NetConnect"
+                                            then true
+                                            else name == "Stop"
+
+let recursive addCapabilityToInnermostArrow capabilityType semanticType =
+    match semanticType with
+        | SemFunction(argument, result, row) ->
+            match result with
+                | SemFunction(_, _, _) ->
+                    match addCapabilityToInnermostArrow(capabilityType)(result) with
+                        | None -> None
+                        | Some(effectfulResult) -> Some(SemFunction(argument)(effectfulResult)(row))
+                | _ -> Some(SemFunction(argument)(result)(Some(SemRow([capabilityType])(None))))
+        | _ -> None
+
+let recursive registerCapabilityOperations capabilityName declarations capabilityType quantified context environment supply reversed =
+    match declarations with
+        | [] -> CapabilityOperationRegistration(environment = addCapabilityBinding(capabilityName)(reverse(reversed))(environment), operations = reverse(reversed), supply = supply, error = None)
+        | CapabilityOperation { name = operationName, signature = signature } :: tail ->
+            if operationNameExists(operationName)(reversed)
+            then CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(DuplicateCapabilityOperation(capabilityName)(operationName)))
+            else
+                match signature with
+                    | None ->
+                        match quantified with
+                            | _ :: _ -> CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(ParameterizedCapabilityOperationRequiresSignature(capabilityName)(operationName)))
+                            | [] ->
+                                match freshTypeVariable(supply) with
+                                    | (operationType, nextSupply) ->
+                                        let scheme = TypeScheme(quantified = [], body = operationType, constraints = [])
+                                        in
+                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = false)
+                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(nextSupply)(definition :: reversed)
+                    | Some(signatureType) ->
+                        match resolveTypeExpression(signatureType)(context) with
+                            | TypeResolutionResult { semanticType = resolvedSignature, error = None } ->
+                                match addCapabilityToInnermostArrow(capabilityType)(resolvedSignature) with
+                                    | None -> CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(CapabilityOperationRequiresFunction(capabilityName)(operationName)))
+                                    | Some(operationType) ->
+                                        let scheme = TypeScheme(quantified = quantified, body = operationType, constraints = [])
+                                        in
+                                            let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = true)
+                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(supply)(definition :: reversed)
+                            | TypeResolutionResult { semanticType = _resolvedSignature, error = Some(error) } -> CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(ProgramTypeResolutionError(error)))
+
+let registerCapabilityDeclaration declaration state =
+    match (declaration, state) with
+        | (CapabilityDecl { name = name, typeParameters = parameters, operations = operations }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
+            if isBuiltinRuntimeCapability(name)
+            then ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(ReservedCapabilityDeclaration(name)))
+            else
+                match resolveCapabilityBinding(name)(environment) with
+                    | Some(_) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(DuplicateCapabilityDeclaration(name)))
+                    | None ->
+                        match registerTypeParameters(parameters)(inferenceTypeResolutionContext(environment))(supply)([])([]) with
+                            | TypeParameterRegistration { context = context, semanticTypes = parameterTypes, quantified = quantified, supply = parameterSupply } ->
+                                let capabilityType = SemCapability(name)(parameterTypes)
+                                in
+                                    match registerCapabilityOperations(name)(operations)(capabilityType)(quantified)(context)(environment)(parameterSupply)([]) with
+                                        | CapabilityOperationRegistration { environment = capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = None } -> ProgramInferenceState(environment = capabilityEnvironment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                        | CapabilityOperationRegistration { environment = _capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(error))
+        | (_declaration, failedState) -> failedState
+
 let recursive resolveConstructorParameters parameters context reversed =
     match parameters with
         | [] -> TypeListResolutionResult(semanticTypes = reverse(reversed), error = None)
@@ -232,6 +345,7 @@ let recursive inferTopLevelItems items state =
                     | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
                     | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
                     | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
+                    | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
                     | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
                     | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
                     | _ ->
