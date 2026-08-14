@@ -14,6 +14,7 @@ export (
     value emptyTypeEnvironment,
     value addTypeBinding,
     value addInferenceTypeDefinition,
+    value addInferenceTypeAlias,
     value addConstructorBinding,
     value inferenceTypeResolutionContext,
     value inferenceEnvironmentSchemes,
@@ -88,6 +89,10 @@ let addConstructorBinding name scheme fieldNames environment =
 let addInferenceTypeDefinition symbolId name arity environment =
     match environment with
         | TypeEnvironment { bindings = bindings, constructors = constructors, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
+
+let addInferenceTypeAlias name parameterIds target environment =
+    match environment with
+        | TypeEnvironment { bindings = bindings, constructors = constructors, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, typeResolutionContext = addTypeAliasDefinition(name)(parameterIds)(target)(typeResolutionContext))
 
 let recursive findTypeBinding name bindings =
     match bindings with
