@@ -122,7 +122,7 @@ let generalize environment semanticType constraints =
         let candidateVariables = mergeVariables(freeTypeVariables(semanticType))(freeConstraintsVariables(constraints))
         in
             let generalizedVariables = removeEnvironmentVariables(environmentVariables)(candidateVariables)
-            in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = constraints))
+            in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
 let recursive instantiateQuantifiers quantified supply substitution =
     match quantified with
@@ -160,5 +160,5 @@ let instantiate scheme supply =
                 | (substitution, nextSupply) ->
                     let instantiatedBody = applySubstitution(substitution)(body)
                     in
-                        let instantiatedConstraints = applyConstraintSubstitutions(substitution)(constraints)
+                        let instantiatedConstraints = canonicalizeTraitConstraints(applyConstraintSubstitutions(substitution)(constraints))
                         in InstantiationResult(semanticType = instantiatedBody, constraints = instantiatedConstraints, supply = nextSupply)

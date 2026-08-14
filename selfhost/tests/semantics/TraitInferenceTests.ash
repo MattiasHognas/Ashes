@@ -323,6 +323,45 @@ let expectTraitImplementationRequirementTermination unit =
     |> acceptsDecreasingTraitImplementationRequirement
     |> acceptsConcreteTraitImplementationRequirement
 
+let expectTraitConstraintCanonicalization unit =
+    (let ranked = TraitDecl(name = "Ranked", typeParameters = [TypeParameter(name = "a")], supertraits = [TraitConstraintSyntax(traitName = "Ordered", typeArguments = [TypeNamed("a")])], methods = [TraitMethodDecl(name = "rank", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Int"))([])(None), defaultImplementation = None)])
+    in
+        let redundant = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("Int")]), TraitConstraintSyntax(traitName = "Ordered", typeArguments = [TypeNamed("Int")]), TraitConstraintSyntax(traitName = "Ranked", typeArguments = [TypeNamed("Int")]), TraitConstraintSyntax(traitName = "Ranked", typeArguments = [TypeNamed("Int")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(ranked), TopLevelTrait(ordDeclaration), TopLevelTrait(eqDeclaration), TopLevelImplementation(redundant)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+                    match resolveTraitImplementations("Equal")(environment) with
+                        | TraitImplementationInferenceDefinition { traitName = "Equal", typeArguments = _typeArguments, requirements = TraitConstraint { traitName = "Ranked", typeArguments = SemInt :: [] } :: [], methods = _methods } :: [] -> Unit
+                        | _ -> test.fail("implementation requirements should be deduplicated and omit transitively implied supertraits")
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("canonical implementation requirements should infer: " + Ashes.Trait.Show.show(error)))
+
+let recursive findBindingScheme name bindings =
+    match bindings with
+        | [] -> None
+        | (candidateName, scheme) :: tail ->
+            if name == candidateName
+            then Some(scheme)
+            else findBindingScheme(name)(tail)
+
+let binaryTraitCall traitName methodName =
+    ExprCall(ExprCall(ExprQualifiedVar(traitName)(methodName))(ExprVar("left"))(false))(ExprVar("right"))(false)
+
+let expectInferredConstraintCanonicalization unit =
+    (let body =
+        ExprLet("ignored")(binaryTraitCall("Equal")("equal"))(binaryTraitCall("Ordered")("compare"))([])(None)([])
+    in
+        let value =
+            ExprLambda("left")(ExprLambda("right")(body)(None))(None)
+        in
+            let binding = LetBindingSyntax(name = "ordered", value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
+            in
+                match inferProgram(ProgramSyntax(items = [TopLevelTrait(ordDeclaration), TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)) with
+                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = TypeEnvironment { bindings = bindings }, error = None } ->
+                        match findBindingScheme("ordered")(bindings) with
+                            | Some(TypeScheme { quantified = _quantified, body = _body, constraints = TraitConstraint { traitName = "Ordered", typeArguments = _arguments } :: [] }) -> Unit
+                            | _ -> test.fail("inferred schemes should omit supertraits implied by stronger constraints")
+                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("canonical inferred constraints should infer: " + Ashes.Trait.Show.show(error)))
+
 let expectTraitImplementationBodyValidation unit =
     (let invalidBody =
         ExprLambda("left")(ExprLambda("right")(ExprInt(42))(None))(None)
@@ -460,6 +499,8 @@ let runTraitInferenceTests unit =
     |> expectInvalidTraitImplementations
     |> expectInvalidTraitImplementationRequirements
     |> expectTraitImplementationRequirementTermination
+    |> expectTraitConstraintCanonicalization
+    |> expectInferredConstraintCanonicalization
     |> expectTraitImplementationBodyValidation
     |> expectTraitImplementationCapabilityRows
     |> expectTraitImplementationCoherence

@@ -1,3 +1,5 @@
+import Ashes.Collection.List.sortBy
+import Ashes.Text.compare as compareText
 export (
     type SemanticType(..),
     type TraitConstraint(..),
@@ -8,6 +10,8 @@ export (
     value occursInType,
     value applySubstitution,
     value formatSemanticType,
+    value traitConstraintStableKey,
+    value canonicalizeTraitConstraints,
 )
 
 type SemanticType =
@@ -71,7 +75,8 @@ let recursive occursInType : Int -> SemanticType -> Bool =
             match semanticType with
                 | SemVariable(candidateId) -> variableId == candidateId
                 | SemList(element) -> occursInType(variableId)(element)
-                | SemTuple(elements) -> anyType(occursInType(variableId))(elements)
+                | SemTuple(elements) ->
+                    anyType(occursInType(variableId))(elements)
                 | SemFunction(argument, result, capabilityRow) ->
                     if occursInType(variableId)(argument)
                     then true
@@ -82,7 +87,8 @@ let recursive occursInType : Int -> SemanticType -> Bool =
                             match capabilityRow with
                                 | None -> false
                                 | Some(row) -> occursInType(variableId)(row)
-                | SemCapability(_name, arguments) -> anyType(occursInType(variableId))(arguments)
+                | SemCapability(_name, arguments) ->
+                    anyType(occursInType(variableId))(arguments)
                 | SemRow(capabilities, tail) ->
                     if anyType(occursInType(variableId))(capabilities)
                     then true
@@ -90,7 +96,8 @@ let recursive occursInType : Int -> SemanticType -> Bool =
                         match tail with
                             | None -> false
                             | Some(tailType) -> occursInType(variableId)(tailType)
-                | SemNamed(_symbolId, _name, arguments) -> anyType(occursInType(variableId))(arguments)
+                | SemNamed(_symbolId, _name, arguments) ->
+                    anyType(occursInType(variableId))(arguments)
                 | SemPointer(pointee) -> occursInType(variableId)(pointee)
                 | _ -> false
 
@@ -136,7 +143,10 @@ and applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticTyp
                             let substitutedRow =
                                 match capabilityRow with
                                     | None -> None
-                                    | Some(row) -> Some(applySubstitution(substitution)(row))
+                                    | Some(row) ->
+                                        row
+                                        |> applySubstitution(substitution)
+                                        |> Some
                             in SemFunction(substitutedArgument)(substitutedResult)(substitutedRow)
                 | SemCapability(name, arguments) ->
                     let substitutedArguments = substituteTypes(substitution)(arguments)
@@ -147,7 +157,10 @@ and applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticTyp
                         let substitutedTail =
                             match tail with
                                 | None -> None
-                                | Some(tailType) -> Some(applySubstitution(substitution)(tailType))
+                                | Some(tailType) ->
+                                    tailType
+                                    |> applySubstitution(substitution)
+                                    |> Some
                         in SemRow(substitutedCapabilities)(substitutedTail)
                 | SemNamed(symbolId, name, arguments) ->
                     let substitutedArguments = substituteTypes(substitution)(arguments)
@@ -177,6 +190,74 @@ let recursive joinTypes : Str -> (SemanticType -> Str) -> List(SemanticType) -> 
                             in
                                 let tailText = renderTail(tail)
                                 in headText + tailText
+
+let recursive stableKeyZeros count =
+    if count <= 0
+    then ""
+    else "0" + stableKeyZeros(count - 1)
+
+let stableVariableKey variableId =
+    (let text = Ashes.Text.fromInt(variableId)
+    in
+        let width =
+            text
+            |> Ashes.Byte.fromText
+            |> Ashes.Byte.length
+        in stableKeyZeros(10 - width) + text)
+
+let recursive semanticTypeStableKey semanticType =
+    match semanticType with
+        | SemInt -> "Int"
+        | SemUInt(bits) -> "u" + Ashes.Text.fromInt(bits)
+        | SemFloat -> "Float"
+        | SemBigInt -> "BigInt"
+        | SemString -> "Str"
+        | SemRune -> "Rune"
+        | SemBytes -> "Bytes"
+        | SemBool -> "Bool"
+        | SemNever -> "Never"
+        | SemVariable(variableId) -> "?" + stableVariableKey(variableId)
+        | SemParameter(_symbolId, name) -> "'" + name
+        | SemList(element) -> "List(" + semanticTypeStableKey(element) + ")"
+        | SemTuple(elements) -> "Tuple(" + joinTypes(",")(semanticTypeStableKey)(elements) + ")"
+        | SemFunction(argument, result, _capabilityRow) -> "Fun(" + semanticTypeStableKey(argument) + "," + semanticTypeStableKey(result) + ")"
+        | SemNamed(_symbolId, name, arguments) -> name + "(" + joinTypes(",")(semanticTypeStableKey)(arguments) + ")"
+        | SemPointer(pointee) -> "Ptr(" + semanticTypeStableKey(pointee) + ")"
+        | SemOpaque(name) -> "Opaque(" + name + ")"
+        | SemCapability(name, arguments) -> "Capability(" + name + "," + joinTypes(",")(semanticTypeStableKey)(arguments) + ")"
+        | SemRow(capabilities, tail) ->
+            let tailKey =
+                match tail with
+                    | None -> ""
+                    | Some(tailType) -> semanticTypeStableKey(tailType)
+            in "Row(" + joinTypes(",")(semanticTypeStableKey)(capabilities) + "|" + tailKey + ")"
+
+let traitConstraintStableKey constraint =
+    match constraint with
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } -> traitName + "(" + joinTypes(",")(semanticTypeStableKey)(typeArguments) + ")"
+
+let recursive removeDuplicateTraitConstraints constraints =
+    match constraints with
+        | [] -> []
+        | head :: tail ->
+            let key = traitConstraintStableKey(head)
+            in
+                let recursive skipDuplicates remaining =
+                    match remaining with
+                        | [] -> []
+                        | candidate :: rest ->
+                            if traitConstraintStableKey(candidate) == key
+                            then skipDuplicates(rest)
+                            else candidate :: rest
+                in
+                    head :: removeDuplicateTraitConstraints(skipDuplicates(tail))
+
+let canonicalizeTraitConstraints constraints =
+    constraints
+    |> sortBy(given (left) ->
+        given (right) ->
+            compareText(traitConstraintStableKey(left))(traitConstraintStableKey(right)) <= 0)
+    |> removeDuplicateTraitConstraints
 
 let recursive formatSemanticType : SemanticType -> Str =
     given (semanticType) ->
