@@ -29,7 +29,7 @@ self-hosted implementation or its test path.
 
 | Area | Current self-hosted surface |
 |---|---|
-| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, and expression, pattern, type-expression, annotation, needs-row, and requirement parsing |
+| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for exports, type declarations, flat lets, recursive groups, and trailing bodies |
 | Remaining packages | Not started |
 
 The syntax model orders `Pattern` and `TypeExpr` before `Expr` so each category remains distinct in
