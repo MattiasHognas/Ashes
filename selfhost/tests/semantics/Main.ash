@@ -1,6 +1,7 @@
 import Ashes.Test as test
 import AshesCompiler.Semantics.Symbols
 import AshesCompiler.Semantics.Scope
+import AshesCompiler.Semantics.Types
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -64,7 +65,40 @@ let run unit =
                                                                                     match leaveScope(restored) with
                                                                                         | None -> Unit
                                                                                         | Some(_) -> test.fail("root scope should not pop")
-                                                                                in Ashes.IO.print("all self-hosted semantics scope tests passed")
+                                                                                in
+                                                                                    match freshTypeVariable(initialTypeVariableSupply(Unit)) with
+                                                                                        | (firstVariable, afterFirst) ->
+                                                                                            let firstChecked =
+                                                                                                match firstVariable with
+                                                                                                    | TypeVariable(0) -> Unit
+                                                                                                    | _ -> test.fail("first type variable should have id zero")
+                                                                                            in
+                                                                                                match freshTypeVariable(afterFirst) with
+                                                                                                    | (secondVariable, _afterSecond) ->
+                                                                                                        let secondChecked =
+                                                                                                            match secondVariable with
+                                                                                                                | TypeVariable(1) -> Unit
+                                                                                                                | _ -> test.fail("second type variable should have id one")
+                                                                                                        in
+                                                                                                            let polymorphic = TypeFunction(TypeVariable(0))(TypeList(TypeVariable(1)))(Some(TypeRow([TypeCapability("State")([TypeVariable(0)])])(Some(TypeVariable(2)))))
+                                                                                                            in
+                                                                                                                let occursChecked =
+                                                                                                                    if occursInType(2)(polymorphic)
+                                                                                                                    then Unit
+                                                                                                                    else test.fail("row-tail variable should occur")
+                                                                                                                in
+                                                                                                                    let absentChecked =
+                                                                                                                        if occursInType(9)(polymorphic)
+                                                                                                                        then test.fail("unrelated variable should not occur")
+                                                                                                                        else Unit
+                                                                                                                    in
+                                                                                                                        let substituted = applySubstitution([(0, TypeInt), (1, TypeString), (2, TypeRow([])(None))])(polymorphic)
+                                                                                                                        in
+                                                                                                                            let formatted = formatSemanticType(substituted)
+                                                                                                                            in
+                                                                                                                                if formatted == "Int -> List(Str) needs {State(Int) | {}}"
+                                                                                                                                then Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 
 run(Unit)
