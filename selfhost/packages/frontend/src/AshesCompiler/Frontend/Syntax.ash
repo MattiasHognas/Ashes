@@ -1,3 +1,4 @@
+import AshesCompiler.Frontend.Token
 export (
     type Pattern(..),
     type TypeExpr(..),
@@ -31,6 +32,7 @@ export (
 )
 
 type Pattern =
+    | PatternAt(TextSpan, Pattern)
     | PatternEmptyList
     | PatternVar(Str)
     | PatternWildcard
@@ -47,6 +49,7 @@ type Pattern =
     deriving {Eq, Show}
 
 type TypeExpr =
+    | TypeAt(TextSpan, TypeExpr)
     | TypeNamed(Str)
     | TypeApplied(Str, List(TypeExpr))
     | TypeArrow(TypeExpr, TypeExpr, List((Str, List(TypeExpr))), Maybe(Str))
@@ -70,6 +73,7 @@ type TraitConstraintSyntax =
     deriving {Eq, Show}
 
 type Expr =
+    | ExprAt(TextSpan, Expr)
     | ExprInt(Int)
     | ExprBigInt(Str)
     | ExprUInt(Int, Int)
