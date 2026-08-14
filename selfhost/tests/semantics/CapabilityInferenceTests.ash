@@ -321,6 +321,68 @@ let expectInvalidHandlers unit =
                                             | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(InvalidHandler(_message)) } -> Unit
                                             | _ -> test.fail("handlers should require an operation arm"))
 
+let clockProvider = ProvideDecl(capabilityName = "Clock", typeArguments = [], bindings = [ProvideBinding(operationName = "now", implementation = ExprLambda("ignored")(ExprInt(1000))(None))])
+
+let stateIntProvider = ProvideDecl(capabilityName = "State", typeArguments = [TypeNamed("Int")], bindings = [ProvideBinding(operationName = "get", implementation = ExprLambda("ignored")(ExprInt(0))(None)), ProvideBinding(operationName = "set", implementation = ExprLambda("value")(ExprTuple([]))(Some(TypeNamed("Int"))))])
+
+let expectProviderInference unit =
+    (let clockChecked =
+        match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(clockProvider)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+                match resolveCapabilityProvider(SemCapability("Clock")([]))(environment) with
+                    | Some(_) -> Unit
+                    | None -> test.fail("Clock provider should be registered")
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("Clock provider should infer: " + Ashes.Trait.Show.show(error))
+    in
+        let stateChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration), TopLevelProvide(stateIntProvider)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+                    match resolveCapabilityProvider(SemCapability("State")([SemInt]))(environment) with
+                        | Some(_) -> Unit
+                        | None -> test.fail("State(Int) provider should be registered")
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("State(Int) provider should infer: " + Ashes.Trait.Show.show(error))
+        in Unit)
+
+let expectInvalidProviders unit =
+    (let duplicateChecked =
+        match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(clockProvider), TopLevelProvide(clockProvider)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DuplicateCapabilityProvider(SemCapability("Clock", []))) } -> Unit
+            | _ -> test.fail("duplicate providers should be rejected")
+    in
+        let missingProvider = ProvideDecl(capabilityName = "State", typeArguments = [TypeNamed("Int")], bindings = [ProvideBinding(operationName = "get", implementation = ExprLambda("ignored")(ExprInt(0))(None))])
+        in
+            let missingChecked =
+                match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration), TopLevelProvide(missingProvider)], body = None)) with
+                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(MissingProviderOperation("State", "set")) } -> Unit
+                    | _ -> test.fail("providers should implement every operation")
+            in
+                let unknownProvider = ProvideDecl(capabilityName = "Clock", typeArguments = [], bindings = [ProvideBinding(operationName = "missing", implementation = ExprLambda("ignored")(ExprInt(0))(None))])
+                in
+                    let unknownChecked =
+                        match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(unknownProvider)], body = None)) with
+                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownProviderOperation("Clock", "missing")) } -> Unit
+                            | _ -> test.fail("providers should reject unknown operations")
+                    in
+                        let duplicateOperationProvider = ProvideDecl(capabilityName = "Clock", typeArguments = [], bindings = [ProvideBinding(operationName = "now", implementation = ExprLambda("ignored")(ExprInt(0))(None)), ProvideBinding(operationName = "now", implementation = ExprLambda("ignored")(ExprInt(1))(None))])
+                        in
+                            let duplicateOperationChecked =
+                                match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(duplicateOperationProvider)], body = None)) with
+                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DuplicateProviderOperation("Clock", "now")) } -> Unit
+                                    | _ -> test.fail("providers should reject duplicate operations")
+                            in
+                                let wrongArity = ProvideDecl(capabilityName = "State", typeArguments = [], bindings = [])
+                                in
+                                    let arityChecked =
+                                        match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration), TopLevelProvide(wrongArity)], body = None)) with
+                                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProviderCapabilityArityMismatch("State", 1, 0)) } -> Unit
+                                            | _ -> test.fail("provider capability arity should be checked")
+                                    in
+                                        let wrongType = ProvideDecl(capabilityName = "Clock", typeArguments = [], bindings = [ProvideBinding(operationName = "now", implementation = ExprLambda("ignored")(ExprString("wrong"))(None))])
+                                        in
+                                            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(wrongType)], body = None)) with
+                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                                                | _ -> test.fail("provider implementations should match operation signatures"))
+
 let runCapabilityInferenceTests unit =
     (let clockChecked = expectClockOperation(Unit)
     in
@@ -349,4 +411,8 @@ let runCapabilityInferenceTests unit =
                                                     let handlerInferenceChecked = expectHandlerInference(Unit)
                                                     in
                                                         let invalidHandlersChecked = expectInvalidHandlers(Unit)
-                                                        in Ashes.IO.print("all self-hosted capability handler inference tests passed"))
+                                                        in
+                                                            let providerInferenceChecked = expectProviderInference(Unit)
+                                                            in
+                                                                let invalidProvidersChecked = expectInvalidProviders(Unit)
+                                                                in Ashes.IO.print("all self-hosted capability provider inference tests passed"))
