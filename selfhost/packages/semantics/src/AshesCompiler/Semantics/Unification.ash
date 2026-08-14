@@ -1,4 +1,5 @@
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.List.reverse
 export (
     type UnificationError(..),
     type UnificationResult(..),
@@ -26,6 +27,42 @@ let recursive typeListLength : List(SemanticType) -> Int =
             | [] -> 0
             | _ :: tail -> 1 + typeListLength(tail)
 
+let recursive substitutionLength : List((Int, SemanticType)) -> Int =
+    given (substitution) ->
+        match substitution with
+            | [] -> 0
+            | _ :: tail -> 1 + substitutionLength(tail)
+
+let capabilityName : SemanticType -> Maybe(Str) =
+    given (semanticType) ->
+        match semanticType with
+            | SemCapability(name, _arguments) -> Some(name)
+            | _ -> None
+
+let recursive findCapability : Str -> List(SemanticType) -> Maybe(SemanticType) =
+    given (name) ->
+        given (capabilities) ->
+            match capabilities with
+                | [] -> None
+                | head :: tail ->
+                    match capabilityName(head) with
+                        | Some(candidateName) ->
+                            if name == candidateName
+                            then Some(head)
+                            else findCapability(name)(tail)
+                        | None -> findCapability(name)(tail)
+
+let recursive capabilitiesMissingFrom candidates reference reversed =
+    match candidates with
+        | [] -> reverse(reversed)
+        | head :: tail ->
+            match capabilityName(head) with
+                | Some(name) ->
+                    match findCapability(name)(reference) with
+                        | None -> capabilitiesMissingFrom(tail)(reference)(head :: reversed)
+                        | Some(_) -> capabilitiesMissingFrom(tail)(reference)(reversed)
+                | None -> capabilitiesMissingFrom(tail)(reference)(head :: reversed)
+
 let bindVariable variableId semanticType substitution =
     (let resolvedType = applySubstitution(substitution)(semanticType)
     in
@@ -47,12 +84,52 @@ let recursive unifyTypeLists left right substitution =
                 | UnificationResult { substitution = nextSubstitution, error = None } -> unifyTypeLists(leftTail)(rightTail)(nextSubstitution)
                 | failure -> failure
         | _ -> unificationFailure(substitution)(TypeArityMismatch(typeListLength(left))(typeListLength(right)))
+and unifyCommonCapabilities left right substitution =
+    match left with
+        | [] -> unificationSuccess(substitution)
+        | head :: tail ->
+            match capabilityName(head) with
+                | None -> unificationFailure(substitution)(TypeMismatch(head)(SemRow(right)(None)))
+                | Some(name) ->
+                    match findCapability(name)(right) with
+                        | None -> unifyCommonCapabilities(tail)(right)(substitution)
+                        | Some(matching) ->
+                            match unifyWith(substitution)(head)(matching) with
+                                | UnificationResult { substitution = nextSubstitution, error = None } -> unifyCommonCapabilities(tail)(right)(nextSubstitution)
+                                | failure -> failure
 and unifyOptionalRows left right substitution =
     match (left, right) with
         | (None, None) -> unificationSuccess(substitution)
         | (Some(leftRow), Some(rightRow)) -> unifyWith(substitution)(leftRow)(rightRow)
         | (None, Some(rightRow)) -> unifyWith(substitution)(SemRow([])(None))(rightRow)
         | (Some(leftRow), None) -> unifyWith(substitution)(leftRow)(SemRow([])(None))
+and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution leftRow rightRow =
+    match unifyCommonCapabilities(leftCapabilities)(rightCapabilities)(substitution) with
+        | UnificationResult { substitution = afterCommon, error = None } ->
+            let leftOnly = capabilitiesMissingFrom(leftCapabilities)(rightCapabilities)([])
+            in
+                let rightOnly = capabilitiesMissingFrom(rightCapabilities)(leftCapabilities)([])
+                in
+                    match (leftOnly, rightOnly) with
+                        | ([], []) -> unifyOptionalRows(leftTail)(rightTail)(afterCommon)
+                        | ([], _) ->
+                            match leftTail with
+                                | None -> unificationFailure(afterCommon)(TypeMismatch(leftRow)(rightRow))
+                                | Some(leftTailType) -> unifyWith(afterCommon)(leftTailType)(SemRow(rightOnly)(rightTail))
+                        | (_, []) ->
+                            match rightTail with
+                                | None -> unificationFailure(afterCommon)(TypeMismatch(leftRow)(rightRow))
+                                | Some(rightTailType) -> unifyWith(afterCommon)(rightTailType)(SemRow(leftOnly)(leftTail))
+                        | (_, _) ->
+                            match (leftTail, rightTail) with
+                                | (Some(leftTailType), Some(rightTailType)) ->
+                                    let freshTail = SemVariable(-(1000000 + substitutionLength(afterCommon)))
+                                    in
+                                        match unifyWith(afterCommon)(leftTailType)(SemRow(rightOnly)(Some(freshTail))) with
+                                            | UnificationResult { substitution = afterLeftTail, error = None } -> unifyWith(afterLeftTail)(rightTailType)(SemRow(leftOnly)(Some(freshTail)))
+                                            | failure -> failure
+                                | _ -> unificationFailure(afterCommon)(TypeMismatch(leftRow)(rightRow))
+        | failure -> failure
 and unifyWith substitution left right =
     (let resolvedLeft = applySubstitution(substitution)(left)
     in
@@ -81,10 +158,7 @@ and unifyWith substitution left right =
                         if leftName == rightName
                         then unifyTypeLists(leftArguments)(rightArguments)(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (SemRow(leftCapabilities, leftTail), SemRow(rightCapabilities, rightTail)) ->
-                        match unifyTypeLists(leftCapabilities)(rightCapabilities)(substitution) with
-                            | UnificationResult { substitution = afterCapabilities, error = None } -> unifyOptionalRows(leftTail)(rightTail)(afterCapabilities)
-                            | failure -> failure
+                    | (SemRow(leftCapabilities, leftTail), SemRow(rightCapabilities, rightTail)) -> unifyRows(leftCapabilities)(leftTail)(rightCapabilities)(rightTail)(substitution)(resolvedLeft)(resolvedRight)
                     | (SemNamed(leftId, _leftName, leftArguments), SemNamed(rightId, _rightName, rightArguments)) ->
                         if leftId == rightId
                         then unifyTypeLists(leftArguments)(rightArguments)(substitution)
