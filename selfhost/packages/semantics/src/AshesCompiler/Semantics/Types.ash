@@ -121,7 +121,7 @@ and applySubstitution : List((Int, SemanticType)) -> SemanticType -> SemanticTyp
                 | TypeVariable(variableId) ->
                     match lookupSubstitution(variableId)(substitution) with
                         | None -> semanticType
-                        | Some(replacement) -> replacement
+                        | Some(replacement) -> applySubstitution(substitution)(replacement)
                 | TypeList(element) ->
                     let substitutedElement = applySubstitution(substitution)(element)
                     in TypeList(substitutedElement)
