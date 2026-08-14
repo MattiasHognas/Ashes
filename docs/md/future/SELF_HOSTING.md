@@ -4,7 +4,8 @@ Status as of 2026-08-14. This document contains both the capability audit of wha
 its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
 and the implementation handoff for the active self-hosted toolchain migration. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap and the
-[self-hosted toolchain README](../../../selfhost/README.md) for package boundaries and commands.
+[self-hosted toolchain README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md)
+for package boundaries and commands.
 
 ## Migration state
 
@@ -34,7 +35,9 @@ milestone per PR.
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
 `frontend` has no compiler dependency, `formatter` depends only on `frontend`, and `semantics` depends
 only on `frontend`. Do not move backend behavior into those packages. Future packages must follow the
-dependency table in the [self-hosted README](../../../selfhost/README.md#package-dependency-graph) and
+dependency table in the
+[self-hosted README](https://github.com/MattiasHognas/Ashes/blob/main/selfhost/README.md#package-dependency-graph)
+and
 must reference only the packages they actually consume.
 
 ### Planned work
