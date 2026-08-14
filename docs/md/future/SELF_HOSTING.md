@@ -25,7 +25,7 @@ independently reviewable milestone per subsequent PR.
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
-| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; and written binding-requirement boundary validation | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, and written `requires` validation implemented; concrete resolution and evidence remain |
+| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; and recursive concrete instance evidence resolution | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, and evidence-plan resolution implemented; evidence threading and lowering remain |
 | IR, optimizer, ownership, backend, linker | No self-hosted implementation yet | Not started |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined, but the tools are not ported | Not started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
@@ -43,9 +43,9 @@ must reference only the packages they actually consume.
 Work should continue in dependency order. Each item below is a reviewable milestone or a short series
 of milestones; split an item when its tests and public contract can stand alone.
 
-1. **Complete trait semantics.** Resolve concrete instances with cycle/depth guards and preserve
-   abstract dictionary requirements. Add `deriving` expansion only
-   after ordinary implementations work.
+1. **Complete trait semantics.** Add canonical resolution diagnostics, thread evidence through every
+   value shape, and lower dictionaries and method dispatch. Add `deriving` expansion only after
+   ordinary evidence works end to end.
 2. **Close whole-program semantic gaps.** Port import/module and export resolution, external declaration
    typing and ABI metadata, package/project stitching, remaining declaration namespace rules, exhaustive
    diagnostics, and any expression/type-inference behavior not yet represented by the focused tests.
@@ -203,7 +203,7 @@ same public behavior.
   constraints.
 - [x] Validate written binding `requires` clauses against inferred canonical constraints, including
   nested lets, recursive groups, invalid trait heads, and ambiguous requirement variables.
-- [ ] Resolve unique concrete instances recursively with cycle/depth guards while preserving abstract
+- [x] Resolve unique concrete instances recursively with cycle/depth guards while preserving abstract
   constraints as hidden dictionary parameters.
 - [ ] Diagnose missing, ambiguous, incoherent, non-terminating, and ambiguous-type-variable goals with
   canonical requirement traces.

@@ -6,4 +6,5 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.TraitResolution
 Unit
