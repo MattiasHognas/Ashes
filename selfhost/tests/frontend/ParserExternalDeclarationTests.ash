@@ -35,9 +35,8 @@ let expectDiagnostics source =
         | _ -> test.fail("expected external parser diagnostic")
 
 let run unit =
-    (let richChecked = checkRichDeclarations(Unit)
-    in
-        let plainChecked = checkPlainDeclarations(Unit)
-        in
-            let resourceChecked = expectDiagnostics("external type Handle resource wrong closeHandle")
-            in expectDiagnostics("external read() -> FfiStr(owned)"))
+    unit
+    |> checkRichDeclarations
+    |> checkPlainDeclarations
+    |> (given (_) -> expectDiagnostics("external type Handle resource wrong closeHandle"))
+    |> (given (_) -> expectDiagnostics("external read() -> FfiStr(owned)"))

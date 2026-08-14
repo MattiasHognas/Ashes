@@ -47,20 +47,18 @@ let recursive containsCode code diagnostics =
 
 let expectDiagnosticCode code source =
     match parseProgram(source) with
-        | ProgramParseResult { program = _program, diagnostics = diagnostics } -> test.assertEqual(true)(containsCode(code)(diagnostics))
+        | ProgramParseResult { program = _program, diagnostics = diagnostics } ->
+            diagnostics
+            |> containsCode(code)
+            |> test.assertEqual(true)
 
 let run unit =
-    (let flatChecked = checkFlatParenthesizedBlock(Unit)
-    in
-        let boundaryChecked = checkCapabilityBoundary(Unit)
-        in
-            let outChecked = expectDiagnosticCode("ASH045")("let value : out Int = 1\nvalue")
-            in
-                let ffiStringChecked = expectDiagnosticCode("ASH046")("let value : FfiStr(borrowed) = 1\nvalue")
-                in
-                    let zeroCostChecked = expectDiagnosticCode("ASH040")("type Bad = Bad\n0")
-                    in
-                        let braceDeclarationChecked = expectDiagnostic("type Point = { x: Int, y: Int }\n0")
-                        in
-                            let braceConstructionChecked = expectDiagnostic("Point { x = 1, y = 2 }")
-                            in expectDiagnostic("{ p with x = 1 }"))
+    unit
+    |> checkFlatParenthesizedBlock
+    |> checkCapabilityBoundary
+    |> (given (_) -> expectDiagnosticCode("ASH045")("let value : out Int = 1\nvalue"))
+    |> (given (_) -> expectDiagnosticCode("ASH046")("let value : FfiStr(borrowed) = 1\nvalue"))
+    |> (given (_) -> expectDiagnosticCode("ASH040")("type Bad = Bad\n0"))
+    |> (given (_) -> expectDiagnostic("type Point = { x: Int, y: Int }\n0"))
+    |> (given (_) -> expectDiagnostic("Point { x = 1, y = 2 }"))
+    |> (given (_) -> expectDiagnostic("{ p with x = 1 }"))

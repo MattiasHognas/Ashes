@@ -7,9 +7,10 @@ let run unit =
     in
         match parseProgram(source) with
             | ProgramParseResult { program = ProgramSyntax { items = item :: [], body = _body }, diagnostics = diagnostics } ->
-                let diagnosticsChecked = test.assertEqual([])(diagnostics)
-                in
+                diagnostics
+                |> test.assertEqual([])
+                |> (given (_) ->
                     match ParserProgramTests.unspanTopLevel(item) with
                         | TopLevelRecursiveGroup(LetBindingSyntax { name = firstName, value = _firstValue, sugarParameters = _firstParameters, typeAnnotation = _firstAnnotation, requirements = _firstRequirements } :: LetBindingSyntax { name = secondName, value = _secondValue, sugarParameters = _secondParameters, typeAnnotation = _secondAnnotation, requirements = _secondRequirements } :: []) -> test.assertEqual(("even", "odd"))((firstName, secondName))
-                        | _ -> test.fail("expected recursive group")
+                        | _ -> test.fail("expected recursive group"))
             | _ -> test.fail("expected one recursive item"))
