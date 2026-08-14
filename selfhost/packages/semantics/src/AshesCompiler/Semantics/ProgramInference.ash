@@ -73,13 +73,13 @@ let recursive constructorFunctionType parameters resultType =
 let recursive registerConstructors constructors resultType quantified context environment =
     match constructors with
         | [] -> ConstructorRegistration(environment = environment, error = None)
-        | TypeConstructor { name = name, parameters = parameters, fieldNames = _fieldNames } :: tail ->
+        | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } :: tail ->
             match resolveConstructorParameters(parameters)(context)([]) with
                 | TypeListResolutionResult { semanticTypes = parameterTypes, error = None } ->
                     let constructorType = constructorFunctionType(parameterTypes)(resultType)
                     in
                         let scheme = TypeScheme(quantified = quantified, body = constructorType, constraints = [])
-                        in registerConstructors(tail)(resultType)(quantified)(context)(addTypeBinding(name)(scheme)(environment))
+                        in registerConstructors(tail)(resultType)(quantified)(context)(addConstructorBinding(name)(scheme)(fieldNames)(environment))
                 | TypeListResolutionResult { semanticTypes = _parameterTypes, error = Some(error) } -> ConstructorRegistration(environment = environment, error = Some(error))
 
 let registerTypeDeclaration declaration state =
