@@ -25,6 +25,13 @@ The eventual bootstrap stages, test infrastructure, CLI, LSP, DAP, TestRunner, a
 fuzzing runner will be implemented in Ashes as well. Host-language helper programs are not part of
 self-hosted implementation or its test path.
 
+## Implementation status
+
+| Area | Current self-hosted surface |
+|---|---|
+| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, and the complete lexer |
+| Remaining packages | Not started |
+
 ## Test discipline
 
 Each port starts with pure-Ashes tests derived from the current implementation's observable
@@ -32,7 +39,7 @@ contract. Unit tests live under `selfhost/tests/<package>/`, integration tests c
 boundaries only when the production tool does, and bootstrap parity tests compare serialized public
 results rather than internal representations.
 
-Run the frontend foundation tests with:
+Run the self-hosted frontend tests with:
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile \
