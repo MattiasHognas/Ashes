@@ -39,7 +39,7 @@ let expectGenericBinaryTrait expectedTrait expression =
     match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
         | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = constraints, error = None } ->
             match applySubstitution(substitution)(semanticType) with
-                | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemVariable(resultId), None), None) ->
+                | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemVariable(resultId), Some(_innerRow)), Some(_outerRow)) ->
                     if leftId == rightId
                     then
                         if rightId == resultId
@@ -56,17 +56,25 @@ let expectPolymorphicIdentity expression =
     match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
         | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = _constraints, error = None } ->
             match applySubstitution(substitution)(semanticType) with
-                | SemFunction(SemVariable(argumentId), SemVariable(resultId), None) ->
+                | SemFunction(SemVariable(argumentId), SemVariable(resultId), Some(_row)) ->
                     if argumentId == resultId
                     then Unit
                     else test.fail("identity argument and result should share one type variable")
                 | _ -> test.fail("expression should infer a polymorphic identity function")
         | _ -> test.fail("polymorphic identity expression should infer")
 
+let expectIntIdentity expression =
+    match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
+        | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = _constraints, error = None } ->
+            match applySubstitution(substitution)(semanticType) with
+                | SemFunction(SemInt, SemInt, Some(_row)) -> Unit
+                | _ -> test.fail("annotated identity should infer an open-row Int function")
+        | _ -> test.fail("annotated identity expression should infer")
+
 let runTypeInferenceTests unit =
     (let identity = ExprLambda("value")(ExprVar("value"))(None)
     in
-        let identityChecked = expectType("?0 -> ?0")(identity)
+        let identityChecked = expectPolymorphicIdentity(identity)
         in
             let applicationChecked = expectType("Int")(ExprCall(identity)(ExprInt(42))(false))
             in
@@ -98,7 +106,7 @@ let runTypeInferenceTests unit =
                                                                 in
                                                                     let annotatedIdentity = ExprLambda("value")(ExprVar("value"))(Some(TypeNamed("Int")))
                                                                     in
-                                                                        let lambdaAnnotationChecked = expectType("Int -> Int")(annotatedIdentity)
+                                                                        let lambdaAnnotationChecked = expectIntIdentity(annotatedIdentity)
                                                                         in
                                                                             let polymorphicAnnotation = TypeArrow(TypeNamed("a"))(TypeNamed("a"))([])(None)
                                                                             in
