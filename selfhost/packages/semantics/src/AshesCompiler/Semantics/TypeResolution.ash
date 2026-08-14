@@ -11,14 +11,14 @@ export (
     value emptyTypeResolutionContext,
     value addTypeParameter,
     value addTypeDefinition,
+    value addTypeAliasDefinition,
     value prepareTypeResolutionContext,
     value resolveTypeExpression,
 )
 
 type TypeDefinition =
-    | symbolId: Int
-    | name: Str
-    | arity: Int
+    | NominalTypeDefinition(Int, Str, Int)
+    | AliasTypeDefinition(Str, List(Int), SemanticType)
 
 type TypeResolutionContext =
     | parameters: List((Str, SemanticType))
@@ -50,7 +50,11 @@ let addTypeParameter name semanticType context =
 
 let addTypeDefinition symbolId name arity context =
     match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = TypeDefinition(symbolId = symbolId, name = name, arity = arity) :: definitions)
+        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = NominalTypeDefinition(symbolId)(name)(arity) :: definitions)
+
+let addTypeAliasDefinition name parameterIds target context =
+    match context with
+        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = AliasTypeDefinition(name)(parameterIds)(target) :: definitions)
 
 let recursive typeListLength values =
     match values with
@@ -70,10 +74,61 @@ let recursive findTypeDefinition name definitions =
         | [] -> None
         | definition :: tail ->
             match definition with
-                | TypeDefinition { symbolId = _symbolId, name = candidateName, arity = _arity } ->
+                | NominalTypeDefinition(_symbolId, candidateName, _arity) ->
                     if name == candidateName
                     then Some(definition)
                     else findTypeDefinition(name)(tail)
+                | AliasTypeDefinition(candidateName, _parameterIds, _target) ->
+                    if name == candidateName
+                    then Some(definition)
+                    else findTypeDefinition(name)(tail)
+
+let recursive findAliasArgument parameterId parameterIds arguments =
+    match (parameterIds, arguments) with
+        | (candidateId :: idTail, argument :: argumentTail) ->
+            if parameterId == candidateId
+            then Some(argument)
+            else findAliasArgument(parameterId)(idTail)(argumentTail)
+        | _ -> None
+
+let recursive substituteAliasType parameterIds arguments semanticType =
+    match semanticType with
+        | SemParameter(parameterId, _name) ->
+            match findAliasArgument(parameterId)(parameterIds)(arguments) with
+                | Some(argument) -> argument
+                | None -> semanticType
+        | SemList(element) -> SemList(substituteAliasType(parameterIds)(arguments)(element))
+        | SemTuple(elements) -> SemTuple(substituteAliasTypes(parameterIds)(arguments)(elements))
+        | SemFunction(argument, result, capabilityRow) ->
+            let substitutedArgument = substituteAliasType(parameterIds)(arguments)(argument)
+            in
+                let substitutedResult = substituteAliasType(parameterIds)(arguments)(result)
+                in
+                    let substitutedRow =
+                        match capabilityRow with
+                            | None -> None
+                            | Some(row) -> Some(substituteAliasType(parameterIds)(arguments)(row))
+                    in SemFunction(substitutedArgument)(substitutedResult)(substitutedRow)
+        | SemCapability(name, capabilityArguments) -> SemCapability(name)(substituteAliasTypes(parameterIds)(arguments)(capabilityArguments))
+        | SemRow(capabilities, tail) ->
+            let substitutedCapabilities = substituteAliasTypes(parameterIds)(arguments)(capabilities)
+            in
+                let substitutedTail =
+                    match tail with
+                        | None -> None
+                        | Some(tailType) -> Some(substituteAliasType(parameterIds)(arguments)(tailType))
+                in SemRow(substitutedCapabilities)(substitutedTail)
+        | SemNamed(symbolId, name, typeArguments) -> SemNamed(symbolId)(name)(substituteAliasTypes(parameterIds)(arguments)(typeArguments))
+        | SemPointer(pointee) -> SemPointer(substituteAliasType(parameterIds)(arguments)(pointee))
+        | _ -> semanticType
+and substituteAliasTypes parameterIds arguments semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | head :: tail ->
+            let substitutedHead = substituteAliasType(parameterIds)(arguments)(head)
+            in
+                let substitutedTail = substituteAliasTypes(parameterIds)(arguments)(tail)
+                in substitutedHead :: substitutedTail
 
 let resolvePrimitive name =
     match name with
@@ -111,12 +166,20 @@ let recursive resolveNamed name arguments context =
 and resolveTypeDefinition name arguments definitions =
     match findTypeDefinition(name)(definitions) with
         | None -> TypeResolutionResult(semanticType = SemNever, error = Some(UnknownTypeName(name)))
-        | Some(TypeDefinition { symbolId = symbolId, name = definitionName, arity = arity }) ->
+        | Some(NominalTypeDefinition(symbolId, definitionName, arity)) ->
             let actualArity = typeListLength(arguments)
             in
                 if actualArity == arity
                 then TypeResolutionResult(semanticType = SemNamed(symbolId)(definitionName)(arguments), error = None)
                 else TypeResolutionResult(semanticType = SemNever, error = Some(TypeNameArityMismatch(name)(arity)(actualArity)))
+        | Some(AliasTypeDefinition(_definitionName, parameterIds, target)) ->
+            let expectedArity = typeListLength(parameterIds)
+            in
+                let actualArity = typeListLength(arguments)
+                in
+                    if actualArity == expectedArity
+                    then TypeResolutionResult(semanticType = substituteAliasType(parameterIds)(arguments)(target), error = None)
+                    else TypeResolutionResult(semanticType = SemNever, error = Some(TypeNameArityMismatch(name)(expectedArity)(actualArity)))
 
 let recursive resolveTypeExpressions expressions context reversed =
     match expressions with

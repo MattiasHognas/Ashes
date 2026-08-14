@@ -62,6 +62,10 @@ type RecursiveInference =
     | supply: TypeVariableSupply
     | error: Maybe(TypeInferenceError)
 
+type AliasParameterRegistration =
+    | context: TypeResolutionContext
+    | parameterIds: List(Int)
+
 let recursive wrapSugarParameters parameters body =
     match parameters with
         | [] -> body
@@ -71,6 +75,11 @@ let recursive parameterCount parameters =
     match parameters with
         | [] -> 0
         | _head :: tail -> 1 + parameterCount(tail)
+
+let recursive registerAliasParameters parameters context nextId reversedIds =
+    match parameters with
+        | [] -> AliasParameterRegistration(context = context, parameterIds = reverse(reversedIds))
+        | TypeParameter { name = name } :: tail -> registerAliasParameters(tail)(addTypeParameter(name)(SemParameter(nextId)(name))(context))(nextId + 1)(nextId :: reversedIds)
 
 let recursive appendProgramSubstitution left right =
     match left with
@@ -183,6 +192,22 @@ let registerTypeDeclaration declaration state =
                                 | ConstructorRegistration { environment = _constructorEnvironment, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = parameterSupply, nextTypeSymbolId = symbolId + 1, error = Some(ProgramTypeResolutionError(error)))
         | (_declaration, failedState) -> failedState
 
+let registerTypeAlias declaration state =
+    match (declaration, state) with
+        | (TypeAliasDecl { name = name, typeParameters = parameters, target = target }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
+            match registerAliasParameters(parameters)(inferenceTypeResolutionContext(environment))(0)([]) with
+                | AliasParameterRegistration { context = aliasContext, parameterIds = parameterIds } ->
+                    match resolveTypeExpression(target)(aliasContext) with
+                        | TypeResolutionResult { semanticType = targetType, error = None } -> ProgramInferenceState(environment = addInferenceTypeAlias(name)(parameterIds)(targetType)(environment), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                        | TypeResolutionResult { semanticType = _targetType, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(ProgramTypeResolutionError(error)))
+        | (_declaration, failedState) -> failedState
+
+let registerZeroCostType declaration state =
+    match declaration with
+        | ZeroCostTypeDecl { name = name, typeParameters = typeParameters, constructor = constructor, derivingTraits = derivingTraits } ->
+            let nominal = TypeDecl(name = name, typeParameters = typeParameters, constructors = [constructor], isRecord = false, derivingTraits = derivingTraits)
+            in registerTypeDeclaration(nominal)(state)
+
 let inferTopLevelLet binding isRecursive state =
     match (binding, state) with
         | (LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = _requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
@@ -205,6 +230,8 @@ let recursive inferTopLevelItems items state =
                     | TopLevelAt(_span, inner) -> inferTopLevelItems([inner])(state)
                     | TopLevelExport(_export) -> state
                     | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
+                    | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
+                    | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
                     | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
                     | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
                     | _ ->
