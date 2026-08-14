@@ -6,11 +6,17 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
 export (
     type ExpressionParseResult(..),
+    type TypeExpressionParseResult(..),
     value parseExpression,
+    value parseTypeExpression,
 )
 
 type ExpressionParseResult =
     | expression: Expr
+    | diagnostics: List(DiagnosticEntry)
+
+type TypeExpressionParseResult =
+    | typeExpression: TypeExpr
     | diagnostics: List(DiagnosticEntry)
 
 type alias ParserState = (List(Token), List(DiagnosticEntry))
@@ -187,6 +193,36 @@ let parserUnspanPattern pattern =
         | PatternAt(_span, inner) -> inner
         | _ -> pattern
 
+let parserTypeSpan typeExpression =
+    match typeExpression with
+        | TypeAt(span, _inner) -> span
+        | _ -> TextSpan(start = 0, end = 0)
+
+let parserTypeStart typeExpression =
+    (let span = parserTypeSpan(typeExpression)
+    in span.start)
+
+let parserTypeEnd typeExpression =
+    (let span = parserTypeSpan(typeExpression)
+    in span.end)
+
+let parserTypeAt start end typeExpression = TypeAt(spanFromBounds(start)(end))(typeExpression)
+
+let parserCapabilityName capabilityReference =
+    match capabilityReference with
+        | CapabilityRefSyntax { name = value, args = _arguments } -> value
+
+let parserCapabilityArguments capabilityReference =
+    match capabilityReference with
+        | CapabilityRefSyntax { name = _name, args = arguments } -> arguments
+
+let parserNeedsParts (needsRow: NeedsRowSyntax) =
+    (let recursive convert (capabilities: List(CapabilityRefSyntax)) =
+        match capabilities with
+            | [] -> []
+            | capabilityReference :: tail -> (parserCapabilityName(capabilityReference), parserCapabilityArguments(capabilityReference)) :: convert(tail)
+    in (convert(needsRow.capabilities), needsRow.tailVariable))
+
 let parserPipeStartsArm (state: ParserState) =
     (let recursive scan tokens parenthesisDepth bracketDepth =
         match tokens with
@@ -245,6 +281,186 @@ let recursive parserLastFieldEnd fields fallback =
         | [] -> parserExprEnd(fallback)
         | (_name, value) :: [] -> parserExprEnd(value)
         | _head :: tail -> parserLastFieldEnd(tail)(fallback)
+
+let recursive parserParameterNames parameters =
+    match parameters with
+        | [] -> []
+        | (name, _annotation) :: tail -> name :: parserParameterNames(tail)
+
+let recursive parserParseTypeExpressionState state =
+    match parserParseTypeWithNeeds(state) with
+        | (typeExpression, pendingNeeds, afterType) ->
+            match pendingNeeds with
+                | None -> (typeExpression, afterType)
+                | Some(_needs) ->
+                    let current = parserCurrent(afterType)
+                    in (typeExpression, parserDiagnostic(afterType)(current)("'needs' requires a function type to attach to."))
+and parserParseTypeWithNeeds state =
+    match parserParseTypePrimary(state) with
+        | (atom, afterAtom) ->
+            if parserCurrentKind(afterAtom) == Arrow
+            then
+                match parserAdvance(afterAtom) with
+                    | (_arrow, afterArrow) ->
+                        match parserParseTypeWithNeeds(afterArrow) with
+                            | (destination, pendingNeeds, afterDestination) ->
+                                let row =
+                                    match pendingNeeds with
+                                        | None -> ([], None)
+                                        | Some(needsRow) -> parserNeedsParts(needsRow)
+                                in
+                                    match row with
+                                        | (capabilities, tailVariable) -> (parserTypeAt(parserTypeStart(atom))(parserTypeEnd(destination))(TypeArrow(atom)(destination)(capabilities)(tailVariable)), None, afterDestination)
+            else
+                if parserCurrentKind(afterAtom) == Needs
+                then
+                    match parserParseNeedsRow(afterAtom) with
+                        | (needsRow, afterNeeds) -> (atom, Some(needsRow), afterNeeds)
+                else (atom, None, afterAtom)
+and parserParseTypePrimary state =
+    if parserCurrentKind(state) == LParen
+    then
+        match parserAdvance(state) with
+            | (leftParen, afterLeftParen) ->
+                if parserCurrentKind(afterLeftParen) == RParen
+                then
+                    match parserAdvance(afterLeftParen) with
+                        | (rightParen, afterRightParen) -> (parserTypeAt(leftParen.position)(tokenEnd(rightParen))(TypeUnit), afterRightParen)
+                else
+                    match parserParseTypeExpressionState(afterLeftParen) with
+                        | (first, afterFirst) ->
+                            if parserCurrentKind(afterFirst) == Comma
+                            then parserParseTupleTypeTail(leftParen.position)(first :: [])(afterFirst)
+                            else
+                                match parserConsume(RParen)(afterFirst) with
+                                    | (_rightParen, afterRightParen) -> (first, afterRightParen)
+    else
+        match parserConsume(Ident)(state) with
+            | (name, afterName) ->
+                if parserCurrentKind(afterName) == LParen
+                then
+                    match parserAdvance(afterName) with
+                        | (_leftParen, afterLeftParen) ->
+                            match parserParseTypeArguments(afterLeftParen) with
+                                | (arguments, rightParen, afterArguments) -> (parserTypeAt(name.position)(tokenEnd(rightParen))(TypeApplied(name.text)(arguments)), afterArguments)
+                else (parserTypeAt(name.position)(tokenEnd(name))(TypeNamed(name.text)), afterName)
+and parserParseTupleTypeTail start reversed state =
+    match parserConsume(Comma)(state) with
+        | (_comma, afterComma) ->
+            match parserParseTypeExpressionState(afterComma) with
+                | (element, afterElement) ->
+                    let elements = element :: reversed
+                    in
+                        if parserCurrentKind(afterElement) == Comma
+                        then parserParseTupleTypeTail(start)(elements)(afterElement)
+                        else
+                            match parserConsume(RParen)(afterElement) with
+                                | (rightParen, afterRightParen) -> (parserTypeAt(start)(tokenEnd(rightParen))(TypeTuple(reverseList(elements))), afterRightParen)
+and parserParseTypeArguments state =
+    if parserCurrentKind(state) == RParen
+    then
+        match parserAdvance(state) with
+            | (rightParen, afterRightParen) -> ([], rightParen, afterRightParen)
+    else
+        match parserParseTypeExpressionState(state) with
+            | (first, afterFirst) -> parserParseMoreTypeArguments(first :: [])(afterFirst)
+and parserParseMoreTypeArguments reversed state =
+    if parserCurrentKind(state) == Comma
+    then
+        match parserAdvance(state) with
+            | (_comma, afterComma) ->
+                match parserParseTypeExpressionState(afterComma) with
+                    | (argument, afterArgument) -> parserParseMoreTypeArguments(argument :: reversed)(afterArgument)
+    else
+        match parserConsume(RParen)(state) with
+            | (rightParen, afterRightParen) -> (reverseList(reversed), rightParen, afterRightParen)
+and parserParseNeedsRow state =
+    match parserAdvance(state) with
+        | (_needsToken, afterNeeds) ->
+            if parserCurrentKind(afterNeeds) == Ident
+            then
+                match parserAdvance(afterNeeds) with
+                    | (tailVariable, afterTail) -> (NeedsRowSyntax(capabilities = [], tailVariable = Some(tailVariable.text)), afterTail)
+            else
+                match parserConsume(LBrace)(afterNeeds) with
+                    | (_leftBrace, afterLeftBrace) ->
+                        if parserCurrentKind(afterLeftBrace) == RBrace
+                        then
+                            match parserAdvance(afterLeftBrace) with
+                                | (_rightBrace, afterRightBrace) -> (NeedsRowSyntax(capabilities = [], tailVariable = None), afterRightBrace)
+                        else
+                            match parserParseCapabilityRef(afterLeftBrace) with
+                                | (first, afterFirst) -> parserParseNeedsRowTail(first :: [])(afterFirst)
+and parserParseNeedsRowTail reversed state =
+    match parserCurrentKind(state) with
+        | Comma ->
+            match parserAdvance(state) with
+                | (_comma, afterComma) ->
+                    match parserParseCapabilityRef(afterComma) with
+                        | (capabilityReference, afterCapability) -> parserParseNeedsRowTail(capabilityReference :: reversed)(afterCapability)
+        | Pipe ->
+            match parserAdvance(state) with
+                | (_pipe, afterPipe) ->
+                    match parserConsume(Ident)(afterPipe) with
+                        | (tailVariable, afterTail) ->
+                            match parserConsume(RBrace)(afterTail) with
+                                | (_rightBrace, afterRightBrace) -> (NeedsRowSyntax(capabilities = reverseList(reversed), tailVariable = Some(tailVariable.text)), afterRightBrace)
+        | _ ->
+            match parserConsume(RBrace)(state) with
+                | (_rightBrace, afterRightBrace) -> (NeedsRowSyntax(capabilities = reverseList(reversed), tailVariable = None), afterRightBrace)
+and parserParseCapabilityRef state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            if parserCurrentKind(afterName) == LParen
+            then
+                match parserAdvance(afterName) with
+                    | (_leftParen, afterLeftParen) ->
+                        match parserParseTypeArguments(afterLeftParen) with
+                            | (arguments, _rightParen, afterArguments) -> (CapabilityRefSyntax(name = name.text, args = arguments), afterArguments)
+            else (CapabilityRefSyntax(name = name.text, args = []), afterName)
+and parserParseRequiresClause state =
+    match parserAdvance(state) with
+        | (_requiresToken, afterRequires) ->
+            match parserConsume(LBrace)(afterRequires) with
+                | (_leftBrace, afterLeftBrace) ->
+                    if parserCurrentKind(afterLeftBrace) == RBrace
+                    then
+                        match parserAdvance(afterLeftBrace) with
+                            | (_rightBrace, afterRightBrace) -> ([], afterRightBrace)
+                    else
+                        match parserParseTraitConstraint(afterLeftBrace) with
+                            | (first, afterFirst) -> parserParseMoreTraitConstraints(first :: [])(afterFirst)
+and parserParseMoreTraitConstraints reversed state =
+    if parserCurrentKind(state) == Comma
+    then
+        match parserAdvance(state) with
+            | (_comma, afterComma) ->
+                match parserParseTraitConstraint(afterComma) with
+                    | (constraint, afterConstraint) -> parserParseMoreTraitConstraints(constraint :: reversed)(afterConstraint)
+    else
+        match parserConsume(RBrace)(state) with
+            | (_rightBrace, afterRightBrace) -> (reverseList(reversed), afterRightBrace)
+and parserParseTraitConstraint state =
+    match parserParseQualifiedIdentifier(state) with
+        | (name, afterName) ->
+            if parserCurrentKind(afterName) == LParen
+            then
+                match parserAdvance(afterName) with
+                    | (_leftParen, afterLeftParen) ->
+                        match parserParseTypeArguments(afterLeftParen) with
+                            | (arguments, _rightParen, afterArguments) -> (TraitConstraintSyntax(traitName = name, typeArguments = arguments), afterArguments)
+            else (TraitConstraintSyntax(traitName = name, typeArguments = []), afterName)
+and parserParseQualifiedIdentifier state =
+    match parserConsume(Ident)(state) with
+        | (first, afterFirst) -> parserParseQualifiedIdentifierTail(first.text :: [])(afterFirst)
+and parserParseQualifiedIdentifierTail reversed state =
+    if parserCurrentKind(state) != Dot
+    then (join(".")(reverseList(reversed)), state)
+    else
+        match parserAdvance(state) with
+            | (_dot, afterDot) ->
+                match parserConsume(Ident)(afterDot) with
+                    | (part, afterPart) -> parserParseQualifiedIdentifierTail(part.text :: reversed)(afterPart)
 
 let parserBuildCallArguments function arguments start end isWhitespace =
     (let recursive build current remaining =
@@ -400,34 +616,63 @@ and parserParseNamedLet state =
                 in
                     match parserConsume(Ident)(afterRecursive) with
                         | (name, afterName) ->
-                            match parserParseSugarParameters([])(afterName) with
-                                | (parameters, afterParameters) ->
-                                    match parserConsume(Equals)(afterParameters) with
-                                        | (_equals, afterEquals) ->
-                                            match parserParseExpression(afterEquals) with
-                                                | (rawValue, afterValue) ->
-                                                    match parserConsume(In)(afterValue) with
-                                                        | (_inToken, afterIn) ->
-                                                            match parserParseExpression(afterIn) with
-                                                                | (body, afterBody) ->
-                                                                    let value = parserBuildLambdas(parameters)(rawValue)(letToken.position)
-                                                                    in
-                                                                        let expression =
-                                                                            if recursiveBinding
-                                                                            then ExprLetRecursive(name.text)(value)(body)(parameters)(None)([])
-                                                                            else ExprLet(name.text)(value)(body)(parameters)(None)([])
-                                                                        in (parserAt(letToken.position)(parserExprEnd(body))(expression), afterBody)
+                            let header =
+                                if parserCurrentKind(afterName) == Colon
+                                then
+                                    match parserAdvance(afterName) with
+                                        | (_colon, afterColon) ->
+                                            match parserParseTypeExpressionState(afterColon) with
+                                                | (annotation, afterAnnotation) ->
+                                                    if parserCurrentKind(afterAnnotation) == Requires
+                                                    then
+                                                        match parserParseRequiresClause(afterAnnotation) with
+                                                            | (requirements, afterRequirements) -> ([], Some(annotation), requirements, afterRequirements)
+                                                    else ([], Some(annotation), [], afterAnnotation)
+                                else
+                                    match parserParseSugarParameters([])(afterName) with
+                                        | (parameters, afterParameters) -> (parameters, None, [], afterParameters)
+                            in
+                                match header with
+                                    | (parameters, typeAnnotation, requirements, afterParameters) ->
+                                        match parserConsume(Equals)(afterParameters) with
+                                            | (_equals, afterEquals) ->
+                                                match parserParseExpression(afterEquals) with
+                                                    | (rawValue, afterValue) ->
+                                                        match parserConsume(In)(afterValue) with
+                                                            | (_inToken, afterIn) ->
+                                                                match parserParseExpression(afterIn) with
+                                                                    | (body, afterBody) ->
+                                                                        let value = parserBuildLambdas(parameters)(rawValue)(letToken.position)
+                                                                        in
+                                                                            let parameterNames = parserParameterNames(parameters)
+                                                                            in
+                                                                                let expression =
+                                                                                    if recursiveBinding
+                                                                                    then ExprLetRecursive(name.text)(value)(body)(parameterNames)(typeAnnotation)(requirements)
+                                                                                    else ExprLet(name.text)(value)(body)(parameterNames)(typeAnnotation)(requirements)
+                                                                                in (parserAt(letToken.position)(parserExprEnd(body))(expression), afterBody)
 and parserParseSugarParameters reversed state =
-    if parserCurrentKind(state) != Ident
-    then (reverseList(reversed), state)
-    else
-        match parserAdvance(state) with
-            | (parameter, afterParameter) -> parserParseSugarParameters(parameter.text :: reversed)(afterParameter)
+    match parserCurrentKind(state) with
+        | Ident ->
+            match parserAdvance(state) with
+                | (parameter, afterParameter) -> parserParseSugarParameters((parameter.text, None) :: reversed)(afterParameter)
+        | LParen ->
+            match parserAdvance(state) with
+                | (_leftParen, afterLeftParen) ->
+                    match parserConsume(Ident)(afterLeftParen) with
+                        | (parameter, afterParameter) ->
+                            match parserConsume(Colon)(afterParameter) with
+                                | (_colon, afterColon) ->
+                                    match parserParseTypeExpressionState(afterColon) with
+                                        | (annotation, afterAnnotation) ->
+                                            match parserConsume(RParen)(afterAnnotation) with
+                                                | (_rightParen, afterRightParen) -> parserParseSugarParameters((parameter.text, Some(annotation)) :: reversed)(afterRightParen)
+        | _ -> (reverseList(reversed), state)
 and parserBuildLambdas parameters body start =
     (let recursive build reversed current =
         match reversed with
             | [] -> current
-            | parameter :: tail -> build(tail)(parserAt(start)(parserExprEnd(current))(ExprLambda(parameter)(current)(None)))
+            | (parameter, annotation) :: tail -> build(tail)(parserAt(start)(parserExprEnd(current))(ExprLambda(parameter)(current)(annotation)))
     in build(reverseList(parameters))(body))
 and parserParseLetResult state =
     match parserAdvance(state) with
@@ -472,10 +717,10 @@ and parserParseLambda state =
                     if parserCurrentKind(afterGiven) == LParen
                     then
                         match parserAdvance(afterGiven) with
-                            | (_leftParen, afterLeftParen) -> parserParseNameList(afterLeftParen)(RParen)
+                            | (_leftParen, afterLeftParen) -> parserParseLambdaParameterList(afterLeftParen)
                     else
                         match parserConsume(Ident)(afterGiven) with
-                            | (parameter, afterParameter) -> (parameter.text :: [], afterParameter)
+                            | (parameter, afterParameter) -> ((parameter.text, None) :: [], afterParameter)
                 in
                     match parametersResult with
                         | (parameters, afterParameters) ->
@@ -483,19 +728,29 @@ and parserParseLambda state =
                                 | (_arrow, afterArrow) ->
                                     match parserParseExpression(afterArrow) with
                                         | (body, afterBody) -> (parserBuildLambdas(parameters)(body)(givenToken.position), afterBody)
-and parserParseNameList state terminator =
-    match parserConsume(Ident)(state) with
-        | (first, afterFirst) -> parserParseMoreNames(first.text :: [])(afterFirst)(terminator)
-and parserParseMoreNames reversed state terminator =
+and parserParseLambdaParameterList state =
+    match parserParseLambdaParameter(state) with
+        | (first, afterFirst) -> parserParseMoreLambdaParameters(first :: [])(afterFirst)
+and parserParseMoreLambdaParameters reversed state =
     if parserCurrentKind(state) == Comma
     then
         match parserAdvance(state) with
             | (_comma, afterComma) ->
-                match parserConsume(Ident)(afterComma) with
-                    | (name, afterName) -> parserParseMoreNames(name.text :: reversed)(afterName)(terminator)
+                match parserParseLambdaParameter(afterComma) with
+                    | (parameter, afterParameter) -> parserParseMoreLambdaParameters(parameter :: reversed)(afterParameter)
     else
-        match parserConsume(terminator)(state) with
+        match parserConsume(RParen)(state) with
             | (_end, afterEnd) -> (reverseList(reversed), afterEnd)
+and parserParseLambdaParameter state =
+    match parserConsume(Ident)(state) with
+        | (parameter, afterParameter) ->
+            if parserCurrentKind(afterParameter) == Colon
+            then
+                match parserAdvance(afterParameter) with
+                    | (_colon, afterColon) ->
+                        match parserParseTypeExpressionState(afterColon) with
+                            | (annotation, afterAnnotation) -> ((parameter.text, Some(annotation)), afterAnnotation)
+            else ((parameter.text, None), afterParameter)
 and parserParseWith state =
     match parserParsePipe(state) with
         | (target, afterTarget) -> parserParseWithTail(target)(afterTarget)
@@ -1171,3 +1426,20 @@ let parseExpression source =
                         in
                             let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
                             in ExpressionParseResult(expression = expression, diagnostics = appendList(lexed.diagnostics)(parserDiagnostics)))
+
+let parseTypeExpression source =
+    (let lexed = tokenize(source)
+    in
+        let initial : ParserState = (lexed.tokens, [])
+        in
+            match parserParseTypeExpressionState(initial) with
+                | (typeExpression, state) ->
+                    let current = parserCurrent(state)
+                    in
+                        let finalState =
+                            if current.kind == EOF
+                            then state
+                            else parserDiagnostic(state)(current)("Unexpected token after end of type expression: " + tokenKindName(current.kind) + ".")
+                        in
+                            let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
+                            in TypeExpressionParseResult(typeExpression = typeExpression, diagnostics = appendList(lexed.diagnostics)(parserDiagnostics)))
