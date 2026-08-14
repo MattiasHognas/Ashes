@@ -1,5 +1,6 @@
 import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 let expectTypeIn expected expression environment =
@@ -51,6 +52,17 @@ let expectGenericBinaryTrait expectedTrait expression =
                 | _ -> test.fail("generic binary expression should infer a curried binary function")
         | _ -> test.fail("generic binary expression should infer")
 
+let expectPolymorphicIdentity expression =
+    match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
+        | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = _constraints, error = None } ->
+            match applySubstitution(substitution)(semanticType) with
+                | SemFunction(SemVariable(argumentId), SemVariable(resultId), None) ->
+                    if argumentId == resultId
+                    then Unit
+                    else test.fail("identity argument and result should share one type variable")
+                | _ -> test.fail("expression should infer a polymorphic identity function")
+        | _ -> test.fail("polymorphic identity expression should infer")
+
 let runTypeInferenceTests unit =
     (let identity = ExprLambda("value")(ExprVar("value"))(None)
     in
@@ -84,24 +96,54 @@ let runTypeInferenceTests unit =
                                                             in
                                                                 let genericAddChecked = expectGenericBinaryTrait("Add")(genericAdd)
                                                                 in
-                                                                    let appliedGenericAdd = ExprCall(ExprCall(genericAdd)(ExprInt(1))(false))(ExprInt(2))(false)
+                                                                    let annotatedIdentity = ExprLambda("value")(ExprVar("value"))(Some(TypeNamed("Int")))
                                                                     in
-                                                                        let resolvedLetConstraintChecked = expectConstraint("Add")("Int")(ExprLet("sum")(appliedGenericAdd)(ExprVar("sum"))([])(None)([]))
+                                                                        let lambdaAnnotationChecked = expectType("Int -> Int")(annotatedIdentity)
                                                                         in
-                                                                            let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                                                                            let polymorphicAnnotation = TypeArrow(TypeNamed("a"))(TypeNamed("a"))([])(None)
                                                                             in
-                                                                                let occursChecked =
-                                                                                    match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
-                                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
-                                                                                        | _ -> test.fail("self application should fail the occurs check")
+                                                                                let polymorphicAnnotationChecked = expectPolymorphicIdentity(ExprLet("identity")(identity)(ExprVar("identity"))([])(Some(polymorphicAnnotation))([]))
                                                                                 in
-                                                                                    let branchMismatchChecked =
-                                                                                        match inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong")))(emptyTypeEnvironment(Unit)) with
-                                                                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
-                                                                                            | _ -> test.fail("if branches should have one type")
+                                                                                    let invalidAnnotation = ExprLet("value")(ExprInt(1))(ExprVar("value"))([])(Some(TypeNamed("Str")))([])
                                                                                     in
-                                                                                        let unknownChecked =
-                                                                                            match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
-                                                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
-                                                                                                | _ -> test.fail("unknown value should be reported")
-                                                                                        in Ashes.IO.print("all self-hosted trait-aware inference tests passed"))
+                                                                                        let invalidAnnotationChecked =
+                                                                                            match inferExpression(invalidAnnotation)(emptyTypeEnvironment(Unit)) with
+                                                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+                                                                                                | _ -> test.fail("let annotations should constrain inferred values")
+                                                                                        in
+                                                                                            let unknownAnnotation = ExprLet("value")(ExprInt(1))(ExprVar("value"))([])(Some(TypeNamed("Missing")))([])
+                                                                                            in
+                                                                                                let unknownAnnotationChecked =
+                                                                                                    match inferExpression(unknownAnnotation)(emptyTypeEnvironment(Unit)) with
+                                                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(InferenceTypeResolutionError(UnknownTypeName("Missing"))) } -> Unit
+                                                                                                        | _ -> test.fail("unknown annotation types should be rejected")
+                                                                                                in
+                                                                                                    let boxedType = SemNamed(10)("Box")([SemInt])
+                                                                                                    in
+                                                                                                        let boxedEnvironment = addInferenceTypeDefinition(10)("Box")(1)(addTypeBinding("boxed")(TypeScheme(quantified = [], body = boxedType, constraints = []))(emptyTypeEnvironment(Unit)))
+                                                                                                        in
+                                                                                                            let nominalAnnotation = TypeApplied("Box")([TypeNamed("Int")])
+                                                                                                            in
+                                                                                                                let nominalAnnotationChecked = expectTypeIn("Box(Int)")(ExprLet("value")(ExprVar("boxed"))(ExprVar("value"))([])(Some(nominalAnnotation))([]))(boxedEnvironment)
+                                                                                                                in
+                                                                                                                    let appliedGenericAdd = ExprCall(ExprCall(genericAdd)(ExprInt(1))(false))(ExprInt(2))(false)
+                                                                                                                    in
+                                                                                                                        let resolvedLetConstraintChecked = expectConstraint("Add")("Int")(ExprLet("sum")(appliedGenericAdd)(ExprVar("sum"))([])(None)([]))
+                                                                                                                        in
+                                                                                                                            let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                                                                                                                            in
+                                                                                                                                let occursChecked =
+                                                                                                                                    match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
+                                                                                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
+                                                                                                                                        | _ -> test.fail("self application should fail the occurs check")
+                                                                                                                                in
+                                                                                                                                    let branchMismatchChecked =
+                                                                                                                                        match inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong")))(emptyTypeEnvironment(Unit)) with
+                                                                                                                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+                                                                                                                                            | _ -> test.fail("if branches should have one type")
+                                                                                                                                    in
+                                                                                                                                        let unknownChecked =
+                                                                                                                                            match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
+                                                                                                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
+                                                                                                                                                | _ -> test.fail("unknown value should be reported")
+                                                                                                                                        in Ashes.IO.print("all self-hosted annotation-aware inference tests passed"))
