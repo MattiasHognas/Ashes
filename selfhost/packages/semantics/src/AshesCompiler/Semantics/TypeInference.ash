@@ -44,6 +44,11 @@ type TypeInferenceError =
     | ConstructorPatternArityMismatch(Str)
     | UnknownRecordPatternField(Str, Str)
     | DuplicateRecordPatternField(Str)
+    | UnknownRecordType(Str)
+    | RecordUpdateRequiresRecord(SemanticType)
+    | MissingRecordField(Str, Str)
+    | UnknownRecordField(Str, Str)
+    | DuplicateRecordField(Str)
     | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -197,6 +202,14 @@ let recursive findRecordFieldType : Str -> List(Str) -> List(SemanticType) -> Ma
                         else findRecordFieldType(fieldName)(nameTail)(typeTail)
                     | _ -> None
 
+let recursive findMissingRecordField requiredFields providedFields =
+    match requiredFields with
+        | [] -> None
+        | head :: tail ->
+            if patternNameExists(head)(providedFields)
+            then findMissingRecordField(tail)(providedFields)
+            else Some(head)
+
 let recursive allPatternNamesPresent : List(Str) -> List(Str) -> Bool =
     given (names) ->
         given (candidates) ->
@@ -286,6 +299,28 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                             | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
                                 match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(fieldType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(fieldType)(patternEnvironment)(patternNames) with
                                     | PatternInferenceResult { semanticType = _unifiedType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = unifiedNames, error = None } -> inferRecordPatternFields(constructorName)(tail)(fieldNames)(fieldTypes)(resultType)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedNames)(fieldName :: seenFields)
+                                    | failure -> failure
+                            | failure -> failure
+and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultType requireAll environment substitution supply seenFields accumulatedConstraints =
+    match fields with
+        | [] ->
+            if requireAll
+            then
+                match findMissingRecordField(fieldNames)(seenFields) with
+                    | None -> addConstraints(accumulatedConstraints)(inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply))
+                    | Some(missing) -> inferenceFailure(SemNever)(substitution)(supply)(MissingRecordField(recordName)(missing))
+            else addConstraints(accumulatedConstraints)(inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply))
+        | (fieldName, fieldExpression) :: tail ->
+            if patternNameExists(fieldName)(seenFields)
+            then inferenceFailure(SemNever)(substitution)(supply)(DuplicateRecordField(fieldName))
+            else
+                match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
+                    | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownRecordField(recordName)(fieldName))
+                    | Some(fieldType) ->
+                        match inferWith(fieldExpression)(environment)(substitution)(supply) with
+                            | TypeInferenceResult { semanticType = expressionType, substitution = expressionSubstitution, supply = expressionSupply, constraints = expressionConstraints, error = None } ->
+                                match mergeUnification(expressionSubstitution)(unify(applySubstitution(expressionSubstitution)(fieldType))(applySubstitution(expressionSubstitution)(expressionType)))(expressionSupply)(resultType) with
+                                    | TypeInferenceResult { semanticType = _unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> inferRecordExpressionFields(recordName)(tail)(fieldNames)(fieldTypes)(resultType)(requireAll)(environment)(unifiedSubstitution)(unifiedSupply)(fieldName :: seenFields)(appendConstraints(accumulatedConstraints)(expressionConstraints))
                                     | failure -> failure
                             | failure -> failure
 and unifyOrPatternBindings names expectedEnvironment actualEnvironment substitution supply resultType =
@@ -569,6 +604,31 @@ and inferWith expression environment substitution supply =
                             let unification = unify(applySubstitution(tailSubstitution)(tailType))(SemList(applySubstitution(tailSubstitution)(headType)))
                             in addConstraints(appendConstraints(headConstraints)(tailConstraints))(mergeUnification(tailSubstitution)(unification)(tailSupply)(tailType))
                         | failure -> failure
+                | failure -> failure
+        | ExprRecord(name, fields) ->
+            match resolveConstructorBinding(name)(environment) with
+                | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownRecordType(name))
+                | Some(ConstructorInferenceDefinition { name = _constructorName, scheme = scheme, fieldNames = fieldNames }) ->
+                    match instantiate(scheme)(supply) with
+                        | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
+                            match splitConstructorType(constructorType)([]) with
+                                | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } -> addConstraints(constructorConstraints)(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(resultType)(true)(environment)(substitution)(constructorSupply)([])([]))
+        | ExprRecordUpdate(target, fields) ->
+            match inferWith(target)(environment)(substitution)(supply) with
+                | TypeInferenceResult { semanticType = targetType, substitution = targetSubstitution, supply = targetSupply, constraints = targetConstraints, error = None } ->
+                    match applySubstitution(targetSubstitution)(targetType) with
+                        | SemNamed(_symbolId, name, _arguments) ->
+                            match resolveConstructorBinding(name)(environment) with
+                                | None -> inferenceFailure(SemNever)(targetSubstitution)(targetSupply)(UnknownRecordType(name))
+                                | Some(ConstructorInferenceDefinition { name = _constructorName, scheme = scheme, fieldNames = fieldNames }) ->
+                                    match instantiate(scheme)(targetSupply) with
+                                        | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
+                                            match splitConstructorType(constructorType)([]) with
+                                                | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } ->
+                                                    match mergeUnification(targetSubstitution)(unify(applySubstitution(targetSubstitution)(targetType))(resultType))(constructorSupply)(resultType) with
+                                                        | TypeInferenceResult { semanticType = unifiedResult, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(targetConstraints)(constructorConstraints))(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(unifiedResult)(false)(environment)(unifiedSubstitution)(unifiedSupply)([])([]))
+                                                        | failure -> failure
+                        | other -> inferenceFailure(SemNever)(targetSubstitution)(targetSupply)(RecordUpdateRequiresRecord(other))
                 | failure -> failure
         | ExprMatch(scrutinee, cases, _position) ->
             match inferWith(scrutinee)(environment)(substitution)(supply) with
