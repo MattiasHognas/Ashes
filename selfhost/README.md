@@ -29,8 +29,13 @@ self-hosted implementation or its test path.
 
 | Area | Current self-hosted surface |
 |---|---|
-| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, and the complete lexer |
+| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, and the typed AST model |
 | Remaining packages | Not started |
+
+The syntax model orders `Pattern` and `TypeExpr` before `Expr` so each category remains distinct in
+Ashes' sequential type-declaration model. Match cases and handler arms are typed tuples inside
+`Expr`; this removes the two mutual type-declaration cycles in the C# record graph without weakening
+the public expression, pattern, or type categories.
 
 ## Test discipline
 
