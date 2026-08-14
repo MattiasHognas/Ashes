@@ -1,0 +1,7 @@
+{
+  "name": "ashes-compiler-frontend",
+  "namespace": "AshesCompiler.Frontend",
+  "entry": "Package.ash",
+  "sourceRoots": ["src"],
+  "outDir": "out"
+}
