@@ -3,6 +3,7 @@ export (
     type InstantiationResult(..),
     value freeTypeVariables,
     value freeSchemeVariables,
+    value freeEnvironmentVariables,
     value generalize,
     value instantiate,
 )

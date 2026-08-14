@@ -362,6 +362,97 @@ let expectInferredConstraintCanonicalization unit =
                             | _ -> test.fail("inferred schemes should omit supertraits implied by stronger constraints")
                     | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("canonical inferred constraints should infer: " + Ashes.Trait.Show.show(error)))
 
+let showDeclaration = TraitDecl(name = "Show", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "show", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Str"))([])(None), defaultImplementation = None)])
+
+let sameValue =
+    ExprLambda("value")(ExprCall(ExprCall(ExprQualifiedVar("Equal")("equal"))(ExprVar("value"))(false))(ExprVar("value"))(false))(None)
+
+let sameAnnotation = TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None)
+
+let expectValidWrittenBindingRequirement unit =
+    (let binding = LetBindingSyntax(name = "same", value = sameValue, sugarParameters = [], typeAnnotation = Some(sameAnnotation), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = TypeEnvironment { bindings = bindings }, error = None } ->
+                match findBindingScheme("same")(bindings) with
+                    | Some(TypeScheme { quantified = _quantified, body = _body, constraints = TraitConstraint { traitName = "Equal", typeArguments = _arguments } :: [] }) -> Unit
+                    | _ -> test.fail("a justified written requires clause should become the binding scheme")
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("a justified written requires clause should infer: " + Ashes.Trait.Show.show(error)))
+
+let rejectsMissingWrittenBindingRequirement unit =
+    (let binding = LetBindingSyntax(name = "bad", value = sameValue, sugarParameters = [], typeAnnotation = Some(sameAnnotation), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(showDeclaration), TopLevelLet(binding)(false)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+            | _ -> test.fail("written requires clauses should cover inferred requirements"))
+
+let rejectsUnjustifiedWrittenBindingRequirement unit =
+    (let identity = ExprLambda("value")(ExprVar("value"))(None)
+    in
+        let binding =
+            LetBindingSyntax(name = "identity", value = identity, sugarParameters = [], typeAnnotation = None
+            |> TypeArrow(TypeNamed("a"))(TypeNamed("a"))([])
+            |> Some, requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnjustifiedWrittenTraitRequirement("Equal"))) } -> Unit
+                | _ -> test.fail("written requires clauses should not introduce unjustified evidence"))
+
+let rejectsAmbiguousWrittenBindingRequirement unit =
+    (let binding = LetBindingSyntax(name = "ambiguous", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(TypeNamed("Int")), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(false)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousTraitRequirement("Equal"))) } -> Unit
+            | _ -> test.fail("written requirement variables should occur in the binding type"))
+
+let rejectsInvalidWrittenBindingRequirements unit =
+    (let unknown = LetBindingSyntax(name = "unknown", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(TypeNamed("Int")), requirements = [TraitConstraintSyntax(traitName = "Missing", typeArguments = [TypeNamed("Int")])])
+    in
+        let unknownChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelLet(unknown)(false)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnknownWrittenTraitRequirement("Missing"))) } -> Unit
+                | _ -> test.fail("written requires clauses should reject unknown traits")
+        in
+            let wrongArity = LetBindingSyntax(name = "wrongArity", value = ExprInt(1), sugarParameters = [], typeAnnotation = Some(TypeNamed("Int")), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [])])
+            in
+                match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(wrongArity)(false)], body = None)) with
+                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(WrittenTraitRequirementArityMismatch("Equal", 1, 0))) } -> Unit
+                    | _ -> test.fail("written requires clauses should enforce trait arity"))
+
+let rejectsNestedMissingWrittenBindingRequirement unit =
+    (let nested = ExprLet("bad")(sameValue)(ExprInt(0))([])(Some(sameAnnotation))([TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(showDeclaration)], body = Some(nested))) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+            | _ -> test.fail("nested written requires clauses should be validated"))
+
+let acceptsRecursiveWrittenBindingRequirement unit =
+    (let binding = LetBindingSyntax(name = "same", value = sameValue, sugarParameters = [], typeAnnotation = Some(sameAnnotation), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelLet(binding)(true)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = None } -> Unit
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("recursive written requires clauses should infer: " + Ashes.Trait.Show.show(error)))
+
+let rejectsInvalidRequirementInRecursiveGroup unit =
+    (let valid = LetBindingSyntax(name = "first", value = sameValue, sugarParameters = [], typeAnnotation = Some(sameAnnotation), requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])])
+    in
+        let invalid = LetBindingSyntax(name = "second", value = sameValue, sugarParameters = [], typeAnnotation = Some(sameAnnotation), requirements = [TraitConstraintSyntax(traitName = "Show", typeArguments = [TypeNamed("a")])])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelTrait(showDeclaration), TopLevelRecursiveGroup([valid, invalid])], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingWrittenTraitRequirement("Equal"))) } -> Unit
+                | _ -> test.fail("every member of a recursive group should validate its written requires clause"))
+
+let expectWrittenBindingRequirements unit =
+    unit
+    |> expectValidWrittenBindingRequirement
+    |> rejectsMissingWrittenBindingRequirement
+    |> rejectsUnjustifiedWrittenBindingRequirement
+    |> rejectsAmbiguousWrittenBindingRequirement
+    |> rejectsInvalidWrittenBindingRequirements
+    |> rejectsNestedMissingWrittenBindingRequirement
+    |> acceptsRecursiveWrittenBindingRequirement
+    |> rejectsInvalidRequirementInRecursiveGroup
+
 let expectTraitImplementationBodyValidation unit =
     (let invalidBody =
         ExprLambda("left")(ExprLambda("right")(ExprInt(42))(None))(None)
@@ -501,6 +592,7 @@ let runTraitInferenceTests unit =
     |> expectTraitImplementationRequirementTermination
     |> expectTraitConstraintCanonicalization
     |> expectInferredConstraintCanonicalization
+    |> expectWrittenBindingRequirements
     |> expectTraitImplementationBodyValidation
     |> expectTraitImplementationCapabilityRows
     |> expectTraitImplementationCoherence

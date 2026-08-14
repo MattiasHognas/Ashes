@@ -79,6 +79,7 @@ type PendingRecursiveBinding =
     | name: Str
     | value: Expr
     | annotation: Maybe(TypeExpr)
+    | requirements: List(TraitConstraintSyntax)
     | placeholderType: SemanticType
 
 type ResolvedRecursiveBinding =
@@ -164,18 +165,18 @@ let recursive appendProgramSubstitution left right =
 let recursive prepareRecursiveBindings bindings environment supply reversedPending =
     match bindings with
         | [] -> RecursivePreparation(environment = environment, pending = reverse(reversedPending), supply = supply)
-        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = _requirements } :: tail ->
+        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } :: tail ->
             match freshTypeVariable(supply) with
                 | (placeholderType, nextSupply) ->
                     let scheme = TypeScheme(quantified = [], body = placeholderType, constraints = [])
                     in
-                        let pending = PendingRecursiveBinding(name = name, value = wrapSugarParameters(parameters)(value), annotation = annotation, placeholderType = placeholderType)
+                        let pending = PendingRecursiveBinding(name = name, value = wrapSugarParameters(parameters)(value), annotation = annotation, requirements = requirements, placeholderType = placeholderType)
                         in prepareRecursiveBindings(tail)(addTypeBinding(name)(scheme)(environment))(nextSupply)(pending :: reversedPending)
 
-let recursive inferRecursiveBindings pending environment substitution supply reversedResolved =
+let recursive inferRecursiveBindings pending environment boundaryEnvironment substitution supply reversedResolved =
     match pending with
         | [] -> RecursiveInference(resolved = reverse(reversedResolved), substitution = substitution, supply = supply, error = None)
-        | PendingRecursiveBinding { name = name, value = value, annotation = annotation, placeholderType = placeholderType } :: tail ->
+        | PendingRecursiveBinding { name = name, value = value, annotation = annotation, requirements = requirements, placeholderType = placeholderType } :: tail ->
             match inferExpressionFrom(value)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                     match unify(applySubstitution(valueSubstitution)(placeholderType))(applySubstitution(valueSubstitution)(valueType)) with
@@ -184,16 +185,11 @@ let recursive inferRecursiveBindings pending environment substitution supply rev
                             in
                                 let unifiedType = applySubstitution(unifiedSubstitution)(placeholderType)
                                 in
-                                    let annotationResult =
-                                        match annotation with
-                                            | None -> TypeInferenceResult(semanticType = unifiedType, substitution = unifiedSubstitution, supply = valueSupply, constraints = [], error = None)
-                                            | Some(typeExpression) -> checkInferenceAnnotation(typeExpression)(unifiedType)(environment)(unifiedSubstitution)(valueSupply)
-                                    in
-                                        match annotationResult with
-                                            | TypeInferenceResult { semanticType = annotatedType, substitution = annotatedSubstitution, supply = annotatedSupply, constraints = _annotationConstraints, error = None } ->
-                                                let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = valueConstraints)
-                                                in inferRecursiveBindings(tail)(environment)(annotatedSubstitution)(annotatedSupply)(resolvedBinding :: reversedResolved)
-                                            | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(error))
+                                    match checkInferenceBindingSignature(annotation)(requirements)(unifiedType)(valueConstraints)(boundaryEnvironment)(unifiedSubstitution)(valueSupply) with
+                                        | TypeInferenceResult { semanticType = annotatedType, substitution = annotatedSubstitution, supply = annotatedSupply, constraints = selectedConstraints, error = None } ->
+                                            let resolvedBinding = ResolvedRecursiveBinding(name = name, semanticType = annotatedType, constraints = selectedConstraints)
+                                            in inferRecursiveBindings(tail)(environment)(boundaryEnvironment)(annotatedSubstitution)(annotatedSupply)(resolvedBinding :: reversedResolved)
+                                        | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(error))
                         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> RecursiveInference(resolved = [], substitution = valueSubstitution, supply = valueSupply, error = Some(InferenceUnificationError(error)))
                 | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> RecursiveInference(resolved = [], substitution = failedSubstitution, supply = failedSupply, error = Some(error))
 
@@ -213,7 +209,7 @@ let inferRecursiveGroup bindings state =
         | ProgramInferenceState { environment = outerEnvironment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None } ->
             match prepareRecursiveBindings(bindings)(outerEnvironment)(supply)([]) with
                 | RecursivePreparation { environment = recursiveEnvironment, pending = pending, supply = preparedSupply } ->
-                    match inferRecursiveBindings(pending)(recursiveEnvironment)(substitution)(preparedSupply)([]) with
+                    match inferRecursiveBindings(pending)(recursiveEnvironment)(outerEnvironment)(substitution)(preparedSupply)([]) with
                         | RecursiveInference { resolved = resolved, substitution = resolvedSubstitution, supply = resolvedSupply, error = None } ->
                             let finalEnvironment = generalizeRecursiveBindings(resolved)(outerEnvironment)(resolvedSubstitution)(outerEnvironment)
                             in ProgramInferenceState(environment = finalEnvironment, substitution = resolvedSubstitution, supply = resolvedSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
@@ -1237,13 +1233,13 @@ let recursive validateTraitDefaults declarations state =
 
 let inferTopLevelLet binding isRecursive state =
     match (binding, state) with
-        | (LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = _requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
+        | (LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
             if isRecursive
             then inferRecursiveGroup([binding])(state)
             else
                 let bindingValue = wrapSugarParameters(parameters)(value)
                 in
-                    match inferTopLevelBinding(name)(bindingValue)(annotation)(environment)(substitution)(supply) with
+                    match inferTopLevelBinding(name)(bindingValue)(annotation)(requirements)(environment)(substitution)(supply) with
                         | TopLevelBindingInferenceResult { environment = nextEnvironment, semanticType = _semanticType, substitution = nextSubstitution, supply = nextSupply, error = None } -> ProgramInferenceState(environment = nextEnvironment, substitution = nextSubstitution, supply = nextSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
                         | TopLevelBindingInferenceResult { environment = _nextEnvironment, semanticType = _semanticType, substitution = nextSubstitution, supply = nextSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = nextSubstitution, supply = nextSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(ProgramExpressionError(error)))
         | (_binding, failedState) -> failedState
