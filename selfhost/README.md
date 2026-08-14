@@ -30,7 +30,8 @@ self-hosted implementation or its test path.
 | Area | Current self-hosted surface |
 |---|---|
 | Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies |
-| Remaining packages | Not started |
+| Formatter | Canonical expression, pattern, and type rendering with precedence preservation and idempotence coverage |
+| Semantics, backend, test runner, LSP, DAP, CLI, and fuzzing | Not started |
 
 The syntax model orders `Pattern` and `TypeExpr` before `Expr` so each category remains distinct in
 Ashes' sequential type-declaration model. Match cases and handler arms are typed tuples inside
@@ -51,4 +52,13 @@ dotnet run --project src/Ashes.Cli -- compile \
   --project selfhost/tests/frontend/ashes.json \
   -o /tmp/ashes-selfhost-frontend-tests
 /tmp/ashes-selfhost-frontend-tests
+```
+
+Run the self-hosted formatter tests with:
+
+```bash
+dotnet run --project src/Ashes.Cli -- compile \
+  --project selfhost/tests/formatter/ashes.json \
+  -o /tmp/ashes-selfhost-formatter-tests
+/tmp/ashes-selfhost-formatter-tests
 ```

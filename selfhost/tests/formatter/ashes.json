@@ -1,0 +1,10 @@
+{
+  "name": "ashes-compiler-formatter-tests",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "frontend": { "path": "../../packages/frontend" },
+    "formatter": { "path": "../../packages/formatter" }
+  }
+}
