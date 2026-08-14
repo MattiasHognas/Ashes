@@ -14,11 +14,9 @@ Node.js helpers are not part of its implementation or test path. The existing C#
 VS Code extension remain the bootstrap oracle and must not be removed or changed merely to make the
 self-hosted port easier.
 
-The migration is currently a stack of one-milestone `feature/selfhost-*` pull requests. Capability
-provider resolution is PR #475, and the current trait declaration registration milestone and this
-handoff are PR #476. When resuming, base new work on the head of PR #476 until the stack has been
-merged; after merges, rebase or retarget only as needed and preserve one independently reviewable
-milestone per PR.
+The migration proceeds as one-milestone `feature/selfhost-*` pull requests. Capability provider
+resolution is PR #475 and trait declaration registration is PR #476; both are merged. Preserve one
+independently reviewable milestone per subsequent PR.
 
 | Area | Ported surface | State |
 |---|---|---|
@@ -27,7 +25,7 @@ milestone per PR.
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
-| Traits | Operator constraints plus trait declaration/method registration, forward supertrait validation, cycle rejection, qualified method schemes, and default-body type checking | Declaration inference implemented; implementations and evidence remain |
+| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; and ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods | Declaration and ordinary implementation inference implemented; coherence and evidence remain |
 | IR, optimizer, ownership, backend, linker | No self-hosted implementation yet | Not started |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined, but the tools are not ported | Not started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
@@ -45,11 +43,11 @@ must reference only the packages they actually consume.
 Work should continue in dependency order. Each item below is a reviewable milestone or a short series
 of milestones; split an item when its tests and public contract can stand alone.
 
-1. **Complete trait semantics.** Register `implement` declarations; validate method completeness,
-   signatures, requirements, overlap/coherence, orphan ownership, termination, and default dependency
-   cycles. Then canonicalize and simplify constraints through supertraits, validate written `requires`
-   clauses, resolve concrete instances, and preserve abstract dictionary requirements. Add `deriving`
-   expansion only after ordinary implementations work.
+1. **Complete trait semantics.** Add overlap/coherence, orphan ownership, requirement termination, and
+   default dependency cycle validation to the ordinary implementation registry. Then canonicalize and
+   simplify constraints through supertraits, validate written `requires` clauses, resolve concrete
+   instances, and preserve abstract dictionary requirements. Add `deriving` expansion only after
+   ordinary implementations work.
 2. **Close whole-program semantic gaps.** Port import/module and export resolution, external declaration
    typing and ABI metadata, package/project stitching, remaining declaration namespace rules, exhaustive
    diagnostics, and any expression/type-inference behavior not yet represented by the focused tests.
@@ -192,9 +190,9 @@ same public behavior.
 - [x] Infer operator constraints and retain them in generalized schemes.
 - [x] Register trait declarations, qualified method schemes, forward supertraits, acyclic supertrait
   graphs, and type-checked default bodies.
-- [ ] Register ordinary `implement` declarations with resolved rigid heads, requirements, supplied
+- [x] Register ordinary `implement` declarations with resolved rigid heads, requirements, supplied
   methods, and inherited defaults.
-- [ ] Validate implementation trait/arity, method uniqueness and completeness, substituted method
+- [x] Validate implementation trait/arity, method uniqueness and completeness, substituted method
   signatures, capability rows, and requirement variables.
 - [ ] Reject exact duplicate and structurally overlapping implementation heads independently of source
   or traversal order.
