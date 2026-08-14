@@ -1,13 +1,16 @@
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
+import Ashes.Collection.List.reverse
 export (
     type TypeDefinition(..),
     type TypeResolutionContext(..),
     type TypeResolutionError(..),
     type TypeResolutionResult(..),
+    type TypeResolutionPreparationResult(..),
     value emptyTypeResolutionContext,
     value addTypeParameter,
     value addTypeDefinition,
+    value prepareTypeResolutionContext,
     value resolveTypeExpression,
 )
 
@@ -29,6 +32,10 @@ type TypeResolutionResult =
     | semanticType: SemanticType
     | error: Maybe(TypeResolutionError)
     deriving {Eq, Show}
+
+type TypeResolutionPreparationResult =
+    | context: TypeResolutionContext
+    | supply: TypeVariableSupply
 
 type TypeListResolutionResult =
     | semanticTypes: List(SemanticType)
@@ -122,7 +129,7 @@ and resolveCapabilities capabilities context reversed =
         | [] -> TypeListResolutionResult(semanticTypes = reversed, error = None)
         | (name, arguments) :: tail ->
             match resolveTypeExpressions(arguments)(context)([]) with
-                | TypeListResolutionResult { semanticTypes = reversedArguments, error = None } -> resolveCapabilities(tail)(context)(SemCapability(name)(Ashes.Collection.List.reverse(reversedArguments)) :: reversed)
+                | TypeListResolutionResult { semanticTypes = reversedArguments, error = None } -> resolveCapabilities(tail)(context)(SemCapability(name)(reverse(reversedArguments)) :: reversed)
                 | TypeListResolutionResult { semanticTypes = _semanticTypes, error = Some(error) } -> TypeListResolutionResult(semanticTypes = [], error = Some(error))
 and resolveTypeExpression typeExpression context =
     match typeExpression with
@@ -130,7 +137,7 @@ and resolveTypeExpression typeExpression context =
         | TypeNamed(name) -> resolveNamed(name)([])(context)
         | TypeApplied(name, arguments) ->
             match resolveTypeExpressions(arguments)(context)([]) with
-                | TypeListResolutionResult { semanticTypes = reversedArguments, error = None } -> resolveNamed(name)(Ashes.Collection.List.reverse(reversedArguments))(context)
+                | TypeListResolutionResult { semanticTypes = reversedArguments, error = None } -> resolveNamed(name)(reverse(reversedArguments))(context)
                 | TypeListResolutionResult { semanticTypes = _semanticTypes, error = Some(error) } -> TypeResolutionResult(semanticType = SemNever, error = Some(error))
         | TypeArrow(argument, result, capabilities, tailName) ->
             match resolveTypeExpression(argument)(context) with
@@ -139,7 +146,7 @@ and resolveTypeExpression typeExpression context =
                         | TypeResolutionResult { semanticType = resultType, error = None } ->
                             match resolveCapabilities(capabilities)(context)([]) with
                                 | TypeListResolutionResult { semanticTypes = reversedCapabilities, error = None } ->
-                                    let resolvedCapabilities = Ashes.Collection.List.reverse(reversedCapabilities)
+                                    let resolvedCapabilities = reverse(reversedCapabilities)
                                     in
                                         let resolvedTail =
                                             match tailName with
@@ -160,6 +167,61 @@ and resolveTypeExpression typeExpression context =
                 | TypeResolutionResult { semanticType = _argumentType, error = Some(error) } -> TypeResolutionResult(semanticType = SemNever, error = Some(error))
         | TypeTuple(elements) ->
             match resolveTypeExpressions(elements)(context)([]) with
-                | TypeListResolutionResult { semanticTypes = reversedElements, error = None } -> TypeResolutionResult(semanticType = SemTuple(Ashes.Collection.List.reverse(reversedElements)), error = None)
+                | TypeListResolutionResult { semanticTypes = reversedElements, error = None } -> TypeResolutionResult(semanticType = SemTuple(reverse(reversedElements)), error = None)
                 | TypeListResolutionResult { semanticTypes = _semanticTypes, error = Some(error) } -> TypeResolutionResult(semanticType = SemNever, error = Some(error))
         | TypeUnit -> TypeResolutionResult(semanticType = SemTuple([]), error = None)
+
+let isLowerTypeName name =
+    (let bytes = Ashes.Byte.fromText(name)
+    in
+        if Ashes.Byte.length(bytes) <= 0
+        then false
+        else
+            let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(0))
+            in
+                if first >= 97
+                then first <= 122
+                else false)
+
+let prepareNamedParameter name context supply =
+    match (resolvePrimitive(name), context) with
+        | (Some(_primitive), _) -> TypeResolutionPreparationResult(context = context, supply = supply)
+        | (None, TypeResolutionContext { parameters = parameters, definitions = _definitions }) ->
+            match findTypeParameter(name)(parameters) with
+                | Some(_parameter) -> TypeResolutionPreparationResult(context = context, supply = supply)
+                | None ->
+                    if isLowerTypeName(name)
+                    then
+                        match freshTypeVariable(supply) with
+                            | (parameterType, nextSupply) -> TypeResolutionPreparationResult(context = addTypeParameter(name)(parameterType)(context), supply = nextSupply)
+                    else TypeResolutionPreparationResult(context = context, supply = supply)
+
+let recursive prepareTypeExpressions expressions context supply =
+    match expressions with
+        | [] -> TypeResolutionPreparationResult(context = context, supply = supply)
+        | head :: tail ->
+            match prepareTypeResolutionContext(head)(context)(supply) with
+                | TypeResolutionPreparationResult { context = headContext, supply = headSupply } -> prepareTypeExpressions(tail)(headContext)(headSupply)
+and prepareCapabilities capabilities context supply =
+    match capabilities with
+        | [] -> TypeResolutionPreparationResult(context = context, supply = supply)
+        | (_name, arguments) :: tail ->
+            match prepareTypeExpressions(arguments)(context)(supply) with
+                | TypeResolutionPreparationResult { context = argumentContext, supply = argumentSupply } -> prepareCapabilities(tail)(argumentContext)(argumentSupply)
+and prepareTypeResolutionContext typeExpression context supply =
+    match typeExpression with
+        | TypeAt(_span, inner) -> prepareTypeResolutionContext(inner)(context)(supply)
+        | TypeNamed(name) -> prepareNamedParameter(name)(context)(supply)
+        | TypeApplied(_name, arguments) -> prepareTypeExpressions(arguments)(context)(supply)
+        | TypeArrow(argument, result, capabilities, tailName) ->
+            match prepareTypeResolutionContext(argument)(context)(supply) with
+                | TypeResolutionPreparationResult { context = argumentContext, supply = argumentSupply } ->
+                    match prepareTypeResolutionContext(result)(argumentContext)(argumentSupply) with
+                        | TypeResolutionPreparationResult { context = resultContext, supply = resultSupply } ->
+                            match prepareCapabilities(capabilities)(resultContext)(resultSupply) with
+                                | TypeResolutionPreparationResult { context = capabilityContext, supply = capabilitySupply } ->
+                                    match tailName with
+                                        | None -> TypeResolutionPreparationResult(context = capabilityContext, supply = capabilitySupply)
+                                        | Some(name) -> prepareNamedParameter(name)(capabilityContext)(capabilitySupply)
+        | TypeTuple(elements) -> prepareTypeExpressions(elements)(context)(supply)
+        | TypeUnit -> TypeResolutionPreparationResult(context = context, supply = supply)
