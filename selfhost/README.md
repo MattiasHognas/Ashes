@@ -30,7 +30,7 @@ self-hosted implementation or its test path.
 | Area | Current self-hosted surface |
 |---|---|
 | Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies |
-| Formatter | Canonical expression, pattern, and type rendering with precedence preservation and idempotence coverage |
+| Formatter | Canonical whole-program, declaration, expression, pattern, and type rendering with precedence preservation and idempotence coverage |
 | Semantics, backend, test runner, LSP, DAP, CLI, and fuzzing | Not started |
 
 The syntax model orders `Pattern` and `TypeExpr` before `Expr` so each category remains distinct in
