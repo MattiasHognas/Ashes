@@ -218,9 +218,9 @@ let recursive addCapabilityToInnermostArrow capabilityType semanticType =
                 | _ -> Some(SemFunction(argument)(result)(Some(SemRow([capabilityType])(None))))
         | _ -> None
 
-let recursive registerCapabilityOperations capabilityName declarations capabilityType quantified context environment supply reversed =
+let recursive registerCapabilityOperations capabilityName declarations capabilityType capabilityScheme quantified context environment supply reversed =
     match declarations with
-        | [] -> CapabilityOperationRegistration(environment = addCapabilityBinding(capabilityName)(reverse(reversed))(environment), operations = reverse(reversed), supply = supply, error = None)
+        | [] -> CapabilityOperationRegistration(environment = addCapabilityBinding(capabilityName)(capabilityScheme)(reverse(reversed))(environment), operations = reverse(reversed), supply = supply, error = None)
         | CapabilityOperation { name = operationName, signature = signature } :: tail ->
             if operationNameExists(operationName)(reversed)
             then CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(DuplicateCapabilityOperation(capabilityName)(operationName)))
@@ -235,7 +235,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                         let scheme = TypeScheme(quantified = [], body = operationType, constraints = [])
                                         in
                                             let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = false)
-                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(nextSupply)(definition :: reversed)
+                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(capabilityScheme)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(nextSupply)(definition :: reversed)
                     | Some(signatureType) ->
                         match resolveTypeExpression(signatureType)(context) with
                             | TypeResolutionResult { semanticType = resolvedSignature, error = None } ->
@@ -245,7 +245,7 @@ let recursive registerCapabilityOperations capabilityName declarations capabilit
                                         let scheme = TypeScheme(quantified = quantified, body = operationType, constraints = [])
                                         in
                                             let definition = CapabilityOperationInferenceDefinition(name = operationName, scheme = scheme, hasExplicitSignature = true)
-                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(supply)(definition :: reversed)
+                                            in registerCapabilityOperations(capabilityName)(tail)(capabilityType)(capabilityScheme)(quantified)(context)(addTypeBinding(capabilityName + "." + operationName)(scheme)(environment))(supply)(definition :: reversed)
                             | TypeResolutionResult { semanticType = _resolvedSignature, error = Some(error) } -> CapabilityOperationRegistration(environment = environment, operations = reverse(reversed), supply = supply, error = Some(ProgramTypeResolutionError(error)))
 
 let registerCapabilityDeclaration declaration state =
@@ -261,9 +261,11 @@ let registerCapabilityDeclaration declaration state =
                             | TypeParameterRegistration { context = context, semanticTypes = parameterTypes, quantified = quantified, supply = parameterSupply } ->
                                 let capabilityType = SemCapability(name)(parameterTypes)
                                 in
-                                    match registerCapabilityOperations(name)(operations)(capabilityType)(quantified)(context)(environment)(parameterSupply)([]) with
-                                        | CapabilityOperationRegistration { environment = capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = None } -> ProgramInferenceState(environment = capabilityEnvironment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
-                                        | CapabilityOperationRegistration { environment = _capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(error))
+                                    let capabilityScheme = TypeScheme(quantified = quantified, body = capabilityType, constraints = [])
+                                    in
+                                        match registerCapabilityOperations(name)(operations)(capabilityType)(capabilityScheme)(quantified)(context)(environment)(parameterSupply)([]) with
+                                            | CapabilityOperationRegistration { environment = capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = None } -> ProgramInferenceState(environment = capabilityEnvironment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                            | CapabilityOperationRegistration { environment = _capabilityEnvironment, operations = _registeredOperations, supply = operationSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = operationSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(error))
         | (_declaration, failedState) -> failedState
 
 let recursive resolveConstructorParameters parameters context reversed =
