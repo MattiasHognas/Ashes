@@ -5,4 +5,5 @@ import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeResolution
+import AshesCompiler.Semantics.ProgramInference
 Unit

@@ -9,9 +9,13 @@ export (
     type TypeEnvironment(..),
     type TypeInferenceError(..),
     type TypeInferenceResult(..),
+    type TopLevelBindingInferenceResult(..),
     value emptyTypeEnvironment,
     value addTypeBinding,
     value addInferenceTypeDefinition,
+    value inferenceTypeResolutionContext,
+    value inferExpressionFrom,
+    value inferTopLevelBinding,
     value inferExpression,
 )
 
@@ -35,6 +39,13 @@ type TypeInferenceResult =
     | constraints: List(TraitConstraint)
     | error: Maybe(TypeInferenceError)
     deriving {Eq, Show}
+
+type TopLevelBindingInferenceResult =
+    | environment: TypeEnvironment
+    | semanticType: SemanticType
+    | substitution: List((Int, SemanticType))
+    | supply: TypeVariableSupply
+    | error: Maybe(TypeInferenceError)
 
 type PatternInferenceResult =
     | semanticType: SemanticType
@@ -66,7 +77,7 @@ let resolveTypeBinding name environment =
     match environment with
         | TypeEnvironment { bindings = bindings, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
 
-let environmentTypeResolutionContext environment =
+let inferenceTypeResolutionContext environment =
     match environment with
         | TypeEnvironment { bindings = _bindings, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
 
@@ -133,7 +144,7 @@ let mergeUnification currentSubstitution result supply fallbackType =
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> inferenceFailure(fallbackType)(currentSubstitution)(supply)(InferenceUnificationError(error))
 
 let checkAnnotation annotation expectedType environment substitution supply =
-    match prepareTypeResolutionContext(annotation)(environmentTypeResolutionContext(environment))(supply) with
+    match prepareTypeResolutionContext(annotation)(inferenceTypeResolutionContext(environment))(supply) with
         | TypeResolutionPreparationResult { context = preparedContext, supply = preparedSupply } ->
             match resolveTypeExpression(annotation)(preparedContext) with
                 | TypeResolutionResult { semanticType = annotationType, error = None } -> mergeUnification(substitution)(unify(applySubstitution(substitution)(expectedType))(annotationType))(preparedSupply)(expectedType)
@@ -432,4 +443,25 @@ and inferWith expression environment substitution supply =
         | ExprLogicalNot(operand) -> inferUnaryTrait("Not")(operand)(environment)(substitution)(supply)
         | _ -> inferenceFailure(SemNever)(substitution)(supply)(UnsupportedInferenceExpression("expression case is not implemented yet"))
 
-let inferExpression expression environment = inferWith(expression)(environment)([])(initialTypeVariableSupply(Unit))
+let inferExpressionFrom expression environment substitution supply = inferWith(expression)(environment)(substitution)(supply)
+
+let inferTopLevelBinding name value annotation environment substitution supply =
+    match inferWith(value)(environment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
+            let annotationResult =
+                match annotation with
+                    | None -> inferenceSuccess(valueType)(valueSubstitution)(valueSupply)
+                    | Some(typeExpression) -> checkAnnotation(typeExpression)(valueType)(environment)(valueSubstitution)(valueSupply)
+            in
+                match annotationResult with
+                    | TypeInferenceResult { semanticType = checkedValue, substitution = checkedSubstitution, supply = checkedSupply, constraints = _annotationConstraints, error = None } ->
+                        let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
+                        in
+                            let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
+                            in
+                                let scheme = generalize(environmentSchemes(environment))(resolvedValue)(resolvedConstraints)
+                                in TopLevelBindingInferenceResult(environment = addTypeBinding(name)(scheme)(environment), semanticType = resolvedValue, substitution = checkedSubstitution, supply = checkedSupply, error = None)
+                    | TypeInferenceResult { semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
+        | TypeInferenceResult { semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
+
+let inferExpression expression environment = inferExpressionFrom(expression)(environment)([])(initialTypeVariableSupply(Unit))
