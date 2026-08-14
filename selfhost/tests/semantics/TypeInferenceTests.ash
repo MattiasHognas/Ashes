@@ -14,6 +14,43 @@ let expectTypeIn expected expression environment =
 
 let expectType expected expression = expectTypeIn(expected)(expression)(emptyTypeEnvironment(Unit))
 
+let recursive hasConstraint expectedTrait expectedType substitution constraints =
+    match constraints with
+        | [] -> false
+        | TraitConstraint { traitName = traitName, typeArguments = semanticType :: [] } :: tail ->
+            if traitName == expectedTrait
+            then
+                if formatSemanticType(applySubstitution(substitution)(semanticType)) == expectedType
+                then true
+                else hasConstraint(expectedTrait)(expectedType)(substitution)(tail)
+            else hasConstraint(expectedTrait)(expectedType)(substitution)(tail)
+        | _ :: tail -> hasConstraint(expectedTrait)(expectedType)(substitution)(tail)
+
+let expectConstraint expectedTrait expectedType expression =
+    match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
+        | TypeInferenceResult { semanticType = _semanticType, substitution = substitution, supply = _supply, constraints = constraints, error = None } ->
+            if hasConstraint(expectedTrait)(expectedType)(substitution)(constraints)
+            then Unit
+            else test.fail("expected constraint " + expectedTrait + "(" + expectedType + ")")
+        | _ -> test.fail("constraint expression should infer")
+
+let expectGenericBinaryTrait expectedTrait expression =
+    match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
+        | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = constraints, error = None } ->
+            match applySubstitution(substitution)(semanticType) with
+                | SemFunction(SemVariable(leftId), SemFunction(SemVariable(rightId), SemVariable(resultId), None), None) ->
+                    if leftId == rightId
+                    then
+                        if rightId == resultId
+                        then
+                            if hasConstraint(expectedTrait)("?" + Ashes.Text.fromInt(leftId))(substitution)(constraints)
+                            then Unit
+                            else test.fail("generic binary expression should preserve its trait constraint")
+                        else test.fail("generic binary expression should use one type for both operands and its result")
+                    else test.fail("generic binary expression should use one type for both operands and its result")
+                | _ -> test.fail("generic binary expression should infer a curried binary function")
+        | _ -> test.fail("generic binary expression should infer")
+
 let runTypeInferenceTests unit =
     (let identity = ExprLambda("value")(ExprVar("value"))(None)
     in
@@ -39,20 +76,32 @@ let runTypeInferenceTests unit =
                                             in
                                                 let qualifiedChecked = expectTypeIn("Str")(ExprQualifiedVar("Config")("value"))(qualifiedEnvironment)
                                                 in
-                                                    let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                                                    let additionChecked = expectConstraint("Add")("Int")(ExprAdd(ExprInt(1))(ExprInt(2)))
                                                     in
-                                                        let occursChecked =
-                                                            match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
-                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
-                                                                | _ -> test.fail("self application should fail the occurs check")
+                                                        let equalityChecked = expectConstraint("Eq")("Str")(ExprEqual(ExprString("left"))(ExprString("right")))
                                                         in
-                                                            let branchMismatchChecked =
-                                                                match inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong")))(emptyTypeEnvironment(Unit)) with
-                                                                    | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
-                                                                    | _ -> test.fail("if branches should have one type")
+                                                            let genericAdd = ExprLambda("left")(ExprLambda("right")(ExprAdd(ExprVar("left"))(ExprVar("right")))(None))(None)
                                                             in
-                                                                let unknownChecked =
-                                                                    match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
-                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
-                                                                        | _ -> test.fail("unknown value should be reported")
-                                                                in Ashes.IO.print("all self-hosted structural inference tests passed"))
+                                                                let genericAddChecked = expectGenericBinaryTrait("Add")(genericAdd)
+                                                                in
+                                                                    let appliedGenericAdd = ExprCall(ExprCall(genericAdd)(ExprInt(1))(false))(ExprInt(2))(false)
+                                                                    in
+                                                                        let resolvedLetConstraintChecked = expectConstraint("Add")("Int")(ExprLet("sum")(appliedGenericAdd)(ExprVar("sum"))([])(None)([]))
+                                                                        in
+                                                                            let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                                                                            in
+                                                                                let occursChecked =
+                                                                                    match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
+                                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
+                                                                                        | _ -> test.fail("self application should fail the occurs check")
+                                                                                in
+                                                                                    let branchMismatchChecked =
+                                                                                        match inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong")))(emptyTypeEnvironment(Unit)) with
+                                                                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+                                                                                            | _ -> test.fail("if branches should have one type")
+                                                                                    in
+                                                                                        let unknownChecked =
+                                                                                            match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
+                                                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
+                                                                                                | _ -> test.fail("unknown value should be reported")
+                                                                                        in Ashes.IO.print("all self-hosted trait-aware inference tests passed"))
