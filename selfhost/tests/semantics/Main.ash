@@ -27,108 +27,126 @@ let symbolName symbol =
 
 let expectResolved expectedId result =
     match result with
-        | Some(symbol) -> test.assertEqual(expectedId)(symbolId(symbol))
+        | Some(symbol) ->
+            symbol
+            |> symbolId
+            |> test.assertEqual(expectedId)
         | None -> test.fail("symbol should resolve")
 
-let run unit =
-    (let root = createContext(Unit)
+let rejectDuplicate shadowed =
+    match declare("value")(None)(SymbolType)(None)(shadowed) with
+        | DeclarationResult { context = unchanged, symbol = None, duplicate = Some(existing) } ->
+            existing
+            |> symbolId
+            |> test.assertEqual(1)
+            |> (given (_) ->
+                unchanged
+                |> scopeDepth
+                |> test.assertEqual(1))
+        | _ -> test.fail("same-frame declaration should be rejected")
+
+let expectRestoredScope restored =
+    restored
+    |> resolve("value")
+    |> expectResolved(0)
+    |> (given (_) ->
+        match resolve("missing")(restored) with
+            | None -> Unit
+            | Some(_) -> test.fail("missing symbol should not resolve"))
+    |> (given (_) ->
+        match leaveScope(restored) with
+            | None -> Unit
+            | Some(_) -> test.fail("root scope should not pop"))
+
+let expectScopeBehavior unit =
+    match Unit
+    |> createContext
+    |> declare("value")(Some("Main.value"))(SymbolValue)(None)
+    |> declared with
+        | (withValue, valueSymbol) ->
+            match withValue
+            |> enterScope
+            |> declare("value")(None)(SymbolValue)(None)
+            |> declared with
+                | (shadowed, shadowSymbol) ->
+                    valueSymbol
+                    |> symbolId
+                    |> test.assertEqual(0)
+                    |> (given (_) ->
+                        withValue
+                        |> resolve("value")
+                        |> expectResolved(0))
+                    |> (given (_) ->
+                        withValue
+                        |> resolveQualified("Main.value")
+                        |> expectResolved(0))
+                    |> (given (_) ->
+                        shadowSymbol
+                        |> symbolId
+                        |> test.assertEqual(1))
+                    |> (given (_) ->
+                        shadowed
+                        |> resolve("value")
+                        |> expectResolved(1))
+                    |> (given (_) ->
+                        shadowed
+                        |> scopeDepth
+                        |> test.assertEqual(1))
+                    |> (given (_) -> rejectDuplicate(shadowed))
+                    |> (given (_) ->
+                        match leaveScope(shadowed) with
+                            | Some(restored) -> expectRestoredScope(restored)
+                            | None -> test.fail("nested scope should pop"))
+
+let expectFreshTypeVariables unit =
+    match Unit
+    |> initialTypeVariableSupply
+    |> freshTypeVariable with
+        | (firstVariable, afterFirst) ->
+            match freshTypeVariable(afterFirst) with
+                | (secondVariable, _afterSecond) ->
+                    ((given (_) ->
+                        match secondVariable with
+                            | SemVariable(1) -> Unit
+                            | _ -> test.fail("second type variable should have id one")))(match firstVariable with
+                        | SemVariable(0) -> Unit
+                        | _ -> test.fail("first type variable should have id zero"))
+
+let expectTypeOperations unit =
+    (let polymorphic =
+        SemFunction(SemVariable(0))(SemList(SemVariable(1)))(Some(SemVariable(2))
+        |> SemRow([SemCapability("State")([SemVariable(0)])])
+        |> Some)
     in
-        let firstDeclaration = declare("value")(Some("Main.value"))(SymbolValue)(None)(root)
-        in
-            match declared(firstDeclaration) with
-                | (withValue, valueSymbol) ->
-                    let stableIdChecked = test.assertEqual(0)(symbolId(valueSymbol))
-                    in
-                        let rootResolutionChecked = expectResolved(0)(resolve("value")(withValue))
-                        in
-                            let qualifiedResolutionChecked = expectResolved(0)(resolveQualified("Main.value")(withValue))
-                            in
-                                let nested = enterScope(withValue)
-                                in
-                                    match declared(declare("value")(None)(SymbolValue)(None)(nested)) with
-                                        | (shadowed, shadowSymbol) ->
-                                            let shadowIdChecked = test.assertEqual(1)(symbolId(shadowSymbol))
-                                            in
-                                                let shadowResolutionChecked = expectResolved(1)(resolve("value")(shadowed))
-                                                in
-                                                    let depthChecked = test.assertEqual(1)(scopeDepth(shadowed))
-                                                    in
-                                                        let duplicate = declare("value")(None)(SymbolType)(None)(shadowed)
-                                                        in
-                                                            let duplicateChecked =
-                                                                match duplicate with
-                                                                    | DeclarationResult { context = unchanged, symbol = None, duplicate = Some(existing) } ->
-                                                                        let idChecked = test.assertEqual(1)(symbolId(existing))
-                                                                        in test.assertEqual(1)(scopeDepth(unchanged))
-                                                                    | _ -> test.fail("same-frame declaration should be rejected")
-                                                            in
-                                                                match leaveScope(shadowed) with
-                                                                    | Some(restored) ->
-                                                                        let restoredChecked = expectResolved(0)(resolve("value")(restored))
-                                                                        in
-                                                                            let missingChecked =
-                                                                                match resolve("missing")(restored) with
-                                                                                    | None -> Unit
-                                                                                    | Some(_) -> test.fail("missing symbol should not resolve")
-                                                                            in
-                                                                                let rootCannotPopChecked =
-                                                                                    match leaveScope(restored) with
-                                                                                        | None -> Unit
-                                                                                        | Some(_) -> test.fail("root scope should not pop")
-                                                                                in
-                                                                                    match freshTypeVariable(initialTypeVariableSupply(Unit)) with
-                                                                                        | (firstVariable, afterFirst) ->
-                                                                                            let firstChecked =
-                                                                                                match firstVariable with
-                                                                                                    | SemVariable(0) -> Unit
-                                                                                                    | _ -> test.fail("first type variable should have id zero")
-                                                                                            in
-                                                                                                match freshTypeVariable(afterFirst) with
-                                                                                                    | (secondVariable, _afterSecond) ->
-                                                                                                        let secondChecked =
-                                                                                                            match secondVariable with
-                                                                                                                | SemVariable(1) -> Unit
-                                                                                                                | _ -> test.fail("second type variable should have id one")
-                                                                                                        in
-                                                                                                            let polymorphic = SemFunction(SemVariable(0))(SemList(SemVariable(1)))(Some(SemRow([SemCapability("State")([SemVariable(0)])])(Some(SemVariable(2)))))
-                                                                                                            in
-                                                                                                                let occursChecked =
-                                                                                                                    if occursInType(2)(polymorphic)
-                                                                                                                    then Unit
-                                                                                                                    else test.fail("row-tail variable should occur")
-                                                                                                                in
-                                                                                                                    let absentChecked =
-                                                                                                                        if occursInType(9)(polymorphic)
-                                                                                                                        then test.fail("unrelated variable should not occur")
-                                                                                                                        else Unit
-                                                                                                                    in
-                                                                                                                        let substituted = applySubstitution([(0, SemInt), (1, SemString), (2, SemRow([])(None))])(polymorphic)
-                                                                                                                        in
-                                                                                                                            let formatted = formatSemanticType(substituted)
-                                                                                                                            in
-                                                                                                                                if formatted == "Int -> List(Str) needs {State(Int) | {}}"
-                                                                                                                                then
-                                                                                                                                    let unificationChecked = UnificationTests.runUnificationTests(Unit)
-                                                                                                                                    in
-                                                                                                                                        let schemesChecked = TypeSchemeTests.runTypeSchemeTests(Unit)
-                                                                                                                                        in
-                                                                                                                                            let inferenceChecked = TypeInferenceTests.runTypeInferenceTests(Unit)
-                                                                                                                                            in
-                                                                                                                                                let patternInferenceChecked = PatternInferenceTests.runPatternInferenceTests(Unit)
-                                                                                                                                                in
-                                                                                                                                                    let typeResolutionChecked = TypeResolutionTests.runTypeResolutionTests(Unit)
-                                                                                                                                                    in
-                                                                                                                                                        let programInferenceChecked = ProgramInferenceTests.runProgramInferenceTests(Unit)
-                                                                                                                                                        in
-                                                                                                                                                            let recordInferenceChecked = RecordInferenceTests.runRecordInferenceTests(Unit)
-                                                                                                                                                            in
-                                                                                                                                                                let resultInferenceChecked = ResultInferenceTests.runResultInferenceTests(Unit)
-                                                                                                                                                                in
-                                                                                                                                                                    let capabilityInferenceChecked = CapabilityInferenceTests.runCapabilityInferenceTests(Unit)
-                                                                                                                                                                    in
-                                                                                                                                                                        let traitInferenceChecked = TraitInferenceTests.runTraitInferenceTests(Unit)
-                                                                                                                                                                        in Ashes.IO.print("all self-hosted semantics foundation tests passed")
-                                                                                                                                else test.fail("unexpected substituted type: " + formatted)
-                                                                    | None -> test.fail("nested scope should pop"))
+        (if occursInType(2)(polymorphic)
+        then Unit
+        else test.fail("row-tail variable should occur"))
+        |> (given (_) ->
+            if occursInType(9)(polymorphic)
+            then test.fail("unrelated variable should not occur")
+            else Unit)
+        |> (given (_) ->
+            let actual =
+                polymorphic
+                |> applySubstitution([(0, SemInt), (1, SemString), (2, SemRow([])(None))])
+                |> formatSemanticType
+            in test.assertEqual("Int -> List(Str) needs {State(Int) | {}}")(actual)))
+
+let run unit =
+    unit
+    |> expectScopeBehavior
+    |> expectFreshTypeVariables
+    |> expectTypeOperations
+    |> UnificationTests.runUnificationTests
+    |> TypeSchemeTests.runTypeSchemeTests
+    |> TypeInferenceTests.runTypeInferenceTests
+    |> PatternInferenceTests.runPatternInferenceTests
+    |> TypeResolutionTests.runTypeResolutionTests
+    |> ProgramInferenceTests.runProgramInferenceTests
+    |> RecordInferenceTests.runRecordInferenceTests
+    |> ResultInferenceTests.runResultInferenceTests
+    |> CapabilityInferenceTests.runCapabilityInferenceTests
+    |> TraitInferenceTests.runTraitInferenceTests
+    |> (given (_) -> Ashes.IO.print("all self-hosted semantics foundation tests passed"))
 
 run(Unit)

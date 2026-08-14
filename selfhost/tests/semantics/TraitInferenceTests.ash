@@ -224,47 +224,56 @@ let expectTraitImplementationDefaults unit =
                                 | _implementations -> test.fail("default methods should be optional and overridable")
                         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("defaulted implementations should infer: " + Ashes.Trait.Show.show(error)))
 
-let expectInvalidTraitImplementations unit =
-    (let missingTrait = TraitImplementationDecl(traitName = "Missing", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+let rejectUnknownTraitImplementation unit =
+    (let implementation = TraitImplementationDecl(traitName = "Missing", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
     in
-        let missingTraitChecked =
-            match inferProgram(ProgramSyntax(items = [TopLevelImplementation(missingTrait)], body = None)) with
-                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementation("Missing")) } -> Unit
-                | _ -> test.fail("implementations of unknown traits should be rejected")
-        in
-            let badArity = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int"), TypeNamed("Str")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
-            in
-                let badArityChecked =
-                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(badArity)], body = None)) with
-                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationArityMismatch("Equal", 1, 2)) } -> Unit
-                        | _ -> test.fail("implementation arity should be checked")
-                in
-                    let unknownMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "other", implementation = trueEqualImplementation)])
-                    in
-                        let unknownMethodChecked =
-                            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(unknownMethod)], body = None)) with
-                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementationMethod("Equal", "other")) } -> Unit
-                                | _ -> test.fail("unknown implementation methods should be rejected")
-                        in
-                            let duplicateMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation), TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
-                            in
-                                let duplicateMethodChecked =
-                                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(duplicateMethod)], body = None)) with
-                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DuplicateTraitImplementationMethod("Equal", "equal")) } -> Unit
-                                        | _ -> test.fail("duplicate implementation methods should be rejected")
-                                in
-                                    let missingMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [])
-                                    in
-                                        let missingMethodChecked =
-                                            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(missingMethod)], body = None)) with
-                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(MissingTraitImplementationMethod("Equal", "equal")) } -> Unit
-                                                | _ -> test.fail("required implementation methods should be checked")
-                                        in
-                                            let escapedRequirement = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("b")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
-                                            in
-                                                match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(escapedRequirement)], body = None)) with
-                                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationRequirementVariableEscapes("Equal", "b")) } -> Unit
-                                                    | _ -> test.fail("implementation requirement variables should occur in the head"))
+        match inferProgram(ProgramSyntax(items = [TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementation("Missing")) } -> Unit
+            | _ -> test.fail("implementations of unknown traits should be rejected"))
+
+let rejectTraitImplementationArity unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int"), TypeNamed("Str")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationArityMismatch("Equal", 1, 2)) } -> Unit
+            | _ -> test.fail("implementation arity should be checked"))
+
+let rejectUnknownTraitImplementationMethod unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "other", implementation = trueEqualImplementation)])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementationMethod("Equal", "other")) } -> Unit
+            | _ -> test.fail("unknown implementation methods should be rejected"))
+
+let rejectDuplicateTraitImplementationMethod unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation), TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DuplicateTraitImplementationMethod("Equal", "equal")) } -> Unit
+            | _ -> test.fail("duplicate implementation methods should be rejected"))
+
+let rejectMissingTraitImplementationMethod unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(MissingTraitImplementationMethod("Equal", "equal")) } -> Unit
+            | _ -> test.fail("required implementation methods should be checked"))
+
+let rejectEscapedTraitImplementationRequirement unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("b")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationRequirementVariableEscapes("Equal", "b")) } -> Unit
+            | _ -> test.fail("implementation requirement variables should occur in the head"))
+
+let expectInvalidTraitImplementations unit =
+    unit
+    |> rejectUnknownTraitImplementation
+    |> rejectTraitImplementationArity
+    |> rejectUnknownTraitImplementationMethod
+    |> rejectDuplicateTraitImplementationMethod
+    |> rejectMissingTraitImplementationMethod
+    |> rejectEscapedTraitImplementationRequirement
 
 let expectInvalidTraitImplementationRequirements unit =
     (let unknownRequirement = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Missing", typeArguments = [TypeNamed("b")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
@@ -640,38 +649,63 @@ let expectTraitEvidenceResolution unit =
     |> expectConcreteTraitEvidenceResolution
     |> expectTraitEvidenceResolutionFailures
 
+let ownedTypeImplementation unit = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+
+let expectOwnedTraitImplementation traitPackage unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        [TopLevelImplementation(implementation)]
+        |> inferPackage("traits")(traitPackage)
+        |> (given (_) -> Unit))
+
+let expectOwnedTypeImplementation traitPackage unit =
+    [TopLevelType(cardType), Unit
+    |> ownedTypeImplementation
+    |> TopLevelImplementation]
+    |> inferPackage("consumer")(traitPackage)
+    |> (given (_) -> Unit)
+
+let rejectFullyForeignImplementation modelPackage unit =
+    match inferProgramFromPackage("consumer")(modelPackage)(ProgramSyntax(items = [Unit
+    |> ownedTypeImplementation
+    |> TopLevelImplementation], body = None)) with
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+        | _ -> test.fail("a package should not implement a foreign trait for a foreign nominal type")
+
+let expectSameNameOwnedTypeImplementation modelPackage unit =
+    [TopLevelType(cardType), Unit
+    |> ownedTypeImplementation
+    |> TopLevelImplementation]
+    |> inferPackage("consumer")(modelPackage)
+    |> (given (_) -> Unit)
+
+let rejectNestedLocalOrphan traitPackage unit =
+    (let implementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("Card")])], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        match inferProgramFromPackage("consumer")(traitPackage)(ProgramSyntax(items = [TopLevelType(cardType), TopLevelImplementation(implementation)], body = None)) with
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+            | _ -> test.fail("a local type nested under a structural head should not satisfy the orphan rule"))
+
+let expectOneOwnedHead traitPackage unit =
+    (let implementation = TraitImplementationDecl(traitName = "PairEqual", typeArguments = [TypeNamed("Int"), TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = pairEqualImplementation)])
+    in
+        [TopLevelType(cardType), TopLevelImplementation(implementation)]
+        |> inferPackage("consumer")(traitPackage)
+        |> (given (_) -> Unit))
+
 let expectTraitImplementationOrphanRule unit =
     (let traitPackage =
         inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), TopLevelTrait(pairEqualDeclaration)])
     in
-        let ownedTrait = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+        let modelPackage = inferPackage("models")(traitPackage)([TopLevelType(cardType)])
         in
-            let ownedTraitChecked = inferPackage("traits")(traitPackage)([TopLevelImplementation(ownedTrait)])
-            in
-                let ownedTypeImplementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
-                in
-                    let ownedTypeChecked = inferPackage("consumer")(traitPackage)([TopLevelType(cardType), TopLevelImplementation(ownedTypeImplementation)])
-                    in
-                        let modelPackage = inferPackage("models")(traitPackage)([TopLevelType(cardType)])
-                        in
-                            let fullyForeignChecked =
-                                match inferProgramFromPackage("consumer")(modelPackage)(ProgramSyntax(items = [TopLevelImplementation(ownedTypeImplementation)], body = None)) with
-                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
-                                    | _ -> test.fail("a package should not implement a foreign trait for a foreign nominal type")
-                            in
-                                let sameNameOwnedTypeChecked = inferPackage("consumer")(modelPackage)([TopLevelType(cardType), TopLevelImplementation(ownedTypeImplementation)])
-                                in
-                                    let nestedLocal = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("Card")])], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
-                                    in
-                                        let nestedLocalChecked =
-                                            match inferProgramFromPackage("consumer")(traitPackage)(ProgramSyntax(items = [TopLevelType(cardType), TopLevelImplementation(nestedLocal)], body = None)) with
-                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
-                                                | _ -> test.fail("a local type nested under a structural head should not satisfy the orphan rule")
-                                        in
-                                            let oneOwnedHead = TraitImplementationDecl(traitName = "PairEqual", typeArguments = [TypeNamed("Int"), TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = pairEqualImplementation)])
-                                            in
-                                                let oneOwnedHeadChecked = inferPackage("consumer")(traitPackage)([TopLevelType(cardType), TopLevelImplementation(oneOwnedHead)])
-                                                in Unit)
+            unit
+            |> expectOwnedTraitImplementation(traitPackage)
+            |> expectOwnedTypeImplementation(traitPackage)
+            |> rejectFullyForeignImplementation(modelPackage)
+            |> expectSameNameOwnedTypeImplementation(modelPackage)
+            |> rejectNestedLocalOrphan(traitPackage)
+            |> expectOneOwnedHead(traitPackage))
 
 let reportTraitInferenceSuccess unit = Ashes.IO.print("all self-hosted trait inference tests passed")
 
