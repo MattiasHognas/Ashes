@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Semantics.Symbols
 import AshesCompiler.Semantics.Scope
 import AshesCompiler.Semantics.Types
+import UnificationTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -97,7 +98,9 @@ let run unit =
                                                                                                                             let formatted = formatSemanticType(substituted)
                                                                                                                             in
                                                                                                                                 if formatted == "Int -> List(Str) needs {State(Int) | {}}"
-                                                                                                                                then Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                then
+                                                                                                                                    let unificationChecked = UnificationTests.run(Unit)
+                                                                                                                                    in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 
