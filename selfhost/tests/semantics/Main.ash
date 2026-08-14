@@ -11,6 +11,7 @@ import ProgramInferenceTests
 import RecordInferenceTests
 import ResultInferenceTests
 import CapabilityInferenceTests
+import TraitInferenceTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -124,7 +125,9 @@ let run unit =
                                                                                                                                                                 let resultInferenceChecked = ResultInferenceTests.runResultInferenceTests(Unit)
                                                                                                                                                                 in
                                                                                                                                                                     let capabilityInferenceChecked = CapabilityInferenceTests.runCapabilityInferenceTests(Unit)
-                                                                                                                                                                    in Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                                                    in
+                                                                                                                                                                        let traitInferenceChecked = TraitInferenceTests.runTraitInferenceTests(Unit)
+                                                                                                                                                                        in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 

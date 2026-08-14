@@ -3071,9 +3071,8 @@ let stamp = given (_) -> Clock.now(Unit)   // resolves to the provider — no ha
   expression whose type must match the operation's signature at the provided instance.
 - **Resolution.** At a capability operation call the concrete instance is known after inference. If
   a matching provider exists and the capability is *not* handled by an enclosing `handle`, the call
-  is a direct call to the provider's implementation. If it *is* handled, the handler wins
-  dynamically. If **both** a provider and an enclosing handler could satisfy the same call, that is
-  an ambiguity error (`ASH027`) — there is no hidden precedence.
+  is a direct call to the provider's implementation. If **both** a provider and an enclosing handler
+  could satisfy the same call, that is an ambiguity error (`ASH027`) — there is no hidden precedence.
 - **Duplicates.** Two providers for the same concrete instance are an error (`ASH026`).
 - **Generic resolution (monomorphization).** A provider resolves a call whose instance is concrete
   at the call site — `provide Clock`, or `Render(Str)` on `Str` values. It also resolves a call inside
