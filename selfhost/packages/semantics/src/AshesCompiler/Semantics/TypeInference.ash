@@ -49,6 +49,7 @@ type TypeInferenceError =
     | MissingRecordField(Str, Str)
     | UnknownRecordField(Str, Str)
     | DuplicateRecordField(Str)
+    | ExpectedResultType(SemanticType)
     | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -80,6 +81,11 @@ type PatternInferenceResult =
 type ConstructorTypeShape =
     | parameters: List(SemanticType)
     | resultType: SemanticType
+
+type ResultTypeShape =
+    | symbolId: Int
+    | errorType: SemanticType
+    | successType: SemanticType
 
 let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
@@ -210,6 +216,11 @@ let recursive findMissingRecordField requiredFields providedFields =
             then findMissingRecordField(tail)(providedFields)
             else Some(head)
 
+let resultTypeShape semanticType =
+    match semanticType with
+        | SemNamed(symbolId, "Result", errorType :: successType :: []) -> Some(ResultTypeShape(symbolId = symbolId, errorType = errorType, successType = successType))
+        | _ -> None
+
 let recursive allPatternNamesPresent : List(Str) -> List(Str) -> Bool =
     given (names) ->
         given (candidates) ->
@@ -323,6 +334,71 @@ and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultTy
                                     | TypeInferenceResult { semanticType = _unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> inferRecordExpressionFields(recordName)(tail)(fieldNames)(fieldTypes)(resultType)(requireAll)(environment)(unifiedSubstitution)(unifiedSupply)(fieldName :: seenFields)(appendConstraints(accumulatedConstraints)(expressionConstraints))
                                     | failure -> failure
                             | failure -> failure
+and inferResultSuccessPipe left right environment substitution supply =
+    match inferWith(left)(environment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
+            let resolvedLeft = applySubstitution(leftSubstitution)(leftType)
+            in
+                match resultTypeShape(resolvedLeft) with
+                    | None -> inferenceFailure(SemNever)(leftSubstitution)(leftSupply)(ExpectedResultType(resolvedLeft))
+                    | Some(ResultTypeShape { symbolId = symbolId, errorType = errorType, successType = successType }) ->
+                        match inferWith(right)(environment)(leftSubstitution)(leftSupply) with
+                            | TypeInferenceResult { semanticType = mapperType, substitution = mapperSubstitution, supply = mapperSupply, constraints = mapperConstraints, error = None } ->
+                                match freshTypeVariable(mapperSupply) with
+                                    | (mappedType, mappedSupply) ->
+                                        let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(successType))(mappedType)(None)
+                                        in
+                                            match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mappedSupply)(mappedType) with
+                                                | TypeInferenceResult { semanticType = unifiedMappedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
+                                                    let resolvedMappedType = applySubstitution(unifiedSubstitution)(unifiedMappedType)
+                                                    in
+                                                        match resultTypeShape(resolvedMappedType) with
+                                                            | None -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(inferenceSuccess(SemNamed(symbolId)("Result")([applySubstitution(unifiedSubstitution)(errorType), resolvedMappedType]))(unifiedSubstitution)(unifiedSupply))
+                                                            | Some(ResultTypeShape { symbolId = mappedSymbolId, errorType = mappedErrorType, successType = mappedSuccessType }) ->
+                                                                match mergeUnification(unifiedSubstitution)(unify(applySubstitution(unifiedSubstitution)(errorType))(mappedErrorType))(unifiedSupply)(SemNamed(mappedSymbolId)("Result")([mappedErrorType, mappedSuccessType])) with
+                                                                    | success -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(success)
+                                                | failure -> failure
+                            | failure -> failure
+        | failure -> failure
+and inferResultErrorPipe left right environment substitution supply =
+    match inferWith(left)(environment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
+            let resolvedLeft = applySubstitution(leftSubstitution)(leftType)
+            in
+                match resultTypeShape(resolvedLeft) with
+                    | None -> inferenceFailure(SemNever)(leftSubstitution)(leftSupply)(ExpectedResultType(resolvedLeft))
+                    | Some(ResultTypeShape { symbolId = symbolId, errorType = errorType, successType = successType }) ->
+                        match inferWith(right)(environment)(leftSubstitution)(leftSupply) with
+                            | TypeInferenceResult { semanticType = mapperType, substitution = mapperSubstitution, supply = mapperSupply, constraints = mapperConstraints, error = None } ->
+                                match freshTypeVariable(mapperSupply) with
+                                    | (mappedErrorType, mappedSupply) ->
+                                        let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(errorType))(mappedErrorType)(None)
+                                        in
+                                            let resultType = SemNamed(symbolId)("Result")([mappedErrorType, applySubstitution(mapperSubstitution)(successType)])
+                                            in addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mappedSupply)(resultType))
+                            | failure -> failure
+        | failure -> failure
+and inferLetResult name value body environment substitution supply =
+    match inferWith(value)(environment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
+            let resolvedValue = applySubstitution(valueSubstitution)(valueType)
+            in
+                match resultTypeShape(resolvedValue) with
+                    | None -> inferenceFailure(SemNever)(valueSubstitution)(valueSupply)(ExpectedResultType(resolvedValue))
+                    | Some(ResultTypeShape { symbolId = _symbolId, errorType = errorType, successType = successType }) ->
+                        let binding = TypeScheme(quantified = [], body = successType, constraints = [])
+                        in
+                            match inferWith(body)(addTypeBinding(name)(binding)(environment))(valueSubstitution)(valueSupply) with
+                                | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                    let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
+                                    in
+                                        match resultTypeShape(resolvedBody) with
+                                            | None -> inferenceFailure(SemNever)(bodySubstitution)(bodySupply)(ExpectedResultType(resolvedBody))
+                                            | Some(ResultTypeShape { symbolId = bodySymbolId, errorType = bodyErrorType, successType = bodySuccessType }) ->
+                                                let resultType = SemNamed(bodySymbolId)("Result")([bodyErrorType, bodySuccessType])
+                                                in addConstraints(appendConstraints(valueConstraints)(bodyConstraints))(mergeUnification(bodySubstitution)(unify(applySubstitution(bodySubstitution)(errorType))(bodyErrorType))(bodySupply)(resultType))
+                                | failure -> failure
+        | failure -> failure
 and unifyOrPatternBindings names expectedEnvironment actualEnvironment substitution supply resultType =
     match names with
         | [] -> patternSuccess(applySubstitution(substitution)(resultType))(expectedEnvironment)(substitution)(supply)([])
@@ -630,6 +706,9 @@ and inferWith expression environment substitution supply =
                                                         | failure -> failure
                         | other -> inferenceFailure(SemNever)(targetSubstitution)(targetSupply)(RecordUpdateRequiresRecord(other))
                 | failure -> failure
+        | ExprResultPipe(left, right) -> inferResultSuccessPipe(left)(right)(environment)(substitution)(supply)
+        | ExprResultMapErrorPipe(left, right) -> inferResultErrorPipe(left)(right)(environment)(substitution)(supply)
+        | ExprLetResult(name, value, body) -> inferLetResult(name)(value)(body)(environment)(substitution)(supply)
         | ExprMatch(scrutinee, cases, _position) ->
             match inferWith(scrutinee)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = scrutineeType, substitution = scrutineeSubstitution, supply = scrutineeSupply, constraints = scrutineeConstraints, error = None } ->
