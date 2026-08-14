@@ -121,6 +121,151 @@ let expectDefaultMethodValidation unit =
                         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
                         | _ -> test.fail("default implementations should match their method signatures"))
 
+let trueEqualImplementation = ExprLambda("left")(ExprLambda("right")(ExprBool(true))(None))(None)
+
+let genericEqualImplementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("a")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+
+let expectTraitImplementationRegistration unit =
+    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(genericEqualImplementation)], body = None)) with
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+            match resolveTraitImplementations("Equal")(environment) with
+                | TraitImplementationInferenceDefinition { traitName = "Equal", typeArguments = typeArguments, requirements = requirements, methods = methods } :: [] ->
+                    let headChecked =
+                        match typeArguments with
+                            | SemList(SemParameter(_parameterId, "a")) :: [] -> Unit
+                            | _ -> test.fail("generic implementation head should use a rigid parameter")
+                    in
+                        let requirementChecked =
+                            match requirements with
+                                | TraitConstraint { traitName = "Equal", typeArguments = SemParameter(_requirementId, "a") :: [] } :: [] -> Unit
+                                | _ -> test.fail("generic implementation should retain its requirement")
+                        in
+                            match methods with
+                                | TraitImplementationMethodInferenceDefinition { name = "equal", implementation = _implementation, semanticType = methodType } :: [] ->
+                                    match methodType with
+                                        | SemFunction(SemList(SemParameter(_leftId, "a")), SemFunction(SemList(SemParameter(_rightId, "a")), SemBool, None), None) -> Unit
+                                        | _ -> test.fail("implementation method should use the specialized trait signature")
+                                | _ -> test.fail("generic implementation should retain its supplied method")
+                | _implementations -> test.fail("generic implementation should register its rigid head, requirement, and specialized method")
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("generic implementation should infer: " + Ashes.Trait.Show.show(error))
+
+let expectTraitImplementationDefaults unit =
+    (let defaultedMethod = TraitMethodDecl(name = "same", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = Some(trueEqualImplementation))
+    in
+        let defaultedTrait = TraitDecl(name = "Comparable", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = None), defaultedMethod])
+        in
+            let inherited = TraitImplementationDecl(traitName = "Comparable", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+            in
+                let overridden = TraitImplementationDecl(traitName = "Comparable", typeArguments = [TypeNamed("Str")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation), TraitImplementationMethodBinding(methodName = "same", implementation = trueEqualImplementation)])
+                in
+                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(defaultedTrait), TopLevelImplementation(inherited), TopLevelImplementation(overridden)], body = None)) with
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+                            match resolveTraitImplementations("Comparable")(environment) with
+                                | TraitImplementationInferenceDefinition { traitName = "Comparable", typeArguments = SemString :: [], requirements = [], methods = _overriddenMethods } :: tail ->
+                                    match tail with
+                                        | TraitImplementationInferenceDefinition { traitName = "Comparable", typeArguments = SemInt :: [], requirements = [], methods = _inheritedEqual :: [] } :: [] -> Unit
+                                        | _implementations -> test.fail("default methods should be optional and overridable")
+                                | _implementations -> test.fail("default methods should be optional and overridable")
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("defaulted implementations should infer: " + Ashes.Trait.Show.show(error)))
+
+let expectInvalidTraitImplementations unit =
+    (let missingTrait = TraitImplementationDecl(traitName = "Missing", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        let missingTraitChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelImplementation(missingTrait)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementation("Missing")) } -> Unit
+                | _ -> test.fail("implementations of unknown traits should be rejected")
+        in
+            let badArity = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int"), TypeNamed("Str")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+            in
+                let badArityChecked =
+                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(badArity)], body = None)) with
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationArityMismatch("Equal", 1, 2)) } -> Unit
+                        | _ -> test.fail("implementation arity should be checked")
+                in
+                    let unknownMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "other", implementation = trueEqualImplementation)])
+                    in
+                        let unknownMethodChecked =
+                            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(unknownMethod)], body = None)) with
+                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementationMethod("Equal", "other")) } -> Unit
+                                | _ -> test.fail("unknown implementation methods should be rejected")
+                        in
+                            let duplicateMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation), TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                            in
+                                let duplicateMethodChecked =
+                                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(duplicateMethod)], body = None)) with
+                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DuplicateTraitImplementationMethod("Equal", "equal")) } -> Unit
+                                        | _ -> test.fail("duplicate implementation methods should be rejected")
+                                in
+                                    let missingMethod = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [])
+                                    in
+                                        let missingMethodChecked =
+                                            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(missingMethod)], body = None)) with
+                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(MissingTraitImplementationMethod("Equal", "equal")) } -> Unit
+                                                | _ -> test.fail("required implementation methods should be checked")
+                                        in
+                                            let escapedRequirement = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeNamed("b")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                                            in
+                                                match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(escapedRequirement)], body = None)) with
+                                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationRequirementVariableEscapes("Equal", "b")) } -> Unit
+                                                    | _ -> test.fail("implementation requirement variables should occur in the head"))
+
+let expectInvalidTraitImplementationRequirements unit =
+    (let unknownRequirement = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("a")])], requirements = [TraitConstraintSyntax(traitName = "Missing", typeArguments = [TypeNamed("b")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        let unknownChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(unknownRequirement)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(UnknownTraitImplementationRequirement("Equal", "Missing")) } -> Unit
+                | _ -> test.fail("unknown implementation requirement traits should be rejected before their variables")
+        in
+            let badArity = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [TraitConstraintSyntax(traitName = "Equal", typeArguments = [])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+            in
+                let arityChecked =
+                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(badArity)], body = None)) with
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(TraitImplementationRequirementArityMismatch("Equal", 1, 0)) } -> Unit
+                        | _ -> test.fail("implementation requirement arity should be checked")
+                in
+                    let unorderedMethods = TraitDecl(name = "UnorderedMethods", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "zeta", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None), defaultImplementation = None), TraitMethodDecl(name = "alpha", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None), defaultImplementation = None)])
+                    in
+                        let missingMethods = TraitImplementationDecl(traitName = "UnorderedMethods", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [])
+                        in
+                            match inferProgram(ProgramSyntax(items = [TopLevelTrait(unorderedMethods), TopLevelImplementation(missingMethods)], body = None)) with
+                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(MissingTraitImplementationMethod("UnorderedMethods", "alpha")) } -> Unit
+                                | _ -> test.fail("missing implementation methods should be diagnosed in ordinal order"))
+
+let expectTraitImplementationBodyValidation unit =
+    (let invalidBody = ExprLambda("left")(ExprLambda("right")(ExprInt(42))(None))(None)
+    in
+        let invalid = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = invalidBody)])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(invalid)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                | _ -> test.fail("implementation bodies should match substituted method signatures"))
+
+let expectTraitImplementationCapabilityRows unit =
+    (let clock = CapabilityDecl(name = "TraitClock", typeParameters = [], operations = [CapabilityOperation(name = "now", signature = Some(TypeArrow(TypeUnit)(TypeNamed("Int"))([])(None)))])
+    in
+        let log = CapabilityDecl(name = "TraitLog", typeParameters = [], operations = [CapabilityOperation(name = "write", signature = Some(TypeArrow(TypeUnit)(TypeNamed("Int"))([])(None)))])
+        in
+            let timed = TraitDecl(name = "Timed", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "time", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Int"))([("TraitClock", [])])(None), defaultImplementation = None)])
+            in
+                let clockBody = ExprLambda("value")(ExprCall(ExprQualifiedVar("TraitClock")("now"))(ExprTuple([]))(false))(None)
+                in
+                    let valid = TraitImplementationDecl(traitName = "Timed", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "time", implementation = clockBody)])
+                    in
+                        let validChecked =
+                            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clock), TopLevelCapability(log), TopLevelTrait(timed), TopLevelImplementation(valid)], body = None)) with
+                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = None } -> Unit
+                                | _ -> test.fail("implementation bodies should retain matching capability rows")
+                        in
+                            let logBody = ExprLambda("value")(ExprCall(ExprQualifiedVar("TraitLog")("write"))(ExprTuple([]))(false))(None)
+                            in
+                                let invalid = TraitImplementationDecl(traitName = "Timed", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "time", implementation = logBody)])
+                                in
+                                    match inferProgram(ProgramSyntax(items = [TopLevelCapability(clock), TopLevelCapability(log), TopLevelTrait(timed), TopLevelImplementation(invalid)], body = None)) with
+                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                                        | _ -> test.fail("implementation capability rows should match method signatures"))
+
 let runTraitInferenceTests unit =
     (let registrationChecked = expectTraitRegistration(Unit)
     in
@@ -131,4 +276,16 @@ let runTraitInferenceTests unit =
                 let invalidSupertraitsChecked = expectInvalidSupertraits(Unit)
                 in
                     let defaultMethodChecked = expectDefaultMethodValidation(Unit)
-                    in Ashes.IO.print("all self-hosted trait declaration inference tests passed"))
+                    in
+                        let implementationChecked = expectTraitImplementationRegistration(Unit)
+                        in
+                            let defaultsChecked = expectTraitImplementationDefaults(Unit)
+                            in
+                                let invalidImplementationsChecked = expectInvalidTraitImplementations(Unit)
+                                in
+                                    let invalidRequirementsChecked = expectInvalidTraitImplementationRequirements(Unit)
+                                    in
+                                        let implementationBodyChecked = expectTraitImplementationBodyValidation(Unit)
+                                        in
+                                            let implementationCapabilitiesChecked = expectTraitImplementationCapabilityRows(Unit)
+                                            in Ashes.IO.print("all self-hosted trait inference tests passed"))
