@@ -84,6 +84,10 @@ let parserCurrentText (state: ParserState) =
     (let current = parserCurrent(state)
     in current.text)
 
+let parserCurrentPosition (state: ParserState) =
+    (let current = parserCurrent(state)
+    in current.position)
+
 let parserAt start end expression = ExprAt(spanFromBounds(start)(end))(expression)
 
 let parserUnspan expression =
@@ -253,7 +257,18 @@ let parserPreviousCompletesCall reversedTokens =
                 else false
             | [] -> false)
 
-let parserSplitTopLevelTokens bytes declarationColumn tokens =
+let parserStartsDeclarationBinding tokens =
+    match tokens with
+        | pipe :: name :: equals :: _ ->
+            if pipe.kind != Pipe
+            then false
+            else
+                if name.kind != Ident
+                then false
+                else equals.kind == Equals
+        | _ -> false
+
+let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes tokens =
     (let recursive split remaining reversed sawToken parenthesisDepth bracketDepth braceDepth =
         match remaining with
             | [] -> (reverseList(reversed), [])
@@ -279,9 +294,18 @@ let parserSplitTopLevelTokens bytes declarationColumn tokens =
                                         else
                                             let column = parserSourceColumn(bytes)(token.position)
                                             in
-                                                if column <= declarationColumn
-                                                then true
-                                                else parserPreviousCompletesCall(reversed)
+                                                if splitBindingPipes
+                                                then
+                                                    if parserStartsDeclarationBinding(remaining)
+                                                    then true
+                                                    else
+                                                        if column <= declarationColumn
+                                                        then true
+                                                        else parserPreviousCompletesCall(reversed)
+                                                else
+                                                    if column <= declarationColumn
+                                                    then true
+                                                    else parserPreviousCompletesCall(reversed)
                     in
                         if atBoundary
                         then (reverseList(reversed), remaining)
@@ -1553,10 +1577,10 @@ and parserBadPrimary state =
             match parserAdvance(diagnosed) with
                 | (_bad, afterBad) -> (parserAt(current.position)(tokenEnd(current))(ExprInt(0)), afterBad))
 
-let parserParseTopLevelValue sourceBytes declarationColumn state =
+let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBindingPipes state =
     (let tokens = parserStateTokens(state)
     in
-        match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(tokens) with
+        match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(splitBindingPipes)(tokens) with
             | (valueTokens, remainingTokens) ->
                 let boundaryPosition =
                     match remainingTokens with
@@ -1574,6 +1598,10 @@ let parserParseTopLevelValue sourceBytes declarationColumn state =
                                         let mergedTokens = appendList(unconsumed)(remainingTokens)
                                         in (value, parserStateWithTokens(afterValue)(mergedTokens)))
 
+let parserParseTopLevelValue sourceBytes declarationColumn state = parserParseDelimitedTopLevelValue(sourceBytes)(declarationColumn)(false)(state)
+
+let parserParseDeclarationBindingValue sourceBytes declarationColumn state = parserParseDelimitedTopLevelValue(sourceBytes)(declarationColumn)(true)(state)
+
 let recursive parserParseProgramItems sourceBytes reversedItems state =
     if parserIsExportDeclaration(state)
     then
@@ -1586,6 +1614,18 @@ let recursive parserParseProgramItems sourceBytes reversedItems state =
                     | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
             | External ->
                 match parserParseExternalTopLevel(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | Capability ->
+                match parserParseCapabilityTopLevel(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | Provide ->
+                match parserParseProvideTopLevel(sourceBytes)(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | Trait ->
+                match parserParseTraitTopLevel(sourceBytes)(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | Implement ->
+                match parserParseImplementationTopLevel(sourceBytes)(state) with
                     | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
             | Let ->
                 if parserLetStartsPattern(state)
@@ -1817,6 +1857,160 @@ and parserParseFfiString state =
                                     in
                                         match parserConsume(RParen)(checkedState) with
                                             | (rightParen, afterRightParen) -> (ParsedNativeString(nullable)(FfiStringBorrowed)(None), tokenEnd(rightParen), afterRightParen)
+and parserParseCapabilityTopLevel state =
+    match parserAdvance(state) with
+        | (startToken, afterStart) ->
+            match parserConsume(Ident)(afterStart) with
+                | (name, afterName) ->
+                    match parserParseTypeParameters(afterName) with
+                        | (parameters, afterParameters) ->
+                            match parserConsume(Equals)(afterParameters) with
+                                | (_equals, afterEquals) ->
+                                    match parserParseCapabilityOperations([])(afterEquals) with
+                                        | (operations, afterOperations) ->
+                                            let checkedState =
+                                                match operations with
+                                                    | [] -> parserDiagnostic(afterOperations)(parserCurrent(afterOperations))("Capability '" + name.text + "' must declare at least one operation.")
+                                                    | _ -> afterOperations
+                                            in (parserTopLevelAt(startToken.position)(parserCurrentPosition(afterOperations))(TopLevelCapability(CapabilityDecl(name = name.text, typeParameters = parameters, operations = operations))), checkedState)
+and parserParseCapabilityOperations reversed state =
+    if parserCurrentKind(state) != Pipe
+    then (reverseList(reversed), state)
+    else
+        match parserAdvance(state) with
+            | (_pipe, afterPipe) ->
+                match parserConsume(Ident)(afterPipe) with
+                    | (name, afterName) ->
+                        if parserCurrentKind(afterName) == Colon
+                        then
+                            match parserAdvance(afterName) with
+                                | (_colon, afterColon) ->
+                                    match parserParseTypeExpressionState(afterColon) with
+                                        | (signature, afterSignature) -> parserParseCapabilityOperations(CapabilityOperation(name = name.text, signature = Some(signature)) :: reversed)(afterSignature)
+                        else parserParseCapabilityOperations(CapabilityOperation(name = name.text, signature = None) :: reversed)(afterName)
+and parserParseOptionalTypeArguments state =
+    if parserCurrentKind(state) != LParen
+    then ([], state)
+    else
+        match parserAdvance(state) with
+            | (_leftParen, afterLeftParen) ->
+                match parserParseTypeArguments(afterLeftParen) with
+                    | (arguments, _rightParen, afterArguments) -> (arguments, afterArguments)
+and parserParseProvideTopLevel sourceBytes state =
+    match parserAdvance(state) with
+        | (startToken, afterStart) ->
+            match parserConsume(Ident)(afterStart) with
+                | (name, afterName) ->
+                    match parserParseOptionalTypeArguments(afterName) with
+                        | (arguments, afterArguments) ->
+                            match parserConsume(Equals)(afterArguments) with
+                                | (_equals, afterEquals) ->
+                                    match parserParseProvideBindings(sourceBytes)(parserSourceColumn(sourceBytes)(startToken.position))([])(afterEquals) with
+                                        | (bindings, afterBindings) ->
+                                            let checkedState =
+                                                match bindings with
+                                                    | [] -> parserDiagnostic(afterBindings)(parserCurrent(afterBindings))("Provider for '" + name.text + "' must supply at least one operation.")
+                                                    | _ -> afterBindings
+                                            in (parserTopLevelAt(startToken.position)(parserCurrentPosition(afterBindings))(TopLevelProvide(ProvideDecl(capabilityName = name.text, typeArguments = arguments, bindings = bindings))), checkedState)
+and parserParseProvideBindings sourceBytes declarationColumn reversed state =
+    if parserCurrentKind(state) != Pipe
+    then (reverseList(reversed), state)
+    else
+        match parserAdvance(state) with
+            | (_pipe, afterPipe) ->
+                match parserConsume(Ident)(afterPipe) with
+                    | (name, afterName) ->
+                        match parserConsume(Equals)(afterName) with
+                            | (_equals, afterEquals) ->
+                                match parserParseDeclarationBindingValue(sourceBytes)(declarationColumn)(afterEquals) with
+                                    | (implementation, afterImplementation) -> parserParseProvideBindings(sourceBytes)(declarationColumn)(ProvideBinding(operationName = name.text, implementation = implementation) :: reversed)(afterImplementation)
+and parserParseTraitTopLevel sourceBytes state =
+    match parserAdvance(state) with
+        | (startToken, afterStart) ->
+            match parserConsume(Ident)(afterStart) with
+                | (name, afterName) ->
+                    match parserParseTypeParameters(afterName) with
+                        | (parameters, afterParameters) ->
+                            let supertraitResult =
+                                if parserCurrentKind(afterParameters) == Requires
+                                then parserParseRequiresClause(afterParameters)
+                                else ([], afterParameters)
+                            in
+                                match supertraitResult with
+                                    | (supertraits, afterSupertraits) ->
+                                        match parserConsume(Equals)(afterSupertraits) with
+                                            | (_equals, afterEquals) ->
+                                                match parserParseTraitMethods(sourceBytes)(parserSourceColumn(sourceBytes)(startToken.position))([])(afterEquals) with
+                                                    | (methods, afterMethods) ->
+                                                        let parameterChecked =
+                                                            match parameters with
+                                                                | [] -> parserDiagnostic(afterMethods)(name)("Trait '" + name.text + "' must declare at least one type parameter.")
+                                                                | _ -> afterMethods
+                                                        in
+                                                            let methodChecked =
+                                                                match methods with
+                                                                    | [] -> parserDiagnostic(parameterChecked)(parserCurrent(parameterChecked))("Trait '" + name.text + "' must declare at least one method.")
+                                                                    | _ -> parameterChecked
+                                                            in (parserTopLevelAt(startToken.position)(parserCurrentPosition(afterMethods))(TopLevelTrait(TraitDecl(name = name.text, typeParameters = parameters, supertraits = supertraits, methods = methods))), methodChecked)
+and parserParseTraitMethods sourceBytes declarationColumn reversed state =
+    if parserCurrentKind(state) != Pipe
+    then (reverseList(reversed), state)
+    else
+        match parserAdvance(state) with
+            | (_pipe, afterPipe) ->
+                match parserConsume(Ident)(afterPipe) with
+                    | (name, afterName) ->
+                        match parserConsume(Colon)(afterName) with
+                            | (_colon, afterColon) ->
+                                match parserParseTypeExpressionState(afterColon) with
+                                    | (signature, afterSignature) ->
+                                        if parserCurrentKind(afterSignature) == Equals
+                                        then
+                                            match parserAdvance(afterSignature) with
+                                                | (_equals, afterEquals) ->
+                                                    match parserParseDeclarationBindingValue(sourceBytes)(declarationColumn)(afterEquals) with
+                                                        | (implementation, afterImplementation) -> parserParseTraitMethods(sourceBytes)(declarationColumn)(TraitMethodDecl(name = name.text, signature = signature, defaultImplementation = Some(implementation)) :: reversed)(afterImplementation)
+                                        else parserParseTraitMethods(sourceBytes)(declarationColumn)(TraitMethodDecl(name = name.text, signature = signature, defaultImplementation = None) :: reversed)(afterSignature)
+and parserParseTraitApplication state =
+    match parserParseQualifiedIdentifier(state) with
+        | (name, afterName) ->
+            match parserConsume(LParen)(afterName) with
+                | (_leftParen, afterLeftParen) ->
+                    match parserParseTypeArguments(afterLeftParen) with
+                        | (arguments, _rightParen, afterArguments) -> (name, arguments, afterArguments)
+and parserParseImplementationTopLevel sourceBytes state =
+    match parserAdvance(state) with
+        | (startToken, afterStart) ->
+            match parserParseTraitApplication(afterStart) with
+                | (traitName, arguments, afterApplication) ->
+                    let requirementResult =
+                        if parserCurrentKind(afterApplication) == Requires
+                        then parserParseRequiresClause(afterApplication)
+                        else ([], afterApplication)
+                    in
+                        match requirementResult with
+                            | (requirements, afterRequirements) ->
+                                match parserConsume(Equals)(afterRequirements) with
+                                    | (_equals, afterEquals) ->
+                                        match parserParseImplementationBindings(sourceBytes)(parserSourceColumn(sourceBytes)(startToken.position))([])(afterEquals) with
+                                            | (bindings, afterBindings) ->
+                                                let checkedState =
+                                                    match bindings with
+                                                        | [] -> parserDiagnostic(afterBindings)(parserCurrent(afterBindings))("Implementation of '" + traitName + "' must supply at least one method.")
+                                                        | _ -> afterBindings
+                                                in (parserTopLevelAt(startToken.position)(parserCurrentPosition(afterBindings))(TopLevelImplementation(TraitImplementationDecl(traitName = traitName, typeArguments = arguments, requirements = requirements, bindings = bindings))), checkedState)
+and parserParseImplementationBindings sourceBytes declarationColumn reversed state =
+    if parserCurrentKind(state) != Pipe
+    then (reverseList(reversed), state)
+    else
+        match parserAdvance(state) with
+            | (_pipe, afterPipe) ->
+                match parserConsume(Ident)(afterPipe) with
+                    | (name, afterName) ->
+                        match parserConsume(Equals)(afterName) with
+                            | (_equals, afterEquals) ->
+                                match parserParseDeclarationBindingValue(sourceBytes)(declarationColumn)(afterEquals) with
+                                    | (implementation, afterImplementation) -> parserParseImplementationBindings(sourceBytes)(declarationColumn)(TraitImplementationMethodBinding(methodName = name.text, implementation = implementation) :: reversed)(afterImplementation)
 and parserParseTypeTopLevel state =
     match parserAdvance(state) with
         | (typeToken, afterType) ->
