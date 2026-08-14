@@ -3,6 +3,7 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
+import AshesCompiler.Semantics.TypeResolution
 import Ashes.Collection.List.reverse
 export (
     type TypeEnvironment(..),
@@ -10,15 +11,18 @@ export (
     type TypeInferenceResult(..),
     value emptyTypeEnvironment,
     value addTypeBinding,
+    value addInferenceTypeDefinition,
     value inferExpression,
 )
 
 type TypeEnvironment =
     | bindings: List((Str, TypeScheme))
+    | typeResolutionContext: TypeResolutionContext
 
 type TypeInferenceError =
     | UnknownValue(Str)
     | InferenceUnificationError(UnificationError)
+    | InferenceTypeResolutionError(TypeResolutionError)
     | DuplicatePatternBinding(Str)
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -40,11 +44,15 @@ type PatternInferenceResult =
     | names: List(Str)
     | error: Maybe(TypeInferenceError)
 
-let emptyTypeEnvironment unit = TypeEnvironment(bindings = [])
+let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
 let addTypeBinding name scheme environment =
     match environment with
-        | TypeEnvironment { bindings = bindings } -> TypeEnvironment(bindings = (name, scheme) :: bindings)
+        | TypeEnvironment { bindings = bindings, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, typeResolutionContext = typeResolutionContext)
+
+let addInferenceTypeDefinition symbolId name arity environment =
+    match environment with
+        | TypeEnvironment { bindings = bindings, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
 
 let recursive findTypeBinding name bindings =
     match bindings with
@@ -56,7 +64,11 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings } -> findTypeBinding(name)(bindings)
+        | TypeEnvironment { bindings = bindings, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
+
+let environmentTypeResolutionContext environment =
+    match environment with
+        | TypeEnvironment { bindings = _bindings, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
 
 let inferenceSuccess semanticType substitution supply = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = [], error = None)
 
@@ -120,9 +132,16 @@ let mergeUnification currentSubstitution result supply fallbackType =
             in inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(supply)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> inferenceFailure(fallbackType)(currentSubstitution)(supply)(InferenceUnificationError(error))
 
+let checkAnnotation annotation expectedType environment substitution supply =
+    match prepareTypeResolutionContext(annotation)(environmentTypeResolutionContext(environment))(supply) with
+        | TypeResolutionPreparationResult { context = preparedContext, supply = preparedSupply } ->
+            match resolveTypeExpression(annotation)(preparedContext) with
+                | TypeResolutionResult { semanticType = annotationType, error = None } -> mergeUnification(substitution)(unify(applySubstitution(substitution)(expectedType))(annotationType))(preparedSupply)(expectedType)
+                | TypeResolutionResult { semanticType = _annotationType, error = Some(error) } -> inferenceFailure(expectedType)(substitution)(preparedSupply)(InferenceTypeResolutionError(error))
+
 let environmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings } ->
+        | TypeEnvironment { bindings = bindings, typeResolutionContext = _typeResolutionContext } ->
             let recursive schemes values =
                 match values with
                     | [] -> []
@@ -270,20 +289,28 @@ and inferWith expression environment substitution supply =
                     match instantiate(scheme)(supply) with
                         | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } -> addConstraints(instantiatedConstraints)(inferenceSuccess(applySubstitution(substitution)(instantiatedType))(substitution)(nextSupply))
         | ExprQualifiedVar(moduleName, name) -> inferWith(ExprVar(moduleName + "." + name))(environment)(substitution)(supply)
-        | ExprLambda(name, body, _annotation) ->
+        | ExprLambda(name, body, annotation) ->
             match freshTypeVariable(supply) with
                 | (parameterType, afterParameter) ->
-                    let parameterScheme = TypeScheme(quantified = [], body = parameterType, constraints = [])
+                    let annotationResult =
+                        match annotation with
+                            | None -> inferenceSuccess(parameterType)(substitution)(afterParameter)
+                            | Some(typeExpression) -> checkAnnotation(typeExpression)(parameterType)(environment)(substitution)(afterParameter)
                     in
-                        let bodyEnvironment = addTypeBinding(name)(parameterScheme)(environment)
-                        in
-                            match inferWith(body)(bodyEnvironment)(substitution)(afterParameter) with
-                                | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
-                                    let resolvedParameter = applySubstitution(bodySubstitution)(parameterType)
+                        match annotationResult with
+                            | TypeInferenceResult { semanticType = checkedParameter, substitution = annotationSubstitution, supply = annotationSupply, constraints = _annotationConstraints, error = None } ->
+                                let parameterScheme = TypeScheme(quantified = [], body = checkedParameter, constraints = [])
+                                in
+                                    let bodyEnvironment = addTypeBinding(name)(parameterScheme)(environment)
                                     in
-                                        let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
-                                        in addConstraints(bodyConstraints)(inferenceSuccess(SemFunction(resolvedParameter)(resolvedBody)(None))(bodySubstitution)(bodySupply))
-                                | failure -> failure
+                                        match inferWith(body)(bodyEnvironment)(annotationSubstitution)(annotationSupply) with
+                                            | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                                let resolvedParameter = applySubstitution(bodySubstitution)(checkedParameter)
+                                                in
+                                                    let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
+                                                    in addConstraints(bodyConstraints)(inferenceSuccess(SemFunction(resolvedParameter)(resolvedBody)(None))(bodySubstitution)(bodySupply))
+                                            | failure -> failure
+                            | failure -> failure
         | ExprCall(function, argument, _whitespace) ->
             match inferWith(function)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
@@ -297,19 +324,27 @@ and inferWith expression environment substitution supply =
                                         in addConstraints(appendConstraints(functionConstraints)(argumentConstraints))(mergeUnification(argumentSubstitution)(unification)(resultSupply)(resultType))
                         | failure -> failure
                 | failure -> failure
-        | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLet(name, value, body, _parameters, annotation, _requirements) ->
             match inferWith(value)(environment)(substitution)(supply) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
-                    let resolvedValue = applySubstitution(valueSubstitution)(valueType)
+                    let annotationResult =
+                        match annotation with
+                            | None -> inferenceSuccess(valueType)(valueSubstitution)(valueSupply)
+                            | Some(typeExpression) -> checkAnnotation(typeExpression)(valueType)(environment)(valueSubstitution)(valueSupply)
                     in
-                        let resolvedConstraints = applyInferenceConstraints(valueSubstitution)(valueConstraints)
-                        in
-                            let scheme = generalize(environmentSchemes(environment))(resolvedValue)(resolvedConstraints)
-                            in
-                                let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
-                                in inferWith(body)(bodyEnvironment)(valueSubstitution)(valueSupply)
+                        match annotationResult with
+                            | TypeInferenceResult { semanticType = checkedValue, substitution = checkedSubstitution, supply = checkedSupply, constraints = _annotationConstraints, error = None } ->
+                                let resolvedValue = applySubstitution(checkedSubstitution)(checkedValue)
+                                in
+                                    let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
+                                    in
+                                        let scheme = generalize(environmentSchemes(environment))(resolvedValue)(resolvedConstraints)
+                                        in
+                                            let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
+                                            in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)
+                            | failure -> failure
                 | failure -> failure
-        | ExprLetRecursive(name, value, body, _parameters, _annotation, _requirements) ->
+        | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
             match freshTypeVariable(supply) with
                 | (recursiveType, afterRecursive) ->
                     let recursiveScheme = TypeScheme(quantified = [], body = recursiveType, constraints = [])
@@ -322,10 +357,20 @@ and inferWith expression environment substitution supply =
                                     in
                                         match mergeUnification(valueSubstitution)(unification)(valueSupply)(recursiveType) with
                                             | TypeInferenceResult { semanticType = unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                let resolvedConstraints = applyInferenceConstraints(unifiedSubstitution)(valueConstraints)
+                                                let annotationResult =
+                                                    match annotation with
+                                                        | None -> inferenceSuccess(unifiedType)(unifiedSubstitution)(unifiedSupply)
+                                                        | Some(typeExpression) -> checkAnnotation(typeExpression)(unifiedType)(environment)(unifiedSubstitution)(unifiedSupply)
                                                 in
-                                                    let scheme = generalize(environmentSchemes(environment))(unifiedType)(resolvedConstraints)
-                                                    in inferWith(body)(addTypeBinding(name)(scheme)(environment))(unifiedSubstitution)(unifiedSupply)
+                                                    match annotationResult with
+                                                        | TypeInferenceResult { semanticType = checkedType, substitution = checkedSubstitution, supply = checkedSupply, constraints = _annotationConstraints, error = None } ->
+                                                            let resolvedType = applySubstitution(checkedSubstitution)(checkedType)
+                                                            in
+                                                                let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
+                                                                in
+                                                                    let scheme = generalize(environmentSchemes(environment))(resolvedType)(resolvedConstraints)
+                                                                    in inferWith(body)(addTypeBinding(name)(scheme)(environment))(checkedSubstitution)(checkedSupply)
+                                                        | failure -> failure
                                             | failure -> failure
                                 | failure -> failure
         | ExprIf(condition, thenBranch, elseBranch) ->
