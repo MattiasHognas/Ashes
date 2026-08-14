@@ -10,6 +10,8 @@ import Ashes.Text.compare as compareText
 export (
     type ProgramInferenceError(..),
     type ProgramInferenceResult(..),
+    value inferProgramFromPackage,
+    value inferProgramInPackage,
     value inferProgram,
 )
 
@@ -43,6 +45,7 @@ type ProgramInferenceError =
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
     | MissingTraitImplementationMethod(Str, Str)
+    | OrphanTraitImplementation(Str)
     | OverlappingTraitImplementations(Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
@@ -870,6 +873,33 @@ let recursive anyTraitImplementationHeadOverlaps candidateArguments implementati
                 | TraitHeadOverlapResult { substitutions = _substitutions, overlaps = true } -> true
                 | _ -> anyTraitImplementationHeadOverlaps(candidateArguments)(tail)
 
+let provenanceBelongsToPackage packageId provenance =
+    match provenance with
+        | DeclarationProvenance { packageId = declarationPackageId } -> packageId == declarationPackageId
+
+let nominalHeadBelongsToPackage packageId semanticType context =
+    match semanticType with
+        | SemNamed(symbolId, _name, _arguments) ->
+            match nominalTypeProvenance(symbolId)(context) with
+                | Some(provenance) -> provenanceBelongsToPackage(packageId)(provenance)
+                | None -> false
+        | _ -> false
+
+let recursive anyNominalHeadBelongsToPackage packageId semanticTypes context =
+    match semanticTypes with
+        | [] -> false
+        | head :: tail ->
+            if nominalHeadBelongsToPackage(packageId)(head)(context)
+            then true
+            else anyNominalHeadBelongsToPackage(packageId)(tail)(context)
+
+let implementationSatisfiesOrphanRule traitProvenance typeArguments environment =
+    (let packageId = inferencePackageId(environment)
+    in
+        if provenanceBelongsToPackage(packageId)(traitProvenance)
+        then true
+        else anyNominalHeadBelongsToPackage(packageId)(typeArguments)(inferenceTypeResolutionContext(environment)))
+
 let recursive implementationMethodSubstitution quantified typeArguments reversed =
     match (quantified, typeArguments) with
         | ((variableId, _name) :: quantifiedTail, argument :: argumentTail) -> implementationMethodSubstitution(quantifiedTail)(argumentTail)((variableId, argument) :: reversed)
@@ -902,7 +932,7 @@ let registerTraitImplementation declaration state =
         | (TraitImplementationDecl { traitName = traitName, typeArguments = typeArguments, requirements = requirements, bindings = bindings }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
             match resolveTraitBinding(traitName)(environment) with
                 | None -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnknownTraitImplementation(traitName)))
-                | Some(TraitInferenceDefinition { name = _name, parameterCount = expectedArity, methods = traitMethods, supertraits = _supertraits }) ->
+                | Some(TraitInferenceDefinition { name = _name, parameterCount = expectedArity, methods = traitMethods, supertraits = _supertraits, provenance = traitProvenance }) ->
                     let actualArity = syntaxListLength(typeArguments)
                     in
                         if expectedArity == actualArity
@@ -915,21 +945,24 @@ let registerTraitImplementation declaration state =
                                             | TypeListResolutionResult { semanticTypes = resolvedTypeArguments, error = None } ->
                                                 match resolveImplementationRequirements(traitName)(requirements)(headNames)(context)(environment)([]) with
                                                     | TraitConstraintRegistration { constraints = resolvedRequirements, error = None } ->
-                                                        match findUnknownImplementationBinding(traitName)(bindings)(environment) with
-                                                            | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(UnknownTraitImplementationMethod(traitName)(methodName)))
-                                                            | None ->
-                                                                match findDuplicateImplementationBinding(bindings)([]) with
-                                                                    | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(DuplicateTraitImplementationMethod(traitName)(methodName)))
-                                                                    | None ->
-                                                                        match findMissingImplementationBinding(traitMethods)(bindings) with
-                                                                            | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(MissingTraitImplementationMethod(traitName)(methodName)))
-                                                                            | None ->
-                                                                                if anyTraitImplementationHeadOverlaps(resolvedTypeArguments)(resolveTraitImplementations(traitName)(environment))
-                                                                                then ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OverlappingTraitImplementations(traitName)))
-                                                                                else
-                                                                                    match registerImplementationMethods(traitName)(bindings)(resolvedTypeArguments)(environment)(substitution)(supply)([]) with
-                                                                                        | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
-                                                                                        | TraitImplementationMethodRegistration { methods = _registeredMethods, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
+                                                        if implementationSatisfiesOrphanRule(traitProvenance)(resolvedTypeArguments)(environment)
+                                                        then
+                                                            match findUnknownImplementationBinding(traitName)(bindings)(environment) with
+                                                                | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(UnknownTraitImplementationMethod(traitName)(methodName)))
+                                                                | None ->
+                                                                    match findDuplicateImplementationBinding(bindings)([]) with
+                                                                        | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(DuplicateTraitImplementationMethod(traitName)(methodName)))
+                                                                        | None ->
+                                                                            match findMissingImplementationBinding(traitMethods)(bindings) with
+                                                                                | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(MissingTraitImplementationMethod(traitName)(methodName)))
+                                                                                | None ->
+                                                                                    if anyTraitImplementationHeadOverlaps(resolvedTypeArguments)(resolveTraitImplementations(traitName)(environment))
+                                                                                    then ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OverlappingTraitImplementations(traitName)))
+                                                                                    else
+                                                                                        match registerImplementationMethods(traitName)(bindings)(resolvedTypeArguments)(environment)(substitution)(supply)([]) with
+                                                                                            | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
+                                                                                            | TraitImplementationMethodRegistration { methods = _registeredMethods, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
+                                                        else ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OrphanTraitImplementation(traitName)))
                                                     | TraitConstraintRegistration { constraints = _resolvedRequirements, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
                                             | TypeListResolutionResult { semanticTypes = _resolvedTypeArguments, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(ProgramTypeResolutionError(error)))
                         else ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(TraitImplementationArityMismatch(traitName)(expectedArity)(actualArity)))
@@ -995,24 +1028,30 @@ let recursive inferTopLevelItems items state =
                             | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnsupportedTopLevelDeclaration("declaration kind")))
             in inferTopLevelItems(tail)(nextState)
 
-let inferProgram program =
+let inferProgramFromPackage packageId baseEnvironment program =
     match program with
         | ProgramSyntax { items = items, body = body } ->
-            let initialState = ProgramInferenceState(environment = emptyTypeEnvironment(Unit), substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = 0, error = None)
+            let initialEnvironment = withInferencePackage(packageId)(baseEnvironment)
             in
-                let declarations = collectTraitDeclarations(items)([])
+                let initialState = ProgramInferenceState(environment = initialEnvironment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = nextTypeDefinitionSymbolId(inferenceTypeResolutionContext(initialEnvironment)), error = None)
                 in
-                    let validatedState =
-                        match validateTraitDeclarations(declarations)(declarations)([]) with
-                            | None -> initialState
-                            | Some(error) -> ProgramInferenceState(environment = emptyTypeEnvironment(Unit), substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = 0, error = Some(error))
+                    let declarations = collectTraitDeclarations(items)([])
                     in
-                        match validateTraitDefaults(declarations)(inferTopLevelItems(items)(validatedState)) with
-                            | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
-                                match body with
-                                    | None -> ProgramInferenceResult(semanticType = SemTuple([]), substitution = substitution, environment = environment, error = None)
-                                    | Some(expression) ->
-                                        match inferExpressionFrom(expression)(environment)(substitution)(supply) with
-                                            | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
-                                            | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(ProgramExpressionError(error)))
-                            | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } -> ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(error))
+                        let validatedState =
+                            match validateTraitDeclarations(declarations)(declarations)([]) with
+                                | None -> initialState
+                                | Some(error) -> ProgramInferenceState(environment = initialEnvironment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = nextTypeDefinitionSymbolId(inferenceTypeResolutionContext(initialEnvironment)), error = Some(error))
+                        in
+                            match validateTraitDefaults(declarations)(inferTopLevelItems(items)(validatedState)) with
+                                | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
+                                    match body with
+                                        | None -> ProgramInferenceResult(semanticType = SemTuple([]), substitution = substitution, environment = environment, error = None)
+                                        | Some(expression) ->
+                                            match inferExpressionFrom(expression)(environment)(substitution)(supply) with
+                                                | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
+                                                | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(ProgramExpressionError(error)))
+                                | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } -> ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(error))
+
+let inferProgramInPackage packageId program = inferProgramFromPackage(packageId)(emptyTypeEnvironmentForPackage(packageId))(program)
+
+let inferProgram program = inferProgramInPackage("standalone")(program)

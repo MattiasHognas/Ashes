@@ -2,6 +2,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.reverse
 export (
+    type DeclarationProvenance(..),
     type TypeDefinition(..),
     type TypeResolutionContext(..),
     type TypeResolutionError(..),
@@ -11,13 +12,20 @@ export (
     value emptyTypeResolutionContext,
     value addTypeParameter,
     value addTypeDefinition,
+    value addTypeDefinitionWithProvenance,
     value addTypeAliasDefinition,
+    value nominalTypeProvenance,
+    value nextTypeDefinitionSymbolId,
     value prepareTypeResolutionContext,
     value resolveTypeExpression,
 )
 
+type DeclarationProvenance =
+    | packageId: Str
+    deriving {Eq, Show}
+
 type TypeDefinition =
-    | NominalTypeDefinition(Int, Str, Int)
+    | NominalTypeDefinition(Int, Str, Int, DeclarationProvenance)
     | AliasTypeDefinition(Str, List(Int), SemanticType)
 
 type TypeResolutionContext =
@@ -48,9 +56,11 @@ let addTypeParameter name semanticType context =
     match context with
         | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = (name, semanticType) :: parameters, definitions = definitions)
 
-let addTypeDefinition symbolId name arity context =
+let addTypeDefinitionWithProvenance symbolId name arity provenance context =
     match context with
-        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = NominalTypeDefinition(symbolId)(name)(arity) :: definitions)
+        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = NominalTypeDefinition(symbolId)(name)(arity)(provenance) :: definitions)
+
+let addTypeDefinition symbolId name arity context = addTypeDefinitionWithProvenance(symbolId)(name)(arity)(DeclarationProvenance(packageId = "standalone"))(context)
 
 let addTypeAliasDefinition name parameterIds target context =
     match context with
@@ -74,7 +84,7 @@ let recursive findTypeDefinition name definitions =
         | [] -> None
         | definition :: tail ->
             match definition with
-                | NominalTypeDefinition(_symbolId, candidateName, _arity) ->
+                | NominalTypeDefinition(_symbolId, candidateName, _arity, _provenance) ->
                     if name == candidateName
                     then Some(definition)
                     else findTypeDefinition(name)(tail)
@@ -82,6 +92,32 @@ let recursive findTypeDefinition name definitions =
                     if name == candidateName
                     then Some(definition)
                     else findTypeDefinition(name)(tail)
+
+let recursive findNominalTypeProvenance symbolId definitions =
+    match definitions with
+        | [] -> None
+        | NominalTypeDefinition(candidateId, _name, _arity, provenance) :: tail ->
+            if symbolId == candidateId
+            then Some(provenance)
+            else findNominalTypeProvenance(symbolId)(tail)
+        | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> findNominalTypeProvenance(symbolId)(tail)
+
+let nominalTypeProvenance symbolId context =
+    match context with
+        | TypeResolutionContext { parameters = _parameters, definitions = definitions } -> findNominalTypeProvenance(symbolId)(definitions)
+
+let recursive maximumTypeDefinitionSymbolId definitions maximum =
+    match definitions with
+        | [] -> maximum
+        | NominalTypeDefinition(symbolId, _name, _arity, _provenance) :: tail ->
+            if symbolId > maximum
+            then maximumTypeDefinitionSymbolId(tail)(symbolId)
+            else maximumTypeDefinitionSymbolId(tail)(maximum)
+        | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> maximumTypeDefinitionSymbolId(tail)(maximum)
+
+let nextTypeDefinitionSymbolId context =
+    match context with
+        | TypeResolutionContext { parameters = _parameters, definitions = definitions } -> maximumTypeDefinitionSymbolId(definitions)(-1) + 1
 
 let recursive findAliasArgument parameterId parameterIds arguments =
     match (parameterIds, arguments) with
@@ -166,7 +202,7 @@ let recursive resolveNamed name arguments context =
 and resolveTypeDefinition name arguments definitions =
     match findTypeDefinition(name)(definitions) with
         | None -> TypeResolutionResult(semanticType = SemNever, error = Some(UnknownTypeName(name)))
-        | Some(NominalTypeDefinition(symbolId, definitionName, arity)) ->
+        | Some(NominalTypeDefinition(symbolId, definitionName, arity, _provenance)) ->
             let actualArity = typeListLength(arguments)
             in
                 if actualArity == arity

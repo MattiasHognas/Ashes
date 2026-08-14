@@ -299,6 +299,49 @@ let expectTraitImplementationCoherence unit =
                                                 | _ -> test.fail("non-overlapping repeated-variable heads should both register")
                                         | _ -> test.fail("a repeated head variable should reject incompatible concrete arguments"))
 
+let cardType = TypeDecl(name = "Card", typeParameters = [], constructors = [TypeConstructor(name = "Card", parameters = [], fieldNames = [])], isRecord = false, derivingTraits = [])
+
+let pairEqualDeclaration = TraitDecl(name = "PairEqual", typeParameters = [TypeParameter(name = "a"), TypeParameter(name = "b")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("b"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = None)])
+
+let pairEqualImplementation = ExprLambda("left")(ExprLambda("right")(ExprBool(true))(None))(None)
+
+let inferPackage packageId environment items =
+    match inferProgramFromPackage(packageId)(environment)(ProgramSyntax(items = items, body = None)) with
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = inferredEnvironment, error = None } -> inferredEnvironment
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("package should infer: " + Ashes.Trait.Show.show(error))
+
+let expectTraitImplementationOrphanRule unit =
+    (let traitPackage = inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), TopLevelTrait(pairEqualDeclaration)])
+    in
+        let ownedTrait = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+        in
+            let ownedTraitChecked = inferPackage("traits")(traitPackage)([TopLevelImplementation(ownedTrait)])
+            in
+                let ownedTypeImplementation = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                in
+                    let ownedTypeChecked = inferPackage("consumer")(traitPackage)([TopLevelType(cardType), TopLevelImplementation(ownedTypeImplementation)])
+                    in
+                        let modelPackage = inferPackage("models")(traitPackage)([TopLevelType(cardType)])
+                        in
+                            let fullyForeignChecked =
+                                match inferProgramFromPackage("consumer")(modelPackage)(ProgramSyntax(items = [TopLevelImplementation(ownedTypeImplementation)], body = None)) with
+                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+                                    | _ -> test.fail("a package should not implement a foreign trait for a foreign nominal type")
+                            in
+                                let sameNameOwnedTypeChecked = inferPackage("consumer")(modelPackage)([TopLevelType(cardType), TopLevelImplementation(ownedTypeImplementation)])
+                                in
+                                    let nestedLocal = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("Card")])], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                                    in
+                                        let nestedLocalChecked =
+                                            match inferProgramFromPackage("consumer")(traitPackage)(ProgramSyntax(items = [TopLevelType(cardType), TopLevelImplementation(nestedLocal)], body = None)) with
+                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OrphanTraitImplementation("Equal")) } -> Unit
+                                                | _ -> test.fail("a local type nested under a structural head should not satisfy the orphan rule")
+                                        in
+                                            let oneOwnedHead = TraitImplementationDecl(traitName = "PairEqual", typeArguments = [TypeNamed("Int"), TypeNamed("Card")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = pairEqualImplementation)])
+                                            in
+                                                let oneOwnedHeadChecked = inferPackage("consumer")(traitPackage)([TopLevelType(cardType), TopLevelImplementation(oneOwnedHead)])
+                                                in Unit)
+
 let runTraitInferenceTests unit =
     (let registrationChecked = expectTraitRegistration(Unit)
     in
@@ -323,4 +366,6 @@ let runTraitInferenceTests unit =
                                             let implementationCapabilitiesChecked = expectTraitImplementationCapabilityRows(Unit)
                                             in
                                                 let implementationCoherenceChecked = expectTraitImplementationCoherence(Unit)
-                                                in Ashes.IO.print("all self-hosted trait inference tests passed"))
+                                                in
+                                                    let implementationOrphanRuleChecked = expectTraitImplementationOrphanRule(Unit)
+                                                    in Ashes.IO.print("all self-hosted trait inference tests passed"))
