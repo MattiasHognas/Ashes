@@ -26,7 +26,7 @@ let expectArity left right =
         | UnificationResult { substitution = _substitution, error = Some(TypeArityMismatch(_leftCount, _rightCount)) } -> Unit
         | _ -> test.fail("expected type arity mismatch")
 
-let run unit =
+let runUnificationTests unit =
     (let variableChecked = expectUnified("Int")(TypeVariable(0))(TypeInt)
     in
         let listChecked = expectUnified("List(Str)")(TypeList(TypeVariable(0)))(TypeList(TypeString))
