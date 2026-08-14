@@ -7,20 +7,28 @@ import AshesCompiler.Semantics.TypeResolution
 import Ashes.Collection.List.reverse
 export (
     type TypeEnvironment(..),
+    type ConstructorInferenceDefinition(..),
     type TypeInferenceError(..),
     type TypeInferenceResult(..),
     type TopLevelBindingInferenceResult(..),
     value emptyTypeEnvironment,
     value addTypeBinding,
     value addInferenceTypeDefinition,
+    value addConstructorBinding,
     value inferenceTypeResolutionContext,
     value inferExpressionFrom,
     value inferTopLevelBinding,
     value inferExpression,
 )
 
+type ConstructorInferenceDefinition =
+    | name: Str
+    | scheme: TypeScheme
+    | fieldNames: List(Str)
+
 type TypeEnvironment =
     | bindings: List((Str, TypeScheme))
+    | constructors: List(ConstructorInferenceDefinition)
     | typeResolutionContext: TypeResolutionContext
 
 type TypeInferenceError =
@@ -28,6 +36,11 @@ type TypeInferenceError =
     | InferenceUnificationError(UnificationError)
     | InferenceTypeResolutionError(TypeResolutionError)
     | DuplicatePatternBinding(Str)
+    | UnknownPatternConstructor(Str)
+    | ConstructorPatternArityMismatch(Str)
+    | UnknownRecordPatternField(Str, Str)
+    | DuplicateRecordPatternField(Str)
+    | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     deriving {Eq, Show}
@@ -55,15 +68,23 @@ type PatternInferenceResult =
     | names: List(Str)
     | error: Maybe(TypeInferenceError)
 
-let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
+type ConstructorTypeShape =
+    | parameters: List(SemanticType)
+    | resultType: SemanticType
+
+let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
 let addTypeBinding name scheme environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, constructors = constructors, typeResolutionContext = typeResolutionContext)
+
+let addConstructorBinding name scheme fieldNames environment =
+    match addTypeBinding(name)(scheme)(environment) with
+        | TypeEnvironment { bindings = bindings, constructors = constructors, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, typeResolutionContext = typeResolutionContext)
 
 let addInferenceTypeDefinition symbolId name arity environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
+        | TypeEnvironment { bindings = bindings, constructors = constructors, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
 
 let recursive findTypeBinding name bindings =
     match bindings with
@@ -75,11 +96,25 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
+
+let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinition) -> Maybe(ConstructorInferenceDefinition) =
+    given (name) ->
+        given (constructors) ->
+            match constructors with
+                | [] -> None
+                | ConstructorInferenceDefinition { name = candidateName, scheme = scheme, fieldNames = fieldNames } :: tail ->
+                    if name == candidateName
+                    then Some(ConstructorInferenceDefinition(name = candidateName, scheme = scheme, fieldNames = fieldNames))
+                    else findConstructorBinding(name)(tail)
+
+let resolveConstructorBinding name environment =
+    match environment with
+        | TypeEnvironment { bindings = _bindings, constructors = constructors, typeResolutionContext = _typeResolutionContext } -> findConstructorBinding(name)(constructors)
 
 let inferenceTypeResolutionContext environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
 
 let inferenceSuccess semanticType substitution supply = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = [], error = None)
 
@@ -128,13 +163,46 @@ let mergePatternUnification currentSubstitution result supply fallbackType envir
             in patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(supply)(names)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> patternFailure(fallbackType)(environment)(currentSubstitution)(supply)(names)(InferenceUnificationError(error))
 
-let recursive patternNameExists name names =
-    match names with
-        | [] -> false
-        | head :: tail ->
-            if name == head
-            then true
-            else patternNameExists(name)(tail)
+let recursive patternNameExists : Str -> List(Str) -> Bool =
+    given (name) ->
+        given (names) ->
+            match names with
+                | [] -> false
+                | head :: tail ->
+                    if name == head
+                    then true
+                    else patternNameExists(name)(tail)
+
+let recursive splitConstructorType semanticType reversedParameters =
+    match semanticType with
+        | SemFunction(parameter, result, None) -> splitConstructorType(result)(parameter :: reversedParameters)
+        | _ -> ConstructorTypeShape(parameters = reverse(reversedParameters), resultType = semanticType)
+
+let recursive findRecordFieldType : Str -> List(Str) -> List(SemanticType) -> Maybe(SemanticType) =
+    given (fieldName) ->
+        given (fieldNames) ->
+            given (fieldTypes) ->
+                match (fieldNames, fieldTypes) with
+                    | (candidateName :: nameTail, fieldType :: typeTail) ->
+                        if fieldName == candidateName
+                        then Some(fieldType)
+                        else findRecordFieldType(fieldName)(nameTail)(typeTail)
+                    | _ -> None
+
+let recursive allPatternNamesPresent : List(Str) -> List(Str) -> Bool =
+    given (names) ->
+        given (candidates) ->
+            match names with
+                | [] -> true
+                | head :: tail ->
+                    if patternNameExists(head)(candidates)
+                    then allPatternNamesPresent(tail)(candidates)
+                    else false
+
+let samePatternNameSets left right =
+    if allPatternNamesPresent(left)(right)
+    then allPatternNamesPresent(right)(left)
+    else false
 
 let mergeUnification currentSubstitution result supply fallbackType =
     match result with
@@ -152,7 +220,7 @@ let checkAnnotation annotation expectedType environment substitution supply =
 
 let environmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, typeResolutionContext = _typeResolutionContext } ->
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, typeResolutionContext = _typeResolutionContext } ->
             let recursive schemes values =
                 match values with
                     | [] -> []
@@ -184,6 +252,66 @@ and inferPatternList patterns environment substitution supply names reversedType
         | head :: tail ->
             match inferPattern(head)(environment)(substitution)(supply)(names) with
                 | PatternInferenceResult { semanticType = headType, environment = headEnvironment, substitution = headSubstitution, supply = headSupply, names = headNames, error = None } -> inferPatternList(tail)(headEnvironment)(headSubstitution)(headSupply)(headNames)(headType :: reversedTypes)
+                | failure -> failure
+and inferConstructorPatternArguments constructorName patterns parameterTypes resultType environment substitution supply names =
+    match (patterns, parameterTypes) with
+        | ([], []) -> patternSuccess(applySubstitution(substitution)(resultType))(environment)(substitution)(supply)(names)
+        | (pattern :: patternTail, parameterType :: parameterTail) ->
+            match inferPattern(pattern)(environment)(substitution)(supply)(names) with
+                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
+                    match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(parameterType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(parameterType)(patternEnvironment)(patternNames) with
+                        | PatternInferenceResult { semanticType = _unifiedType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = unifiedNames, error = None } -> inferConstructorPatternArguments(constructorName)(patternTail)(parameterTail)(resultType)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedNames)
+                        | failure -> failure
+                | failure -> failure
+        | _ -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(ConstructorPatternArityMismatch(constructorName))
+and inferRecordPatternFields constructorName fields fieldNames fieldTypes resultType environment substitution supply names seenFields =
+    match fields with
+        | [] -> patternSuccess(applySubstitution(substitution)(resultType))(environment)(substitution)(supply)(names)
+        | (fieldName, fieldPattern) :: tail ->
+            if patternNameExists(fieldName)(seenFields)
+            then patternFailure(SemNever)(environment)(substitution)(supply)(names)(DuplicateRecordPatternField(fieldName))
+            else
+                match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
+                    | None -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(UnknownRecordPatternField(constructorName)(fieldName))
+                    | Some(fieldType) ->
+                        match inferPattern(fieldPattern)(environment)(substitution)(supply)(names) with
+                            | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
+                                match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(fieldType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(fieldType)(patternEnvironment)(patternNames) with
+                                    | PatternInferenceResult { semanticType = _unifiedType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = unifiedNames, error = None } -> inferRecordPatternFields(constructorName)(tail)(fieldNames)(fieldTypes)(resultType)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedNames)(fieldName :: seenFields)
+                                    | failure -> failure
+                            | failure -> failure
+and unifyOrPatternBindings names expectedEnvironment actualEnvironment substitution supply resultType =
+    match names with
+        | [] -> patternSuccess(applySubstitution(substitution)(resultType))(expectedEnvironment)(substitution)(supply)([])
+        | name :: tail ->
+            match (resolveTypeBinding(name)(expectedEnvironment), resolveTypeBinding(name)(actualEnvironment)) with
+                | (Some(TypeScheme { quantified = _expectedQuantified, body = expectedType, constraints = _expectedConstraints }), Some(TypeScheme { quantified = _actualQuantified, body = actualType, constraints = _actualConstraints })) ->
+                    match mergePatternUnification(substitution)(unify(applySubstitution(substitution)(expectedType))(applySubstitution(substitution)(actualType)))(supply)(resultType)(expectedEnvironment)(names) with
+                        | PatternInferenceResult { semanticType = _unifiedType, environment = _unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = _unifiedNames, error = None } -> unifyOrPatternBindings(tail)(expectedEnvironment)(actualEnvironment)(unifiedSubstitution)(unifiedSupply)(resultType)
+                        | failure -> failure
+                | _ -> patternFailure(SemNever)(expectedEnvironment)(substitution)(supply)(names)(InconsistentOrPatternBindings)
+and inferOrPatternAlternatives alternatives baseEnvironment expectedEnvironment expectedNames expectedType substitution supply outerNames =
+    match alternatives with
+        | [] ->
+            match (expectedEnvironment, expectedType) with
+                | (Some(environment), Some(resultType)) -> patternSuccess(applySubstitution(substitution)(resultType))(environment)(substitution)(supply)(expectedNames)
+                | _ -> patternFailure(SemNever)(baseEnvironment)(substitution)(supply)(outerNames)(UnsupportedInferencePattern("or-pattern must contain an alternative"))
+        | alternative :: tail ->
+            match inferPattern(alternative)(baseEnvironment)(substitution)(supply)(outerNames) with
+                | PatternInferenceResult { semanticType = alternativeType, environment = alternativeEnvironment, substitution = alternativeSubstitution, supply = alternativeSupply, names = alternativeNames, error = None } ->
+                    match (expectedEnvironment, expectedType) with
+                        | (None, None) -> inferOrPatternAlternatives(tail)(baseEnvironment)(Some(alternativeEnvironment))(alternativeNames)(Some(alternativeType))(alternativeSubstitution)(alternativeSupply)(outerNames)
+                        | (Some(firstEnvironment), Some(firstType)) ->
+                            if samePatternNameSets(expectedNames)(alternativeNames)
+                            then
+                                match mergePatternUnification(alternativeSubstitution)(unify(applySubstitution(alternativeSubstitution)(firstType))(applySubstitution(alternativeSubstitution)(alternativeType)))(alternativeSupply)(firstType)(alternativeEnvironment)(alternativeNames) with
+                                    | PatternInferenceResult { semanticType = unifiedType, environment = _unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = _unifiedNames, error = None } ->
+                                        match unifyOrPatternBindings(expectedNames)(firstEnvironment)(alternativeEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedType) with
+                                            | PatternInferenceResult { semanticType = bindingType, environment = _bindingEnvironment, substitution = bindingSubstitution, supply = bindingSupply, names = _bindingNames, error = None } -> inferOrPatternAlternatives(tail)(baseEnvironment)(Some(firstEnvironment))(expectedNames)(Some(bindingType))(bindingSubstitution)(bindingSupply)(outerNames)
+                                            | failure -> failure
+                                    | failure -> failure
+                            else patternFailure(SemNever)(firstEnvironment)(alternativeSubstitution)(alternativeSupply)(expectedNames)(InconsistentOrPatternBindings)
+                        | _ -> patternFailure(SemNever)(baseEnvironment)(alternativeSubstitution)(alternativeSupply)(outerNames)(InconsistentOrPatternBindings)
                 | failure -> failure
 and inferPattern pattern environment substitution supply names =
     match pattern with
@@ -224,6 +352,23 @@ and inferPattern pattern environment substitution supply names =
                         let scheme = TypeScheme(quantified = [], body = innerType, constraints = [])
                         in patternSuccess(innerType)(addTypeBinding(name)(scheme)(innerEnvironment))(innerSubstitution)(innerSupply)(name :: innerNames)
                 | failure -> failure
+        | PatternConstructor(name, patterns) ->
+            match resolveConstructorBinding(name)(environment) with
+                | None -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(UnknownPatternConstructor(name))
+                | Some(ConstructorInferenceDefinition { name = _constructorName, scheme = scheme, fieldNames = _fieldNames }) ->
+                    match instantiate(scheme)(supply) with
+                        | InstantiationResult { semanticType = constructorType, constraints = _constraints, supply = constructorSupply } ->
+                            match splitConstructorType(constructorType)([]) with
+                                | ConstructorTypeShape { parameters = parameterTypes, resultType = resultType } -> inferConstructorPatternArguments(name)(patterns)(parameterTypes)(resultType)(environment)(substitution)(constructorSupply)(names)
+        | PatternRecord(name, fields) ->
+            match resolveConstructorBinding(name)(environment) with
+                | None -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(UnknownPatternConstructor(name))
+                | Some(ConstructorInferenceDefinition { name = _constructorName, scheme = scheme, fieldNames = fieldNames }) ->
+                    match instantiate(scheme)(supply) with
+                        | InstantiationResult { semanticType = constructorType, constraints = _constraints, supply = constructorSupply } ->
+                            match splitConstructorType(constructorType)([]) with
+                                | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } -> inferRecordPatternFields(name)(fields)(fieldNames)(fieldTypes)(resultType)(environment)(substitution)(constructorSupply)(names)([])
+        | PatternOr(alternatives) -> inferOrPatternAlternatives(alternatives)(environment)(None)([])(None)(substitution)(supply)(names)
         | PatternInt(_) -> patternSuccess(SemInt)(environment)(substitution)(supply)(names)
         | PatternString(_) -> patternSuccess(SemString)(environment)(substitution)(supply)(names)
         | PatternRune(_) -> patternSuccess(SemRune)(environment)(substitution)(supply)(names)
