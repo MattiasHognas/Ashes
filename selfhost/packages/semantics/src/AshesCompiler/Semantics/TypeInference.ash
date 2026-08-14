@@ -40,6 +40,7 @@ export (
     value inferenceTypeResolutionContext,
     value inferenceEnvironmentSchemes,
     value applyInferenceConstraints,
+    value simplifyTraitConstraints,
     value checkInferenceAnnotation,
     value inferExpressionFrom,
     value inferTopLevelBinding,
@@ -77,6 +78,7 @@ type TraitMethodInferenceDefinition =
 type TraitInferenceDefinition =
     | name: Str
     | parameterCount: Int
+    | parameters: List(SemanticType)
     | methods: List(TraitMethodInferenceDefinition)
     | supertraits: List(TraitConstraint)
     | provenance: DeclarationProvenance
@@ -297,16 +299,16 @@ let resolveCapabilityOperation capabilityName operationName environment =
         | None -> None
         | Some(CapabilityInferenceDefinition { name = _name, scheme = _scheme, operations = operations }) -> findCapabilityOperation(operationName)(operations)
 
-let addTraitBinding name parameterCount methods supertraits environment =
+let addTraitBinding name parameterCount parameters methods supertraits environment =
     match environment with
-        | TypeEnvironment { packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, traitImplementations = traitImplementations, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = TraitInferenceDefinition(name = name, parameterCount = parameterCount, methods = methods, supertraits = supertraits, provenance = DeclarationProvenance(packageId = packageId)) :: traits, traitImplementations = traitImplementations, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, traitImplementations = traitImplementations, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = TraitInferenceDefinition(name = name, parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = canonicalizeTraitConstraints(supertraits), provenance = DeclarationProvenance(packageId = packageId)) :: traits, traitImplementations = traitImplementations, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let recursive findTraitBinding name traits =
     match traits with
         | [] -> None
-        | TraitInferenceDefinition { name = candidateName, parameterCount = parameterCount, methods = methods, supertraits = supertraits, provenance = provenance } :: tail ->
+        | TraitInferenceDefinition { name = candidateName, parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = supertraits, provenance = provenance } :: tail ->
             if name == candidateName
-            then Some(TraitInferenceDefinition(name = candidateName, parameterCount = parameterCount, methods = methods, supertraits = supertraits, provenance = provenance))
+            then Some(TraitInferenceDefinition(name = candidateName, parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = supertraits, provenance = provenance))
             else findTraitBinding(name)(tail)
 
 let resolveTraitBinding name environment =
@@ -545,6 +547,60 @@ let recursive applyInferenceConstraints substitution constraints =
                 in
                     let resolvedTail = applyInferenceConstraints(substitution)(tail)
                     in TraitConstraint(traitName = traitName, typeArguments = resolvedArguments) :: resolvedTail
+
+let recursive traitParameterSubstitution parameters arguments reversed =
+    match (parameters, arguments) with
+        | ([], []) -> reversed
+        | (SemVariable(variableId) :: parameterTail, argument :: argumentTail) -> traitParameterSubstitution(parameterTail)(argumentTail)((variableId, argument) :: reversed)
+        | (_parameter :: parameterTail, _argument :: argumentTail) -> traitParameterSubstitution(parameterTail)(argumentTail)(reversed)
+        | _ -> reversed
+
+let directSupertraitConstraints constraint environment =
+    match constraint with
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } ->
+            match resolveTraitBinding(traitName)(environment) with
+                | None -> []
+                | Some(TraitInferenceDefinition { name = _name, parameterCount = _parameterCount, parameters = parameters, methods = _methods, supertraits = supertraits }) ->
+                    let substitution = traitParameterSubstitution(parameters)(typeArguments)([])
+                    in canonicalizeTraitConstraints(applyInferenceConstraints(substitution)(supertraits))
+
+let recursive traitConstraintImpliesFrom pending targetKey environment visited =
+    match pending with
+        | [] -> false
+        | head :: tail ->
+            let key = traitConstraintStableKey(head)
+            in
+                if stringExists(key)(visited)
+                then traitConstraintImpliesFrom(tail)(targetKey)(environment)(visited)
+                else
+                    if key == targetKey
+                    then true
+                    else traitConstraintImpliesFrom(appendConstraints(tail)(directSupertraitConstraints(head)(environment)))(targetKey)(environment)(key :: visited)
+
+let traitConstraintImplies stronger target environment = traitConstraintImpliesFrom(directSupertraitConstraints(stronger)(environment))(traitConstraintStableKey(target))(environment)([])
+
+let recursive anyTraitConstraintImplies candidate constraints environment =
+    match constraints with
+        | [] -> false
+        | stronger :: tail ->
+            if traitConstraintStableKey(stronger) == traitConstraintStableKey(candidate)
+            then anyTraitConstraintImplies(candidate)(tail)(environment)
+            else
+                if traitConstraintImplies(stronger)(candidate)(environment)
+                then true
+                else anyTraitConstraintImplies(candidate)(tail)(environment)
+
+let recursive removeImpliedTraitConstraints remaining allConstraints environment =
+    match remaining with
+        | [] -> []
+        | head :: tail ->
+            if anyTraitConstraintImplies(head)(allConstraints)(environment)
+            then removeImpliedTraitConstraints(tail)(allConstraints)(environment)
+            else head :: removeImpliedTraitConstraints(tail)(allConstraints)(environment)
+
+let simplifyTraitConstraints environment constraints =
+    (let canonical = canonicalizeTraitConstraints(constraints)
+    in canonicalizeTraitConstraints(removeImpliedTraitConstraints(canonical)(canonical)(environment)))
 
 let recursive appendSubstitution left right =
     match left with
@@ -1247,7 +1303,7 @@ and inferWith expression environment substitution supply ambientRow =
                                 in
                                     let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
                                     in
-                                        let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedValue)(resolvedConstraints)
+                                        let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedValue)(simplifyTraitConstraints(environment)(resolvedConstraints))
                                         in
                                             let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
                                             in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)(ambientRow)
@@ -1277,7 +1333,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                             in
                                                                 let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
                                                                 in
-                                                                    let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedType)(resolvedConstraints)
+                                                                    let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedType)(simplifyTraitConstraints(environment)(resolvedConstraints))
                                                                     in inferWith(body)(addTypeBinding(name)(scheme)(environment))(checkedSubstitution)(checkedSupply)(ambientRow)
                                                         | failure -> failure
                                             | failure -> failure
@@ -1387,7 +1443,7 @@ let inferTopLevelBinding name value annotation environment substitution supply =
                         in
                             let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
                             in
-                                let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedValue)(resolvedConstraints)
+                                let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedValue)(simplifyTraitConstraints(environment)(resolvedConstraints))
                                 in TopLevelBindingInferenceResult(environment = addTypeBinding(name)(scheme)(environment), semanticType = resolvedValue, substitution = checkedSubstitution, supply = checkedSupply, error = None)
                     | TypeInferenceResult { semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
         | TypeInferenceResult { semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> TopLevelBindingInferenceResult(environment = environment, semanticType = failedType, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
