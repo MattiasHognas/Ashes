@@ -3,4 +3,5 @@ import AshesCompiler.Semantics.Scope
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
+import AshesCompiler.Semantics.TypeInference
 Unit
