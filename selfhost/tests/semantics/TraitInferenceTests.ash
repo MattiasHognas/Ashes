@@ -130,6 +130,49 @@ let expectDefaultMethodValidation unit =
                         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
                         | _ -> test.fail("default implementations should match their method signatures"))
 
+let choiceMethod name dependency =
+    TraitMethodDecl(name = name, signature = TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None), defaultImplementation = None
+    |> ExprLambda("value")(ExprCall(ExprQualifiedVar("Choice")(dependency))(ExprVar("value"))(false))
+    |> Some)
+
+let choiceBaseMethod = TraitMethodDecl(name = "base", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None), defaultImplementation = None)
+
+let choiceImplementation = ExprLambda("value")(ExprBool(true))(None)
+
+let rejectsDefaultMethodDependencyCycle unit =
+    (let choice = TraitDecl(name = "Choice", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [choiceMethod("first")("second"), choiceMethod("second")("first"), choiceBaseMethod])
+    in
+        let implementation = TraitImplementationDecl(traitName = "Choice", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "base", implementation = choiceImplementation)])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(choice), TopLevelImplementation(implementation)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first")) } -> Unit
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("unexpected default cycle result: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("active trait defaults should not form a dependency cycle"))
+
+let rejectsSelfDependentDefaultMethod unit =
+    (let recursiveChoice = TraitDecl(name = "Choice", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [choiceMethod("first")("first"), choiceBaseMethod])
+    in
+        let implementation = TraitImplementationDecl(traitName = "Choice", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "base", implementation = choiceImplementation)])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(recursiveChoice), TopLevelImplementation(implementation)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(DefaultTraitMethodDependencyCycle("Choice", "first")) } -> Unit
+                | _ -> test.fail("a selected trait default should not depend on itself"))
+
+let acceptsOverrideBreakingDefaultMethodCycle unit =
+    (let choice = TraitDecl(name = "Choice", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [choiceMethod("first")("second"), choiceMethod("second")("first")])
+    in
+        let implementation = TraitImplementationDecl(traitName = "Choice", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "first", implementation = choiceImplementation)])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(choice), TopLevelImplementation(implementation)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = None } -> Unit
+                | _ -> test.fail("an implementation override should break a chain of trait defaults"))
+
+let expectDefaultMethodDependencyCycles unit =
+    unit
+    |> rejectsDefaultMethodDependencyCycle
+    |> rejectsSelfDependentDefaultMethod
+    |> acceptsOverrideBreakingDefaultMethodCycle
+
 let trueEqualImplementation =
     ExprLambda("left")(ExprLambda("right")(ExprBool(true))(None))(None)
 
@@ -411,6 +454,7 @@ let runTraitInferenceTests unit =
     |> expectInvalidTraitDeclarations
     |> expectInvalidSupertraits
     |> expectDefaultMethodValidation
+    |> expectDefaultMethodDependencyCycles
     |> expectTraitImplementationRegistration
     |> expectTraitImplementationDefaults
     |> expectInvalidTraitImplementations
