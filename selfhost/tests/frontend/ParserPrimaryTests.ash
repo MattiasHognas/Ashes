@@ -43,13 +43,13 @@ let run unit =
     in
         let unsignedChecked =
             match ParserExpressionTests.unspan(unsigned) with
-                | ExprUInt(value, bits) ->
+                | ExprUInt(value, bits, text) ->
                     if value != -1
                     then test.fail("expected u64 bit value")
                     else
-                        if bits == 64
-                        then Unit
-                        else test.fail("expected u64 width")
+                        if bits != 64
+                        then test.fail("expected u64 width")
+                        else test.assertEqual("18446744073709551615u64")(text)
                 | _ -> test.fail("expected u64 literal")
         in
             let literals = ParserExpressionTests.expectClean("(99N, 3.14, \"hello\", '😀', true, false)")

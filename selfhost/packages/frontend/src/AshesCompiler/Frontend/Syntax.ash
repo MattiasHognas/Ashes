@@ -76,7 +76,7 @@ type Expr =
     | ExprAt(TextSpan, Expr)
     | ExprInt(Int)
     | ExprBigInt(Str)
-    | ExprUInt(Int, Int)
+    | ExprUInt(Int, Int, Str)
     | ExprFloat(Float, Str)
     | ExprString(Str)
     | ExprRune(Int)

@@ -1282,7 +1282,7 @@ and parserParsePrimary state =
                         let bits = parserUnsignedBits(token.text)
                         in
                             if bits > 0
-                            then (parserAt(token.position)(tokenEnd(token))(ExprUInt(token.intValue)(bits)), afterToken)
+                            then (parserAt(token.position)(tokenEnd(token))(ExprUInt(token.intValue)(bits)(token.text)), afterToken)
                             else (parserAt(token.position)(tokenEnd(token))(ExprInt(token.intValue)), afterToken)
             | BigInt ->
                 match parserAdvance(state) with
