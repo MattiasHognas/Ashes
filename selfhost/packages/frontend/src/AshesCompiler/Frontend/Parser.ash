@@ -1584,6 +1584,9 @@ let recursive parserParseProgramItems sourceBytes reversedItems state =
             | Type ->
                 match parserParseTypeTopLevel(state) with
                     | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | External ->
+                match parserParseExternalTopLevel(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
             | Let ->
                 if parserLetStartsPattern(state)
                 then parserParseProgramBody(reversedItems)(state)
@@ -1670,6 +1673,150 @@ and parserParseExportNames reversed state =
                 else
                     match parserConsume(RParen)(afterName) with
                         | (_rightParen, afterRightParen) -> (reverseList(names), afterRightParen)
+and parserParseExternalTopLevel state =
+    match parserAdvance(state) with
+        | (externalToken, afterExternal) ->
+            if parserCurrentKind(afterExternal) == Type
+            then parserParseExternalType(externalToken.position)(afterExternal)
+            else parserParseExternalFunction(externalToken.position)(afterExternal)
+and parserParseExternalType start state =
+    match parserAdvance(state) with
+        | (_typeToken, afterType) ->
+            match parserConsume(Ident)(afterType) with
+                | (name, afterName) ->
+                    if parserCurrentKind(afterName) == Ident
+                    then
+                        if parserCurrentText(afterName) == "resource"
+                        then
+                            match parserAdvance(afterName) with
+                                | (_resourceToken, afterResource) ->
+                                    match parserConsume(Ident)(afterResource) with
+                                        | (destructorKeyword, afterDestructorKeyword) ->
+                                            let checkedState =
+                                                if destructorKeyword.text == "destructor"
+                                                then afterDestructorKeyword
+                                                else parserDiagnostic(afterDestructorKeyword)(destructorKeyword)("Expected 'destructor' after external resource type.")
+                                            in
+                                                match parserConsume(Ident)(checkedState) with
+                                                    | (destructorName, afterDestructor) -> (parserTopLevelAt(start)(tokenEnd(destructorName))(TopLevelExternal(ExternalOpaqueType(name.text)(Some(destructorName.text)))), afterDestructor)
+                        else (parserTopLevelAt(start)(tokenEnd(name))(TopLevelExternal(ExternalOpaqueType(name.text)(None))), afterName)
+                    else (parserTopLevelAt(start)(tokenEnd(name))(TopLevelExternal(ExternalOpaqueType(name.text)(None))), afterName)
+and parserParseExternalFunction start state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            match parserConsume(LParen)(afterName) with
+                | (_leftParen, afterLeftParen) ->
+                    match parserParseExternalParameters([])([])(afterLeftParen) with
+                        | (parameterTypes, ownerships, afterParameters) ->
+                            match parserConsume(Arrow)(afterParameters) with
+                                | (_arrow, afterArrow) ->
+                                    match parserParseFfiType(afterArrow) with
+                                        | (returnType, returnEnd, afterReturn) ->
+                                            let needsResult =
+                                                if parserCurrentKind(afterReturn) == Needs
+                                                then
+                                                    match parserParseNeedsRow(afterReturn) with
+                                                        | (needsRow, afterNeeds) -> (Some(needsRow), afterNeeds)
+                                                else (None, afterReturn)
+                                            in
+                                                match needsResult with
+                                                    | (needsRow, afterNeeds) ->
+                                                        if parserCurrentKind(afterNeeds) == Equals
+                                                        then
+                                                            match parserAdvance(afterNeeds) with
+                                                                | (_equals, afterEquals) ->
+                                                                    match parserConsume(String)(afterEquals) with
+                                                                        | (symbol, afterSymbol) -> (parserTopLevelAt(start)(tokenEnd(symbol))(TopLevelExternal(ExternalFunction(name.text)(parameterTypes)(returnType)(Some(symbol.text))(ownerships)(needsRow))), afterSymbol)
+                                                        else (parserTopLevelAt(start)(returnEnd)(TopLevelExternal(ExternalFunction(name.text)(parameterTypes)(returnType)(None)(ownerships)(needsRow))), afterNeeds)
+and parserParseExternalParameters reversedTypes reversedOwnerships state =
+    if parserCurrentKind(state) == RParen
+    then
+        match parserAdvance(state) with
+            | (_rightParen, afterRightParen) -> (reverseList(reversedTypes), reverseList(reversedOwnerships), afterRightParen)
+    else
+        match parserParseExternalOwnership(state) with
+            | (ownership, afterOwnership) ->
+                match parserParseFfiType(afterOwnership) with
+                    | (parameterType, _endPosition, afterType) ->
+                        if parserCurrentKind(afterType) == Comma
+                        then
+                            match parserAdvance(afterType) with
+                                | (_comma, afterComma) -> parserParseExternalParameters(parameterType :: reversedTypes)(ownership :: reversedOwnerships)(afterComma)
+                        else
+                            match parserConsume(RParen)(afterType) with
+                                | (_rightParen, afterRightParen) -> (reverseList(parameterType :: reversedTypes), reverseList(ownership :: reversedOwnerships), afterRightParen)
+and parserParseExternalOwnership state =
+    if parserCurrentKind(state) != Ident
+    then (ExternalOwnershipUnspecified, state)
+    else
+        if parserCurrentText(state) == "borrow"
+        then
+            match parserAdvance(state) with
+                | (_borrow, afterBorrow) -> (ExternalOwnershipBorrow, afterBorrow)
+        else
+            if parserCurrentText(state) == "consume"
+            then
+                match parserAdvance(state) with
+                    | (_consume, afterConsume) -> (ExternalOwnershipConsume, afterConsume)
+            else (ExternalOwnershipUnspecified, state)
+and parserParseFfiType state =
+    if parserCurrentKind(state) == Star
+    then
+        match parserAdvance(state) with
+            | (_star, afterStar) ->
+                match parserParseFfiType(afterStar) with
+                    | (inner, endPosition, afterInner) -> (ParsedPointer(inner), endPosition, afterInner)
+    else
+        match parserConsume(Ident)(state) with
+            | (name, afterName) ->
+                if name.text == "out"
+                then
+                    match parserParseFfiType(afterName) with
+                        | (inner, endPosition, afterInner) -> (ParsedOut(inner), endPosition, afterInner)
+                else
+                    if name.text == "FfiBuffer"
+                    then
+                        match parserConsume(LParen)(afterName) with
+                            | (_leftParen, afterLeftParen) ->
+                                match parserParseFfiType(afterLeftParen) with
+                                    | (inner, _innerEnd, afterInner) ->
+                                        match parserConsume(RParen)(afterInner) with
+                                            | (rightParen, afterRightParen) -> (ParsedBuffer(inner), tokenEnd(rightParen), afterRightParen)
+                    else
+                        if name.text == "FfiStr"
+                        then parserParseFfiString(afterName)
+                        else (ParsedNamed(name.text), tokenEnd(name), afterName)
+and parserParseFfiString state =
+    match parserConsume(LParen)(state) with
+        | (_leftParen, afterLeftParen) ->
+            let nullableResult =
+                if parserCurrentKind(afterLeftParen) == Ident
+                then
+                    if parserCurrentText(afterLeftParen) == "nullable"
+                    then
+                        match parserAdvance(afterLeftParen) with
+                            | (_nullable, afterNullable) -> (true, afterNullable)
+                    else (false, afterLeftParen)
+                else (false, afterLeftParen)
+            in
+                match nullableResult with
+                    | (nullable, afterNullable) ->
+                        match parserConsume(Ident)(afterNullable) with
+                            | (ownership, afterOwnership) ->
+                                if ownership.text == "owned"
+                                then
+                                    match parserConsume(Ident)(afterOwnership) with
+                                        | (destructor, afterDestructor) ->
+                                            match parserConsume(RParen)(afterDestructor) with
+                                                | (rightParen, afterRightParen) -> (ParsedNativeString(nullable)(FfiStringOwned)(Some(destructor.text)), tokenEnd(rightParen), afterRightParen)
+                                else
+                                    let checkedState =
+                                        if ownership.text == "borrowed"
+                                        then afterOwnership
+                                        else parserDiagnostic(afterOwnership)(ownership)("FfiStr expects 'borrowed' or 'owned disposeName'.")
+                                    in
+                                        match parserConsume(RParen)(checkedState) with
+                                            | (rightParen, afterRightParen) -> (ParsedNativeString(nullable)(FfiStringBorrowed)(None), tokenEnd(rightParen), afterRightParen)
 and parserParseTypeTopLevel state =
     match parserAdvance(state) with
         | (typeToken, afterType) ->
