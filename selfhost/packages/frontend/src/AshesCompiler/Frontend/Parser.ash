@@ -7,8 +7,10 @@ import AshesCompiler.Frontend.Token
 export (
     type ExpressionParseResult(..),
     type TypeExpressionParseResult(..),
+    type ProgramParseResult(..),
     value parseExpression,
     value parseTypeExpression,
+    value parseProgram,
 )
 
 type ExpressionParseResult =
@@ -19,7 +21,20 @@ type TypeExpressionParseResult =
     | typeExpression: TypeExpr
     | diagnostics: List(DiagnosticEntry)
 
+type ProgramParseResult =
+    | program: ProgramSyntax
+    | diagnostics: List(DiagnosticEntry)
+
 type alias ParserState = (List(Token), List(DiagnosticEntry))
+
+type ParsedTypeBranches =
+    | constructors: List(TypeConstructor)
+    | fieldNames: List(Str)
+    | fieldTypes: List(TypeExpr)
+    | sawField: Bool
+    | sawConstructor: Bool
+    | endPosition: Int
+    | state: ParserState
 
 let parserSyntheticToken kind position = Token(kind = kind, text = "", intValue = 0, floatValue = 0.0, position = position, length = 0)
 
@@ -172,6 +187,134 @@ let parserCurrentStartsNamedArgument (state: ParserState) =
 let parserStateDiagnostics (state: ParserState) =
     match state with
         | (_tokens, diagnostics) -> diagnostics
+
+let parserStateTokens (state: ParserState) =
+    match state with
+        | (tokens, _diagnostics) -> tokens
+
+let parserStateWithTokens (state: ParserState) tokens =
+    match state with
+        | (_oldTokens, diagnostics) -> (tokens, diagnostics)
+
+let parserSourceByteAt bytes position = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(position))
+
+let recursive parserLineStart bytes position =
+    if position <= 0
+    then 0
+    else
+        if parserSourceByteAt(bytes)(position - 1) == 10
+        then position
+        else parserLineStart(bytes)(position - 1)
+
+let recursive parserOnlyIndentBefore bytes position current =
+    if current >= position
+    then true
+    else
+        let value = parserSourceByteAt(bytes)(current)
+        in
+            if value == 32
+            then parserOnlyIndentBefore(bytes)(position)(current + 1)
+            else
+                if value == 9
+                then parserOnlyIndentBefore(bytes)(position)(current + 1)
+                else
+                    if value == 13
+                    then parserOnlyIndentBefore(bytes)(position)(current + 1)
+                    else false
+
+let parserStartsSourceLine bytes position = parserOnlyIndentBefore(bytes)(position)(parserLineStart(bytes)(position))
+
+let parserSourceColumn bytes position = position - parserLineStart(bytes)(position)
+
+let parserPreviousCompletesCall reversedTokens =
+    (let recursive findCallOpen remaining depth =
+        match remaining with
+            | [] -> false
+            | token :: tail ->
+                match token.kind with
+                    | RParen -> findCallOpen(tail)(depth + 1)
+                    | LParen ->
+                        if depth == 1
+                        then
+                            match tail with
+                                | functionToken :: _ ->
+                                    match functionToken.kind with
+                                        | Ident -> true
+                                        | RParen -> true
+                                        | _ -> false
+                                | [] -> false
+                        else findCallOpen(tail)(depth - 1)
+                    | _ -> findCallOpen(tail)(depth)
+    in
+        match reversedTokens with
+            | token :: _ ->
+                if token.kind == RParen
+                then findCallOpen(reversedTokens)(0)
+                else false
+            | [] -> false)
+
+let parserSplitTopLevelTokens bytes declarationColumn tokens =
+    (let recursive split remaining reversed sawToken parenthesisDepth bracketDepth braceDepth =
+        match remaining with
+            | [] -> (reverseList(reversed), [])
+            | token :: tail ->
+                if token.kind == EOF
+                then (reverseList(reversed), remaining)
+                else
+                    let atBoundary =
+                        if !sawToken
+                        then false
+                        else
+                            if parenthesisDepth != 0
+                            then false
+                            else
+                                if bracketDepth != 0
+                                then false
+                                else
+                                    if braceDepth != 0
+                                    then false
+                                    else
+                                        if !parserStartsSourceLine(bytes)(token.position)
+                                        then false
+                                        else
+                                            let column = parserSourceColumn(bytes)(token.position)
+                                            in
+                                                if column <= declarationColumn
+                                                then true
+                                                else parserPreviousCompletesCall(reversed)
+                    in
+                        if atBoundary
+                        then (reverseList(reversed), remaining)
+                        else
+                            let nextParenthesisDepth =
+                                match token.kind with
+                                    | LParen -> parenthesisDepth + 1
+                                    | RParen -> parenthesisDepth - 1
+                                    | _ -> parenthesisDepth
+                            in
+                                let nextBracketDepth =
+                                    match token.kind with
+                                        | LBracket -> bracketDepth + 1
+                                        | RBracket -> bracketDepth - 1
+                                        | _ -> bracketDepth
+                                in
+                                    let nextBraceDepth =
+                                        match token.kind with
+                                            | LBrace -> braceDepth + 1
+                                            | RBrace -> braceDepth - 1
+                                            | _ -> braceDepth
+                                    in split(tail)(token :: reversed)(true)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
+    in split(tokens)([])(false)(0)(0)(0))
+
+let recursive parserTokensBeforeEof tokens =
+    match tokens with
+        | [] -> []
+        | token :: tail ->
+            if token.kind == EOF
+            then []
+            else token :: parserTokensBeforeEof(tail)
+
+let parserTopLevelAt start end item = TopLevelAt(spanFromBounds(start)(end))(item)
 
 let parserPatternSpan pattern =
     match pattern with
@@ -1409,6 +1552,405 @@ and parserBadPrimary state =
         in
             match parserAdvance(diagnosed) with
                 | (_bad, afterBad) -> (parserAt(current.position)(tokenEnd(current))(ExprInt(0)), afterBad))
+
+let parserParseTopLevelValue sourceBytes declarationColumn state =
+    (let tokens = parserStateTokens(state)
+    in
+        match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(tokens) with
+            | (valueTokens, remainingTokens) ->
+                let boundaryPosition =
+                    match remainingTokens with
+                        | token :: _ -> token.position
+                        | [] -> 0
+                in
+                    let temporaryTokens = appendList(valueTokens)(parserSyntheticToken(EOF)(boundaryPosition) :: [])
+                    in
+                        let temporaryState = parserStateWithTokens(state)(temporaryTokens)
+                        in
+                            match parserParseExpression(temporaryState) with
+                                | (value, afterValue) ->
+                                    let unconsumed = parserTokensBeforeEof(parserStateTokens(afterValue))
+                                    in
+                                        let mergedTokens = appendList(unconsumed)(remainingTokens)
+                                        in (value, parserStateWithTokens(afterValue)(mergedTokens)))
+
+let recursive parserParseProgramItems sourceBytes reversedItems state =
+    if parserIsExportDeclaration(state)
+    then
+        match parserParseExportDeclaration(state) with
+            | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+    else
+        match parserCurrentKind(state) with
+            | Type ->
+                match parserParseTypeTopLevel(state) with
+                    | (item, afterItem) -> parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterItem)
+            | Let ->
+                if parserLetStartsPattern(state)
+                then parserParseProgramBody(reversedItems)(state)
+                else parserParseTopLevelLet(sourceBytes)(reversedItems)(state)
+            | EOF ->
+                match reversedItems with
+                    | [] -> parserParseProgramBody(reversedItems)(state)
+                    | _ -> (reverseList(reversedItems), None, state)
+            | _ -> parserParseProgramBody(reversedItems)(state)
+and parserParseProgramBody reversedItems state =
+    match parserParseExpression(state) with
+        | (body, afterBody) -> (reverseList(reversedItems), Some(body), afterBody)
+and parserIsExportDeclaration state =
+    if parserCurrentKind(state) != Ident
+    then false
+    else parserCurrentText(state) == "export"
+and parserParseExportDeclaration state =
+    match parserAdvance(state) with
+        | (exportToken, afterExport) ->
+            match parserConsume(LParen)(afterExport) with
+                | (_leftParen, afterLeftParen) ->
+                    match parserParseExportItems([])(afterLeftParen) with
+                        | (items, rightParen, afterItems) -> (parserTopLevelAt(exportToken.position)(tokenEnd(rightParen))(TopLevelExport(ExportDecl(items = items))), afterItems)
+and parserParseExportItems reversed state =
+    if parserCurrentKind(state) == RParen
+    then
+        match parserAdvance(state) with
+            | (rightParen, afterRightParen) -> (reverseList(reversed), rightParen, afterRightParen)
+    else
+        match parserParseExportItem(state) with
+            | (Some(item), afterItem) -> parserParseExportItemsTail(item :: reversed)(afterItem)
+            | (None, afterItem) -> parserParseExportItemsTail(reversed)(afterItem)
+and parserParseExportItemsTail reversed state =
+    if parserCurrentKind(state) == Comma
+    then
+        match parserAdvance(state) with
+            | (_comma, afterComma) -> parserParseExportItems(reversed)(afterComma)
+    else
+        match parserConsume(RParen)(state) with
+            | (rightParen, afterRightParen) -> (reverseList(reversed), rightParen, afterRightParen)
+and parserParseExportItem state =
+    if parserCurrentKind(state) == Type
+    then
+        match parserAdvance(state) with
+            | (_typeToken, afterType) ->
+                match parserConsume(Ident)(afterType) with
+                    | (name, afterName) ->
+                        if parserCurrentKind(afterName) != LParen
+                        then (Some(ExportType(name.text)(ExportConstructorsHidden)), afterName)
+                        else
+                            match parserAdvance(afterName) with
+                                | (_leftParen, afterLeftParen) ->
+                                    if parserCurrentKind(afterLeftParen) == Dot
+                                    then
+                                        match parserAdvance(afterLeftParen) with
+                                            | (_firstDot, afterFirstDot) ->
+                                                match parserConsume(Dot)(afterFirstDot) with
+                                                    | (_secondDot, afterSecondDot) ->
+                                                        match parserConsume(RParen)(afterSecondDot) with
+                                                            | (_rightParen, afterRightParen) -> (Some(ExportType(name.text)(ExportConstructorsAll)), afterRightParen)
+                                    else
+                                        match parserParseExportNames([])(afterLeftParen) with
+                                            | (names, afterNames) -> (Some(ExportType(name.text)(ExportConstructorsSelected(names))), afterNames)
+    else
+        match parserConsume(Ident)(state) with
+            | (category, afterCategory) ->
+                match parserConsume(Ident)(afterCategory) with
+                    | (name, afterName) ->
+                        if category.text == "value"
+                        then (Some(ExportValue(name.text)), afterName)
+                        else
+                            if category.text == "module"
+                            then (Some(ExportModule(name.text)), afterName)
+                            else (None, parserDiagnostic(afterName)(category)("Expected 'value', 'type', or 'module' in export."))
+and parserParseExportNames reversed state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            let names = name.text :: reversed
+            in
+                if parserCurrentKind(afterName) == Comma
+                then
+                    match parserAdvance(afterName) with
+                        | (_comma, afterComma) -> parserParseExportNames(names)(afterComma)
+                else
+                    match parserConsume(RParen)(afterName) with
+                        | (_rightParen, afterRightParen) -> (reverseList(names), afterRightParen)
+and parserParseTypeTopLevel state =
+    match parserAdvance(state) with
+        | (typeToken, afterType) ->
+            if parserCurrentKind(afterType) == Ident
+            then
+                if parserCurrentText(afterType) == "alias"
+                then parserParseTypeAliasDeclaration(typeToken.position)(afterType)
+                else parserParseNamedTypeDeclaration(typeToken.position)(afterType)
+            else parserParseNamedTypeDeclaration(typeToken.position)(afterType)
+and parserParseTypeAliasDeclaration start state =
+    match parserAdvance(state) with
+        | (_alias, afterAlias) ->
+            match parserConsume(Ident)(afterAlias) with
+                | (name, afterName) ->
+                    match parserParseTypeParameters(afterName) with
+                        | (parameters, afterParameters) ->
+                            match parserConsume(Equals)(afterParameters) with
+                                | (_equals, afterEquals) ->
+                                    match parserParseTypeExpressionState(afterEquals) with
+                                        | (target, afterTarget) -> (parserTopLevelAt(start)(parserTypeEnd(target))(TopLevelTypeAlias(TypeAliasDecl(name = name.text, typeParameters = parameters, target = target))), afterTarget)
+and parserParseNamedTypeDeclaration start state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            match parserParseTypeParameters(afterName) with
+                | (parameters, afterParameters) ->
+                    match parserConsume(Equals)(afterParameters) with
+                        | (_equals, afterEquals) ->
+                            if parserCurrentKind(afterEquals) == Ident
+                            then parserParseZeroCostType(start)(name.text)(parameters)(afterEquals)
+                            else parserParseAlgebraicType(start)(name.text)(parameters)(afterEquals)
+and parserParseTypeParameters state =
+    if parserCurrentKind(state) != LParen
+    then ([], state)
+    else
+        match parserAdvance(state) with
+            | (_leftParen, afterLeftParen) ->
+                if parserCurrentKind(afterLeftParen) == RParen
+                then
+                    match parserAdvance(afterLeftParen) with
+                        | (_rightParen, afterRightParen) -> ([], afterRightParen)
+                else parserParseTypeParameterList([])(afterLeftParen)
+and parserParseTypeParameterList reversed state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            let parameters = TypeParameter(name = name.text) :: reversed
+            in
+                if parserCurrentKind(afterName) == Comma
+                then
+                    match parserAdvance(afterName) with
+                        | (_comma, afterComma) -> parserParseTypeParameterList(parameters)(afterComma)
+                else
+                    match parserConsume(RParen)(afterName) with
+                        | (_rightParen, afterRightParen) -> (reverseList(parameters), afterRightParen)
+and parserParseZeroCostType start typeName parameters state =
+    match parserConsume(Ident)(state) with
+        | (constructorName, afterConstructor) ->
+            let payloadResult =
+                if parserCurrentKind(afterConstructor) == LParen
+                then
+                    match parserAdvance(afterConstructor) with
+                        | (_leftParen, afterLeftParen) -> parserParseTypeArguments(afterLeftParen)
+                else ([], constructorName, afterConstructor)
+            in
+                match payloadResult with
+                    | (payloads, endToken, afterPayloads) ->
+                        let checkedState =
+                            match payloads with
+                                | _single :: [] -> afterPayloads
+                                | _ -> parserDiagnostic(afterPayloads)(constructorName)("Type '" + typeName + "' must have exactly one constructor payload.")
+                        in
+                            match parserParseDerivingClause([])(tokenEnd(endToken))(checkedState) with
+                                | (traits, endPosition, afterDeriving) ->
+                                    let constructor = TypeConstructor(name = constructorName.text, parameters = payloads, fieldNames = [])
+                                    in
+                                        let declaration = ZeroCostTypeDecl(name = typeName, typeParameters = parameters, constructor = constructor, derivingTraits = traits)
+                                        in (parserTopLevelAt(start)(endPosition)(TopLevelZeroCostType(declaration)), afterDeriving)
+and parserParseAlgebraicType start typeName parameters state =
+    match parserParseTypeBranches([])([])([])(false)(false)(start)(state) with
+        | ParsedTypeBranches { constructors = constructors, fieldNames = fieldNames, fieldTypes = fieldTypes, sawField = sawField, sawConstructor = sawConstructor, endPosition = branchEnd, state = afterBranches } ->
+            let checkedState =
+                if sawField
+                then
+                    if sawConstructor
+                    then parserDiagnostic(afterBranches)(parserCurrent(afterBranches))("Record field alternatives cannot be mixed with constructor alternatives.")
+                    else afterBranches
+                else
+                    match constructors with
+                        | [] -> parserDiagnostic(afterBranches)(parserCurrent(afterBranches))("Type '" + typeName + "' must have at least one constructor.")
+                        | _ -> afterBranches
+            in
+                match parserParseDerivingClause([])(branchEnd)(checkedState) with
+                    | (traits, endPosition, afterDeriving) ->
+                        if sawField
+                        then
+                            let recordConstructor = TypeConstructor(name = typeName, parameters = fieldTypes, fieldNames = fieldNames)
+                            in
+                                let declaration = TypeDecl(name = typeName, typeParameters = parameters, constructors = recordConstructor :: [], isRecord = true, derivingTraits = traits)
+                                in (parserTopLevelAt(start)(endPosition)(TopLevelType(declaration)), afterDeriving)
+                        else
+                            let declaration = TypeDecl(name = typeName, typeParameters = parameters, constructors = constructors, isRecord = false, derivingTraits = traits)
+                            in (parserTopLevelAt(start)(endPosition)(TopLevelType(declaration)), afterDeriving)
+and parserParseTypeBranches constructors fieldNames fieldTypes sawField sawConstructor endPosition state =
+    if parserCurrentKind(state) != Pipe
+    then ParsedTypeBranches(constructors = reverseList(constructors), fieldNames = reverseList(fieldNames), fieldTypes = reverseList(fieldTypes), sawField = sawField, sawConstructor = sawConstructor, endPosition = endPosition, state = state)
+    else
+        match parserAdvance(state) with
+            | (_pipe, afterPipe) ->
+                match parserConsume(Ident)(afterPipe) with
+                    | (branchName, afterName) ->
+                        if parserCurrentKind(afterName) == Colon
+                        then
+                            match parserAdvance(afterName) with
+                                | (_colon, afterColon) ->
+                                    match parserParseTypeExpressionState(afterColon) with
+                                        | (fieldType, afterField) -> parserParseTypeBranches(constructors)(branchName.text :: fieldNames)(fieldType :: fieldTypes)(true)(sawConstructor)(parserTypeEnd(fieldType))(afterField)
+                        else
+                            let payloadResult =
+                                if parserCurrentKind(afterName) == LParen
+                                then
+                                    match parserAdvance(afterName) with
+                                        | (_leftParen, afterLeftParen) -> parserParseTypeArguments(afterLeftParen)
+                                else ([], branchName, afterName)
+                            in
+                                match payloadResult with
+                                    | (payloads, endToken, afterPayloads) ->
+                                        let constructor = TypeConstructor(name = branchName.text, parameters = payloads, fieldNames = [])
+                                        in parserParseTypeBranches(constructor :: constructors)(fieldNames)(fieldTypes)(sawField)(true)(tokenEnd(endToken))(afterPayloads)
+and parserParseDerivingClause reversed endPosition state =
+    if parserCurrentKind(state) != Deriving
+    then (reverseList(reversed), endPosition, state)
+    else
+        match parserAdvance(state) with
+            | (_deriving, afterDeriving) ->
+                match parserConsume(LBrace)(afterDeriving) with
+                    | (_leftBrace, afterLeftBrace) ->
+                        if parserCurrentKind(afterLeftBrace) == RBrace
+                        then
+                            let diagnosed = parserDiagnostic(afterLeftBrace)(parserCurrent(afterLeftBrace))("A 'deriving' clause must contain at least one trait.")
+                            in
+                                match parserAdvance(diagnosed) with
+                                    | (rightBrace, afterRightBrace) -> (reverseList(reversed), tokenEnd(rightBrace), afterRightBrace)
+                        else parserParseDerivingTraits(reversed)(afterLeftBrace)
+and parserParseDerivingTraits reversed state =
+    match parserParseQualifiedIdentifier(state) with
+        | (traitName, afterTrait) ->
+            let traits = traitName :: reversed
+            in
+                if parserCurrentKind(afterTrait) == Comma
+                then
+                    match parserAdvance(afterTrait) with
+                        | (_comma, afterComma) -> parserParseDerivingTraits(traits)(afterComma)
+                else
+                    match parserConsume(RBrace)(afterTrait) with
+                        | (rightBrace, afterRightBrace) -> (reverseList(traits), tokenEnd(rightBrace), afterRightBrace)
+and parserParseTopLevelLet sourceBytes reversedItems state =
+    match parserAdvance(state) with
+        | (letToken, afterLet) ->
+            let recursiveBinding = parserCurrentKind(afterLet) == Recursive
+            in
+                let afterRecursive =
+                    if recursiveBinding
+                    then
+                        match parserAdvance(afterLet) with
+                            | (_recursive, next) -> next
+                    else afterLet
+                in
+                    match parserParseTopLevelBinding(sourceBytes)(parserSourceColumn(sourceBytes)(letToken.position))(afterRecursive) with
+                        | (binding, valueEnd, valueLeadsWithLet, afterBinding) ->
+                            match binding with
+                                | LetBindingSyntax { name = bindingName, value = bindingValue, sugarParameters = sugarParameters, typeAnnotation = typeAnnotation, requirements = requirements } ->
+                                    if parserCurrentKind(afterBinding) == In
+                                    then
+                                        match parserAdvance(afterBinding) with
+                                            | (_inToken, afterIn) ->
+                                                match parserParseExpression(afterIn) with
+                                                    | (body, afterBody) ->
+                                                        let expression =
+                                                            if recursiveBinding
+                                                            then ExprLetRecursive(bindingName)(bindingValue)(body)(sugarParameters)(typeAnnotation)(requirements)
+                                                            else ExprLet(bindingName)(bindingValue)(body)(sugarParameters)(typeAnnotation)(requirements)
+                                                        in (reverseList(reversedItems), Some(parserAt(letToken.position)(parserExprEnd(body))(expression)), afterBody)
+                                    else
+                                        if parserCurrentKind(afterBinding) == And
+                                        then parserParseRecursiveGroup(sourceBytes)(reversedItems)(letToken.position)(binding :: [])(recursiveBinding)(afterBinding)
+                                        else
+                                            if valueLeadsWithLet
+                                            then
+                                                if parserCurrentKind(afterBinding) == EOF
+                                                then
+                                                    let missingIn = parserDiagnostic(afterBinding)(parserCurrent(afterBinding))("Expected In but found EOF.")
+                                                    in
+                                                        let missingBodyState = parserDiagnostic(missingIn)(parserCurrent(missingIn))("Expected expression but found EOF.")
+                                                        in
+                                                            let missingBody = parserAt(valueEnd)(valueEnd)(ExprInt(0))
+                                                            in
+                                                                let expression =
+                                                                    if recursiveBinding
+                                                                    then ExprLetRecursive(bindingName)(bindingValue)(missingBody)(sugarParameters)(typeAnnotation)(requirements)
+                                                                    else ExprLet(bindingName)(bindingValue)(missingBody)(sugarParameters)(typeAnnotation)(requirements)
+                                                                in (reverseList(reversedItems), Some(parserAt(letToken.position)(valueEnd)(expression)), missingBodyState)
+                                                else
+                                                    let item = parserTopLevelAt(letToken.position)(valueEnd)(TopLevelLet(binding)(recursiveBinding))
+                                                    in parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterBinding)
+                                            else
+                                                let item = parserTopLevelAt(letToken.position)(valueEnd)(TopLevelLet(binding)(recursiveBinding))
+                                                in parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterBinding)
+and parserParseTopLevelBinding sourceBytes declarationColumn state =
+    match parserConsume(Ident)(state) with
+        | (name, afterName) ->
+            let header =
+                if parserCurrentKind(afterName) == Colon
+                then
+                    match parserAdvance(afterName) with
+                        | (_colon, afterColon) ->
+                            match parserParseTypeExpressionState(afterColon) with
+                                | (annotation, afterAnnotation) ->
+                                    if parserCurrentKind(afterAnnotation) == Requires
+                                    then
+                                        match parserParseRequiresClause(afterAnnotation) with
+                                            | (requirements, afterRequirements) -> ([], Some(annotation), requirements, afterRequirements)
+                                    else ([], Some(annotation), [], afterAnnotation)
+                else
+                    match parserParseSugarParameters([])(afterName) with
+                        | (parameters, afterParameters) -> (parameters, None, [], afterParameters)
+            in
+                match header with
+                    | (parameters, annotation, requirements, afterHeader) ->
+                        match parserConsume(Equals)(afterHeader) with
+                            | (_equals, afterEquals) ->
+                                let valueLeadsWithLet =
+                                    match parameters with
+                                        | [] ->
+                                            match parserCurrentKind(afterEquals) with
+                                                | Let -> true
+                                                | LetBang -> true
+                                                | LetQuestion -> true
+                                                | _ -> false
+                                        | _ -> false
+                                in
+                                    match parserParseTopLevelValue(sourceBytes)(declarationColumn)(afterEquals) with
+                                        | (rawValue, afterValue) ->
+                                            let value = parserBuildLambdas(parameters)(rawValue)(name.position)
+                                            in
+                                                let binding = LetBindingSyntax(name = name.text, value = value, sugarParameters = parserParameterNames(parameters), typeAnnotation = annotation, requirements = requirements)
+                                                in (binding, parserExprEnd(value), valueLeadsWithLet, afterValue)
+and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings recursiveBinding state =
+    (let checkedState =
+        if recursiveBinding
+        then state
+        else parserDiagnostic(state)(parserCurrent(state))("'and' is only allowed in a 'let recursive' binding group.")
+    in
+        match parserAdvance(checkedState) with
+            | (andToken, afterAnd) ->
+                match parserParseTopLevelBinding(sourceBytes)(parserSourceColumn(sourceBytes)(andToken.position))(afterAnd) with
+                    | (binding, valueEnd, _valueLeadsWithLet, afterBinding) ->
+                        let bindings = binding :: reversedBindings
+                        in
+                            if parserCurrentKind(afterBinding) == And
+                            then parserParseRecursiveGroup(sourceBytes)(reversedItems)(start)(bindings)(recursiveBinding)(afterBinding)
+                            else
+                                let item = parserTopLevelAt(start)(valueEnd)(TopLevelRecursiveGroup(reverseList(bindings)))
+                                in parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterBinding))
+
+let parseProgram source =
+    (let lexed = tokenize(source)
+    in
+        let initial : ParserState = (lexed.tokens, [])
+        in
+            let sourceBytes = Ashes.Byte.fromText(source)
+            in
+                match parserParseProgramItems(sourceBytes)([])(initial) with
+                    | (items, body, state) ->
+                        let current = parserCurrent(state)
+                        in
+                            let finalState =
+                                if current.kind == EOF
+                                then state
+                                else parserDiagnostic(state)(current)("Unexpected token after end of program: " + tokenKindName(current.kind) + ".")
+                            in
+                                let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
+                                in ProgramParseResult(program = ProgramSyntax(items = items, body = body), diagnostics = appendList(lexed.diagnostics)(parserDiagnostics)))
 
 let parseExpression source =
     (let lexed = tokenize(source)

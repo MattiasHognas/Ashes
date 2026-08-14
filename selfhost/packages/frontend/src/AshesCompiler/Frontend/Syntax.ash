@@ -239,6 +239,7 @@ type LetBindingSyntax =
     | requirements: List(TraitConstraintSyntax)
 
 type TopLevelItem =
+    | TopLevelAt(TextSpan, TopLevelItem)
     | TopLevelExport(ExportDecl)
     | TopLevelType(TypeDecl)
     | TopLevelTypeAlias(TypeAliasDecl)
