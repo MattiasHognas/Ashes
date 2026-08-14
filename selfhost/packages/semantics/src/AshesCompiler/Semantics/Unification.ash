@@ -30,7 +30,7 @@ let bindVariable variableId semanticType substitution =
     (let resolvedType = applySubstitution(substitution)(semanticType)
     in
         match resolvedType with
-            | TypeVariable(otherId) ->
+            | SemVariable(otherId) ->
                 if variableId == otherId
                 then unificationSuccess(substitution)
                 else unificationSuccess((variableId, resolvedType) :: substitution)
@@ -51,8 +51,8 @@ and unifyOptionalRows left right substitution =
     match (left, right) with
         | (None, None) -> unificationSuccess(substitution)
         | (Some(leftRow), Some(rightRow)) -> unifyWith(substitution)(leftRow)(rightRow)
-        | (None, Some(rightRow)) -> unifyWith(substitution)(TypeRow([])(None))(rightRow)
-        | (Some(leftRow), None) -> unifyWith(substitution)(leftRow)(TypeRow([])(None))
+        | (None, Some(rightRow)) -> unifyWith(substitution)(SemRow([])(None))(rightRow)
+        | (Some(leftRow), None) -> unifyWith(substitution)(leftRow)(SemRow([])(None))
 and unifyWith substitution left right =
     (let resolvedLeft = applySubstitution(substitution)(left)
     in
@@ -62,42 +62,42 @@ and unifyWith substitution left right =
             then unificationSuccess(substitution)
             else
                 match (resolvedLeft, resolvedRight) with
-                    | (TypeVariable(variableId), semanticType) -> bindVariable(variableId)(semanticType)(substitution)
-                    | (semanticType, TypeVariable(variableId)) -> bindVariable(variableId)(semanticType)(substitution)
-                    | (TypeUInt(leftBits), TypeUInt(rightBits)) ->
+                    | (SemVariable(variableId), semanticType) -> bindVariable(variableId)(semanticType)(substitution)
+                    | (semanticType, SemVariable(variableId)) -> bindVariable(variableId)(semanticType)(substitution)
+                    | (SemUInt(leftBits), SemUInt(rightBits)) ->
                         if leftBits == rightBits
                         then unificationSuccess(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (TypeList(leftElement), TypeList(rightElement)) -> unifyWith(substitution)(leftElement)(rightElement)
-                    | (TypeTuple(leftElements), TypeTuple(rightElements)) -> unifyTypeLists(leftElements)(rightElements)(substitution)
-                    | (TypeFunction(leftArgument, leftResult, leftRow), TypeFunction(rightArgument, rightResult, rightRow)) ->
+                    | (SemList(leftElement), SemList(rightElement)) -> unifyWith(substitution)(leftElement)(rightElement)
+                    | (SemTuple(leftElements), SemTuple(rightElements)) -> unifyTypeLists(leftElements)(rightElements)(substitution)
+                    | (SemFunction(leftArgument, leftResult, leftRow), SemFunction(rightArgument, rightResult, rightRow)) ->
                         match unifyWith(substitution)(leftArgument)(rightArgument) with
                             | UnificationResult { substitution = afterArgument, error = None } ->
                                 match unifyWith(afterArgument)(leftResult)(rightResult) with
                                     | UnificationResult { substitution = afterResult, error = None } -> unifyOptionalRows(leftRow)(rightRow)(afterResult)
                                     | failure -> failure
                             | failure -> failure
-                    | (TypeCapability(leftName, leftArguments), TypeCapability(rightName, rightArguments)) ->
+                    | (SemCapability(leftName, leftArguments), SemCapability(rightName, rightArguments)) ->
                         if leftName == rightName
                         then unifyTypeLists(leftArguments)(rightArguments)(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (TypeRow(leftCapabilities, leftTail), TypeRow(rightCapabilities, rightTail)) ->
+                    | (SemRow(leftCapabilities, leftTail), SemRow(rightCapabilities, rightTail)) ->
                         match unifyTypeLists(leftCapabilities)(rightCapabilities)(substitution) with
                             | UnificationResult { substitution = afterCapabilities, error = None } -> unifyOptionalRows(leftTail)(rightTail)(afterCapabilities)
                             | failure -> failure
-                    | (TypeNamed(leftId, _leftName, leftArguments), TypeNamed(rightId, _rightName, rightArguments)) ->
+                    | (SemNamed(leftId, _leftName, leftArguments), SemNamed(rightId, _rightName, rightArguments)) ->
                         if leftId == rightId
                         then unifyTypeLists(leftArguments)(rightArguments)(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (TypeParameter(leftId, _leftName), TypeParameter(rightId, _rightName)) ->
+                    | (SemParameter(leftId, _leftName), SemParameter(rightId, _rightName)) ->
                         if leftId == rightId
                         then unificationSuccess(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (TypeOpaque(leftName), TypeOpaque(rightName)) ->
+                    | (SemOpaque(leftName), SemOpaque(rightName)) ->
                         if leftName == rightName
                         then unificationSuccess(substitution)
                         else unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight))
-                    | (TypePointer(leftPointee), TypePointer(rightPointee)) -> unifyWith(substitution)(leftPointee)(rightPointee)
+                    | (SemPointer(leftPointee), SemPointer(rightPointee)) -> unifyWith(substitution)(leftPointee)(rightPointee)
                     | _ -> unificationFailure(substitution)(TypeMismatch(resolvedLeft)(resolvedRight)))
 
 let unify left right = unifyWith([])(left)(right)
