@@ -19,6 +19,12 @@ type ProgramInferenceError =
     | DuplicateCapabilityOperation(Str, Str)
     | ParameterizedCapabilityOperationRequiresSignature(Str, Str)
     | CapabilityOperationRequiresFunction(Str, Str)
+    | UnknownProviderCapability(Str)
+    | ProviderCapabilityArityMismatch(Str, Int, Int)
+    | DuplicateCapabilityProvider(SemanticType)
+    | UnknownProviderOperation(Str, Str)
+    | DuplicateProviderOperation(Str, Str)
+    | MissingProviderOperation(Str, Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
 
@@ -74,6 +80,12 @@ type AliasParameterRegistration =
 type CapabilityOperationRegistration =
     | environment: TypeEnvironment
     | operations: List(CapabilityOperationInferenceDefinition)
+    | supply: TypeVariableSupply
+    | error: Maybe(ProgramInferenceError)
+
+type ProviderOperationRegistration =
+    | operations: List(CapabilityProviderOperationInferenceDefinition)
+    | substitution: List((Int, SemanticType))
     | supply: TypeVariableSupply
     | error: Maybe(ProgramInferenceError)
 
@@ -293,6 +305,127 @@ let recursive registerConstructors constructors resultType quantified context en
                         in registerConstructors(tail)(resultType)(quantified)(context)(addConstructorBinding(name)(scheme)(fieldNames)(environment))
                 | TypeListResolutionResult { semanticTypes = _parameterTypes, error = Some(error) } -> ConstructorRegistration(environment = environment, error = Some(error))
 
+let recursive semanticTypeListLength values =
+    match values with
+        | [] -> 0
+        | _ :: tail -> 1 + semanticTypeListLength(tail)
+
+let recursive providerBindingExists operationName bindings =
+    match bindings with
+        | [] -> false
+        | ProvideBinding { operationName = candidateName, implementation = _implementation } :: tail ->
+            if operationName == candidateName
+            then true
+            else providerBindingExists(operationName)(tail)
+
+let recursive providerNameExists name values =
+    match values with
+        | [] -> false
+        | head :: tail ->
+            if name == head
+            then true
+            else providerNameExists(name)(tail)
+
+let recursive findProviderBinding operationName bindings =
+    match bindings with
+        | [] -> None
+        | ProvideBinding { operationName = candidateName, implementation = implementation } :: tail ->
+            if operationName == candidateName
+            then Some(implementation)
+            else findProviderBinding(operationName)(tail)
+
+let recursive findDuplicateProviderBinding bindings seen =
+    match bindings with
+        | [] -> None
+        | ProvideBinding { operationName = operationName, implementation = _implementation } :: tail ->
+            if providerNameExists(operationName)(seen)
+            then Some(operationName)
+            else findDuplicateProviderBinding(tail)(operationName :: seen)
+
+let recursive findUnknownProviderBinding capabilityName bindings environment =
+    match bindings with
+        | [] -> None
+        | ProvideBinding { operationName = operationName, implementation = _implementation } :: tail ->
+            match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
+                | None -> Some(operationName)
+                | Some(_) -> findUnknownProviderBinding(capabilityName)(tail)(environment)
+
+let recursive findMissingProviderBinding operations bindings =
+    match operations with
+        | [] -> None
+        | CapabilityOperationInferenceDefinition { name = operationName, scheme = _scheme, hasExplicitSignature = _hasExplicitSignature } :: tail ->
+            if providerBindingExists(operationName)(bindings)
+            then findMissingProviderBinding(tail)(bindings)
+            else Some(operationName)
+
+let recursive providerOperationCapability capabilityName semanticType =
+    match semanticType with
+        | SemFunction(_argument, result, row) ->
+            match result with
+                | SemFunction(_, _, _) -> providerOperationCapability(capabilityName)(result)
+                | _ ->
+                    match row with
+                        | Some(SemRow(capabilities, _tail)) ->
+                            let recursive findCapability values =
+                                match values with
+                                    | [] -> None
+                                    | SemCapability(name, arguments) :: tail ->
+                                        if name == capabilityName
+                                        then Some(SemCapability(name)(arguments))
+                                        else findCapability(tail)
+                                    | _ :: tail -> findCapability(tail)
+                            in findCapability(capabilities)
+                        | _ -> None
+        | _ -> None
+
+let recursive detachProviderOperationRow semanticType =
+    match semanticType with
+        | SemFunction(argument, result, row) ->
+            match result with
+                | SemFunction(_, _, _) -> SemFunction(argument)(detachProviderOperationRow(result))(row)
+                | _ -> SemFunction(argument)(result)(None)
+        | _ -> semanticType
+
+let prepareProviderExpectedType capabilityName capabilityType operation substitution supply =
+    match operation with
+        | CapabilityOperationInferenceDefinition { name = _operationName, scheme = scheme, hasExplicitSignature = hasExplicitSignature } ->
+            match instantiate(scheme)(supply) with
+                | InstantiationResult { semanticType = operationType, constraints = _constraints, supply = operationSupply } ->
+                    if hasExplicitSignature
+                    then
+                        match providerOperationCapability(capabilityName)(operationType) with
+                            | None -> TypeInferenceResult(semanticType = SemNever, substitution = substitution, supply = operationSupply, constraints = [], error = Some(UnsupportedInferenceExpression("provider operation has no capability row")))
+                            | Some(operationCapability) ->
+                                match unify(applySubstitution(substitution)(operationCapability))(applySubstitution(substitution)(capabilityType)) with
+                                    | UnificationResult { substitution = operationSubstitution, error = None } ->
+                                        let combined = appendProgramSubstitution(operationSubstitution)(substitution)
+                                        in TypeInferenceResult(semanticType = applySubstitution(combined)(detachProviderOperationRow(operationType)), substitution = combined, supply = operationSupply, constraints = [], error = None)
+                                    | UnificationResult { substitution = _operationSubstitution, error = Some(error) } -> TypeInferenceResult(semanticType = SemNever, substitution = substitution, supply = operationSupply, constraints = [], error = Some(InferenceUnificationError(error)))
+                    else TypeInferenceResult(semanticType = operationType, substitution = substitution, supply = operationSupply, constraints = [], error = None)
+
+let recursive registerProviderOperations capabilityName capabilityType operationDefinitions bindings environment substitution supply reversed =
+    match operationDefinitions with
+        | [] -> ProviderOperationRegistration(operations = reverse(reversed), substitution = substitution, supply = supply, error = None)
+        | operation :: tail ->
+            match operation with
+                | CapabilityOperationInferenceDefinition { name = operationName, scheme = _scheme, hasExplicitSignature = _hasExplicitSignature } ->
+                    match findProviderBinding(operationName)(bindings) with
+                        | None -> ProviderOperationRegistration(operations = reverse(reversed), substitution = substitution, supply = supply, error = Some(MissingProviderOperation(capabilityName)(operationName)))
+                        | Some(implementation) ->
+                            match prepareProviderExpectedType(capabilityName)(capabilityType)(operation)(substitution)(supply) with
+                                | TypeInferenceResult { semanticType = expectedType, substitution = expectedSubstitution, supply = expectedSupply, constraints = _expectedConstraints, error = None } ->
+                                    match inferExpressionFrom(implementation)(environment)(expectedSubstitution)(expectedSupply) with
+                                        | TypeInferenceResult { semanticType = implementationType, substitution = implementationSubstitution, supply = implementationSupply, constraints = _implementationConstraints, error = None } ->
+                                            match unify(applySubstitution(implementationSubstitution)(expectedType))(applySubstitution(implementationSubstitution)(implementationType)) with
+                                                | UnificationResult { substitution = providerSubstitution, error = None } ->
+                                                    let combined = appendProgramSubstitution(providerSubstitution)(implementationSubstitution)
+                                                    in
+                                                        let registered = CapabilityProviderOperationInferenceDefinition(name = operationName, semanticType = applySubstitution(combined)(implementationType))
+                                                        in registerProviderOperations(capabilityName)(capabilityType)(tail)(bindings)(environment)(combined)(implementationSupply)(registered :: reversed)
+                                                | UnificationResult { substitution = _providerSubstitution, error = Some(error) } -> ProviderOperationRegistration(operations = reverse(reversed), substitution = implementationSubstitution, supply = implementationSupply, error = Some(ProgramExpressionError(InferenceUnificationError(error))))
+                                        | TypeInferenceResult { semanticType = _implementationType, substitution = failedSubstitution, supply = failedSupply, constraints = _implementationConstraints, error = Some(error) } -> ProviderOperationRegistration(operations = reverse(reversed), substitution = failedSubstitution, supply = failedSupply, error = Some(ProgramExpressionError(error)))
+                                | TypeInferenceResult { semanticType = _expectedType, substitution = failedSubstitution, supply = failedSupply, constraints = _expectedConstraints, error = Some(error) } -> ProviderOperationRegistration(operations = reverse(reversed), substitution = failedSubstitution, supply = failedSupply, error = Some(ProgramExpressionError(error)))
+
 let registerTypeDeclaration declaration state =
     match (declaration, state) with
         | (TypeDecl { name = name, typeParameters = parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = symbolId, error = None }) ->
@@ -323,6 +456,44 @@ let registerZeroCostType declaration state =
             let nominal = TypeDecl(name = name, typeParameters = typeParameters, constructors = [constructor], isRecord = false, derivingTraits = derivingTraits)
             in registerTypeDeclaration(nominal)(state)
 
+let registerCapabilityProvider declaration state =
+    match (declaration, state) with
+        | (ProvideDecl { capabilityName = capabilityName, typeArguments = typeArguments, bindings = bindings }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
+            match resolveCapabilityBinding(capabilityName)(environment) with
+                | None -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnknownProviderCapability(capabilityName)))
+                | Some(CapabilityInferenceDefinition { name = _name, scheme = capabilityScheme, operations = operations }) ->
+                    match capabilityScheme with
+                        | TypeScheme { quantified = _quantified, body = SemCapability(_schemeName, parameterTypes), constraints = _constraints } ->
+                            let expectedArity = semanticTypeListLength(parameterTypes)
+                            in
+                                let actualArity = parameterCount(typeArguments)
+                                in
+                                    if expectedArity == actualArity
+                                    then
+                                        match resolveConstructorParameters(typeArguments)(inferenceTypeResolutionContext(environment))([]) with
+                                            | TypeListResolutionResult { semanticTypes = resolvedArguments, error = None } ->
+                                                let capabilityType = SemCapability(capabilityName)(resolvedArguments)
+                                                in
+                                                    match resolveCapabilityProvider(capabilityType)(environment) with
+                                                        | Some(_) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(DuplicateCapabilityProvider(capabilityType)))
+                                                        | None ->
+                                                            match findDuplicateProviderBinding(bindings)([]) with
+                                                                | Some(operationName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(DuplicateProviderOperation(capabilityName)(operationName)))
+                                                                | None ->
+                                                                    match findUnknownProviderBinding(capabilityName)(bindings)(environment) with
+                                                                        | Some(operationName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnknownProviderOperation(capabilityName)(operationName)))
+                                                                        | None ->
+                                                                            match findMissingProviderBinding(operations)(bindings) with
+                                                                                | Some(operationName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(MissingProviderOperation(capabilityName)(operationName)))
+                                                                                | None ->
+                                                                                    match registerProviderOperations(capabilityName)(capabilityType)(operations)(bindings)(environment)(substitution)(supply)([]) with
+                                                                                        | ProviderOperationRegistration { operations = registeredOperations, substitution = providerSubstitution, supply = providerSupply, error = None } -> ProgramInferenceState(environment = addCapabilityProvider(capabilityType)(registeredOperations)(environment), substitution = providerSubstitution, supply = providerSupply, nextTypeSymbolId = nextTypeSymbolId, error = None)
+                                                                                        | ProviderOperationRegistration { operations = _registeredOperations, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = nextTypeSymbolId, error = Some(error))
+                                            | TypeListResolutionResult { semanticTypes = _resolvedArguments, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(ProgramTypeResolutionError(error)))
+                                    else ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(ProviderCapabilityArityMismatch(capabilityName)(expectedArity)(actualArity)))
+                        | _ -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnknownProviderCapability(capabilityName)))
+        | (_declaration, failedState) -> failedState
+
 let inferTopLevelLet binding isRecursive state =
     match (binding, state) with
         | (LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = _requirements }, ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = None }) ->
@@ -348,6 +519,7 @@ let recursive inferTopLevelItems items state =
                     | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
                     | TopLevelZeroCostType(declaration) -> registerZeroCostType(declaration)(state)
                     | TopLevelCapability(declaration) -> registerCapabilityDeclaration(declaration)(state)
+                    | TopLevelProvide(declaration) -> registerCapabilityProvider(declaration)(state)
                     | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
                     | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
                     | _ ->
