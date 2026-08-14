@@ -43,6 +43,7 @@ type ProgramInferenceError =
     | TraitImplementationRequirementArityMismatch(Str, Int, Int)
     | TraitImplementationRequirementVariableEscapes(Str, Str)
     | NonDecreasingTraitImplementationRequirement(Str, Str)
+    | DefaultTraitMethodDependencyCycle(Str, Str)
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
     | MissingTraitImplementationMethod(Str, Str)
@@ -135,6 +136,10 @@ type TraitImplementationMethodRegistration =
 type TraitHeadOverlapResult =
     | substitutions: List((Int, SemanticType))
     | overlaps: Bool
+
+type DefaultMethodCycleValidation =
+    | completed: List(Str)
+    | cycle: Maybe(Str)
 
 let recursive wrapSugarParameters parameters body =
     match parameters with
@@ -854,6 +859,162 @@ let recursive implementationBindingExists methodName bindings =
             then true
             else implementationBindingExists(methodName)(tail)
 
+let recursive expressionPairDependsOnTraitMethod traitName methodName left right =
+    if expressionDependsOnTraitMethod(traitName)(methodName)(left)
+    then true
+    else expressionDependsOnTraitMethod(traitName)(methodName)(right)
+and expressionsDependOnTraitMethod traitName methodName expressions =
+    match expressions with
+        | [] -> false
+        | head :: tail ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(head)
+            then true
+            else expressionsDependOnTraitMethod(traitName)(methodName)(tail)
+and expressionFieldsDependOnTraitMethod traitName methodName fields =
+    match fields with
+        | [] -> false
+        | (_name, value) :: tail ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(value)
+            then true
+            else expressionFieldsDependOnTraitMethod(traitName)(methodName)(tail)
+and matchCasesDependOnTraitMethod traitName methodName cases =
+    match cases with
+        | [] -> false
+        | (_pattern, body, guard) :: tail ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(body)
+            then true
+            else
+                let guardDepends =
+                    match guard with
+                        | None -> false
+                        | Some(guardExpression) -> expressionDependsOnTraitMethod(traitName)(methodName)(guardExpression)
+                in
+                    if guardDepends
+                    then true
+                    else matchCasesDependOnTraitMethod(traitName)(methodName)(tail)
+and handlerArmsDependOnTraitMethod traitName methodName arms =
+    match arms with
+        | [] -> false
+        | (_capabilityName, _operationName, _patterns, body) :: tail ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(body)
+            then true
+            else handlerArmsDependOnTraitMethod(traitName)(methodName)(tail)
+and expressionDependsOnTraitMethod traitName methodName expression =
+    match expression with
+        | ExprAt(_span, inner) -> expressionDependsOnTraitMethod(traitName)(methodName)(inner)
+        | ExprQualifiedVar(candidateTraitName, candidateMethodName) ->
+            if traitName == candidateTraitName
+            then methodName == candidateMethodName
+            else false
+        | ExprAdd(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprSubtract(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprMultiply(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprDivide(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprModulo(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprBitwiseAnd(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprBitwiseOr(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprBitwiseXor(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprShiftLeft(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprShiftRight(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprGreaterThan(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprLessThan(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprGreaterOrEqual(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprLessOrEqual(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprEqual(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprNotEqual(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprResultPipe(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprResultMapErrorPipe(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprCons(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprBitwiseNot(operand) -> expressionDependsOnTraitMethod(traitName)(methodName)(operand)
+        | ExprLogicalNot(operand) -> expressionDependsOnTraitMethod(traitName)(methodName)(operand)
+        | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(value)(body)
+        | ExprLetResult(_name, value, body) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(value)(body)
+        | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(value)(body)
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(condition)
+            then true
+            else expressionPairDependsOnTraitMethod(traitName)(methodName)(thenBranch)(elseBranch)
+        | ExprLambda(_name, body, _annotation) -> expressionDependsOnTraitMethod(traitName)(methodName)(body)
+        | ExprCall(function, argument, _whitespace) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(function)(argument)
+        | ExprTuple(elements) -> expressionsDependOnTraitMethod(traitName)(methodName)(elements)
+        | ExprList(elements) -> expressionsDependOnTraitMethod(traitName)(methodName)(elements)
+        | ExprMatch(value, cases, _position) ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(value)
+            then true
+            else matchCasesDependOnTraitMethod(traitName)(methodName)(cases)
+        | ExprAwait(task) -> expressionDependsOnTraitMethod(traitName)(methodName)(task)
+        | ExprRecord(_name, fields) -> expressionFieldsDependOnTraitMethod(traitName)(methodName)(fields)
+        | ExprRecordUpdate(target, fields) ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(target)
+            then true
+            else expressionFieldsDependOnTraitMethod(traitName)(methodName)(fields)
+        | ExprPerform(operation) -> expressionDependsOnTraitMethod(traitName)(methodName)(operation)
+        | ExprHandle(body, arms) ->
+            if expressionDependsOnTraitMethod(traitName)(methodName)(body)
+            then true
+            else handlerArmsDependOnTraitMethod(traitName)(methodName)(arms)
+        | ExprInt(_) -> false
+        | ExprBigInt(_) -> false
+        | ExprUInt(_, _, _) -> false
+        | ExprFloat(_, _) -> false
+        | ExprString(_) -> false
+        | ExprRune(_) -> false
+        | ExprBool(_) -> false
+        | ExprVar(_) -> false
+
+let recursive activeDefaultMethodNames methods bindings reversed =
+    match methods with
+        | [] -> sortImplementationNames(reverse(reversed))
+        | TraitMethodInferenceDefinition { name = methodName, scheme = _scheme, defaultImplementation = defaultImplementation } :: tail ->
+            match defaultImplementation with
+                | None -> activeDefaultMethodNames(tail)(bindings)(reversed)
+                | Some(_) ->
+                    if implementationBindingExists(methodName)(bindings)
+                    then activeDefaultMethodNames(tail)(bindings)(reversed)
+                    else activeDefaultMethodNames(tail)(bindings)(methodName :: reversed)
+
+let recursive findInferenceTraitMethod methodName methods =
+    match methods with
+        | [] -> None
+        | TraitMethodInferenceDefinition { name = candidateName, scheme = scheme, defaultImplementation = defaultImplementation } :: tail ->
+            if methodName == candidateName
+            then Some(TraitMethodInferenceDefinition(name = candidateName, scheme = scheme, defaultImplementation = defaultImplementation))
+            else findInferenceTraitMethod(methodName)(tail)
+
+let recursive validateDefaultMethodDependencies traitName methodName body remaining activeDefaults methods path completed =
+    match remaining with
+        | [] -> DefaultMethodCycleValidation(completed = methodName :: completed, cycle = None)
+        | dependency :: tail ->
+            if expressionDependsOnTraitMethod(traitName)(dependency)(body)
+            then
+                match validateDefaultMethodDependency(traitName)(dependency)(activeDefaults)(methods)(methodName :: path)(completed) with
+                    | DefaultMethodCycleValidation { completed = dependencyCompleted, cycle = None } -> validateDefaultMethodDependencies(traitName)(methodName)(body)(tail)(activeDefaults)(methods)(path)(dependencyCompleted)
+                    | cycle -> cycle
+            else validateDefaultMethodDependencies(traitName)(methodName)(body)(tail)(activeDefaults)(methods)(path)(completed)
+and validateDefaultMethodDependency traitName methodName activeDefaults methods path completed =
+    if nameExists(methodName)(completed)
+    then DefaultMethodCycleValidation(completed = completed, cycle = None)
+    else
+        if nameExists(methodName)(path)
+        then DefaultMethodCycleValidation(completed = completed, cycle = Some(methodName))
+        else
+            match findInferenceTraitMethod(methodName)(methods) with
+                | None -> DefaultMethodCycleValidation(completed = completed, cycle = None)
+                | Some(TraitMethodInferenceDefinition { name = _name, scheme = _scheme, defaultImplementation = None }) -> DefaultMethodCycleValidation(completed = methodName :: completed, cycle = None)
+                | Some(TraitMethodInferenceDefinition { name = _name, scheme = _scheme, defaultImplementation = Some(body) }) -> validateDefaultMethodDependencies(traitName)(methodName)(body)(activeDefaults)(activeDefaults)(methods)(path)(completed)
+
+let recursive validateDefaultMethodDependencyRoots traitName remaining activeDefaults methods completed =
+    match remaining with
+        | [] -> None
+        | methodName :: tail ->
+            match validateDefaultMethodDependency(traitName)(methodName)(activeDefaults)(methods)([])(completed) with
+                | DefaultMethodCycleValidation { completed = nextCompleted, cycle = None } -> validateDefaultMethodDependencyRoots(traitName)(tail)(activeDefaults)(methods)(nextCompleted)
+                | DefaultMethodCycleValidation { completed = _nextCompleted, cycle = Some(methodName) } -> Some(methodName)
+
+let validateDefaultMethodDependencyCycles traitName methods bindings =
+    (let activeDefaults = activeDefaultMethodNames(methods)(bindings)([])
+    in validateDefaultMethodDependencyRoots(traitName)(activeDefaults)(activeDefaults)(methods)([]))
+
 let recursive findUnknownImplementationBinding traitName bindings environment =
     match bindings with
         | [] -> None
@@ -1038,7 +1199,10 @@ let registerTraitImplementation declaration state =
                                                                                             then ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OverlappingTraitImplementations(traitName)))
                                                                                             else
                                                                                                 match registerImplementationMethods(traitName)(bindings)(resolvedTypeArguments)(environment)(substitution)(supply)([]) with
-                                                                                                    | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
+                                                                                                    | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } ->
+                                                                                                        match validateDefaultMethodDependencyCycles(traitName)(traitMethods)(bindings) with
+                                                                                                            | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(DefaultTraitMethodDependencyCycle(traitName)(methodName)))
+                                                                                                            | None -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
                                                                                                     | TraitImplementationMethodRegistration { methods = _registeredMethods, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
                                                                 else ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OrphanTraitImplementation(traitName)))
                                                     | TraitConstraintRegistration { constraints = _resolvedRequirements, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
