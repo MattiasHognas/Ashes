@@ -12,6 +12,8 @@ export (
     type CapabilityOperationInferenceDefinition(..),
     type CapabilityProviderInferenceDefinition(..),
     type CapabilityProviderOperationInferenceDefinition(..),
+    type TraitInferenceDefinition(..),
+    type TraitMethodInferenceDefinition(..),
     type TypeInferenceError(..),
     type TypeInferenceResult(..),
     type TopLevelBindingInferenceResult(..),
@@ -25,6 +27,9 @@ export (
     value resolveCapabilityOperation,
     value addCapabilityProvider,
     value resolveCapabilityProvider,
+    value addTraitBinding,
+    value resolveTraitBinding,
+    value resolveTraitMethod,
     value inferenceTypeResolutionContext,
     value inferenceEnvironmentSchemes,
     value applyInferenceConstraints,
@@ -57,10 +62,22 @@ type CapabilityProviderInferenceDefinition =
     | capabilityType: SemanticType
     | operations: List(CapabilityProviderOperationInferenceDefinition)
 
+type TraitMethodInferenceDefinition =
+    | name: Str
+    | scheme: TypeScheme
+    | defaultImplementation: Maybe(Expr)
+
+type TraitInferenceDefinition =
+    | name: Str
+    | parameterCount: Int
+    | methods: List(TraitMethodInferenceDefinition)
+    | supertraits: List(TraitConstraint)
+
 type TypeEnvironment =
     | bindings: List((Str, TypeScheme))
     | constructors: List(ConstructorInferenceDefinition)
     | capabilities: List(CapabilityInferenceDefinition)
+    | traits: List(TraitInferenceDefinition)
     | providers: List(CapabilityProviderInferenceDefinition)
     | handledCapabilities: List(Str)
     | typeResolutionContext: TypeResolutionContext
@@ -174,27 +191,27 @@ type ProviderCapabilityResolution =
     | capabilities: List(SemanticType)
     | error: Maybe(TypeInferenceError)
 
-let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], capabilities = [], providers = [], handledCapabilities = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
+let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], capabilities = [], traits = [], providers = [], handledCapabilities = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
 let addTypeBinding name scheme environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addConstructorBinding name scheme fieldNames environment =
     match addTypeBinding(name)(scheme)(environment) with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addCapabilityBinding name scheme operations environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, scheme = scheme, operations = operations) :: capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, scheme = scheme, operations = operations) :: capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addInferenceTypeDefinition symbolId name arity environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
 
 let addInferenceTypeAlias name parameterIds target environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeAliasDefinition(name)(parameterIds)(target)(typeResolutionContext))
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeAliasDefinition(name)(parameterIds)(target)(typeResolutionContext))
 
 let recursive findTypeBinding name bindings =
     match bindings with
@@ -206,7 +223,7 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
 
 let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinition) -> Maybe(ConstructorInferenceDefinition) =
     given (name) ->
@@ -220,7 +237,7 @@ let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinitio
 
 let resolveConstructorBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findConstructorBinding(name)(constructors)
+        | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findConstructorBinding(name)(constructors)
 
 let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition) -> Maybe(CapabilityInferenceDefinition) =
     given (name) ->
@@ -234,7 +251,7 @@ let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition)
 
 let resolveCapabilityBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityBinding(name)(capabilities)
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityBinding(name)(capabilities)
 
 let recursive findCapabilityOperation name operations =
     match operations with
@@ -249,9 +266,38 @@ let resolveCapabilityOperation capabilityName operationName environment =
         | None -> None
         | Some(CapabilityInferenceDefinition { name = _name, scheme = _scheme, operations = operations }) -> findCapabilityOperation(operationName)(operations)
 
+let addTraitBinding name parameterCount methods supertraits environment =
+    match environment with
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, traits = TraitInferenceDefinition(name = name, parameterCount = parameterCount, methods = methods, supertraits = supertraits) :: traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+
+let recursive findTraitBinding name traits =
+    match traits with
+        | [] -> None
+        | TraitInferenceDefinition { name = candidateName, parameterCount = parameterCount, methods = methods, supertraits = supertraits } :: tail ->
+            if name == candidateName
+            then Some(TraitInferenceDefinition(name = candidateName, parameterCount = parameterCount, methods = methods, supertraits = supertraits))
+            else findTraitBinding(name)(tail)
+
+let resolveTraitBinding name environment =
+    match environment with
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findTraitBinding(name)(traits)
+
+let recursive findTraitMethod name methods =
+    match methods with
+        | [] -> None
+        | TraitMethodInferenceDefinition { name = candidateName, scheme = scheme, defaultImplementation = defaultImplementation } :: tail ->
+            if name == candidateName
+            then Some(TraitMethodInferenceDefinition(name = candidateName, scheme = scheme, defaultImplementation = defaultImplementation))
+            else findTraitMethod(name)(tail)
+
+let resolveTraitMethod traitName methodName environment =
+    match resolveTraitBinding(traitName)(environment) with
+        | None -> None
+        | Some(TraitInferenceDefinition { name = _name, parameterCount = _parameterCount, methods = methods, supertraits = _supertraits }) -> findTraitMethod(methodName)(methods)
+
 let addCapabilityProvider capabilityType operations environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = CapabilityProviderInferenceDefinition(capabilityType = capabilityType, operations = operations) :: providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = CapabilityProviderInferenceDefinition(capabilityType = capabilityType, operations = operations) :: providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let recursive findCapabilityProvider capabilityType providers =
     match providers with
@@ -263,7 +309,7 @@ let recursive findCapabilityProvider capabilityType providers =
 
 let resolveCapabilityProvider capabilityType environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityProvider(capabilityType)(providers)
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityProvider(capabilityType)(providers)
 
 let recursive stringExists name values =
     match values with
@@ -280,11 +326,11 @@ let recursive appendHandledCapabilities names existing =
 
 let withHandledCapabilities names environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = appendHandledCapabilities(names)(handledCapabilities), typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = appendHandledCapabilities(names)(handledCapabilities), typeResolutionContext = typeResolutionContext)
 
 let capabilityIsHandled name environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = handledCapabilities, typeResolutionContext = _typeResolutionContext } -> stringExists(name)(handledCapabilities)
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = handledCapabilities, typeResolutionContext = _typeResolutionContext } -> stringExists(name)(handledCapabilities)
 
 let recursive handlerOperationExists capabilityName operationName arms =
     match arms with
@@ -416,7 +462,7 @@ let recursive buildUnsignedOperationType parameters capabilityType supply revers
 
 let inferenceTypeResolutionContext environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
 
 let inferenceSuccess semanticType substitution supply = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = [], error = None)
 
@@ -636,7 +682,7 @@ let checkInferenceAnnotation annotation expectedType environment substitution su
 
 let inferenceEnvironmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, traits = _traits, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             let recursive schemes values =
                 match values with
                     | [] -> []
