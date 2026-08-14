@@ -1,0 +1,10 @@
+{
+  "name": "ashes-compiler-semantics",
+  "namespace": "AshesCompiler.Semantics",
+  "entry": "Package.ash",
+  "sourceRoots": ["src"],
+  "outDir": "out",
+  "dependencies": {
+    "frontend": { "path": "../frontend" }
+  }
+}
