@@ -6,6 +6,8 @@ export (
     type TraitResolutionError(..),
     type TraitEvidenceResolution(..),
     value resolveTraitEvidence,
+    value requireTraitEvidence,
+    value formatTraitResolutionTrace,
 )
 
 type TraitEvidencePlan =
@@ -13,11 +15,12 @@ type TraitEvidencePlan =
     | TraitEvidenceInstance(TraitConstraint, TraitImplementationInferenceDefinition, List(TraitEvidencePlan), List(TraitEvidencePlan))
 
 type TraitResolutionError =
-    | MissingTraitImplementation(TraitConstraint)
-    | AmbiguousTraitImplementation(TraitConstraint)
+    | MissingTraitImplementation(TraitConstraint, List(TraitConstraint))
+    | AmbiguousTraitImplementation(TraitConstraint, List(TraitConstraint))
     | CyclicTraitResolution(List(TraitConstraint))
-    | TraitResolutionDepthExceeded(TraitConstraint, Int)
-    | NonDecreasingTraitResolutionRequirement(TraitConstraint)
+    | TraitResolutionDepthExceeded(TraitConstraint, Int, List(TraitConstraint))
+    | NonDecreasingTraitResolutionRequirement(TraitConstraint, List(TraitConstraint))
+    | AmbiguousTraitEvidence(TraitConstraint, List(TraitConstraint))
     deriving {Eq, Show}
 
 type TraitEvidenceResolution =
@@ -39,6 +42,32 @@ type TraitDependencyResolution =
 let evidenceSuccess plan = TraitEvidenceResolution(plan = Some(plan), error = None)
 
 let evidenceFailure error = TraitEvidenceResolution(plan = None, error = Some(error))
+
+let canonicalResolutionTrace goal trace = reverse(goal :: trace)
+
+let recursive formatTraitResolutionArguments arguments =
+    match arguments with
+        | [] -> ""
+        | head :: tail ->
+            let recursive formatTail remaining =
+                match remaining with
+                    | [] -> ""
+                    | item :: rest -> ", " + formatSemanticType(item) + formatTail(rest)
+            in formatSemanticType(head) + formatTail(tail)
+
+let formatTraitResolutionConstraint constraint =
+    match constraint with
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } -> traitName + "(" + formatTraitResolutionArguments(typeArguments) + ")"
+
+let recursive formatTraitResolutionTrace trace =
+    match trace with
+        | [] -> ""
+        | head :: tail ->
+            let recursive formatTail remaining =
+                match remaining with
+                    | [] -> ""
+                    | item :: rest -> " -> " + formatTraitResolutionConstraint(item) + formatTail(rest)
+            in formatTraitResolutionConstraint(head) + formatTail(tail)
 
 let nextResolutionDepth : Int -> Int =
     given (depth) -> depth + 1
@@ -251,7 +280,7 @@ let recursive resolveTraitDependencies dependencies environment trace depth reve
             match resolveTraitEvidenceFrom(head)(environment)(trace)(depth) with
                 | TraitEvidenceResolution { plan = Some(plan), error = None } -> resolveTraitDependencies(tail)(environment)(trace)(depth)(plan :: reversed)
                 | TraitEvidenceResolution { plan = _plan, error = Some(error) } -> TraitDependencyResolution(plans = reverse(reversed), error = Some(error))
-                | _ -> TraitDependencyResolution(plans = reverse(reversed), error = Some(MissingTraitImplementation(head)))
+                | _ -> TraitDependencyResolution(plans = reverse(reversed), error = Some(MissingTraitImplementation(head)(canonicalResolutionTrace(head)(trace))))
 and resolveMatchedTraitEvidence goal implementation substitutions environment trace depth =
     match implementation with
         | TraitImplementationInferenceDefinition { traitName = _traitName, typeArguments = _typeArguments, requirements = requirements, methods = _methods } ->
@@ -263,7 +292,7 @@ and resolveMatchedTraitEvidence goal implementation substitutions environment tr
                     else firstNonDecreasingRequirement(traitConstraintStructuralSize(goal))(resolvedRequirements)
                 in
                     match nonDecreasing with
-                        | Some(requirement) -> evidenceFailure(NonDecreasingTraitResolutionRequirement(requirement))
+                        | Some(requirement) -> evidenceFailure(NonDecreasingTraitResolutionRequirement(requirement)(canonicalResolutionTrace(requirement)(trace)))
                         | None ->
                             match resolveTraitDependencies(resolvedRequirements)(environment)(trace)(nextResolutionDepth(depth))([]) with
                                 | TraitDependencyResolution { plans = _plans, error = Some(error) } -> evidenceFailure(error)
@@ -273,10 +302,10 @@ and resolveMatchedTraitEvidence goal implementation substitutions environment tr
                                         | TraitDependencyResolution { plans = supertraitPlans, error = None } -> evidenceSuccess(TraitEvidenceInstance(goal)(implementation)(requirementPlans)(supertraitPlans))
 and resolveTraitEvidenceFrom goal environment trace depth =
     if resolutionDepthExceeded(depth)
-    then evidenceFailure(TraitResolutionDepthExceeded(goal)(64))
+    then evidenceFailure(TraitResolutionDepthExceeded(goal)(64)(canonicalResolutionTrace(goal)(trace)))
     else
         if traceContains(goal)(trace)
-        then evidenceFailure(CyclicTraitResolution(reverse(goal :: trace)))
+        then evidenceFailure(CyclicTraitResolution(canonicalResolutionTrace(goal)(trace)))
         else
             match goal with
                 | TraitConstraint { traitName = traitName, typeArguments = typeArguments } ->
@@ -285,9 +314,35 @@ and resolveTraitEvidenceFrom goal environment trace depth =
                         match matches with
                             | [] ->
                                 if traitConstraintIsConcrete(goal)
-                                then evidenceFailure(MissingTraitImplementation(goal))
+                                then evidenceFailure(MissingTraitImplementation(goal)(canonicalResolutionTrace(goal)(trace)))
                                 else evidenceSuccess(TraitEvidenceParameter(goal))
                             | TraitImplementationMatch { implementation = implementation, substitutions = substitutions } :: [] -> resolveMatchedTraitEvidence(goal)(implementation)(substitutions)(environment)(goal :: trace)(depth)
-                            | _ -> evidenceFailure(AmbiguousTraitImplementation(goal))
+                            | _ -> evidenceFailure(AmbiguousTraitImplementation(goal)(canonicalResolutionTrace(goal)(trace)))
 
 let resolveTraitEvidence goal environment = resolveTraitEvidenceFrom(goal)(environment)([])(0)
+
+let recursive firstEvidenceParameterTrace plan trace =
+    match plan with
+        | TraitEvidenceParameter(constraint) -> Some(canonicalResolutionTrace(constraint)(trace))
+        | TraitEvidenceInstance(goal, _implementation, requirements, supertraits) ->
+            match firstEvidenceParameterTraceFrom(requirements)(goal :: trace) with
+                | Some(parameterTrace) -> Some(parameterTrace)
+                | None -> firstEvidenceParameterTraceFrom(supertraits)(goal :: trace)
+and firstEvidenceParameterTraceFrom plans trace =
+    match plans with
+        | [] -> None
+        | head :: tail ->
+            match firstEvidenceParameterTrace(head)(trace) with
+                | Some(parameterTrace) -> Some(parameterTrace)
+                | None -> firstEvidenceParameterTraceFrom(tail)(trace)
+
+let requireTraitEvidence goal environment =
+    match resolveTraitEvidence(goal)(environment) with
+        | TraitEvidenceResolution { plan = Some(plan), error = None } ->
+            match firstEvidenceParameterTrace(plan)([]) with
+                | None -> evidenceSuccess(plan)
+                | Some(trace) ->
+                    match reverse(trace) with
+                        | parameter :: _ -> evidenceFailure(AmbiguousTraitEvidence(parameter)(trace))
+                        | [] -> evidenceFailure(AmbiguousTraitEvidence(goal)([goal]))
+        | result -> result
