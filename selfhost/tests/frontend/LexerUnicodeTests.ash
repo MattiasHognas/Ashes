@@ -15,34 +15,33 @@ let unicodeTokenAt (index: Int) (tokens: List(Token)) =
 let run unit =
     (let result = tokenize("naïve let 😀")
     in
-        let identifier = unicodeTokenAt(0)(result.tokens)
-        in
-            let keyword = unicodeTokenAt(1)(result.tokens)
-            in
-                let bad = unicodeTokenAt(2)(result.tokens)
-                in
-                    let eof = unicodeTokenAt(3)(result.tokens)
-                    in
-                        let identifierChecked = test.assertEqual(Token(kind = Ident, text = "naïve", intValue = 0, floatValue = 0.0, position = 0, length = 6))(identifier)
-                        in
-                            let keywordChecked = test.assertEqual(Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 8, length = 3))(keyword)
-                            in
-                                let badChecked = test.assertEqual(Token(kind = Bad, text = "😀", intValue = 0, floatValue = 0.0, position = 12, length = 4))(bad)
-                                in
-                                    let eofPositionChecked = test.assertEqual(16)(eof.position)
-                                    in
-                                        let diagnosticChecked = test.assertEqual([DiagnosticEntry(span = TextSpan(start = 12, end = 16), message = "Unexpected character: '😀'.", code = Some("ASH003"))])(result.diagnostics)
-                                        in
-                                            let suffixBoundary = tokenize("1u8é")
-                                            in
-                                                let suffixKinds =
-                                                    suffixBoundary.tokens
-                                                    |> LexerCoreTests.lexerKindNames
-                                                    |> test.assertEqual(["Int", "Ident", "EOF"])
-                                                in
-                                                    let unicodeString = tokenize("\"café 😀\"")
-                                                    in
-                                                        let unicodeStringToken = unicodeTokenAt(0)(unicodeString.tokens)
-                                                        in
-                                                            let unicodeStringChecked = test.assertEqual("café 😀")(unicodeStringToken.text)
-                                                            in Unit)
+        result.tokens
+        |> unicodeTokenAt(0)
+        |> test.assertEqual(Token(kind = Ident, text = "naïve", intValue = 0, floatValue = 0.0, position = 0, length = 6))
+        |> (given (_) ->
+            result.tokens
+            |> unicodeTokenAt(1)
+            |> test.assertEqual(Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 8, length = 3)))
+        |> (given (_) ->
+            result.tokens
+            |> unicodeTokenAt(2)
+            |> test.assertEqual(Token(kind = Bad, text = "😀", intValue = 0, floatValue = 0.0, position = 12, length = 4)))
+        |> (given (_) ->
+            result.tokens
+            |> unicodeTokenAt(3)
+            |> (given (token) -> token.position)
+            |> test.assertEqual(16))
+        |> (given (_) -> test.assertEqual([DiagnosticEntry(span = TextSpan(start = 12, end = 16), message = "Unexpected character: '😀'.", code = Some("ASH003"))])(result.diagnostics))
+        |> (given (_) ->
+            "1u8é"
+            |> tokenize
+            |> (given (suffix) -> suffix.tokens)
+            |> LexerCoreTests.lexerKindNames
+            |> test.assertEqual(["Int", "Ident", "EOF"]))
+        |> (given (_) ->
+            "\"café 😀\""
+            |> tokenize
+            |> (given (unicodeString) -> unicodeString.tokens)
+            |> unicodeTokenAt(0)
+            |> (given (token) -> token.text)
+            |> test.assertEqual("café 😀")))
