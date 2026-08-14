@@ -2,8 +2,8 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
-let expectType expected expression =
-    match inferExpression(expression)(emptyTypeEnvironment(Unit)) with
+let expectTypeIn expected expression environment =
+    match inferExpression(expression)(environment) with
         | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, error = None } ->
             let actual = formatSemanticType(applySubstitution(substitution)(semanticType))
             in
@@ -11,6 +11,8 @@ let expectType expected expression =
                 then Unit
                 else test.fail("expected " + expected + " but inferred " + actual)
         | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(error) } -> test.fail("inference should succeed: " + Ashes.Trait.Show.show(error))
+
+let expectType expected expression = expectTypeIn(expected)(expression)(emptyTypeEnvironment(Unit))
 
 let runTypeInferenceTests unit =
     (let identity = ExprLambda("value")(ExprVar("value"))(None)
@@ -25,15 +27,32 @@ let runTypeInferenceTests unit =
                     in
                         let polymorphismChecked = expectType("(Int, Str)")(ExprLet("identity")(identity)(polymorphicBody)([])(None)([]))
                         in
-                            let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                            let conditionalChecked = expectType("Int")(ExprIf(ExprBool(true))(ExprInt(1))(ExprInt(2)))
                             in
-                                let occursChecked =
-                                    match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
-                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
-                                        | _ -> test.fail("self application should fail the occurs check")
+                                let listChecked = expectType("List(Int)")(ExprList([ExprInt(1), ExprInt(2)]))
                                 in
-                                    let unknownChecked =
-                                        match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
-                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
-                                            | _ -> test.fail("unknown value should be reported")
-                                    in Ashes.IO.print("all self-hosted core inference tests passed"))
+                                    let consChecked = expectType("List(Str)")(ExprCons(ExprString("head"))(ExprList([])))
+                                    in
+                                        let recursiveChecked = expectType("Int")(ExprLetRecursive("loop")(identity)(ExprCall(ExprVar("loop"))(ExprInt(1))(false))([])(None)([]))
+                                        in
+                                            let qualifiedEnvironment = addTypeBinding("Config.value")(TypeScheme(quantified = [], body = SemString, constraints = []))(emptyTypeEnvironment(Unit))
+                                            in
+                                                let qualifiedChecked = expectTypeIn("Str")(ExprQualifiedVar("Config")("value"))(qualifiedEnvironment)
+                                                in
+                                                    let selfApplication = ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+                                                    in
+                                                        let occursChecked =
+                                                            match inferExpression(selfApplication)(emptyTypeEnvironment(Unit)) with
+                                                                | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(InfiniteType(_variableId, _type))) } -> Unit
+                                                                | _ -> test.fail("self application should fail the occurs check")
+                                                        in
+                                                            let branchMismatchChecked =
+                                                                match inferExpression(ExprIf(ExprBool(true))(ExprInt(1))(ExprString("wrong")))(emptyTypeEnvironment(Unit)) with
+                                                                    | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(InferenceUnificationError(TypeMismatch(_left, _right))) } -> Unit
+                                                                    | _ -> test.fail("if branches should have one type")
+                                                            in
+                                                                let unknownChecked =
+                                                                    match inferExpression(ExprVar("missing"))(emptyTypeEnvironment(Unit)) with
+                                                                        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(UnknownValue("missing")) } -> Unit
+                                                                        | _ -> test.fail("unknown value should be reported")
+                                                                in Ashes.IO.print("all self-hosted structural inference tests passed"))
