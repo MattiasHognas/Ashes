@@ -25,7 +25,7 @@ independently reviewable milestone per subsequent PR.
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
-| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; and ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods | Declaration and ordinary implementation inference implemented; coherence and evidence remain |
+| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; and deterministic duplicate/structural-overlap rejection | Declaration, ordinary implementation, and head-coherence inference implemented; ownership and evidence remain |
 | IR, optimizer, ownership, backend, linker | No self-hosted implementation yet | Not started |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined, but the tools are not ported | Not started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
@@ -43,8 +43,8 @@ must reference only the packages they actually consume.
 Work should continue in dependency order. Each item below is a reviewable milestone or a short series
 of milestones; split an item when its tests and public contract can stand alone.
 
-1. **Complete trait semantics.** Add overlap/coherence, orphan ownership, requirement termination, and
-   default dependency cycle validation to the ordinary implementation registry. Then canonicalize and
+1. **Complete trait semantics.** Add orphan ownership, requirement termination, and default dependency
+   cycle validation to the coherent ordinary implementation registry. Then canonicalize and
    simplify constraints through supertraits, validate written `requires` clauses, resolve concrete
    instances, and preserve abstract dictionary requirements. Add `deriving` expansion only after
    ordinary implementations work.
@@ -194,7 +194,7 @@ same public behavior.
   methods, and inherited defaults.
 - [x] Validate implementation trait/arity, method uniqueness and completeness, substituted method
   signatures, capability rows, and requirement variables.
-- [ ] Reject exact duplicate and structurally overlapping implementation heads independently of source
+- [x] Reject exact duplicate and structurally overlapping implementation heads independently of source
   or traversal order.
 - [ ] Track package provenance for traits and nominal head types and enforce the orphan ownership rule.
 - [ ] Validate decreasing conditional requirements, resolution cycles/depth, and default-only method

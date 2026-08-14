@@ -266,6 +266,39 @@ let expectTraitImplementationCapabilityRows unit =
                                         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
                                         | _ -> test.fail("implementation capability rows should match method signatures"))
 
+let expectTraitImplementationCoherence unit =
+    (let exact = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+    in
+        let exactChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(exact), TopLevelImplementation(exact)], body = None)) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                | _ -> test.fail("exact duplicate implementation heads should overlap")
+        in
+            let concrete = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("Int")])], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+            in
+                let genericFirstChecked =
+                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(genericEqualImplementation), TopLevelImplementation(concrete)], body = None)) with
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                        | _ -> test.fail("generic and concrete heads should overlap")
+                in
+                    let concreteFirstChecked =
+                        match inferProgram(ProgramSyntax(items = [TopLevelTrait(eqDeclaration), TopLevelImplementation(concrete), TopLevelImplementation(genericEqualImplementation)], body = None)) with
+                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(OverlappingTraitImplementations("Equal")) } -> Unit
+                            | _ -> test.fail("overlap detection should not depend on implementation order")
+                    in
+                        let pairTrait = TraitDecl(name = "PairEqual", typeParameters = [TypeParameter(name = "a"), TypeParameter(name = "b")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("b"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = None)])
+                        in
+                            let repeated = TraitImplementationDecl(traitName = "PairEqual", typeArguments = [TypeNamed("a"), TypeNamed("a")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                            in
+                                let distinct = TraitImplementationDecl(traitName = "PairEqual", typeArguments = [TypeNamed("Int"), TypeNamed("Str")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+                                in
+                                    match inferProgram(ProgramSyntax(items = [TopLevelTrait(pairTrait), TopLevelImplementation(repeated), TopLevelImplementation(distinct)], body = None)) with
+                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = environment, error = None } ->
+                                            match resolveTraitImplementations("PairEqual")(environment) with
+                                                | _first :: _second :: [] -> Unit
+                                                | _ -> test.fail("non-overlapping repeated-variable heads should both register")
+                                        | _ -> test.fail("a repeated head variable should reject incompatible concrete arguments"))
+
 let runTraitInferenceTests unit =
     (let registrationChecked = expectTraitRegistration(Unit)
     in
@@ -288,4 +321,6 @@ let runTraitInferenceTests unit =
                                         let implementationBodyChecked = expectTraitImplementationBodyValidation(Unit)
                                         in
                                             let implementationCapabilitiesChecked = expectTraitImplementationCapabilityRows(Unit)
-                                            in Ashes.IO.print("all self-hosted trait inference tests passed"))
+                                            in
+                                                let implementationCoherenceChecked = expectTraitImplementationCoherence(Unit)
+                                                in Ashes.IO.print("all self-hosted trait inference tests passed"))

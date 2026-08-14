@@ -43,6 +43,7 @@ type ProgramInferenceError =
     | UnknownTraitImplementationMethod(Str, Str)
     | DuplicateTraitImplementationMethod(Str, Str)
     | MissingTraitImplementationMethod(Str, Str)
+    | OverlappingTraitImplementations(Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
 
@@ -126,6 +127,10 @@ type TraitImplementationMethodRegistration =
     | substitution: List((Int, SemanticType))
     | supply: TypeVariableSupply
     | error: Maybe(ProgramInferenceError)
+
+type TraitHeadOverlapResult =
+    | substitutions: List((Int, SemanticType))
+    | overlaps: Bool
 
 let recursive wrapSugarParameters parameters body =
     match parameters with
@@ -808,6 +813,63 @@ let recursive findMissingImplementationBindingFrom methods bindings candidate =
 
 let findMissingImplementationBinding methods bindings = findMissingImplementationBindingFrom(methods)(bindings)(None)
 
+let recursive findTraitHeadSubstitution parameterId substitutions =
+    match substitutions with
+        | [] -> None
+        | (candidateId, replacement) :: tail ->
+            if parameterId == candidateId
+            then Some(replacement)
+            else findTraitHeadSubstitution(parameterId)(tail)
+
+let recursive traitHeadTypesOverlap left right substitutions =
+    match (left, right) with
+        | ([], []) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+        | (leftHead :: leftTail, rightHead :: rightTail) ->
+            match traitHeadTypeOverlaps(leftHead)(rightHead)(substitutions) with
+                | TraitHeadOverlapResult { substitutions = nextSubstitutions, overlaps = true } -> traitHeadTypesOverlap(leftTail)(rightTail)(nextSubstitutions)
+                | failure -> failure
+        | _ -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = false)
+and traitHeadTypeOverlaps left right substitutions =
+    match left with
+        | SemParameter(parameterId, _name) ->
+            match findTraitHeadSubstitution(parameterId)(substitutions) with
+                | Some(replacement) -> traitHeadTypeOverlaps(replacement)(right)(substitutions)
+                | None -> TraitHeadOverlapResult(substitutions = (parameterId, right) :: substitutions, overlaps = true)
+        | _ ->
+            match right with
+                | SemParameter(parameterId, _name) ->
+                    match findTraitHeadSubstitution(parameterId)(substitutions) with
+                        | Some(replacement) -> traitHeadTypeOverlaps(left)(replacement)(substitutions)
+                        | None -> TraitHeadOverlapResult(substitutions = (parameterId, left) :: substitutions, overlaps = true)
+                | _ ->
+                    match (left, right) with
+                        | (SemInt, SemInt) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemUInt(leftBits), SemUInt(rightBits)) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = leftBits == rightBits)
+                        | (SemFloat, SemFloat) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemBigInt, SemBigInt) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemString, SemString) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemRune, SemRune) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemBytes, SemBytes) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemBool, SemBool) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemNever, SemNever) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = true)
+                        | (SemList(leftElement), SemList(rightElement)) -> traitHeadTypeOverlaps(leftElement)(rightElement)(substitutions)
+                        | (SemTuple(leftElements), SemTuple(rightElements)) -> traitHeadTypesOverlap(leftElements)(rightElements)(substitutions)
+                        | (SemNamed(_leftId, leftName, leftArguments), SemNamed(_rightId, rightName, rightArguments)) ->
+                            if leftName == rightName
+                            then traitHeadTypesOverlap(leftArguments)(rightArguments)(substitutions)
+                            else TraitHeadOverlapResult(substitutions = substitutions, overlaps = false)
+                        | (SemPointer(leftPointee), SemPointer(rightPointee)) -> traitHeadTypeOverlaps(leftPointee)(rightPointee)(substitutions)
+                        | (SemOpaque(leftName), SemOpaque(rightName)) -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = leftName == rightName)
+                        | _ -> TraitHeadOverlapResult(substitutions = substitutions, overlaps = false)
+
+let recursive anyTraitImplementationHeadOverlaps candidateArguments implementations =
+    match implementations with
+        | [] -> false
+        | TraitImplementationInferenceDefinition { traitName = _traitName, typeArguments = existingArguments, requirements = _requirements, methods = _methods } :: tail ->
+            match traitHeadTypesOverlap(existingArguments)(candidateArguments)([]) with
+                | TraitHeadOverlapResult { substitutions = _substitutions, overlaps = true } -> true
+                | _ -> anyTraitImplementationHeadOverlaps(candidateArguments)(tail)
+
 let recursive implementationMethodSubstitution quantified typeArguments reversed =
     match (quantified, typeArguments) with
         | ((variableId, _name) :: quantifiedTail, argument :: argumentTail) -> implementationMethodSubstitution(quantifiedTail)(argumentTail)((variableId, argument) :: reversed)
@@ -862,9 +924,12 @@ let registerTraitImplementation declaration state =
                                                                         match findMissingImplementationBinding(traitMethods)(bindings) with
                                                                             | Some(methodName) -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(MissingTraitImplementationMethod(traitName)(methodName)))
                                                                             | None ->
-                                                                                match registerImplementationMethods(traitName)(bindings)(resolvedTypeArguments)(environment)(substitution)(supply)([]) with
-                                                                                    | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
-                                                                                    | TraitImplementationMethodRegistration { methods = _registeredMethods, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
+                                                                                if anyTraitImplementationHeadOverlaps(resolvedTypeArguments)(resolveTraitImplementations(traitName)(environment))
+                                                                                then ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(OverlappingTraitImplementations(traitName)))
+                                                                                else
+                                                                                    match registerImplementationMethods(traitName)(bindings)(resolvedTypeArguments)(environment)(substitution)(supply)([]) with
+                                                                                        | TraitImplementationMethodRegistration { methods = registeredMethods, substitution = implementationSubstitution, supply = implementationSupply, error = None } -> ProgramInferenceState(environment = addTraitImplementation(traitName)(resolvedTypeArguments)(resolvedRequirements)(registeredMethods)(environment), substitution = implementationSubstitution, supply = implementationSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = None)
+                                                                                        | TraitImplementationMethodRegistration { methods = _registeredMethods, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = failedSubstitution, supply = failedSupply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
                                                     | TraitConstraintRegistration { constraints = _resolvedRequirements, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(error))
                                             | TypeListResolutionResult { semanticTypes = _resolvedTypeArguments, error = Some(error) } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = implementationNextTypeSymbolId, error = Some(ProgramTypeResolutionError(error)))
                         else ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(TraitImplementationArityMismatch(traitName)(expectedArity)(actualArity)))
