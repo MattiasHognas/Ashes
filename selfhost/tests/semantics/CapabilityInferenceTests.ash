@@ -343,6 +343,56 @@ let expectProviderInference unit =
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("State(Int) provider should infer: " + Ashes.Trait.Show.show(error))
         in Unit)
 
+let expectProviderSatisfaction unit =
+    (let clockWrapper = ExprLambda("ignored")(handlerClockCall)(None)
+    in
+        let clockChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(clockProvider)], body = Some(clockWrapper))) with
+                | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+                    match applySubstitution(substitution)(semanticType) with
+                        | SemFunction(_argument, SemInt, Some(row)) ->
+                            if rowContainsCapability("Clock")(row)
+                            then test.fail("a concrete Clock provider should satisfy Clock calls")
+                            else Unit
+                        | _ -> test.fail("a provider-backed Clock call should retain its result type")
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("a provider-backed Clock call should infer: " + Ashes.Trait.Show.show(error))
+        in
+            let stateSet = ExprCall(ExprQualifiedVar("State")("set"))(ExprInt(42))(false)
+            in
+                let stateWrapper = ExprLambda("ignored")(stateSet)(None)
+                in
+                    let stateChecked =
+                        match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration), TopLevelProvide(stateIntProvider)], body = Some(stateWrapper))) with
+                            | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+                                match applySubstitution(substitution)(semanticType) with
+                                    | SemFunction(_argument, SemTuple([]), Some(row)) ->
+                                        if rowContainsCapability("State")(row)
+                                        then test.fail("a concrete State(Int) provider should satisfy State(Int) calls")
+                                        else Unit
+                                    | _ -> test.fail("a provider-backed State.set call should retain its result type")
+                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("a provider-backed State(Int) call should infer: " + Ashes.Trait.Show.show(error))
+                    in
+                        let abstractSet = ExprLambda("value")(ExprCall(ExprQualifiedVar("State")("set"))(ExprVar("value"))(false))(None)
+                        in
+                            match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration), TopLevelProvide(stateIntProvider)], body = Some(abstractSet))) with
+                                | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+                                    match applySubstitution(substitution)(semanticType) with
+                                        | SemFunction(_argument, SemTuple([]), Some(row)) ->
+                                            if rowContainsCapability("State")(row)
+                                            then Unit
+                                            else test.fail("an abstract State requirement should not select a concrete provider")
+                                        | _ -> test.fail("an abstract State call should retain its function type")
+                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("an abstract State call should infer: " + Ashes.Trait.Show.show(error)))
+
+let expectProviderHandlerAmbiguity unit =
+    (let clockArm = (Some("Clock"), "now", [PatternWildcard], resumeWith(ExprInt(42)))
+    in
+        let handler = ExprHandle(handlerClockCall)([clockArm])
+        in
+            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(clockProvider)], body = Some(handler))) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(AmbiguousCapabilitySatisfaction("Clock"))) } -> Unit
+                | _ -> test.fail("a provider and handler for the same concrete capability should be ambiguous"))
+
 let expectInvalidProviders unit =
     (let duplicateChecked =
         match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration), TopLevelProvide(clockProvider), TopLevelProvide(clockProvider)], body = None)) with
@@ -414,5 +464,9 @@ let runCapabilityInferenceTests unit =
                                                         in
                                                             let providerInferenceChecked = expectProviderInference(Unit)
                                                             in
-                                                                let invalidProvidersChecked = expectInvalidProviders(Unit)
-                                                                in Ashes.IO.print("all self-hosted capability provider inference tests passed"))
+                                                                let providerSatisfactionChecked = expectProviderSatisfaction(Unit)
+                                                                in
+                                                                    let providerHandlerAmbiguityChecked = expectProviderHandlerAmbiguity(Unit)
+                                                                    in
+                                                                        let invalidProvidersChecked = expectInvalidProviders(Unit)
+                                                                        in Ashes.IO.print("all self-hosted capability provider inference tests passed"))

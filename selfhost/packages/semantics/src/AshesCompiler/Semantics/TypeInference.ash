@@ -62,6 +62,7 @@ type TypeEnvironment =
     | constructors: List(ConstructorInferenceDefinition)
     | capabilities: List(CapabilityInferenceDefinition)
     | providers: List(CapabilityProviderInferenceDefinition)
+    | handledCapabilities: List(Str)
     | typeResolutionContext: TypeResolutionContext
 
 type TypeInferenceError =
@@ -83,6 +84,7 @@ type TypeInferenceError =
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InvalidHandler(Str)
+    | AmbiguousCapabilitySatisfaction(Str)
     | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -164,27 +166,35 @@ type HandlerArmInference =
     | constraints: List(TraitConstraint)
     | error: Maybe(TypeInferenceError)
 
-let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], capabilities = [], providers = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
+type ProviderRowResolution =
+    | semanticType: SemanticType
+    | error: Maybe(TypeInferenceError)
+
+type ProviderCapabilityResolution =
+    | capabilities: List(SemanticType)
+    | error: Maybe(TypeInferenceError)
+
+let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], capabilities = [], providers = [], handledCapabilities = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
 let addTypeBinding name scheme environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = (name, scheme) :: bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addConstructorBinding name scheme fieldNames environment =
     match addTypeBinding(name)(scheme)(environment) with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addCapabilityBinding name scheme operations environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, scheme = scheme, operations = operations) :: capabilities, providers = providers, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, scheme = scheme, operations = operations) :: capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let addInferenceTypeDefinition symbolId name arity environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeDefinition(symbolId)(name)(arity)(typeResolutionContext))
 
 let addInferenceTypeAlias name parameterIds target environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = addTypeAliasDefinition(name)(parameterIds)(target)(typeResolutionContext))
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = addTypeAliasDefinition(name)(parameterIds)(target)(typeResolutionContext))
 
 let recursive findTypeBinding name bindings =
     match bindings with
@@ -196,7 +206,7 @@ let recursive findTypeBinding name bindings =
 
 let resolveTypeBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findTypeBinding(name)(bindings)
 
 let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinition) -> Maybe(ConstructorInferenceDefinition) =
     given (name) ->
@@ -210,7 +220,7 @@ let recursive findConstructorBinding : Str -> List(ConstructorInferenceDefinitio
 
 let resolveConstructorBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, providers = _providers, typeResolutionContext = _typeResolutionContext } -> findConstructorBinding(name)(constructors)
+        | TypeEnvironment { bindings = _bindings, constructors = constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findConstructorBinding(name)(constructors)
 
 let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition) -> Maybe(CapabilityInferenceDefinition) =
     given (name) ->
@@ -224,7 +234,7 @@ let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition)
 
 let resolveCapabilityBinding name environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = capabilities, providers = _providers, typeResolutionContext = _typeResolutionContext } -> findCapabilityBinding(name)(capabilities)
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityBinding(name)(capabilities)
 
 let recursive findCapabilityOperation name operations =
     match operations with
@@ -241,7 +251,7 @@ let resolveCapabilityOperation capabilityName operationName environment =
 
 let addCapabilityProvider capabilityType operations environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = CapabilityProviderInferenceDefinition(capabilityType = capabilityType, operations = operations) :: providers, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = CapabilityProviderInferenceDefinition(capabilityType = capabilityType, operations = operations) :: providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
 
 let recursive findCapabilityProvider capabilityType providers =
     match providers with
@@ -253,7 +263,7 @@ let recursive findCapabilityProvider capabilityType providers =
 
 let resolveCapabilityProvider capabilityType environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = providers, typeResolutionContext = _typeResolutionContext } -> findCapabilityProvider(capabilityType)(providers)
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityProvider(capabilityType)(providers)
 
 let recursive stringExists name values =
     match values with
@@ -262,6 +272,19 @@ let recursive stringExists name values =
             if name == head
             then true
             else stringExists(name)(tail)
+
+let recursive appendHandledCapabilities names existing =
+    match names with
+        | [] -> existing
+        | head :: tail -> head :: appendHandledCapabilities(tail)(existing)
+
+let withHandledCapabilities names environment =
+    match environment with
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = capabilities, providers = providers, handledCapabilities = appendHandledCapabilities(names)(handledCapabilities), typeResolutionContext = typeResolutionContext)
+
+let capabilityIsHandled name environment =
+    match environment with
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = handledCapabilities, typeResolutionContext = _typeResolutionContext } -> stringExists(name)(handledCapabilities)
 
 let recursive handlerOperationExists capabilityName operationName arms =
     match arms with
@@ -393,7 +416,7 @@ let recursive buildUnsignedOperationType parameters capabilityType supply revers
 
 let inferenceTypeResolutionContext environment =
     match environment with
-        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
+        | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = typeResolutionContext } -> typeResolutionContext
 
 let inferenceSuccess semanticType substitution supply = TypeInferenceResult(semanticType = semanticType, substitution = substitution, supply = supply, constraints = [], error = None)
 
@@ -503,17 +526,85 @@ let mergeUnification currentSubstitution result supply fallbackType =
             in inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(supply)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> inferenceFailure(fallbackType)(currentSubstitution)(supply)(InferenceUnificationError(error))
 
-let subsumeCapabilityRow capabilityRow ambientRow substitution supply resultType =
+let recursive anyAbstractSemanticType values =
+    match values with
+        | [] -> false
+        | head :: tail ->
+            if isAbstractSemanticType(head)
+            then true
+            else anyAbstractSemanticType(tail)
+and isAbstractSemanticType semanticType =
+    match semanticType with
+        | SemVariable(_) -> true
+        | SemParameter(_, _) -> true
+        | SemList(element) -> isAbstractSemanticType(element)
+        | SemTuple(elements) -> anyAbstractSemanticType(elements)
+        | SemFunction(argument, result, capabilityRow) ->
+            if isAbstractSemanticType(argument)
+            then true
+            else
+                if isAbstractSemanticType(result)
+                then true
+                else
+                    match capabilityRow with
+                        | None -> false
+                        | Some(row) -> isAbstractSemanticType(row)
+        | SemCapability(_name, arguments) -> anyAbstractSemanticType(arguments)
+        | SemRow(capabilities, tail) ->
+            if anyAbstractSemanticType(capabilities)
+            then true
+            else
+                match tail with
+                    | None -> false
+                    | Some(tailType) -> isAbstractSemanticType(tailType)
+        | SemNamed(_symbolId, _name, arguments) -> anyAbstractSemanticType(arguments)
+        | SemPointer(pointee) -> isAbstractSemanticType(pointee)
+        | _ -> false
+
+let recursive resolveProvidedCapabilities capabilities environment reversed =
+    match capabilities with
+        | [] -> ProviderCapabilityResolution(capabilities = reverse(reversed), error = None)
+        | head :: tail ->
+            match head with
+                | SemCapability(name, _arguments) ->
+                    if isAbstractSemanticType(head)
+                    then resolveProvidedCapabilities(tail)(environment)(head :: reversed)
+                    else
+                        match resolveCapabilityProvider(head)(environment) with
+                            | None -> resolveProvidedCapabilities(tail)(environment)(head :: reversed)
+                            | Some(_) ->
+                                if capabilityIsHandled(name)(environment)
+                                then ProviderCapabilityResolution(capabilities = reverse(reversed), error = Some(AmbiguousCapabilitySatisfaction(name)))
+                                else resolveProvidedCapabilities(tail)(environment)(reversed)
+                | _ -> resolveProvidedCapabilities(tail)(environment)(head :: reversed)
+and resolveProvidedCapabilityRow semanticType environment =
+    match semanticType with
+        | SemRow(capabilities, tail) ->
+            match resolveProvidedCapabilities(capabilities)(environment)([]) with
+                | ProviderCapabilityResolution { capabilities = _resolvedCapabilities, error = Some(error) } -> ProviderRowResolution(semanticType = semanticType, error = Some(error))
+                | ProviderCapabilityResolution { capabilities = resolvedCapabilities, error = None } ->
+                    match tail with
+                        | None -> ProviderRowResolution(semanticType = SemRow(resolvedCapabilities)(None), error = None)
+                        | Some(tailType) ->
+                            match resolveProvidedCapabilityRow(tailType)(environment) with
+                                | ProviderRowResolution { semanticType = _resolvedTail, error = Some(error) } -> ProviderRowResolution(semanticType = semanticType, error = Some(error))
+                                | ProviderRowResolution { semanticType = resolvedTail, error = None } -> ProviderRowResolution(semanticType = SemRow(resolvedCapabilities)(Some(resolvedTail)), error = None)
+        | _ -> ProviderRowResolution(semanticType = semanticType, error = None)
+
+let subsumeCapabilityRow capabilityRow environment ambientRow substitution supply resultType =
     (let resolvedRow = applySubstitution(substitution)(capabilityRow)
     in
         let resolvedAmbient = applySubstitution(substitution)(ambientRow)
         in
-            match resolvedRow with
-                | SemRow([], None) -> inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply)
-                | SemRow(capabilities, None) ->
-                    match freshTypeVariable(supply) with
-                        | (tailType, nextSupply) -> mergeUnification(substitution)(unify(resolvedAmbient)(SemRow(capabilities)(Some(tailType))))(nextSupply)(resultType)
-                | _ -> mergeUnification(substitution)(unify(resolvedAmbient)(resolvedRow))(supply)(resultType))
+            match resolveProvidedCapabilityRow(resolvedRow)(environment) with
+                | ProviderRowResolution { semanticType = _providerResolvedRow, error = Some(error) } -> inferenceFailure(resultType)(substitution)(supply)(error)
+                | ProviderRowResolution { semanticType = providerResolvedRow, error = None } ->
+                    match providerResolvedRow with
+                        | SemRow([], None) -> inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply)
+                        | SemRow(capabilities, None) ->
+                            match freshTypeVariable(supply) with
+                                | (tailType, nextSupply) -> mergeUnification(substitution)(unify(resolvedAmbient)(SemRow(capabilities)(Some(tailType))))(nextSupply)(resultType)
+                        | _ -> mergeUnification(substitution)(unify(resolvedAmbient)(providerResolvedRow))(supply)(resultType))
 
 let recursive capabilityOperationCallRoot expression sawArgument =
     match expression with
@@ -532,7 +623,7 @@ let subsumeUnsignedCapabilityOperation function environment ambientRow result =
                 | None -> result
                 | Some((capabilityName, operationName)) ->
                     match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
-                        | Some(CapabilityOperationInferenceDefinition { name = _name, scheme = _scheme, hasExplicitSignature = false }) -> addConstraints(constraints)(subsumeCapabilityRow(SemRow([SemCapability(capabilityName)([])])(None))(ambientRow)(substitution)(supply)(semanticType))
+                        | Some(CapabilityOperationInferenceDefinition { name = _name, scheme = _scheme, hasExplicitSignature = false }) -> addConstraints(constraints)(subsumeCapabilityRow(SemRow([SemCapability(capabilityName)([])])(None))(environment)(ambientRow)(substitution)(supply)(semanticType))
                         | _ -> result
         | _ -> result
 
@@ -545,7 +636,7 @@ let checkInferenceAnnotation annotation expectedType environment substitution su
 
 let inferenceEnvironmentSchemes environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, typeResolutionContext = _typeResolutionContext } ->
+        | TypeEnvironment { bindings = bindings, constructors = _constructors, capabilities = _capabilities, providers = _providers, handledCapabilities = _handledCapabilities, typeResolutionContext = _typeResolutionContext } ->
             let recursive schemes values =
                 match values with
                     | [] -> []
@@ -645,7 +736,7 @@ and inferResultSuccessPipe left right environment substitution supply ambientRow
                                                 in
                                                     match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mapperRowSupply)(mappedType) with
                                                         | TypeInferenceResult { semanticType = unifiedMappedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                            match subsumeCapabilityRow(mapperRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedMappedType) with
+                                                            match subsumeCapabilityRow(mapperRow)(environment)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedMappedType) with
                                                                 | TypeInferenceResult { semanticType = subsumedMappedType, substitution = subsumedSubstitution, supply = subsumedSupply, constraints = _subsumptionConstraints, error = None } ->
                                                                     let resolvedMappedType = applySubstitution(subsumedSubstitution)(subsumedMappedType)
                                                                     in
@@ -677,7 +768,7 @@ and inferResultErrorPipe left right environment substitution supply ambientRow =
                                                     let resultType = SemNamed(symbolId)("Result")([mappedErrorType, applySubstitution(mapperSubstitution)(successType)])
                                                     in
                                                         match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mapperRowSupply)(resultType) with
-                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(subsumeCapabilityRow(mapperRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType))
+                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(subsumeCapabilityRow(mapperRow)(environment)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType))
                                                             | failure -> failure
                             | failure -> failure
         | failure -> failure
@@ -946,9 +1037,9 @@ and inferHandler body arms environment substitution supply ambientRow =
                                                 | (bodyTail, bodyTailSupply) ->
                                                     let bodyAmbient = SemRow(handledCapabilityTypes(handledCapabilities))(Some(bodyTail))
                                                     in
-                                                        match inferWith(body)(environment)(armSubstitution)(bodyTailSupply)(bodyAmbient) with
+                                                        match inferWith(body)(withHandledCapabilities(capabilityNames)(environment))(armSubstitution)(bodyTailSupply)(bodyAmbient) with
                                                             | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
-                                                                match subsumeCapabilityRow(bodyTail)(ambientRow)(bodySubstitution)(bodySupply)(bodyType) with
+                                                                match subsumeCapabilityRow(bodyTail)(environment)(ambientRow)(bodySubstitution)(bodySupply)(bodyType) with
                                                                     | TypeInferenceResult { semanticType = subsumedBodyType, substitution = subsumedSubstitution, supply = subsumedSupply, constraints = _subsumptionConstraints, error = None } -> inferHandlerReturn(returnArm)(subsumedBodyType)(handlerResult)(environment)(subsumedSubstitution)(subsumedSupply)(ambientRow)(appendConstraints(armConstraints)(bodyConstraints))
                                                                     | failure -> failure
                                                             | failure -> failure
@@ -1040,7 +1131,7 @@ and inferWith expression environment substitution supply ambientRow =
                                                 in
                                                     match mergeUnification(argumentSubstitution)(unification)(callRowSupply)(resultType) with
                                                         | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                            let callResult = subsumeCapabilityRow(callRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType)
+                                                            let callResult = subsumeCapabilityRow(callRow)(environment)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType)
                                                             in addConstraints(appendConstraints(functionConstraints)(argumentConstraints))(subsumeUnsignedCapabilityOperation(function)(environment)(ambientRow)(callResult))
                                                         | failure -> failure
                         | failure -> failure
