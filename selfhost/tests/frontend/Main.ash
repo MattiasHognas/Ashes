@@ -17,6 +17,7 @@ import ParserRecursiveGroupTests
 import ParserProgramBoundaryTests
 import ParserExternalDeclarationTests
 import ParserCapabilityTraitTests
+import ParserFrontendParityTests
 let tokenTestsChecked = TokenTests.run(Unit)
 
 let lexerCoreTestsChecked = LexerCoreTests.run(Unit)
@@ -54,5 +55,7 @@ let parserProgramBoundaryTestsChecked = ParserProgramBoundaryTests.run(Unit)
 let parserExternalDeclarationTestsChecked = ParserExternalDeclarationTests.run(Unit)
 
 let parserCapabilityTraitTestsChecked = ParserCapabilityTraitTests.run(Unit)
+
+let parserFrontendParityTestsChecked = ParserFrontendParityTests.run(Unit)
 
 Ashes.IO.print("all self-hosted frontend tests passed")
