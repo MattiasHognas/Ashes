@@ -7,6 +7,7 @@ import TypeSchemeTests
 import TypeInferenceTests
 import PatternInferenceTests
 import TypeResolutionTests
+import ProgramInferenceTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -112,7 +113,9 @@ let run unit =
                                                                                                                                                 let patternInferenceChecked = PatternInferenceTests.runPatternInferenceTests(Unit)
                                                                                                                                                 in
                                                                                                                                                     let typeResolutionChecked = TypeResolutionTests.runTypeResolutionTests(Unit)
-                                                                                                                                                    in Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                                    in
+                                                                                                                                                        let programInferenceChecked = ProgramInferenceTests.runProgramInferenceTests(Unit)
+                                                                                                                                                        in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 

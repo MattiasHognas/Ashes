@@ -7,6 +7,7 @@ export (
     type TypeResolutionError(..),
     type TypeResolutionResult(..),
     type TypeResolutionPreparationResult(..),
+    type TypeListResolutionResult(..),
     value emptyTypeResolutionContext,
     value addTypeParameter,
     value addTypeDefinition,
