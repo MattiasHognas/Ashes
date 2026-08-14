@@ -236,6 +236,91 @@ let expectOperationValueRules unit =
                 | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnknownCapabilityOperation("Clock", "missing"))) } -> Unit
                 | _ -> test.fail("implicit calls should reject unknown capability operations"))
 
+let handlerClockCall = ExprCall(ExprQualifiedVar("Clock")("now"))(ExprTuple([]))(false)
+
+let resumeWith value = ExprCall(ExprVar("resume"))(value)(false)
+
+let expectHandlerDischarges expectedResult dischargedCapability remainingCapability declarations handler =
+    (let wrapper = ExprLambda("ignored")(handler)(None)
+    in
+        match inferProgram(ProgramSyntax(items = declarations, body = Some(wrapper))) with
+            | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+                match applySubstitution(substitution)(semanticType) with
+                    | SemFunction(_argument, resultType, Some(row)) ->
+                        if formatSemanticType(resultType) == expectedResult
+                        then
+                            if rowContainsCapability(dischargedCapability)(row)
+                            then test.fail("handler should discharge " + dischargedCapability)
+                            else
+                                match remainingCapability with
+                                    | None -> Unit
+                                    | Some(name) ->
+                                        if rowContainsCapability(name)(row)
+                                        then Unit
+                                        else test.fail("handler arm effect should propagate " + name)
+                        else test.fail("handler inferred unexpected result " + formatSemanticType(resultType))
+                    | _ -> test.fail("handler wrapper should infer a function")
+            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("handler should infer: " + Ashes.Trait.Show.show(error)))
+
+let expectHandlerInference unit =
+    (let clockArm = (Some("Clock"), "now", [PatternWildcard], resumeWith(ExprInt(42)))
+    in
+        let basicChecked = expectHandlerDischarges("Int")("Clock")(None)([TopLevelCapability(clockDeclaration)])(ExprHandle(handlerClockCall)([clockArm]))
+        in
+            let returnArm = (None, "return", [PatternVar("value")], ExprString("done"))
+            in
+                let returnChecked = expectHandlerDischarges("Str")("Clock")(None)([TopLevelCapability(clockDeclaration)])(ExprHandle(handlerClockCall)([clockArm, returnArm]))
+                in
+                    let loggingArmBody = ExprLet("ignored")(ExprCall(ExprQualifiedVar("Log")("write"))(ExprString("handled"))(false))(resumeWith(ExprInt(42)))([])(None)([])
+                    in
+                        let loggingArm = (Some("Clock"), "now", [PatternWildcard], loggingArmBody)
+                        in
+                            let armEffectChecked = expectHandlerDischarges("Int")("Clock")(Some("Log"))([TopLevelCapability(clockDeclaration), TopLevelCapability(logDeclaration)])(ExprHandle(handlerClockCall)([loggingArm]))
+                            in
+                                let stateGet = ExprCall(ExprQualifiedVar("State")("get"))(ExprTuple([]))(false)
+                                in
+                                    let getArm = (Some("State"), "get", [PatternWildcard], resumeWith(ExprInt(7)))
+                                    in
+                                        let setArm = (Some("State"), "set", [PatternVar("value")], resumeWith(ExprTuple([])))
+                                        in
+                                            let stateChecked = expectHandlerDischarges("Int")("State")(None)([TopLevelCapability(stateDeclaration)])(ExprHandle(stateGet)([getArm, setArm]))
+                                            in Unit)
+
+let expectInvalidHandlers unit =
+    (let clockArm = (Some("Clock"), "now", [PatternWildcard], resumeWith(ExprInt(42)))
+    in
+        let duplicateChecked =
+            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration)], body = Some(ExprHandle(handlerClockCall)([clockArm, clockArm])))) with
+                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InvalidHandler(_message))) } -> Unit
+                | _ -> test.fail("duplicate handler arms should be rejected")
+        in
+            let getArm = (Some("State"), "get", [PatternWildcard], resumeWith(ExprInt(7)))
+            in
+                let incompleteChecked =
+                    match inferProgram(ProgramSyntax(items = [TopLevelCapability(stateDeclaration)], body = Some(ExprHandle(ExprCall(ExprQualifiedVar("State")("get"))(ExprTuple([]))(false))([getArm])))) with
+                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InvalidHandler(_message))) } -> Unit
+                        | _ -> test.fail("handlers should cover every capability operation")
+                in
+                    let badPatternArm = (Some("Clock"), "now", [PatternInt(1)], resumeWith(ExprInt(42)))
+                    in
+                        let patternChecked =
+                            match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration)], body = Some(ExprHandle(handlerClockCall)([badPatternArm])))) with
+                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                                | _ -> test.fail("handler arm patterns should match operation parameters")
+                        in
+                            let badResumeArm = (Some("Clock"), "now", [PatternWildcard], resumeWith(ExprString("wrong")))
+                            in
+                                let resumeChecked =
+                                    match inferProgram(ProgramSyntax(items = [TopLevelCapability(clockDeclaration)], body = Some(ExprHandle(handlerClockCall)([badResumeArm])))) with
+                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                                        | _ -> test.fail("resume arguments should match operation results")
+                                in
+                                    let returnOnly = (None, "return", [PatternVar("value")], ExprVar("value"))
+                                    in
+                                        match inferExpression(ExprHandle(ExprInt(1))([returnOnly]))(emptyTypeEnvironment(Unit)) with
+                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(InvalidHandler(_message)) } -> Unit
+                                            | _ -> test.fail("handlers should require an operation arm"))
+
 let runCapabilityInferenceTests unit =
     (let clockChecked = expectClockOperation(Unit)
     in
@@ -260,4 +345,8 @@ let runCapabilityInferenceTests unit =
                                             let invalidPerformChecked = expectInvalidPerform(Unit)
                                             in
                                                 let operationValueRulesChecked = expectOperationValueRules(Unit)
-                                                in Ashes.IO.print("all self-hosted capability effect inference tests passed"))
+                                                in
+                                                    let handlerInferenceChecked = expectHandlerInference(Unit)
+                                                    in
+                                                        let invalidHandlersChecked = expectInvalidHandlers(Unit)
+                                                        in Ashes.IO.print("all self-hosted capability handler inference tests passed"))

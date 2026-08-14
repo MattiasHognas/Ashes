@@ -41,6 +41,7 @@ type CapabilityOperationInferenceDefinition =
 
 type CapabilityInferenceDefinition =
     | name: Str
+    | scheme: TypeScheme
     | operations: List(CapabilityOperationInferenceDefinition)
 
 type TypeEnvironment =
@@ -67,6 +68,7 @@ type TypeInferenceError =
     | PerformRequiresCapabilityOperation
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
+    | InvalidHandler(Str)
     | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -104,6 +106,50 @@ type ResultTypeShape =
     | errorType: SemanticType
     | successType: SemanticType
 
+type HandlerOperationArmDefinition =
+    | capabilityName: Str
+    | operationName: Str
+    | parameters: List(Pattern)
+    | body: Expr
+
+type HandlerArmCollection =
+    | operationArms: List(HandlerOperationArmDefinition)
+    | capabilityNames: List(Str)
+    | returnArm: Maybe((Pattern, Expr))
+    | error: Maybe(TypeInferenceError)
+
+type HandledCapabilityDefinition =
+    | name: Str
+    | semanticType: SemanticType
+    | operations: List(CapabilityOperationInferenceDefinition)
+
+type HandledCapabilityPreparation =
+    | capabilities: List(HandledCapabilityDefinition)
+    | supply: TypeVariableSupply
+    | error: Maybe(TypeInferenceError)
+
+type HandlerOperationShape =
+    | parameters: List(SemanticType)
+    | resultType: SemanticType
+
+type HandlerOperationTypePreparation =
+    | semanticType: SemanticType
+    | substitution: List((Int, SemanticType))
+    | supply: TypeVariableSupply
+    | error: Maybe(TypeInferenceError)
+
+type HandlerParameterInference =
+    | environment: TypeEnvironment
+    | substitution: List((Int, SemanticType))
+    | supply: TypeVariableSupply
+    | error: Maybe(TypeInferenceError)
+
+type HandlerArmInference =
+    | substitution: List((Int, SemanticType))
+    | supply: TypeVariableSupply
+    | constraints: List(TraitConstraint)
+    | error: Maybe(TypeInferenceError)
+
 let emptyTypeEnvironment unit = TypeEnvironment(bindings = [], constructors = [], capabilities = [], typeResolutionContext = emptyTypeResolutionContext(Unit))
 
 let addTypeBinding name scheme environment =
@@ -114,9 +160,9 @@ let addConstructorBinding name scheme fieldNames environment =
     match addTypeBinding(name)(scheme)(environment) with
         | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = ConstructorInferenceDefinition(name = name, scheme = scheme, fieldNames = fieldNames) :: constructors, capabilities = capabilities, typeResolutionContext = typeResolutionContext)
 
-let addCapabilityBinding name operations environment =
+let addCapabilityBinding name scheme operations environment =
     match environment with
-        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, operations = operations) :: capabilities, typeResolutionContext = typeResolutionContext)
+        | TypeEnvironment { bindings = bindings, constructors = constructors, capabilities = capabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(bindings = bindings, constructors = constructors, capabilities = CapabilityInferenceDefinition(name = name, scheme = scheme, operations = operations) :: capabilities, typeResolutionContext = typeResolutionContext)
 
 let addInferenceTypeDefinition symbolId name arity environment =
     match environment with
@@ -157,9 +203,9 @@ let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition)
         given (capabilities) ->
             match capabilities with
                 | [] -> None
-                | CapabilityInferenceDefinition { name = candidateName, operations = operations } :: tail ->
+                | CapabilityInferenceDefinition { name = candidateName, scheme = scheme, operations = operations } :: tail ->
                     if name == candidateName
-                    then Some(CapabilityInferenceDefinition(name = candidateName, operations = operations))
+                    then Some(CapabilityInferenceDefinition(name = candidateName, scheme = scheme, operations = operations))
                     else findCapabilityBinding(name)(tail)
 
 let resolveCapabilityBinding name environment =
@@ -177,7 +223,143 @@ let recursive findCapabilityOperation name operations =
 let resolveCapabilityOperation capabilityName operationName environment =
     match resolveCapabilityBinding(capabilityName)(environment) with
         | None -> None
-        | Some(CapabilityInferenceDefinition { name = _name, operations = operations }) -> findCapabilityOperation(operationName)(operations)
+        | Some(CapabilityInferenceDefinition { name = _name, scheme = _scheme, operations = operations }) -> findCapabilityOperation(operationName)(operations)
+
+let recursive stringExists name values =
+    match values with
+        | [] -> false
+        | head :: tail ->
+            if name == head
+            then true
+            else stringExists(name)(tail)
+
+let recursive handlerOperationExists capabilityName operationName arms =
+    match arms with
+        | [] -> false
+        | HandlerOperationArmDefinition { capabilityName = candidateCapability, operationName = candidateOperation, parameters = _parameters, body = _body } :: tail ->
+            if capabilityName == candidateCapability
+            then
+                if operationName == candidateOperation
+                then true
+                else handlerOperationExists(capabilityName)(operationName)(tail)
+            else handlerOperationExists(capabilityName)(operationName)(tail)
+
+let recursive collectHandlerArms arms environment reversedOperations reversedCapabilities returnArm =
+    match arms with
+        | [] ->
+            match reversedOperations with
+                | [] -> HandlerArmCollection(operationArms = [], capabilityNames = [], returnArm = returnArm, error = Some(InvalidHandler("a handler needs at least one operation arm")))
+                | _ -> HandlerArmCollection(operationArms = reverse(reversedOperations), capabilityNames = reverse(reversedCapabilities), returnArm = returnArm, error = None)
+        | (None, _operationName, parameters, body) :: tail ->
+            match (returnArm, parameters) with
+                | (Some(_), _) -> HandlerArmCollection(operationArms = reverse(reversedOperations), capabilityNames = reverse(reversedCapabilities), returnArm = returnArm, error = Some(InvalidHandler("duplicate return arm")))
+                | (None, parameter :: []) -> collectHandlerArms(tail)(environment)(reversedOperations)(reversedCapabilities)(Some((parameter, body)))
+                | _ -> HandlerArmCollection(operationArms = reverse(reversedOperations), capabilityNames = reverse(reversedCapabilities), returnArm = returnArm, error = Some(InvalidHandler("the return arm takes exactly one parameter")))
+        | (Some(capabilityName), operationName, parameters, body) :: tail ->
+            match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
+                | None -> HandlerArmCollection(operationArms = reverse(reversedOperations), capabilityNames = reverse(reversedCapabilities), returnArm = returnArm, error = Some(InvalidHandler("unknown operation " + capabilityName + "." + operationName)))
+                | Some(_) ->
+                    if handlerOperationExists(capabilityName)(operationName)(reversedOperations)
+                    then HandlerArmCollection(operationArms = reverse(reversedOperations), capabilityNames = reverse(reversedCapabilities), returnArm = returnArm, error = Some(InvalidHandler("duplicate operation arm " + capabilityName + "." + operationName)))
+                    else
+                        let operationArm = HandlerOperationArmDefinition(capabilityName = capabilityName, operationName = operationName, parameters = parameters, body = body)
+                        in
+                            if stringExists(capabilityName)(reversedCapabilities)
+                            then collectHandlerArms(tail)(environment)(operationArm :: reversedOperations)(reversedCapabilities)(returnArm)
+                            else collectHandlerArms(tail)(environment)(operationArm :: reversedOperations)(capabilityName :: reversedCapabilities)(returnArm)
+
+let recursive findMissingHandlerOperation capabilityNames environment arms =
+    match capabilityNames with
+        | [] -> None
+        | capabilityName :: tail ->
+            match resolveCapabilityBinding(capabilityName)(environment) with
+                | None -> Some(capabilityName)
+                | Some(CapabilityInferenceDefinition { name = _name, scheme = _scheme, operations = operations }) ->
+                    let recursive missingOperation definitions =
+                        match definitions with
+                            | [] -> None
+                            | CapabilityOperationInferenceDefinition { name = operationName, scheme = _operationScheme, hasExplicitSignature = _hasExplicitSignature } :: rest ->
+                                if handlerOperationExists(capabilityName)(operationName)(arms)
+                                then missingOperation(rest)
+                                else Some(capabilityName + "." + operationName)
+                    in
+                        match missingOperation(operations) with
+                            | Some(missing) -> Some(missing)
+                            | None -> findMissingHandlerOperation(tail)(environment)(arms)
+
+let recursive prepareHandledCapabilities names environment supply reversed =
+    match names with
+        | [] -> HandledCapabilityPreparation(capabilities = reverse(reversed), supply = supply, error = None)
+        | name :: tail ->
+            match resolveCapabilityBinding(name)(environment) with
+                | None -> HandledCapabilityPreparation(capabilities = reverse(reversed), supply = supply, error = Some(InvalidHandler("unknown capability " + name)))
+                | Some(CapabilityInferenceDefinition { name = _name, scheme = scheme, operations = operations }) ->
+                    match instantiate(scheme)(supply) with
+                        | InstantiationResult { semanticType = capabilityType, constraints = _constraints, supply = nextSupply } ->
+                            let definition = HandledCapabilityDefinition(name = name, semanticType = capabilityType, operations = operations)
+                            in prepareHandledCapabilities(tail)(environment)(nextSupply)(definition :: reversed)
+
+let recursive findHandledCapability name capabilities =
+    match capabilities with
+        | [] -> None
+        | HandledCapabilityDefinition { name = candidateName, semanticType = semanticType, operations = operations } :: tail ->
+            if name == candidateName
+            then Some(HandledCapabilityDefinition(name = candidateName, semanticType = semanticType, operations = operations))
+            else findHandledCapability(name)(tail)
+
+let recursive handledCapabilityTypes capabilities =
+    match capabilities with
+        | [] -> []
+        | HandledCapabilityDefinition { name = _name, semanticType = semanticType, operations = _operations } :: tail -> semanticType :: handledCapabilityTypes(tail)
+
+let recursive operationCapabilityFromType capabilityName semanticType =
+    match semanticType with
+        | SemFunction(_argument, result, row) ->
+            match result with
+                | SemFunction(_, _, _) -> operationCapabilityFromType(capabilityName)(result)
+                | _ ->
+                    match row with
+                        | None -> None
+                        | Some(SemRow(capabilities, _tail)) ->
+                            let recursive findCapability values =
+                                match values with
+                                    | [] -> None
+                                    | SemCapability(name, arguments) :: rest ->
+                                        if name == capabilityName
+                                        then Some(SemCapability(name)(arguments))
+                                        else findCapability(rest)
+                                    | _ :: rest -> findCapability(rest)
+                            in findCapability(capabilities)
+                        | Some(_) -> None
+        | _ -> None
+
+let recursive splitHandlerOperationType remaining semanticType reversed =
+    match remaining with
+        | [] ->
+            match semanticType with
+                | SemFunction(_, _, _) -> None
+                | _ -> Some(HandlerOperationShape(parameters = reverse(reversed), resultType = semanticType))
+        | _ :: tail ->
+            match semanticType with
+                | SemFunction(argument, result, _row) -> splitHandlerOperationType(tail)(result)(argument :: reversed)
+                | _ -> None
+
+let recursive buildUnsignedOperationType parameters capabilityType supply reversed =
+    match parameters with
+        | [] ->
+            match freshTypeVariable(supply) with
+                | (resultType, resultSupply) ->
+                    let recursive wrap arguments body =
+                        match arguments with
+                            | [] -> body
+                            | argument :: tail ->
+                                match tail with
+                                    | [] -> SemFunction(argument)(body)(Some(SemRow([capabilityType])(None)))
+                                    | _ -> SemFunction(argument)(wrap(tail)(body))(None)
+                    in HandlerOperationTypePreparation(semanticType = wrap(reverse(reversed))(resultType), substitution = [], supply = resultSupply, error = None)
+        | _ :: tail ->
+            match freshTypeVariable(supply) with
+                | (parameterType, nextSupply) -> buildUnsignedOperationType(tail)(capabilityType)(nextSupply)(parameterType :: reversed)
 
 let inferenceTypeResolutionContext environment =
     match environment with
@@ -490,6 +672,70 @@ and inferLetResult name value body environment substitution supply ambientRow =
                                                 in addConstraints(appendConstraints(valueConstraints)(bodyConstraints))(mergeUnification(bodySubstitution)(unify(applySubstitution(bodySubstitution)(errorType))(bodyErrorType))(bodySupply)(resultType))
                                 | failure -> failure
         | failure -> failure
+and prepareHandlerOperationType operation capabilityType parameters substitution supply =
+    match operation with
+        | CapabilityOperationInferenceDefinition { name = operationName, scheme = scheme, hasExplicitSignature = hasExplicitSignature } ->
+            match instantiate(scheme)(supply) with
+                | InstantiationResult { semanticType = instantiatedType, constraints = _constraints, supply = instantiatedSupply } ->
+                    if hasExplicitSignature
+                    then
+                        match capabilityType with
+                            | SemCapability(capabilityName, _arguments) ->
+                                match operationCapabilityFromType(capabilityName)(instantiatedType) with
+                                    | None -> HandlerOperationTypePreparation(semanticType = SemNever, substitution = substitution, supply = instantiatedSupply, error = Some(InvalidHandler("operation " + capabilityName + "." + operationName + " has no capability row")))
+                                    | Some(operationCapability) ->
+                                        match unify(applySubstitution(substitution)(operationCapability))(applySubstitution(substitution)(capabilityType)) with
+                                            | UnificationResult { substitution = capabilitySubstitution, error = None } ->
+                                                let combined = appendSubstitution(capabilitySubstitution)(substitution)
+                                                in HandlerOperationTypePreparation(semanticType = applySubstitution(combined)(instantiatedType), substitution = combined, supply = instantiatedSupply, error = None)
+                                            | UnificationResult { substitution = _capabilitySubstitution, error = Some(error) } -> HandlerOperationTypePreparation(semanticType = SemNever, substitution = substitution, supply = instantiatedSupply, error = Some(InferenceUnificationError(error)))
+                            | _ -> HandlerOperationTypePreparation(semanticType = SemNever, substitution = substitution, supply = instantiatedSupply, error = Some(InvalidHandler("handled capability has an invalid semantic type")))
+                    else
+                        match buildUnsignedOperationType(parameters)(capabilityType)(instantiatedSupply)([]) with
+                            | HandlerOperationTypePreparation { semanticType = inferredOperationType, substitution = _inferredSubstitution, supply = inferredSupply, error = None } ->
+                                match unify(applySubstitution(substitution)(instantiatedType))(inferredOperationType) with
+                                    | UnificationResult { substitution = operationSubstitution, error = None } ->
+                                        let combined = appendSubstitution(operationSubstitution)(substitution)
+                                        in HandlerOperationTypePreparation(semanticType = applySubstitution(combined)(inferredOperationType), substitution = combined, supply = inferredSupply, error = None)
+                                    | UnificationResult { substitution = _operationSubstitution, error = Some(error) } -> HandlerOperationTypePreparation(semanticType = SemNever, substitution = substitution, supply = inferredSupply, error = Some(InferenceUnificationError(error)))
+                            | HandlerOperationTypePreparation { semanticType = _inferredOperationType, substitution = _inferredSubstitution, supply = inferredSupply, error = Some(error) } -> HandlerOperationTypePreparation(semanticType = SemNever, substitution = substitution, supply = inferredSupply, error = Some(error))
+and inferHandlerParameters patterns parameterTypes environment substitution supply names =
+    match (patterns, parameterTypes) with
+        | ([], []) -> HandlerParameterInference(environment = environment, substitution = substitution, supply = supply, error = None)
+        | (pattern :: patternTail, parameterType :: typeTail) ->
+            match inferPattern(pattern)(environment)(substitution)(supply)(names) with
+                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = patternNames, error = None } ->
+                    match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(parameterType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(parameterType)(patternEnvironment)(patternNames) with
+                        | PatternInferenceResult { semanticType = _unifiedType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = unifiedNames, error = None } -> inferHandlerParameters(patternTail)(typeTail)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedNames)
+                        | PatternInferenceResult { semanticType = _failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> HandlerParameterInference(environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
+                | PatternInferenceResult { semanticType = _failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> HandlerParameterInference(environment = environment, substitution = failedSubstitution, supply = failedSupply, error = Some(error))
+        | _ -> HandlerParameterInference(environment = environment, substitution = substitution, supply = supply, error = Some(InvalidHandler("operation arm parameter count does not match its signature")))
+and inferHandlerOperationArms arms handledCapabilities handlerResult environment substitution supply ambientRow accumulatedConstraints =
+    match arms with
+        | [] -> HandlerArmInference(substitution = substitution, supply = supply, constraints = accumulatedConstraints, error = None)
+        | HandlerOperationArmDefinition { capabilityName = capabilityName, operationName = operationName, parameters = parameters, body = body } :: tail ->
+            match (findHandledCapability(capabilityName)(handledCapabilities), resolveCapabilityOperation(capabilityName)(operationName)(environment)) with
+                | (Some(HandledCapabilityDefinition { name = _name, semanticType = capabilityType, operations = _operations }), Some(operation)) ->
+                    match prepareHandlerOperationType(operation)(capabilityType)(parameters)(substitution)(supply) with
+                        | HandlerOperationTypePreparation { semanticType = operationType, substitution = operationSubstitution, supply = operationSupply, error = None } ->
+                            match splitHandlerOperationType(parameters)(applySubstitution(operationSubstitution)(operationType))([]) with
+                                | None -> HandlerArmInference(substitution = operationSubstitution, supply = operationSupply, constraints = accumulatedConstraints, error = Some(InvalidHandler("operation arm parameter count does not match " + capabilityName + "." + operationName)))
+                                | Some(HandlerOperationShape { parameters = parameterTypes, resultType = operationResultType }) ->
+                                    match inferHandlerParameters(parameters)(parameterTypes)(environment)(operationSubstitution)(operationSupply)([]) with
+                                        | HandlerParameterInference { environment = armEnvironment, substitution = parameterSubstitution, supply = parameterSupply, error = None } ->
+                                            let resumeType = SemFunction(applySubstitution(parameterSubstitution)(operationResultType))(applySubstitution(parameterSubstitution)(handlerResult))(None)
+                                            in
+                                                let resumeScheme = TypeScheme(quantified = [], body = resumeType, constraints = [])
+                                                in
+                                                    match inferWith(body)(addTypeBinding("resume")(resumeScheme)(armEnvironment))(parameterSubstitution)(parameterSupply)(ambientRow) with
+                                                        | TypeInferenceResult { semanticType = armType, substitution = armSubstitution, supply = armSupply, constraints = armConstraints, error = None } ->
+                                                            match mergeUnification(armSubstitution)(unify(applySubstitution(armSubstitution)(handlerResult))(applySubstitution(armSubstitution)(armType)))(armSupply)(handlerResult) with
+                                                                | TypeInferenceResult { semanticType = _unifiedHandlerType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> inferHandlerOperationArms(tail)(handledCapabilities)(handlerResult)(environment)(unifiedSubstitution)(unifiedSupply)(ambientRow)(appendConstraints(accumulatedConstraints)(armConstraints))
+                                                                | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> HandlerArmInference(substitution = failedSubstitution, supply = failedSupply, constraints = accumulatedConstraints, error = Some(error))
+                                                        | TypeInferenceResult { semanticType = _failedType, substitution = failedSubstitution, supply = failedSupply, constraints = _failedConstraints, error = Some(error) } -> HandlerArmInference(substitution = failedSubstitution, supply = failedSupply, constraints = accumulatedConstraints, error = Some(error))
+                                        | HandlerParameterInference { environment = _armEnvironment, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> HandlerArmInference(substitution = failedSubstitution, supply = failedSupply, constraints = accumulatedConstraints, error = Some(error))
+                        | HandlerOperationTypePreparation { semanticType = _operationType, substitution = failedSubstitution, supply = failedSupply, error = Some(error) } -> HandlerArmInference(substitution = failedSubstitution, supply = failedSupply, constraints = accumulatedConstraints, error = Some(error))
+                | _ -> HandlerArmInference(substitution = substitution, supply = supply, constraints = accumulatedConstraints, error = Some(InvalidHandler("unknown operation " + capabilityName + "." + operationName)))
 and unifyOrPatternBindings names expectedEnvironment actualEnvironment substitution supply resultType =
     match names with
         | [] -> patternSuccess(applySubstitution(substitution)(resultType))(expectedEnvironment)(substitution)(supply)([])
@@ -638,6 +884,44 @@ and inferUnaryTrait traitName operand environment substitution supply ambientRow
                 let constraint = TraitConstraint(traitName = traitName, typeArguments = [resolvedOperand])
                 in addConstraints(appendConstraints(operandConstraints)([constraint]))(inferenceSuccess(resolvedOperand)(operandSubstitution)(operandSupply))
         | failure -> failure
+and inferHandlerReturn returnArm bodyType handlerResult environment substitution supply ambientRow accumulatedConstraints =
+    match returnArm with
+        | None -> addConstraints(accumulatedConstraints)(mergeUnification(substitution)(unify(applySubstitution(substitution)(handlerResult))(applySubstitution(substitution)(bodyType)))(supply)(handlerResult))
+        | Some((pattern, returnBody)) ->
+            match inferPattern(pattern)(environment)(substitution)(supply)([]) with
+                | PatternInferenceResult { semanticType = patternType, environment = returnEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _names, error = None } ->
+                    match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(bodyType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(bodyType)(returnEnvironment)([]) with
+                        | PatternInferenceResult { semanticType = _unifiedBodyType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = _unifiedNames, error = None } ->
+                            match inferWith(returnBody)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(ambientRow) with
+                                | TypeInferenceResult { semanticType = returnType, substitution = returnSubstitution, supply = returnSupply, constraints = returnConstraints, error = None } -> addConstraints(appendConstraints(accumulatedConstraints)(returnConstraints))(mergeUnification(returnSubstitution)(unify(applySubstitution(returnSubstitution)(handlerResult))(applySubstitution(returnSubstitution)(returnType)))(returnSupply)(handlerResult))
+                                | failure -> failure
+                        | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
+                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
+and inferHandler body arms environment substitution supply ambientRow =
+    match collectHandlerArms(arms)(environment)([])([])(None) with
+        | HandlerArmCollection { operationArms = _operationArms, capabilityNames = _capabilityNames, returnArm = _returnArm, error = Some(error) } -> inferenceFailure(SemNever)(substitution)(supply)(error)
+        | HandlerArmCollection { operationArms = operationArms, capabilityNames = capabilityNames, returnArm = returnArm, error = None } ->
+            match findMissingHandlerOperation(capabilityNames)(environment)(operationArms) with
+                | Some(missing) -> inferenceFailure(SemNever)(substitution)(supply)(InvalidHandler("missing operation arm " + missing))
+                | None ->
+                    match prepareHandledCapabilities(capabilityNames)(environment)(supply)([]) with
+                        | HandledCapabilityPreparation { capabilities = _handledCapabilities, supply = failedSupply, error = Some(error) } -> inferenceFailure(SemNever)(substitution)(failedSupply)(error)
+                        | HandledCapabilityPreparation { capabilities = handledCapabilities, supply = capabilitySupply, error = None } ->
+                            match freshTypeVariable(capabilitySupply) with
+                                | (handlerResult, handlerResultSupply) ->
+                                    match inferHandlerOperationArms(operationArms)(handledCapabilities)(handlerResult)(environment)(substitution)(handlerResultSupply)(ambientRow)([]) with
+                                        | HandlerArmInference { substitution = failedSubstitution, supply = failedSupply, constraints = _armConstraints, error = Some(error) } -> inferenceFailure(SemNever)(failedSubstitution)(failedSupply)(error)
+                                        | HandlerArmInference { substitution = armSubstitution, supply = armSupply, constraints = armConstraints, error = None } ->
+                                            match freshTypeVariable(armSupply) with
+                                                | (bodyTail, bodyTailSupply) ->
+                                                    let bodyAmbient = SemRow(handledCapabilityTypes(handledCapabilities))(Some(bodyTail))
+                                                    in
+                                                        match inferWith(body)(environment)(armSubstitution)(bodyTailSupply)(bodyAmbient) with
+                                                            | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                                                match subsumeCapabilityRow(bodyTail)(ambientRow)(bodySubstitution)(bodySupply)(bodyType) with
+                                                                    | TypeInferenceResult { semanticType = subsumedBodyType, substitution = subsumedSubstitution, supply = subsumedSupply, constraints = _subsumptionConstraints, error = None } -> inferHandlerReturn(returnArm)(subsumedBodyType)(handlerResult)(environment)(subsumedSubstitution)(subsumedSupply)(ambientRow)(appendConstraints(armConstraints)(bodyConstraints))
+                                                                    | failure -> failure
+                                                            | failure -> failure
 and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
         | ExprAt(_span, inner) -> inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
@@ -684,6 +968,7 @@ and inferWith expression environment substitution supply ambientRow =
                     match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
                         | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownCapabilityOperation(capabilityName)(operationName))
                         | Some(_) -> inferWith(operation)(environment)(substitution)(supply)(ambientRow)
+        | ExprHandle(body, arms) -> inferHandler(body)(arms)(environment)(substitution)(supply)(ambientRow)
         | ExprLambda(name, body, annotation) ->
             match freshTypeVariable(supply) with
                 | (parameterType, afterParameter) ->
