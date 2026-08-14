@@ -64,6 +64,9 @@ type TypeInferenceError =
     | UnknownRecordField(Str, Str)
     | DuplicateRecordField(Str)
     | ExpectedResultType(SemanticType)
+    | PerformRequiresCapabilityOperation
+    | UnknownCapabilityOperation(Str, Str)
+    | UnsignedCapabilityOperationRequiresSignature(Str, Str)
     | InconsistentOrPatternBindings
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
@@ -162,6 +165,19 @@ let recursive findCapabilityBinding : Str -> List(CapabilityInferenceDefinition)
 let resolveCapabilityBinding name environment =
     match environment with
         | TypeEnvironment { bindings = _bindings, constructors = _constructors, capabilities = capabilities, typeResolutionContext = _typeResolutionContext } -> findCapabilityBinding(name)(capabilities)
+
+let recursive findCapabilityOperation name operations =
+    match operations with
+        | [] -> None
+        | CapabilityOperationInferenceDefinition { name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature } :: tail ->
+            if name == candidateName
+            then Some(CapabilityOperationInferenceDefinition(name = candidateName, scheme = scheme, hasExplicitSignature = hasExplicitSignature))
+            else findCapabilityOperation(name)(tail)
+
+let resolveCapabilityOperation capabilityName operationName environment =
+    match resolveCapabilityBinding(capabilityName)(environment) with
+        | None -> None
+        | Some(CapabilityInferenceDefinition { name = _name, operations = operations }) -> findCapabilityOperation(operationName)(operations)
 
 let inferenceTypeResolutionContext environment =
     match environment with
@@ -275,6 +291,39 @@ let mergeUnification currentSubstitution result supply fallbackType =
             in inferenceSuccess(applySubstitution(combined)(fallbackType))(combined)(supply)
         | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> inferenceFailure(fallbackType)(currentSubstitution)(supply)(InferenceUnificationError(error))
 
+let subsumeCapabilityRow capabilityRow ambientRow substitution supply resultType =
+    (let resolvedRow = applySubstitution(substitution)(capabilityRow)
+    in
+        let resolvedAmbient = applySubstitution(substitution)(ambientRow)
+        in
+            match resolvedRow with
+                | SemRow([], None) -> inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply)
+                | SemRow(capabilities, None) ->
+                    match freshTypeVariable(supply) with
+                        | (tailType, nextSupply) -> mergeUnification(substitution)(unify(resolvedAmbient)(SemRow(capabilities)(Some(tailType))))(nextSupply)(resultType)
+                | _ -> mergeUnification(substitution)(unify(resolvedAmbient)(resolvedRow))(supply)(resultType))
+
+let recursive capabilityOperationCallRoot expression sawArgument =
+    match expression with
+        | ExprAt(_span, inner) -> capabilityOperationCallRoot(inner)(sawArgument)
+        | ExprCall(function, _argument, _whitespace) -> capabilityOperationCallRoot(function)(true)
+        | ExprQualifiedVar(capabilityName, operationName) ->
+            if sawArgument
+            then Some((capabilityName, operationName))
+            else None
+        | _ -> None
+
+let subsumeUnsignedCapabilityOperation function environment ambientRow result =
+    match result with
+        | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = supply, constraints = constraints, error = None } ->
+            match capabilityOperationCallRoot(function)(true) with
+                | None -> result
+                | Some((capabilityName, operationName)) ->
+                    match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
+                        | Some(CapabilityOperationInferenceDefinition { name = _name, scheme = _scheme, hasExplicitSignature = false }) -> addConstraints(constraints)(subsumeCapabilityRow(SemRow([SemCapability(capabilityName)([])])(None))(ambientRow)(substitution)(supply)(semanticType))
+                        | _ -> result
+        | _ -> result
+
 let checkInferenceAnnotation annotation expectedType environment substitution supply =
     match prepareTypeResolutionContext(annotation)(inferenceTypeResolutionContext(environment))(supply) with
         | TypeResolutionPreparationResult { context = preparedContext, supply = preparedSupply } ->
@@ -291,23 +340,23 @@ let inferenceEnvironmentSchemes environment =
                     | (_name, scheme) :: tail -> scheme :: schemes(tail)
             in schemes(bindings)
 
-let recursive inferExpressions expressions environment substitution supply reversedTypes =
+let recursive inferExpressions expressions environment substitution supply ambientRow reversedTypes =
     match expressions with
         | [] -> inferenceSuccess(SemTuple(reversedTypes))(substitution)(supply)
         | head :: tail ->
-            match inferWith(head)(environment)(substitution)(supply) with
-                | TypeInferenceResult { semanticType = inferredType, substitution = nextSubstitution, supply = nextSupply, constraints = inferredConstraints, error = None } -> addConstraints(inferredConstraints)(inferExpressions(tail)(environment)(nextSubstitution)(nextSupply)(inferredType :: reversedTypes))
+            match inferWith(head)(environment)(substitution)(supply)(ambientRow) with
+                | TypeInferenceResult { semanticType = inferredType, substitution = nextSubstitution, supply = nextSupply, constraints = inferredConstraints, error = None } -> addConstraints(inferredConstraints)(inferExpressions(tail)(environment)(nextSubstitution)(nextSupply)(ambientRow)(inferredType :: reversedTypes))
                 | failure -> failure
-and inferListElements expressions elementType environment substitution supply =
+and inferListElements expressions elementType environment substitution supply ambientRow =
     match expressions with
         | [] -> inferenceSuccess(SemList(applySubstitution(substitution)(elementType)))(substitution)(supply)
         | head :: tail ->
-            match inferWith(head)(environment)(substitution)(supply) with
+            match inferWith(head)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = inferredType, substitution = nextSubstitution, supply = nextSupply, constraints = inferredConstraints, error = None } ->
                     let unification = unify(applySubstitution(nextSubstitution)(elementType))(applySubstitution(nextSubstitution)(inferredType))
                     in
                         match mergeUnification(nextSubstitution)(unification)(nextSupply)(elementType) with
-                            | TypeInferenceResult { semanticType = unifiedElement, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(inferredConstraints)(inferListElements(tail)(unifiedElement)(environment)(unifiedSubstitution)(unifiedSupply))
+                            | TypeInferenceResult { semanticType = unifiedElement, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(inferredConstraints)(inferListElements(tail)(unifiedElement)(environment)(unifiedSubstitution)(unifiedSupply)(ambientRow))
                             | failure -> failure
                 | failure -> failure
 and inferPatternList patterns environment substitution supply names reversedTypes =
@@ -344,7 +393,7 @@ and inferRecordPatternFields constructorName fields fieldNames fieldTypes result
                                     | PatternInferenceResult { semanticType = _unifiedType, environment = unifiedEnvironment, substitution = unifiedSubstitution, supply = unifiedSupply, names = unifiedNames, error = None } -> inferRecordPatternFields(constructorName)(tail)(fieldNames)(fieldTypes)(resultType)(unifiedEnvironment)(unifiedSubstitution)(unifiedSupply)(unifiedNames)(fieldName :: seenFields)
                                     | failure -> failure
                             | failure -> failure
-and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultType requireAll environment substitution supply seenFields accumulatedConstraints =
+and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultType requireAll environment substitution supply ambientRow seenFields accumulatedConstraints =
     match fields with
         | [] ->
             if requireAll
@@ -360,58 +409,68 @@ and inferRecordExpressionFields recordName fields fieldNames fieldTypes resultTy
                 match findRecordFieldType(fieldName)(fieldNames)(fieldTypes) with
                     | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownRecordField(recordName)(fieldName))
                     | Some(fieldType) ->
-                        match inferWith(fieldExpression)(environment)(substitution)(supply) with
+                        match inferWith(fieldExpression)(environment)(substitution)(supply)(ambientRow) with
                             | TypeInferenceResult { semanticType = expressionType, substitution = expressionSubstitution, supply = expressionSupply, constraints = expressionConstraints, error = None } ->
                                 match mergeUnification(expressionSubstitution)(unify(applySubstitution(expressionSubstitution)(fieldType))(applySubstitution(expressionSubstitution)(expressionType)))(expressionSupply)(resultType) with
-                                    | TypeInferenceResult { semanticType = _unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> inferRecordExpressionFields(recordName)(tail)(fieldNames)(fieldTypes)(resultType)(requireAll)(environment)(unifiedSubstitution)(unifiedSupply)(fieldName :: seenFields)(appendConstraints(accumulatedConstraints)(expressionConstraints))
+                                    | TypeInferenceResult { semanticType = _unifiedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> inferRecordExpressionFields(recordName)(tail)(fieldNames)(fieldTypes)(resultType)(requireAll)(environment)(unifiedSubstitution)(unifiedSupply)(ambientRow)(fieldName :: seenFields)(appendConstraints(accumulatedConstraints)(expressionConstraints))
                                     | failure -> failure
                             | failure -> failure
-and inferResultSuccessPipe left right environment substitution supply =
-    match inferWith(left)(environment)(substitution)(supply) with
+and inferResultSuccessPipe left right environment substitution supply ambientRow =
+    match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
             let resolvedLeft = applySubstitution(leftSubstitution)(leftType)
             in
                 match resultTypeShape(resolvedLeft) with
                     | None -> inferenceFailure(SemNever)(leftSubstitution)(leftSupply)(ExpectedResultType(resolvedLeft))
                     | Some(ResultTypeShape { symbolId = symbolId, errorType = errorType, successType = successType }) ->
-                        match inferWith(right)(environment)(leftSubstitution)(leftSupply) with
+                        match inferWith(right)(environment)(leftSubstitution)(leftSupply)(ambientRow) with
                             | TypeInferenceResult { semanticType = mapperType, substitution = mapperSubstitution, supply = mapperSupply, constraints = mapperConstraints, error = None } ->
                                 match freshTypeVariable(mapperSupply) with
                                     | (mappedType, mappedSupply) ->
-                                        let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(successType))(mappedType)(None)
-                                        in
-                                            match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mappedSupply)(mappedType) with
-                                                | TypeInferenceResult { semanticType = unifiedMappedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
-                                                    let resolvedMappedType = applySubstitution(unifiedSubstitution)(unifiedMappedType)
-                                                    in
-                                                        match resultTypeShape(resolvedMappedType) with
-                                                            | None -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(inferenceSuccess(SemNamed(symbolId)("Result")([applySubstitution(unifiedSubstitution)(errorType), resolvedMappedType]))(unifiedSubstitution)(unifiedSupply))
-                                                            | Some(ResultTypeShape { symbolId = mappedSymbolId, errorType = mappedErrorType, successType = mappedSuccessType }) ->
-                                                                match mergeUnification(unifiedSubstitution)(unify(applySubstitution(unifiedSubstitution)(errorType))(mappedErrorType))(unifiedSupply)(SemNamed(mappedSymbolId)("Result")([mappedErrorType, mappedSuccessType])) with
-                                                                    | success -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(success)
-                                                | failure -> failure
+                                        match freshTypeVariable(mappedSupply) with
+                                            | (mapperRow, mapperRowSupply) ->
+                                                let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(successType))(mappedType)(Some(mapperRow))
+                                                in
+                                                    match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mapperRowSupply)(mappedType) with
+                                                        | TypeInferenceResult { semanticType = unifiedMappedType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
+                                                            match subsumeCapabilityRow(mapperRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedMappedType) with
+                                                                | TypeInferenceResult { semanticType = subsumedMappedType, substitution = subsumedSubstitution, supply = subsumedSupply, constraints = _subsumptionConstraints, error = None } ->
+                                                                    let resolvedMappedType = applySubstitution(subsumedSubstitution)(subsumedMappedType)
+                                                                    in
+                                                                        match resultTypeShape(resolvedMappedType) with
+                                                                            | None -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(inferenceSuccess(SemNamed(symbolId)("Result")([applySubstitution(subsumedSubstitution)(errorType), resolvedMappedType]))(subsumedSubstitution)(subsumedSupply))
+                                                                            | Some(ResultTypeShape { symbolId = mappedSymbolId, errorType = mappedErrorType, successType = mappedSuccessType }) ->
+                                                                                match mergeUnification(subsumedSubstitution)(unify(applySubstitution(subsumedSubstitution)(errorType))(mappedErrorType))(subsumedSupply)(SemNamed(mappedSymbolId)("Result")([mappedErrorType, mappedSuccessType])) with
+                                                                                    | success -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(success)
+                                                                | failure -> failure
+                                                        | failure -> failure
                             | failure -> failure
         | failure -> failure
-and inferResultErrorPipe left right environment substitution supply =
-    match inferWith(left)(environment)(substitution)(supply) with
+and inferResultErrorPipe left right environment substitution supply ambientRow =
+    match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
             let resolvedLeft = applySubstitution(leftSubstitution)(leftType)
             in
                 match resultTypeShape(resolvedLeft) with
                     | None -> inferenceFailure(SemNever)(leftSubstitution)(leftSupply)(ExpectedResultType(resolvedLeft))
                     | Some(ResultTypeShape { symbolId = symbolId, errorType = errorType, successType = successType }) ->
-                        match inferWith(right)(environment)(leftSubstitution)(leftSupply) with
+                        match inferWith(right)(environment)(leftSubstitution)(leftSupply)(ambientRow) with
                             | TypeInferenceResult { semanticType = mapperType, substitution = mapperSubstitution, supply = mapperSupply, constraints = mapperConstraints, error = None } ->
                                 match freshTypeVariable(mapperSupply) with
                                     | (mappedErrorType, mappedSupply) ->
-                                        let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(errorType))(mappedErrorType)(None)
-                                        in
-                                            let resultType = SemNamed(symbolId)("Result")([mappedErrorType, applySubstitution(mapperSubstitution)(successType)])
-                                            in addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mappedSupply)(resultType))
+                                        match freshTypeVariable(mappedSupply) with
+                                            | (mapperRow, mapperRowSupply) ->
+                                                let expectedMapper = SemFunction(applySubstitution(mapperSubstitution)(errorType))(mappedErrorType)(Some(mapperRow))
+                                                in
+                                                    let resultType = SemNamed(symbolId)("Result")([mappedErrorType, applySubstitution(mapperSubstitution)(successType)])
+                                                    in
+                                                        match mergeUnification(mapperSubstitution)(unify(applySubstitution(mapperSubstitution)(mapperType))(expectedMapper))(mapperRowSupply)(resultType) with
+                                                            | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(leftConstraints)(mapperConstraints))(subsumeCapabilityRow(mapperRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType))
+                                                            | failure -> failure
                             | failure -> failure
         | failure -> failure
-and inferLetResult name value body environment substitution supply =
-    match inferWith(value)(environment)(substitution)(supply) with
+and inferLetResult name value body environment substitution supply ambientRow =
+    match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             let resolvedValue = applySubstitution(valueSubstitution)(valueType)
             in
@@ -420,7 +479,7 @@ and inferLetResult name value body environment substitution supply =
                     | Some(ResultTypeShape { symbolId = _symbolId, errorType = errorType, successType = successType }) ->
                         let binding = TypeScheme(quantified = [], body = successType, constraints = [])
                         in
-                            match inferWith(body)(addTypeBinding(name)(binding)(environment))(valueSubstitution)(valueSupply) with
+                            match inferWith(body)(addTypeBinding(name)(binding)(environment))(valueSubstitution)(valueSupply)(ambientRow) with
                                 | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
                                     let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
                                     in
@@ -525,37 +584,37 @@ and inferPattern pattern environment substitution supply names =
         | PatternRune(_) -> patternSuccess(SemRune)(environment)(substitution)(supply)(names)
         | PatternBool(_) -> patternSuccess(SemBool)(environment)(substitution)(supply)(names)
         | _ -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(UnsupportedInferencePattern("pattern case is not implemented yet"))
-and inferMatchCases cases scrutineeType resultType environment substitution supply accumulatedConstraints =
+and inferMatchCases cases scrutineeType resultType environment substitution supply ambientRow accumulatedConstraints =
     match cases with
         | [] -> addConstraints(accumulatedConstraints)(inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply))
         | (pattern, body, guard) :: tail ->
             match inferPattern(pattern)(environment)(substitution)(supply)([]) with
                 | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _patternNames, error = None } ->
                     match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(scrutineeType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(scrutineeType)(patternEnvironment)([]) with
-                        | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } -> inferMatchGuard(guard)(body)(tail)(scrutineeType)(resultType)(environment)(matchedEnvironment)(matchedSubstitution)(matchedSupply)(accumulatedConstraints)
+                        | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } -> inferMatchGuard(guard)(body)(tail)(scrutineeType)(resultType)(environment)(matchedEnvironment)(matchedSubstitution)(matchedSupply)(ambientRow)(accumulatedConstraints)
                         | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
                 | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
-and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply accumulatedConstraints =
+and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
     match guard with
-        | None -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(substitution)(supply)(accumulatedConstraints)
+        | None -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(substitution)(supply)(ambientRow)(accumulatedConstraints)
         | Some(guardExpression) ->
-            match inferWith(guardExpression)(patternEnvironment)(substitution)(supply) with
+            match inferWith(guardExpression)(patternEnvironment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = guardType, substitution = guardSubstitution, supply = guardSupply, constraints = guardConstraints, error = None } ->
                     match mergeUnification(guardSubstitution)(unify(applySubstitution(guardSubstitution)(guardType))(SemBool))(guardSupply)(SemBool) with
-                        | TypeInferenceResult { semanticType = _booleanType, substitution = booleanSubstitution, supply = booleanSupply, constraints = _unificationConstraints, error = None } -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(booleanSubstitution)(booleanSupply)(appendConstraints(accumulatedConstraints)(guardConstraints))
+                        | TypeInferenceResult { semanticType = _booleanType, substitution = booleanSubstitution, supply = booleanSupply, constraints = _unificationConstraints, error = None } -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(booleanSubstitution)(booleanSupply)(ambientRow)(appendConstraints(accumulatedConstraints)(guardConstraints))
                         | failure -> failure
                 | failure -> failure
-and inferMatchBody body tail scrutineeType resultType environment patternEnvironment substitution supply accumulatedConstraints =
-    match inferWith(body)(patternEnvironment)(substitution)(supply) with
+and inferMatchBody body tail scrutineeType resultType environment patternEnvironment substitution supply ambientRow accumulatedConstraints =
+    match inferWith(body)(patternEnvironment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
             match mergeUnification(bodySubstitution)(unify(applySubstitution(bodySubstitution)(resultType))(applySubstitution(bodySubstitution)(bodyType)))(bodySupply)(resultType) with
-                | TypeInferenceResult { semanticType = _unifiedResult, substitution = resultSubstitution, supply = resultSupply, constraints = _unificationConstraints, error = None } -> inferMatchCases(tail)(scrutineeType)(resultType)(environment)(resultSubstitution)(resultSupply)(appendConstraints(accumulatedConstraints)(bodyConstraints))
+                | TypeInferenceResult { semanticType = _unifiedResult, substitution = resultSubstitution, supply = resultSupply, constraints = _unificationConstraints, error = None } -> inferMatchCases(tail)(scrutineeType)(resultType)(environment)(resultSubstitution)(resultSupply)(ambientRow)(appendConstraints(accumulatedConstraints)(bodyConstraints))
                 | failure -> failure
         | failure -> failure
-and inferBinaryTrait traitName returnsBool left right environment substitution supply =
-    match inferWith(left)(environment)(substitution)(supply) with
+and inferBinaryTrait traitName returnsBool left right environment substitution supply ambientRow =
+    match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
-            match inferWith(right)(environment)(leftSubstitution)(leftSupply) with
+            match inferWith(right)(environment)(leftSubstitution)(leftSupply)(ambientRow) with
                 | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
                     let unification = unify(applySubstitution(rightSubstitution)(leftType))(applySubstitution(rightSubstitution)(rightType))
                     in
@@ -571,17 +630,30 @@ and inferBinaryTrait traitName returnsBool left right environment substitution s
                             | failure -> failure
                 | failure -> failure
         | failure -> failure
-and inferUnaryTrait traitName operand environment substitution supply =
-    match inferWith(operand)(environment)(substitution)(supply) with
+and inferUnaryTrait traitName operand environment substitution supply ambientRow =
+    match inferWith(operand)(environment)(substitution)(supply)(ambientRow) with
         | TypeInferenceResult { semanticType = operandType, substitution = operandSubstitution, supply = operandSupply, constraints = operandConstraints, error = None } ->
             let resolvedOperand = applySubstitution(operandSubstitution)(operandType)
             in
                 let constraint = TraitConstraint(traitName = traitName, typeArguments = [resolvedOperand])
                 in addConstraints(appendConstraints(operandConstraints)([constraint]))(inferenceSuccess(resolvedOperand)(operandSubstitution)(operandSupply))
         | failure -> failure
-and inferWith expression environment substitution supply =
+and inferCalledFunction expression environment substitution supply ambientRow =
     match expression with
-        | ExprAt(_span, inner) -> inferWith(inner)(environment)(substitution)(supply)
+        | ExprAt(_span, inner) -> inferCalledFunction(inner)(environment)(substitution)(supply)(ambientRow)
+        | ExprQualifiedVar(capabilityName, operationName) ->
+            match resolveCapabilityBinding(capabilityName)(environment) with
+                | None -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+                | Some(_) ->
+                    match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
+                        | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownCapabilityOperation(capabilityName)(operationName))
+                        | Some(CapabilityOperationInferenceDefinition { name = _name, scheme = scheme, hasExplicitSignature = _hasExplicitSignature }) ->
+                            match instantiate(scheme)(supply) with
+                                | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } -> addConstraints(instantiatedConstraints)(inferenceSuccess(applySubstitution(substitution)(instantiatedType))(substitution)(nextSupply))
+        | _ -> inferWith(expression)(environment)(substitution)(supply)(ambientRow)
+and inferWith expression environment substitution supply ambientRow =
+    match expression with
+        | ExprAt(_span, inner) -> inferWith(inner)(environment)(substitution)(supply)(ambientRow)
         | ExprInt(_) -> inferenceSuccess(SemInt)(substitution)(supply)
         | ExprBigInt(_) -> inferenceSuccess(SemBigInt)(substitution)(supply)
         | ExprUInt(_value, bits, _text) -> inferenceSuccess(SemUInt(bits))(substitution)(supply)
@@ -595,7 +667,23 @@ and inferWith expression environment substitution supply =
                 | Some(scheme) ->
                     match instantiate(scheme)(supply) with
                         | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } -> addConstraints(instantiatedConstraints)(inferenceSuccess(applySubstitution(substitution)(instantiatedType))(substitution)(nextSupply))
-        | ExprQualifiedVar(moduleName, name) -> inferWith(ExprVar(moduleName + "." + name))(environment)(substitution)(supply)
+        | ExprQualifiedVar(moduleName, name) ->
+            match resolveCapabilityBinding(moduleName)(environment) with
+                | None -> inferWith(ExprVar(moduleName + "." + name))(environment)(substitution)(supply)(ambientRow)
+                | Some(_) ->
+                    match resolveCapabilityOperation(moduleName)(name)(environment) with
+                        | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownCapabilityOperation(moduleName)(name))
+                        | Some(CapabilityOperationInferenceDefinition { name = _operationName, scheme = _scheme, hasExplicitSignature = false }) -> inferenceFailure(SemNever)(substitution)(supply)(UnsignedCapabilityOperationRequiresSignature(moduleName)(name))
+                        | Some(CapabilityOperationInferenceDefinition { name = _operationName, scheme = scheme, hasExplicitSignature = true }) ->
+                            match instantiate(scheme)(supply) with
+                                | InstantiationResult { semanticType = instantiatedType, constraints = instantiatedConstraints, supply = nextSupply } -> addConstraints(instantiatedConstraints)(inferenceSuccess(applySubstitution(substitution)(instantiatedType))(substitution)(nextSupply))
+        | ExprPerform(operation) ->
+            match capabilityOperationCallRoot(operation)(false) with
+                | None -> inferenceFailure(SemNever)(substitution)(supply)(PerformRequiresCapabilityOperation)
+                | Some((capabilityName, operationName)) ->
+                    match resolveCapabilityOperation(capabilityName)(operationName)(environment) with
+                        | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownCapabilityOperation(capabilityName)(operationName))
+                        | Some(_) -> inferWith(operation)(environment)(substitution)(supply)(ambientRow)
         | ExprLambda(name, body, annotation) ->
             match freshTypeVariable(supply) with
                 | (parameterType, afterParameter) ->
@@ -610,29 +698,40 @@ and inferWith expression environment substitution supply =
                                 in
                                     let bodyEnvironment = addTypeBinding(name)(parameterScheme)(environment)
                                     in
-                                        match inferWith(body)(bodyEnvironment)(annotationSubstitution)(annotationSupply) with
-                                            | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
-                                                let resolvedParameter = applySubstitution(bodySubstitution)(checkedParameter)
-                                                in
-                                                    let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
-                                                    in addConstraints(bodyConstraints)(inferenceSuccess(SemFunction(resolvedParameter)(resolvedBody)(None))(bodySubstitution)(bodySupply))
-                                            | failure -> failure
+                                        match freshTypeVariable(annotationSupply) with
+                                            | (bodyAmbientRow, bodyAmbientSupply) ->
+                                                match inferWith(body)(bodyEnvironment)(annotationSubstitution)(bodyAmbientSupply)(bodyAmbientRow) with
+                                                    | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+                                                        let resolvedParameter = applySubstitution(bodySubstitution)(checkedParameter)
+                                                        in
+                                                            let resolvedBody = applySubstitution(bodySubstitution)(bodyType)
+                                                            in
+                                                                let resolvedBodyRow = applySubstitution(bodySubstitution)(bodyAmbientRow)
+                                                                in addConstraints(bodyConstraints)(inferenceSuccess(SemFunction(resolvedParameter)(resolvedBody)(Some(resolvedBodyRow)))(bodySubstitution)(bodySupply))
+                                                    | failure -> failure
                             | failure -> failure
         | ExprCall(function, argument, _whitespace) ->
-            match inferWith(function)(environment)(substitution)(supply) with
+            match inferCalledFunction(function)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = functionType, substitution = functionSubstitution, supply = functionSupply, constraints = functionConstraints, error = None } ->
-                    match inferWith(argument)(environment)(functionSubstitution)(functionSupply) with
+                    match inferWith(argument)(environment)(functionSubstitution)(functionSupply)(ambientRow) with
                         | TypeInferenceResult { semanticType = argumentType, substitution = argumentSubstitution, supply = argumentSupply, constraints = argumentConstraints, error = None } ->
                             match freshTypeVariable(argumentSupply) with
                                 | (resultType, resultSupply) ->
-                                    let expectedFunction = SemFunction(argumentType)(resultType)(None)
-                                    in
-                                        let unification = unify(applySubstitution(argumentSubstitution)(functionType))(expectedFunction)
-                                        in addConstraints(appendConstraints(functionConstraints)(argumentConstraints))(mergeUnification(argumentSubstitution)(unification)(resultSupply)(resultType))
+                                    match freshTypeVariable(resultSupply) with
+                                        | (callRow, callRowSupply) ->
+                                            let expectedFunction = SemFunction(argumentType)(resultType)(Some(callRow))
+                                            in
+                                                let unification = unify(applySubstitution(argumentSubstitution)(functionType))(expectedFunction)
+                                                in
+                                                    match mergeUnification(argumentSubstitution)(unification)(callRowSupply)(resultType) with
+                                                        | TypeInferenceResult { semanticType = unifiedResultType, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } ->
+                                                            let callResult = subsumeCapabilityRow(callRow)(ambientRow)(unifiedSubstitution)(unifiedSupply)(unifiedResultType)
+                                                            in addConstraints(appendConstraints(functionConstraints)(argumentConstraints))(subsumeUnsignedCapabilityOperation(function)(environment)(ambientRow)(callResult))
+                                                        | failure -> failure
                         | failure -> failure
                 | failure -> failure
         | ExprLet(name, value, body, _parameters, annotation, _requirements) ->
-            match inferWith(value)(environment)(substitution)(supply) with
+            match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                     let annotationResult =
                         match annotation with
@@ -648,7 +747,7 @@ and inferWith expression environment substitution supply =
                                         let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedValue)(resolvedConstraints)
                                         in
                                             let bodyEnvironment = addTypeBinding(name)(scheme)(environment)
-                                            in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)
+                                            in inferWith(body)(bodyEnvironment)(checkedSubstitution)(checkedSupply)(ambientRow)
                             | failure -> failure
                 | failure -> failure
         | ExprLetRecursive(name, value, body, _parameters, annotation, _requirements) ->
@@ -658,7 +757,7 @@ and inferWith expression environment substitution supply =
                     in
                         let recursiveEnvironment = addTypeBinding(name)(recursiveScheme)(environment)
                         in
-                            match inferWith(value)(recursiveEnvironment)(substitution)(afterRecursive) with
+                            match inferWith(value)(recursiveEnvironment)(substitution)(afterRecursive)(ambientRow) with
                                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
                                     let unification = unify(applySubstitution(valueSubstitution)(recursiveType))(applySubstitution(valueSubstitution)(valueType))
                                     in
@@ -676,20 +775,20 @@ and inferWith expression environment substitution supply =
                                                                 let resolvedConstraints = applyInferenceConstraints(checkedSubstitution)(valueConstraints)
                                                                 in
                                                                     let scheme = generalize(inferenceEnvironmentSchemes(environment))(resolvedType)(resolvedConstraints)
-                                                                    in inferWith(body)(addTypeBinding(name)(scheme)(environment))(checkedSubstitution)(checkedSupply)
+                                                                    in inferWith(body)(addTypeBinding(name)(scheme)(environment))(checkedSubstitution)(checkedSupply)(ambientRow)
                                                         | failure -> failure
                                             | failure -> failure
                                 | failure -> failure
         | ExprIf(condition, thenBranch, elseBranch) ->
-            match inferWith(condition)(environment)(substitution)(supply) with
+            match inferWith(condition)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = conditionType, substitution = conditionSubstitution, supply = conditionSupply, constraints = conditionConstraints, error = None } ->
                     let conditionUnification = unify(applySubstitution(conditionSubstitution)(conditionType))(SemBool)
                     in
                         match mergeUnification(conditionSubstitution)(conditionUnification)(conditionSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _booleanType, substitution = booleanSubstitution, supply = booleanSupply, constraints = _unificationConstraints, error = None } ->
-                                match inferWith(thenBranch)(environment)(booleanSubstitution)(booleanSupply) with
+                                match inferWith(thenBranch)(environment)(booleanSubstitution)(booleanSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = thenType, substitution = thenSubstitution, supply = thenSupply, constraints = thenConstraints, error = None } ->
-                                        match inferWith(elseBranch)(environment)(thenSubstitution)(thenSupply) with
+                                        match inferWith(elseBranch)(environment)(thenSubstitution)(thenSupply)(ambientRow) with
                                             | TypeInferenceResult { semanticType = elseType, substitution = elseSubstitution, supply = elseSupply, constraints = elseConstraints, error = None } ->
                                                 let branchUnification = unify(applySubstitution(elseSubstitution)(thenType))(applySubstitution(elseSubstitution)(elseType))
                                                 in addConstraints(appendConstraints(conditionConstraints)(appendConstraints(thenConstraints)(elseConstraints)))(mergeUnification(elseSubstitution)(branchUnification)(elseSupply)(thenType))
@@ -698,16 +797,16 @@ and inferWith expression environment substitution supply =
                             | failure -> failure
                 | failure -> failure
         | ExprTuple(elements) ->
-            match inferExpressions(elements)(environment)(substitution)(supply)([]) with
+            match inferExpressions(elements)(environment)(substitution)(supply)(ambientRow)([]) with
                 | TypeInferenceResult { semanticType = SemTuple(reversedTypes), substitution = tupleSubstitution, supply = tupleSupply, constraints = tupleConstraints, error = None } -> addConstraints(tupleConstraints)(inferenceSuccess(SemTuple(reverse(reversedTypes)))(tupleSubstitution)(tupleSupply))
                 | failure -> failure
         | ExprList(elements) ->
             match freshTypeVariable(supply) with
-                | (elementType, nextSupply) -> inferListElements(elements)(elementType)(environment)(substitution)(nextSupply)
+                | (elementType, nextSupply) -> inferListElements(elements)(elementType)(environment)(substitution)(nextSupply)(ambientRow)
         | ExprCons(head, tail) ->
-            match inferWith(head)(environment)(substitution)(supply) with
+            match inferWith(head)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = headType, substitution = headSubstitution, supply = headSupply, constraints = headConstraints, error = None } ->
-                    match inferWith(tail)(environment)(headSubstitution)(headSupply) with
+                    match inferWith(tail)(environment)(headSubstitution)(headSupply)(ambientRow) with
                         | TypeInferenceResult { semanticType = tailType, substitution = tailSubstitution, supply = tailSupply, constraints = tailConstraints, error = None } ->
                             let unification = unify(applySubstitution(tailSubstitution)(tailType))(SemList(applySubstitution(tailSubstitution)(headType)))
                             in addConstraints(appendConstraints(headConstraints)(tailConstraints))(mergeUnification(tailSubstitution)(unification)(tailSupply)(tailType))
@@ -720,9 +819,9 @@ and inferWith expression environment substitution supply =
                     match instantiate(scheme)(supply) with
                         | InstantiationResult { semanticType = constructorType, constraints = constructorConstraints, supply = constructorSupply } ->
                             match splitConstructorType(constructorType)([]) with
-                                | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } -> addConstraints(constructorConstraints)(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(resultType)(true)(environment)(substitution)(constructorSupply)([])([]))
+                                | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } -> addConstraints(constructorConstraints)(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(resultType)(true)(environment)(substitution)(constructorSupply)(ambientRow)([])([]))
         | ExprRecordUpdate(target, fields) ->
-            match inferWith(target)(environment)(substitution)(supply) with
+            match inferWith(target)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = targetType, substitution = targetSubstitution, supply = targetSupply, constraints = targetConstraints, error = None } ->
                     match applySubstitution(targetSubstitution)(targetType) with
                         | SemNamed(_symbolId, name, _arguments) ->
@@ -734,43 +833,45 @@ and inferWith expression environment substitution supply =
                                             match splitConstructorType(constructorType)([]) with
                                                 | ConstructorTypeShape { parameters = fieldTypes, resultType = resultType } ->
                                                     match mergeUnification(targetSubstitution)(unify(applySubstitution(targetSubstitution)(targetType))(resultType))(constructorSupply)(resultType) with
-                                                        | TypeInferenceResult { semanticType = unifiedResult, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(targetConstraints)(constructorConstraints))(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(unifiedResult)(false)(environment)(unifiedSubstitution)(unifiedSupply)([])([]))
+                                                        | TypeInferenceResult { semanticType = unifiedResult, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(appendConstraints(targetConstraints)(constructorConstraints))(inferRecordExpressionFields(name)(fields)(fieldNames)(fieldTypes)(unifiedResult)(false)(environment)(unifiedSubstitution)(unifiedSupply)(ambientRow)([])([]))
                                                         | failure -> failure
                         | other -> inferenceFailure(SemNever)(targetSubstitution)(targetSupply)(RecordUpdateRequiresRecord(other))
                 | failure -> failure
-        | ExprResultPipe(left, right) -> inferResultSuccessPipe(left)(right)(environment)(substitution)(supply)
-        | ExprResultMapErrorPipe(left, right) -> inferResultErrorPipe(left)(right)(environment)(substitution)(supply)
-        | ExprLetResult(name, value, body) -> inferLetResult(name)(value)(body)(environment)(substitution)(supply)
+        | ExprResultPipe(left, right) -> inferResultSuccessPipe(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprResultMapErrorPipe(left, right) -> inferResultErrorPipe(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprLetResult(name, value, body) -> inferLetResult(name)(value)(body)(environment)(substitution)(supply)(ambientRow)
         | ExprMatch(scrutinee, cases, _position) ->
-            match inferWith(scrutinee)(environment)(substitution)(supply) with
+            match inferWith(scrutinee)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = scrutineeType, substitution = scrutineeSubstitution, supply = scrutineeSupply, constraints = scrutineeConstraints, error = None } ->
                     match freshTypeVariable(scrutineeSupply) with
-                        | (resultType, resultSupply) -> inferMatchCases(cases)(scrutineeType)(resultType)(environment)(scrutineeSubstitution)(resultSupply)(scrutineeConstraints)
+                        | (resultType, resultSupply) -> inferMatchCases(cases)(scrutineeType)(resultType)(environment)(scrutineeSubstitution)(resultSupply)(ambientRow)(scrutineeConstraints)
                 | failure -> failure
-        | ExprAdd(left, right) -> inferBinaryTrait("Add")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprSubtract(left, right) -> inferBinaryTrait("Subtract")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprMultiply(left, right) -> inferBinaryTrait("Multiply")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprDivide(left, right) -> inferBinaryTrait("Divide")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprModulo(left, right) -> inferBinaryTrait("Remainder")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprBitwiseAnd(left, right) -> inferBinaryTrait("BitAnd")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprBitwiseOr(left, right) -> inferBinaryTrait("BitOr")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprBitwiseXor(left, right) -> inferBinaryTrait("BitXor")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprShiftLeft(left, right) -> inferBinaryTrait("ShiftLeft")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprShiftRight(left, right) -> inferBinaryTrait("ShiftRight")(false)(left)(right)(environment)(substitution)(supply)
-        | ExprEqual(left, right) -> inferBinaryTrait("Eq")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprNotEqual(left, right) -> inferBinaryTrait("Eq")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprLessThan(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprLessOrEqual(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprGreaterThan(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprGreaterOrEqual(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)
-        | ExprBitwiseNot(operand) -> inferUnaryTrait("BitwiseNot")(operand)(environment)(substitution)(supply)
-        | ExprLogicalNot(operand) -> inferUnaryTrait("Not")(operand)(environment)(substitution)(supply)
+        | ExprAdd(left, right) -> inferBinaryTrait("Add")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprSubtract(left, right) -> inferBinaryTrait("Subtract")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprMultiply(left, right) -> inferBinaryTrait("Multiply")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprDivide(left, right) -> inferBinaryTrait("Divide")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprModulo(left, right) -> inferBinaryTrait("Remainder")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprBitwiseAnd(left, right) -> inferBinaryTrait("BitAnd")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprBitwiseOr(left, right) -> inferBinaryTrait("BitOr")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprBitwiseXor(left, right) -> inferBinaryTrait("BitXor")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprShiftLeft(left, right) -> inferBinaryTrait("ShiftLeft")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprShiftRight(left, right) -> inferBinaryTrait("ShiftRight")(false)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprEqual(left, right) -> inferBinaryTrait("Eq")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprNotEqual(left, right) -> inferBinaryTrait("Eq")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprLessThan(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprLessOrEqual(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprGreaterThan(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprGreaterOrEqual(left, right) -> inferBinaryTrait("Ord")(true)(left)(right)(environment)(substitution)(supply)(ambientRow)
+        | ExprBitwiseNot(operand) -> inferUnaryTrait("BitwiseNot")(operand)(environment)(substitution)(supply)(ambientRow)
+        | ExprLogicalNot(operand) -> inferUnaryTrait("Not")(operand)(environment)(substitution)(supply)(ambientRow)
         | _ -> inferenceFailure(SemNever)(substitution)(supply)(UnsupportedInferenceExpression("expression case is not implemented yet"))
 
-let inferExpressionFrom expression environment substitution supply = inferWith(expression)(environment)(substitution)(supply)
+let inferExpressionFrom expression environment substitution supply =
+    match freshTypeVariable(supply) with
+        | (ambientRow, nextSupply) -> inferWith(expression)(environment)(substitution)(nextSupply)(ambientRow)
 
 let inferTopLevelBinding name value annotation environment substitution supply =
-    match inferWith(value)(environment)(substitution)(supply) with
+    match inferExpressionFrom(value)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->
             let annotationResult =
                 match annotation with
