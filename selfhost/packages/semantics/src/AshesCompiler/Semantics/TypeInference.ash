@@ -1,4 +1,5 @@
 import AshesCompiler.Frontend.Syntax.Expr
+import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
@@ -18,6 +19,8 @@ type TypeEnvironment =
 type TypeInferenceError =
     | UnknownValue(Str)
     | InferenceUnificationError(UnificationError)
+    | DuplicatePatternBinding(Str)
+    | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     deriving {Eq, Show}
 
@@ -28,6 +31,14 @@ type TypeInferenceResult =
     | constraints: List(TraitConstraint)
     | error: Maybe(TypeInferenceError)
     deriving {Eq, Show}
+
+type PatternInferenceResult =
+    | semanticType: SemanticType
+    | environment: TypeEnvironment
+    | substitution: List((Int, SemanticType))
+    | supply: TypeVariableSupply
+    | names: List(Str)
+    | error: Maybe(TypeInferenceError)
 
 let emptyTypeEnvironment unit = TypeEnvironment(bindings = [])
 
@@ -83,6 +94,25 @@ let recursive appendSubstitution left right =
         | [] -> right
         | head :: tail -> head :: appendSubstitution(tail)(right)
 
+let patternSuccess semanticType environment substitution supply names = PatternInferenceResult(semanticType = semanticType, environment = environment, substitution = substitution, supply = supply, names = names, error = None)
+
+let patternFailure semanticType environment substitution supply names error = PatternInferenceResult(semanticType = semanticType, environment = environment, substitution = substitution, supply = supply, names = names, error = Some(error))
+
+let mergePatternUnification currentSubstitution result supply fallbackType environment names =
+    match result with
+        | UnificationResult { substitution = unificationSubstitution, error = None } ->
+            let combined = appendSubstitution(unificationSubstitution)(currentSubstitution)
+            in patternSuccess(applySubstitution(combined)(fallbackType))(environment)(combined)(supply)(names)
+        | UnificationResult { substitution = _unificationSubstitution, error = Some(error) } -> patternFailure(fallbackType)(environment)(currentSubstitution)(supply)(names)(InferenceUnificationError(error))
+
+let recursive patternNameExists name names =
+    match names with
+        | [] -> false
+        | head :: tail ->
+            if name == head
+            then true
+            else patternNameExists(name)(tail)
+
 let mergeUnification currentSubstitution result supply fallbackType =
     match result with
         | UnificationResult { substitution = unificationSubstitution, error = None } ->
@@ -118,6 +148,84 @@ and inferListElements expressions elementType environment substitution supply =
                             | TypeInferenceResult { semanticType = unifiedElement, substitution = unifiedSubstitution, supply = unifiedSupply, constraints = _unificationConstraints, error = None } -> addConstraints(inferredConstraints)(inferListElements(tail)(unifiedElement)(environment)(unifiedSubstitution)(unifiedSupply))
                             | failure -> failure
                 | failure -> failure
+and inferPatternList patterns environment substitution supply names reversedTypes =
+    match patterns with
+        | [] -> patternSuccess(SemTuple(reversedTypes))(environment)(substitution)(supply)(names)
+        | head :: tail ->
+            match inferPattern(head)(environment)(substitution)(supply)(names) with
+                | PatternInferenceResult { semanticType = headType, environment = headEnvironment, substitution = headSubstitution, supply = headSupply, names = headNames, error = None } -> inferPatternList(tail)(headEnvironment)(headSubstitution)(headSupply)(headNames)(headType :: reversedTypes)
+                | failure -> failure
+and inferPattern pattern environment substitution supply names =
+    match pattern with
+        | PatternAt(_span, inner) -> inferPattern(inner)(environment)(substitution)(supply)(names)
+        | PatternEmptyList ->
+            match freshTypeVariable(supply) with
+                | (elementType, nextSupply) -> patternSuccess(SemList(elementType))(environment)(substitution)(nextSupply)(names)
+        | PatternVar(name) ->
+            if patternNameExists(name)(names)
+            then patternFailure(SemNever)(environment)(substitution)(supply)(names)(DuplicatePatternBinding(name))
+            else
+                match freshTypeVariable(supply) with
+                    | (variableType, nextSupply) ->
+                        let scheme = TypeScheme(quantified = [], body = variableType, constraints = [])
+                        in patternSuccess(variableType)(addTypeBinding(name)(scheme)(environment))(substitution)(nextSupply)(name :: names)
+        | PatternWildcard ->
+            match freshTypeVariable(supply) with
+                | (wildcardType, nextSupply) -> patternSuccess(wildcardType)(environment)(substitution)(nextSupply)(names)
+        | PatternCons(head, tail) ->
+            match inferPattern(head)(environment)(substitution)(supply)(names) with
+                | PatternInferenceResult { semanticType = headType, environment = headEnvironment, substitution = headSubstitution, supply = headSupply, names = headNames, error = None } ->
+                    match inferPattern(tail)(headEnvironment)(headSubstitution)(headSupply)(headNames) with
+                        | PatternInferenceResult { semanticType = tailType, environment = tailEnvironment, substitution = tailSubstitution, supply = tailSupply, names = tailNames, error = None } ->
+                            let listType = SemList(applySubstitution(tailSubstitution)(headType))
+                            in mergePatternUnification(tailSubstitution)(unify(applySubstitution(tailSubstitution)(tailType))(listType))(tailSupply)(listType)(tailEnvironment)(tailNames)
+                        | failure -> failure
+                | failure -> failure
+        | PatternTuple(elements) ->
+            match inferPatternList(elements)(environment)(substitution)(supply)(names)([]) with
+                | PatternInferenceResult { semanticType = SemTuple(reversedTypes), environment = tupleEnvironment, substitution = tupleSubstitution, supply = tupleSupply, names = tupleNames, error = None } -> patternSuccess(SemTuple(reverse(reversedTypes)))(tupleEnvironment)(tupleSubstitution)(tupleSupply)(tupleNames)
+                | failure -> failure
+        | PatternAs(inner, name) ->
+            match inferPattern(inner)(environment)(substitution)(supply)(names) with
+                | PatternInferenceResult { semanticType = innerType, environment = innerEnvironment, substitution = innerSubstitution, supply = innerSupply, names = innerNames, error = None } ->
+                    if patternNameExists(name)(innerNames)
+                    then patternFailure(innerType)(innerEnvironment)(innerSubstitution)(innerSupply)(innerNames)(DuplicatePatternBinding(name))
+                    else
+                        let scheme = TypeScheme(quantified = [], body = innerType, constraints = [])
+                        in patternSuccess(innerType)(addTypeBinding(name)(scheme)(innerEnvironment))(innerSubstitution)(innerSupply)(name :: innerNames)
+                | failure -> failure
+        | PatternInt(_) -> patternSuccess(SemInt)(environment)(substitution)(supply)(names)
+        | PatternString(_) -> patternSuccess(SemString)(environment)(substitution)(supply)(names)
+        | PatternRune(_) -> patternSuccess(SemRune)(environment)(substitution)(supply)(names)
+        | PatternBool(_) -> patternSuccess(SemBool)(environment)(substitution)(supply)(names)
+        | _ -> patternFailure(SemNever)(environment)(substitution)(supply)(names)(UnsupportedInferencePattern("pattern case is not implemented yet"))
+and inferMatchCases cases scrutineeType resultType environment substitution supply accumulatedConstraints =
+    match cases with
+        | [] -> addConstraints(accumulatedConstraints)(inferenceSuccess(applySubstitution(substitution)(resultType))(substitution)(supply))
+        | (pattern, body, guard) :: tail ->
+            match inferPattern(pattern)(environment)(substitution)(supply)([]) with
+                | PatternInferenceResult { semanticType = patternType, environment = patternEnvironment, substitution = patternSubstitution, supply = patternSupply, names = _patternNames, error = None } ->
+                    match mergePatternUnification(patternSubstitution)(unify(applySubstitution(patternSubstitution)(scrutineeType))(applySubstitution(patternSubstitution)(patternType)))(patternSupply)(scrutineeType)(patternEnvironment)([]) with
+                        | PatternInferenceResult { semanticType = _matchedType, environment = matchedEnvironment, substitution = matchedSubstitution, supply = matchedSupply, names = _matchedNames, error = None } -> inferMatchGuard(guard)(body)(tail)(scrutineeType)(resultType)(environment)(matchedEnvironment)(matchedSubstitution)(matchedSupply)(accumulatedConstraints)
+                        | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
+                | PatternInferenceResult { semanticType = failedType, environment = _failedEnvironment, substitution = failedSubstitution, supply = failedSupply, names = _failedNames, error = Some(error) } -> inferenceFailure(failedType)(failedSubstitution)(failedSupply)(error)
+and inferMatchGuard guard body tail scrutineeType resultType environment patternEnvironment substitution supply accumulatedConstraints =
+    match guard with
+        | None -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(substitution)(supply)(accumulatedConstraints)
+        | Some(guardExpression) ->
+            match inferWith(guardExpression)(patternEnvironment)(substitution)(supply) with
+                | TypeInferenceResult { semanticType = guardType, substitution = guardSubstitution, supply = guardSupply, constraints = guardConstraints, error = None } ->
+                    match mergeUnification(guardSubstitution)(unify(applySubstitution(guardSubstitution)(guardType))(SemBool))(guardSupply)(SemBool) with
+                        | TypeInferenceResult { semanticType = _booleanType, substitution = booleanSubstitution, supply = booleanSupply, constraints = _unificationConstraints, error = None } -> inferMatchBody(body)(tail)(scrutineeType)(resultType)(environment)(patternEnvironment)(booleanSubstitution)(booleanSupply)(appendConstraints(accumulatedConstraints)(guardConstraints))
+                        | failure -> failure
+                | failure -> failure
+and inferMatchBody body tail scrutineeType resultType environment patternEnvironment substitution supply accumulatedConstraints =
+    match inferWith(body)(patternEnvironment)(substitution)(supply) with
+        | TypeInferenceResult { semanticType = bodyType, substitution = bodySubstitution, supply = bodySupply, constraints = bodyConstraints, error = None } ->
+            match mergeUnification(bodySubstitution)(unify(applySubstitution(bodySubstitution)(resultType))(applySubstitution(bodySubstitution)(bodyType)))(bodySupply)(resultType) with
+                | TypeInferenceResult { semanticType = _unifiedResult, substitution = resultSubstitution, supply = resultSupply, constraints = _unificationConstraints, error = None } -> inferMatchCases(tail)(scrutineeType)(resultType)(environment)(resultSubstitution)(resultSupply)(appendConstraints(accumulatedConstraints)(bodyConstraints))
+                | failure -> failure
+        | failure -> failure
 and inferBinaryTrait traitName returnsBool left right environment substitution supply =
     match inferWith(left)(environment)(substitution)(supply) with
         | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
@@ -252,6 +360,12 @@ and inferWith expression environment substitution supply =
                             let unification = unify(applySubstitution(tailSubstitution)(tailType))(SemList(applySubstitution(tailSubstitution)(headType)))
                             in addConstraints(appendConstraints(headConstraints)(tailConstraints))(mergeUnification(tailSubstitution)(unification)(tailSupply)(tailType))
                         | failure -> failure
+                | failure -> failure
+        | ExprMatch(scrutinee, cases, _position) ->
+            match inferWith(scrutinee)(environment)(substitution)(supply) with
+                | TypeInferenceResult { semanticType = scrutineeType, substitution = scrutineeSubstitution, supply = scrutineeSupply, constraints = scrutineeConstraints, error = None } ->
+                    match freshTypeVariable(scrutineeSupply) with
+                        | (resultType, resultSupply) -> inferMatchCases(cases)(scrutineeType)(resultType)(environment)(scrutineeSubstitution)(resultSupply)(scrutineeConstraints)
                 | failure -> failure
         | ExprAdd(left, right) -> inferBinaryTrait("Add")(false)(left)(right)(environment)(substitution)(supply)
         | ExprSubtract(left, right) -> inferBinaryTrait("Subtract")(false)(left)(right)(environment)(substitution)(supply)

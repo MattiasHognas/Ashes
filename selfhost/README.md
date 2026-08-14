@@ -31,7 +31,7 @@ self-hosted implementation or its test path.
 |---|---|
 | Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies |
 | Formatter | Canonical whole-program, declaration, expression, pattern, and type rendering with precedence preservation and idempotence coverage |
-| Semantics | Stable symbols and lexical scopes plus the semantic type algebra, substitutions and unification, environment-aware constrained schemes, and Algorithm W inference for literals, qualified variables, lambdas, application, polymorphic and recursive lets, tuples, lists, cons, conditionals, and trait-constrained operators |
+| Semantics | Stable symbols and lexical scopes plus the semantic type algebra, substitutions and unification, environment-aware constrained schemes, and Algorithm W inference for literals, qualified variables, lambdas, application, polymorphic and recursive lets, tuples, lists, cons, conditionals, trait-constrained operators, and guarded matches over literal, binding, alias, list, and tuple patterns |
 | Backend, test runner, LSP, DAP, CLI, and fuzzing | Not started |
 
 The syntax model orders `Pattern` and `TypeExpr` before `Expr` so each category remains distinct in

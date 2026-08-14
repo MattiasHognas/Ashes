@@ -5,6 +5,7 @@ import AshesCompiler.Semantics.Types
 import UnificationTests
 import TypeSchemeTests
 import TypeInferenceTests
+import PatternInferenceTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -106,7 +107,9 @@ let run unit =
                                                                                                                                         let schemesChecked = TypeSchemeTests.runTypeSchemeTests(Unit)
                                                                                                                                         in
                                                                                                                                             let inferenceChecked = TypeInferenceTests.runTypeInferenceTests(Unit)
-                                                                                                                                            in Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                            in
+                                                                                                                                                let patternInferenceChecked = PatternInferenceTests.runPatternInferenceTests(Unit)
+                                                                                                                                                in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 
