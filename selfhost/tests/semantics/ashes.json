@@ -1,0 +1,9 @@
+{
+  "name": "ashes-selfhost-semantics-tests",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "semantics": { "path": "../../packages/semantics" }
+  }
+}
