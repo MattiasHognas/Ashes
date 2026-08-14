@@ -3,6 +3,7 @@ import AshesCompiler.Semantics.Symbols
 import AshesCompiler.Semantics.Scope
 import AshesCompiler.Semantics.Types
 import UnificationTests
+import TypeSchemeTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -99,8 +100,10 @@ let run unit =
                                                                                                                             in
                                                                                                                                 if formatted == "Int -> List(Str) needs {State(Int) | {}}"
                                                                                                                                 then
-                                                                                                                                    let unificationChecked = UnificationTests.run(Unit)
-                                                                                                                                    in Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                    let unificationChecked = UnificationTests.runUnificationTests(Unit)
+                                                                                                                                    in
+                                                                                                                                        let schemesChecked = TypeSchemeTests.runTypeSchemeTests(Unit)
+                                                                                                                                        in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 
