@@ -2,6 +2,7 @@ import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TypeInference
 let equalMethod =
     TraitMethodDecl(name = "equal", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = None)
@@ -542,6 +543,94 @@ let inferPackage packageId environment items =
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = inferredEnvironment, error = None } -> inferredEnvironment
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("package should infer: " + Ashes.Trait.Show.show(error))
 
+let equalIntImplementation requirements = TraitImplementationDecl(traitName = "Equal", typeArguments = [TypeNamed("Int")], requirements = requirements, bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = trueEqualImplementation)])
+
+let recursive nestedListType : Int -> SemanticType -> SemanticType =
+    given (depth) ->
+        given (semanticType) ->
+            if depth <= 0
+            then semanticType
+            else nestedListType(depth - 1)(SemList(semanticType))
+
+let expectExactTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemInt]))(environment) with
+        | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] }, _implementation, [], [])), error = None } -> Unit
+        | _ -> test.fail("a unique concrete implementation should resolve to instance evidence")
+
+let expectRecursiveTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemList(SemInt)]))(environment) with
+        | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, _implementation, TraitEvidenceInstance(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] }, _innerImplementation, [], []) :: [], [])), error = None } -> Unit
+        | _ -> test.fail("concrete implementation requirements should resolve recursively")
+
+let expectAbstractTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemList(SemVariable(99))]))(environment) with
+        | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, _implementation, TraitEvidenceParameter(TraitConstraint { traitName = "Equal", typeArguments = SemVariable(99) :: [] }) :: [], [])), error = None } -> Unit
+        | _ -> test.fail("unresolved abstract requirements should remain evidence parameters")
+
+let expectSupertraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Ordered", typeArguments = [SemInt]))(environment) with
+        | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_goal, _implementation, [], TraitEvidenceInstance(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] }, _equalImplementation, [], []) :: [])), error = None } -> Unit
+        | _ -> test.fail("resolved instance evidence should include resolved supertraits")
+
+let expectConcreteTraitEvidenceResolution unit =
+    (let orderedImplementation =
+        TraitImplementationDecl(traitName = "Ordered", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "compare", implementation = ExprLambda("left")(ExprLambda("right")(ExprInt(0))(None))(None))])
+    in
+        let environment =
+            inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), TopLevelTrait(ordDeclaration), []
+            |> equalIntImplementation
+            |> TopLevelImplementation, TopLevelImplementation(genericEqualImplementation), TopLevelImplementation(orderedImplementation)])
+        in
+            unit
+            |> expectExactTraitEvidence(environment)
+            |> expectRecursiveTraitEvidence(environment)
+            |> expectAbstractTraitEvidence(environment)
+            |> expectSupertraitEvidence(environment))
+
+let expectMissingTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemString]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(MissingTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemString :: [] })) } -> Unit
+        | _ -> test.fail("a missing concrete implementation should fail resolution")
+
+let expectAmbiguousTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemInt]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(AmbiguousTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] })) } -> Unit
+        | _ -> test.fail("multiple matching implementations should fail resolution")
+
+let expectCyclicTraitEvidence environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemInt]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(CyclicTraitResolution(_trace)) } -> Unit
+        | _ -> test.fail("cyclic concrete requirements should fail resolution")
+
+let expectTraitEvidenceDepthLimit environment unit =
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [nestedListType(65)(SemInt)]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(TraitResolutionDepthExceeded(_goal, 64)) } -> Unit
+        | _ -> test.fail("trait resolution should enforce the C# depth limit")
+
+let expectTraitEvidenceResolutionFailures unit =
+    (let baseEnvironment =
+        inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), []
+        |> equalIntImplementation
+        |> TopLevelImplementation, TopLevelImplementation(genericEqualImplementation)])
+    in
+        let duplicateEnvironment = addTraitImplementation("Equal")([SemInt])([])([])(baseEnvironment)
+        in
+            let cyclicEnvironment =
+                inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), [TraitConstraintSyntax(traitName = "Equal", typeArguments = [TypeApplied("List")([TypeNamed("Int")])])]
+                |> equalIntImplementation
+                |> TopLevelImplementation, TopLevelImplementation(genericEqualImplementation)])
+            in
+                unit
+                |> expectMissingTraitEvidence(baseEnvironment)
+                |> expectAmbiguousTraitEvidence(duplicateEnvironment)
+                |> expectCyclicTraitEvidence(cyclicEnvironment)
+                |> expectTraitEvidenceDepthLimit(baseEnvironment))
+
+let expectTraitEvidenceResolution unit =
+    unit
+    |> expectConcreteTraitEvidenceResolution
+    |> expectTraitEvidenceResolutionFailures
+
 let expectTraitImplementationOrphanRule unit =
     (let traitPackage =
         inferPackage("traits")(emptyTypeEnvironmentForPackage("traits"))([TopLevelTrait(eqDeclaration), TopLevelTrait(pairEqualDeclaration)])
@@ -597,4 +686,5 @@ let runTraitInferenceTests unit =
     |> expectTraitImplementationCapabilityRows
     |> expectTraitImplementationCoherence
     |> expectTraitImplementationOrphanRule
+    |> expectTraitEvidenceResolution
     |> reportTraitInferenceSuccess
