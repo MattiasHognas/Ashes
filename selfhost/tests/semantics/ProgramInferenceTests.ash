@@ -21,52 +21,75 @@ let runProgramInferenceTests unit =
             in
                 let sequentialChecked = expectProgramType("Int")(sequentialProgram)
                 in
-                    let optionType = TypeDecl(name = "Option", typeParameters = [TypeParameter(name = "a")], constructors = [TypeConstructor(name = "None", parameters = [], fieldNames = []), TypeConstructor(name = "Some", parameters = [TypeNamed("a")], fieldNames = [])], isRecord = false, derivingTraits = [])
+                    let recursiveLoop = LetBindingSyntax(name = "loop", value = ExprLambda("value")(ExprIf(ExprBool(true))(ExprVar("value"))(ExprCall(ExprVar("loop"))(ExprVar("value"))(false)))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
                     in
-                        let constructorProgram = ProgramSyntax(items = [TopLevelType(optionType)], body = Some(ExprCall(ExprVar("Some"))(ExprString("value"))(false)))
+                        let recursiveChecked = expectProgramType("Int")(ProgramSyntax(items = [TopLevelLet(recursiveLoop)(true)], body = Some(ExprCall(ExprVar("loop"))(ExprInt(1))(false))))
                         in
-                            let constructorChecked = expectProgramType("Option(Str)")(constructorProgram)
+                            let firstMutual = LetBindingSyntax(name = "first", value = ExprLambda("value")(ExprCall(ExprVar("second"))(ExprVar("value"))(false))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
                             in
-                                let optionMatch = ExprMatch(ExprCall(ExprVar("Some"))(ExprString("value"))(false))([(PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None), (PatternConstructor("None")([]), ExprString("none"), None)])(None)
+                                let secondMutual = LetBindingSyntax(name = "second", value = ExprLambda("value")(ExprVar("value"))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
                                 in
-                                    let constructorPatternProgram = ProgramSyntax(items = [TopLevelType(optionType)], body = Some(optionMatch))
+                                    let mutualUses = ExprTuple([ExprCall(ExprVar("first"))(ExprInt(1))(false), ExprCall(ExprVar("first"))(ExprString("value"))(false)])
                                     in
-                                        let constructorPatternChecked = expectProgramType("Str")(constructorPatternProgram)
+                                        let mutualProgram = ProgramSyntax(items = [TopLevelRecursiveGroup([firstMutual, secondMutual])], body = Some(mutualUses))
                                         in
-                                            let pointType = TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed("Str")], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
+                                            let mutualChecked = expectProgramType("(Int, Str)")(mutualProgram)
                                             in
-                                                let pointValue = ExprCall(ExprCall(ExprVar("Point"))(ExprInt(1))(false))(ExprString("origin"))(false)
+                                                let polymorphicRecursiveBody = ExprLambda("value")(ExprTuple([ExprCall(ExprVar("bad"))(ExprInt(1))(false), ExprCall(ExprVar("bad"))(ExprString("value"))(false)]))(None)
                                                 in
-                                                    let recordMatch = ExprMatch(pointValue)([(PatternRecord("Point")([("label", PatternVar("label"))]), ExprVar("label"), None)])(None)
+                                                    let polymorphicRecursive = LetBindingSyntax(name = "bad", value = polymorphicRecursiveBody, sugarParameters = [], typeAnnotation = None, requirements = [])
                                                     in
-                                                        let recordPatternChecked = expectProgramType("Str")(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(recordMatch)))
+                                                        let polymorphicRecursionChecked =
+                                                            match inferProgram(ProgramSyntax(items = [TopLevelLet(polymorphicRecursive)(true)], body = None)) with
+                                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
+                                                                | _ -> test.fail("recursive bindings should remain monomorphic inside their group")
                                                         in
-                                                            let booleanAlias = PatternOr([PatternAs(PatternBool(true))("value"), PatternAs(PatternBool(false))("value")])
+                                                            let optionType = TypeDecl(name = "Option", typeParameters = [TypeParameter(name = "a")], constructors = [TypeConstructor(name = "None", parameters = [], fieldNames = []), TypeConstructor(name = "Some", parameters = [TypeNamed("a")], fieldNames = [])], isRecord = false, derivingTraits = [])
                                                             in
-                                                                let orPattern = ExprMatch(ExprBool(true))([(booleanAlias, ExprVar("value"), None)])(None)
+                                                                let constructorProgram = ProgramSyntax(items = [TopLevelType(optionType)], body = Some(ExprCall(ExprVar("Some"))(ExprString("value"))(false)))
                                                                 in
-                                                                    let orPatternChecked = expectProgramType("Bool")(ProgramSyntax(items = [], body = Some(orPattern)))
+                                                                    let constructorChecked = expectProgramType("Option(Str)")(constructorProgram)
                                                                     in
-                                                                        let wrongArityMatch = ExprMatch(ExprCall(ExprVar("Some"))(ExprInt(1))(false))([(PatternConstructor("Some")([]), ExprInt(0), None)])(None)
+                                                                        let optionMatch = ExprMatch(ExprCall(ExprVar("Some"))(ExprString("value"))(false))([(PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None), (PatternConstructor("None")([]), ExprString("none"), None)])(None)
                                                                         in
-                                                                            let wrongArityChecked =
-                                                                                match inferProgram(ProgramSyntax(items = [TopLevelType(optionType)], body = Some(wrongArityMatch))) with
-                                                                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(ConstructorPatternArityMismatch("Some"))) } -> Unit
-                                                                                    | _ -> test.fail("constructor pattern arity should be checked")
+                                                                            let constructorPatternProgram = ProgramSyntax(items = [TopLevelType(optionType)], body = Some(optionMatch))
                                                                             in
-                                                                                let unknownFieldMatch = ExprMatch(pointValue)([(PatternRecord("Point")([("missing", PatternWildcard)]), ExprInt(0), None)])(None)
+                                                                                let constructorPatternChecked = expectProgramType("Str")(constructorPatternProgram)
                                                                                 in
-                                                                                    let unknownFieldChecked =
-                                                                                        match inferProgram(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(unknownFieldMatch))) with
-                                                                                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnknownRecordPatternField("Point", "missing"))) } -> Unit
-                                                                                            | _ -> test.fail("record pattern fields should be checked")
+                                                                                    let pointType = TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed("Str")], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
                                                                                     in
-                                                                                        let inconsistentPattern = PatternOr([PatternVar("value"), PatternWildcard])
+                                                                                        let pointValue = ExprCall(ExprCall(ExprVar("Point"))(ExprInt(1))(false))(ExprString("origin"))(false)
                                                                                         in
-                                                                                            let inconsistentMatch = ExprMatch(ExprBool(true))([(inconsistentPattern, ExprBool(true), None)])(None)
+                                                                                            let recordMatch = ExprMatch(pointValue)([(PatternRecord("Point")([("label", PatternVar("label"))]), ExprVar("label"), None)])(None)
                                                                                             in
-                                                                                                let inconsistentChecked =
-                                                                                                    match inferProgram(ProgramSyntax(items = [], body = Some(inconsistentMatch))) with
-                                                                                                        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InconsistentOrPatternBindings)) } -> Unit
-                                                                                                        | _ -> test.fail("or-pattern alternatives should bind the same names")
-                                                                                                in Ashes.IO.print("all self-hosted program and constructor pattern inference tests passed"))
+                                                                                                let recordPatternChecked = expectProgramType("Str")(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(recordMatch)))
+                                                                                                in
+                                                                                                    let booleanAlias = PatternOr([PatternAs(PatternBool(true))("value"), PatternAs(PatternBool(false))("value")])
+                                                                                                    in
+                                                                                                        let orPattern = ExprMatch(ExprBool(true))([(booleanAlias, ExprVar("value"), None)])(None)
+                                                                                                        in
+                                                                                                            let orPatternChecked = expectProgramType("Bool")(ProgramSyntax(items = [], body = Some(orPattern)))
+                                                                                                            in
+                                                                                                                let wrongArityMatch = ExprMatch(ExprCall(ExprVar("Some"))(ExprInt(1))(false))([(PatternConstructor("Some")([]), ExprInt(0), None)])(None)
+                                                                                                                in
+                                                                                                                    let wrongArityChecked =
+                                                                                                                        match inferProgram(ProgramSyntax(items = [TopLevelType(optionType)], body = Some(wrongArityMatch))) with
+                                                                                                                            | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(ConstructorPatternArityMismatch("Some"))) } -> Unit
+                                                                                                                            | _ -> test.fail("constructor pattern arity should be checked")
+                                                                                                                    in
+                                                                                                                        let unknownFieldMatch = ExprMatch(pointValue)([(PatternRecord("Point")([("missing", PatternWildcard)]), ExprInt(0), None)])(None)
+                                                                                                                        in
+                                                                                                                            let unknownFieldChecked =
+                                                                                                                                match inferProgram(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(unknownFieldMatch))) with
+                                                                                                                                    | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(UnknownRecordPatternField("Point", "missing"))) } -> Unit
+                                                                                                                                    | _ -> test.fail("record pattern fields should be checked")
+                                                                                                                            in
+                                                                                                                                let inconsistentPattern = PatternOr([PatternVar("value"), PatternWildcard])
+                                                                                                                                in
+                                                                                                                                    let inconsistentMatch = ExprMatch(ExprBool(true))([(inconsistentPattern, ExprBool(true), None)])(None)
+                                                                                                                                    in
+                                                                                                                                        let inconsistentChecked =
+                                                                                                                                            match inferProgram(ProgramSyntax(items = [], body = Some(inconsistentMatch))) with
+                                                                                                                                                | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InconsistentOrPatternBindings)) } -> Unit
+                                                                                                                                                | _ -> test.fail("or-pattern alternatives should bind the same names")
+                                                                                                                                        in Ashes.IO.print("all self-hosted recursive program inference tests passed"))
