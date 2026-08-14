@@ -1,5 +1,7 @@
 import AshesCompiler.Frontend.Syntax
+import Ashes.Collection.List.sortBy
 export (
+    value formatProgram,
     value formatExpression,
     value formatTypeExpression,
     value formatPattern,
@@ -218,7 +220,10 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                             match annotation with
                                 | None -> name
                                 | Some(typeExpression) -> name + ": " + formatterType(typeExpression)
-                        in formatterWrap(parent)(1)("given (" + parameter + ") -> " + formatterExpr(body)(0)(indent))
+                        in
+                            if formatterExpressionIsMultiline(body)
+                            then formatterWrap(parent)(1)("given (" + parameter + ") ->\n" + formatterIndent(indent + 4) + formatterExpr(body)(0)(indent + 4))
+                            else formatterWrap(parent)(1)("given (" + parameter + ") -> " + formatterExpr(body)(0)(indent))
                     | ExprLet(name, value, body, parameters, annotation, requirements) -> formatterLet(parent)(indent)("let ")(name)(value)(body)(parameters)(annotation)(requirements)
                     | ExprLetRecursive(name, value, body, parameters, annotation, requirements) -> formatterLet(parent)(indent)("let recursive ")(name)(value)(body)(parameters)(annotation)(requirements)
                     | ExprLetResult(name, value, body) -> formatterWrap(parent)(1)("let? " + name + " = " + formatterExpr(value)(0)(indent) + "\nin " + formatterExpr(body)(0)(indent))
@@ -260,14 +265,17 @@ and formatterSugarParameters : List(Str) -> Expr -> Str -> (Str, Expr) =
                             | _ -> (rendered, value)
 and formatterRequirements : List(TraitConstraintSyntax) -> Str =
     given (requirements) ->
-        let render : TraitConstraintSyntax -> Str =
-            given (requirement) ->
-                match requirement with
-                    | TraitConstraintSyntax { traitName = name, typeArguments = arguments } -> name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
+        let sorted =
+            sortBy(given (left) ->
+                given (right) -> formatterRequirement(left) <= formatterRequirement(right))(requirements)
         in
             match requirements with
                 | [] -> ""
-                | _ -> " requires {" + formatterJoin(", ")(render)(requirements) + "}"
+                | _ -> " requires {" + formatterJoin(", ")(formatterRequirement)(sorted) + "}"
+and formatterRequirement : TraitConstraintSyntax -> Str =
+    given (requirement) ->
+        match requirement with
+            | TraitConstraintSyntax { traitName = name, typeArguments = arguments } -> name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
 and formatterCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
     given (cases) ->
         given (indent) ->
@@ -303,9 +311,313 @@ and formatterFollowingArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int
             match arms with
                 | [] -> ""
                 | _ -> "\n" + formatterArms(arms)(indent)
+and formatterExpressionIsMultiline : Expr -> Bool =
+    given (expression) ->
+        match formatterUnspanExpr(expression) with
+            | ExprLambda(_, _, _) -> true
+            | ExprLet(_, _, _, _, _, _) -> true
+            | ExprLetRecursive(_, _, _, _, _, _) -> true
+            | ExprLetResult(_, _, _) -> true
+            | ExprIf(_, _, _) -> true
+            | ExprMatch(_, _, _) -> true
+            | ExprHandle(_, _) -> true
+            | _ -> false
 
 let formatExpression expression = formatterExpr(expression)(0)(0) + "\n"
 
 let formatTypeExpression typeExpression = formatterType(typeExpression)
 
 let formatPattern pattern = formatterPatternAt(pattern)(0)
+
+let formatterTypeParameter parameter =
+    match parameter with
+        | TypeParameter { name = name } -> name
+
+let formatterTypeParameters parameters =
+    match parameters with
+        | [] -> ""
+        | _ -> "(" + formatterJoin(", ")(formatterTypeParameter)(parameters) + ")"
+
+let formatterDeriving traits =
+    match traits with
+        | [] -> ""
+        | _ ->
+            "    deriving {" + formatterJoin(", ")(given (name) -> name)(traits) + "}\n"
+
+let formatterConstructor constructor =
+    match constructor with
+        | TypeConstructor { name = name, parameters = [], fieldNames = _fields } -> "    | " + name + "\n"
+        | TypeConstructor { name = name, parameters = parameters, fieldNames = _fields } -> "    | " + name + "(" + formatterJoin(", ")(formatterType)(parameters) + ")\n"
+
+let recursive formatterConstructors constructors =
+    match constructors with
+        | [] -> ""
+        | constructor :: tail -> formatterConstructor(constructor) + formatterConstructors(tail)
+
+let recursive formatterRecordFields names parameters =
+    match (names, parameters) with
+        | (name :: nameTail, parameter :: parameterTail) -> "    | " + name + ": " + formatterType(parameter) + "\n" + formatterRecordFields(nameTail)(parameterTail)
+        | _ -> ""
+
+let formatterTypeDeclaration declaration =
+    match declaration with
+        | TypeDecl { name = name, typeParameters = parameters, constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits } ->
+            let body =
+                if isRecord
+                then
+                    match constructors with
+                        | TypeConstructor { name = _constructorName, parameters = fieldTypes, fieldNames = fieldNames } :: _ -> formatterRecordFields(fieldNames)(fieldTypes)
+                        | [] -> ""
+                else formatterConstructors(constructors)
+            in "type " + name + formatterTypeParameters(parameters) + " =\n" + body + formatterDeriving(derivingTraits)
+
+let formatterTypeAliasDeclaration declaration =
+    match declaration with
+        | TypeAliasDecl { name = name, typeParameters = parameters, target = target } -> "type alias " + name + formatterTypeParameters(parameters) + " = " + formatterType(target) + "\n"
+
+let formatterZeroCostTypeDeclaration declaration =
+    match declaration with
+        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = constructorType :: _tail, fieldNames = _fields }, derivingTraits = derivingTraits } -> "type " + name + formatterTypeParameters(parameters) + " = " + constructorName + "(" + formatterType(constructorType) + ")\n" + formatterDeriving(derivingTraits)
+        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = [], fieldNames = _fields }, derivingTraits = derivingTraits } -> "type " + name + formatterTypeParameters(parameters) + " = " + constructorName + "()\n" + formatterDeriving(derivingTraits)
+
+let formatterExportConstructors constructors =
+    match constructors with
+        | ExportConstructorsHidden -> ""
+        | ExportConstructorsAll -> "(..)"
+        | ExportConstructorsSelected(names) ->
+            "(" + formatterJoin(", ")(given (name) -> name)(names) + ")"
+
+let formatterExportItem item =
+    match item with
+        | ExportValue(name) -> "    value " + name + ",\n"
+        | ExportType(name, constructors) -> "    type " + name + formatterExportConstructors(constructors) + ",\n"
+        | ExportModule(name) -> "    module " + name + ",\n"
+
+let recursive formatterExportItems items =
+    match items with
+        | [] -> ""
+        | item :: tail -> formatterExportItem(item) + formatterExportItems(tail)
+
+let formatterExportDeclaration declaration =
+    match declaration with
+        | ExportDecl { items = items } -> "export (\n" + formatterExportItems(items) + ")\n"
+
+let recursive formatterParsedType parsedType =
+    match parsedType with
+        | ParsedNamed(name) -> name
+        | ParsedPointer(inner) -> "*" + formatterParsedType(inner)
+        | ParsedBuffer(inner) -> "FfiBuffer(" + formatterParsedType(inner) + ")"
+        | ParsedOut(inner) -> "out " + formatterParsedType(inner)
+        | ParsedNativeString(nullable, ownership, destructor) ->
+            let nullableText =
+                if nullable
+                then "nullable "
+                else ""
+            in
+                let ownershipText =
+                    match (ownership, destructor) with
+                        | (FfiStringBorrowed, _) -> "borrowed"
+                        | (FfiStringOwned, Some(name)) -> "owned " + name
+                        | (FfiStringOwned, None) -> "owned"
+                in "FfiStr(" + nullableText + ownershipText + ")"
+
+let formatterExternalOwnership ownership =
+    match ownership with
+        | ExternalOwnershipUnspecified -> ""
+        | ExternalOwnershipBorrow -> "borrow "
+        | ExternalOwnershipConsume -> "consume "
+
+let recursive formatterExternalParameters parameterTypes ownerships =
+    match parameterTypes with
+        | [] -> ""
+        | parameter :: tail ->
+            let ownership =
+                match ownerships with
+                    | head :: _ -> head
+                    | [] -> ExternalOwnershipUnspecified
+            in
+                let remainingOwnerships =
+                    match ownerships with
+                        | _head :: rest -> rest
+                        | [] -> []
+                in
+                    let suffix =
+                        match tail with
+                            | [] -> ""
+                            | _ -> ", " + formatterExternalParameters(tail)(remainingOwnerships)
+                    in formatterExternalOwnership(ownership) + formatterParsedType(parameter) + suffix
+
+let formatterCapabilityRef capabilityReference =
+    match capabilityReference with
+        | CapabilityRefSyntax { name = name, args = [] } -> name
+        | CapabilityRefSyntax { name = name, args = arguments } -> name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
+
+let formatterNeedsRow row =
+    match row with
+        | NeedsRowSyntax { capabilities = [], tailVariable = Some(tail) } -> " needs " + tail
+        | NeedsRowSyntax { capabilities = capabilities, tailVariable = tailVariable } ->
+            let capabilitiesText = formatterJoin(", ")(formatterCapabilityRef)(capabilities)
+            in
+                match tailVariable with
+                    | None -> " needs {" + capabilitiesText + "}"
+                    | Some(tail) -> " needs {" + capabilitiesText + " | " + tail + "}"
+
+let formatterExternalDeclaration declaration =
+    match declaration with
+        | ExternalOpaqueType(name, None) -> "external type " + name + "\n"
+        | ExternalOpaqueType(name, Some(destructor)) -> "external type " + name + " resource destructor " + destructor + "\n"
+        | ExternalFunction(name, parameterTypes, returnType, symbol, ownerships, needsRow) ->
+            let needsText =
+                match needsRow with
+                    | None -> ""
+                    | Some(row) -> formatterNeedsRow(row)
+            in
+                let symbolText =
+                    match symbol with
+                        | None -> ""
+                        | Some(value) -> " = \"" + formatterEscape(value) + "\""
+                in "external " + name + "(" + formatterExternalParameters(parameterTypes)(ownerships) + ") -> " + formatterParsedType(returnType) + needsText + symbolText + "\n"
+
+let formatterCapabilityOperation operation =
+    match operation with
+        | CapabilityOperation { name = name, signature = None } -> "    | " + name + "\n"
+        | CapabilityOperation { name = name, signature = Some(signature) } -> "    | " + name + " : " + formatterType(signature) + "\n"
+
+let recursive formatterCapabilityOperations operations =
+    match operations with
+        | [] -> ""
+        | operation :: tail -> formatterCapabilityOperation(operation) + formatterCapabilityOperations(tail)
+
+let formatterCapabilityDeclaration declaration =
+    match declaration with
+        | CapabilityDecl { name = name, typeParameters = parameters, operations = operations } -> "capability " + name + formatterTypeParameters(parameters) + " =\n" + formatterCapabilityOperations(operations)
+
+let formatterIsMultiline expression = formatterExpressionIsMultiline(expression)
+
+let formatterDeclarationValue expression indent =
+    if formatterIsMultiline(expression)
+    then "\n" + formatterIndent(indent) + formatterExpr(expression)(0)(indent) + "\n"
+    else " " + formatterExpr(expression)(0)(0) + "\n"
+
+let formatterProvideBinding binding =
+    match binding with
+        | ProvideBinding { operationName = name, implementation = implementation } -> "    | " + name + " =" + formatterDeclarationValue(implementation)(8)
+
+let recursive formatterProvideBindings bindings =
+    match bindings with
+        | [] -> ""
+        | binding :: tail -> formatterProvideBinding(binding) + formatterProvideBindings(tail)
+
+let formatterProvideDeclaration declaration =
+    match declaration with
+        | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } ->
+            let argumentsText =
+                match arguments with
+                    | [] -> ""
+                    | _ -> "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
+            in "provide " + name + argumentsText + " =\n" + formatterProvideBindings(bindings)
+
+let formatterTraitMethod method =
+    match method with
+        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = None } -> "    | " + name + " : " + formatterType(signature) + "\n"
+        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = Some(implementation) } -> "    | " + name + " : " + formatterType(signature) + " =" + formatterDeclarationValue(implementation)(8)
+
+let recursive formatterTraitMethods methods =
+    match methods with
+        | [] -> ""
+        | method :: tail -> formatterTraitMethod(method) + formatterTraitMethods(tail)
+
+let formatterTraitDeclaration declaration =
+    match declaration with
+        | TraitDecl { name = name, typeParameters = parameters, supertraits = supertraits, methods = methods } -> "trait " + name + formatterTypeParameters(parameters) + formatterRequirements(supertraits) + " =\n" + formatterTraitMethods(methods)
+
+let formatterImplementationBinding binding =
+    match binding with
+        | TraitImplementationMethodBinding { methodName = name, implementation = implementation } -> "    | " + name + " =" + formatterDeclarationValue(implementation)(8)
+
+let recursive formatterImplementationBindings bindings =
+    match bindings with
+        | [] -> ""
+        | binding :: tail -> formatterImplementationBinding(binding) + formatterImplementationBindings(tail)
+
+let formatterImplementationDeclaration declaration =
+    match declaration with
+        | TraitImplementationDecl { traitName = name, typeArguments = arguments, requirements = requirements, bindings = bindings } -> "implement " + name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")" + formatterRequirements(requirements) + " =\n" + formatterImplementationBindings(bindings)
+
+let formatterLetBinding prefix binding =
+    match binding with
+        | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } ->
+            let annotationText =
+                match annotation with
+                    | None -> ""
+                    | Some(typeExpression) -> " : " + formatterType(typeExpression) + formatterRequirements(requirements)
+            in
+                match formatterSugarParameters(parameters)(value)("") with
+                    | (parameterText, formattedValue) -> prefix + name + parameterText + annotationText + " =" + formatterDeclarationValue(formattedValue)(4)
+
+let recursive formatterRecursiveBindings bindings first =
+    match bindings with
+        | [] -> ""
+        | binding :: tail ->
+            let prefix =
+                if first
+                then "let recursive "
+                else "and "
+            in formatterLetBinding(prefix)(binding) + formatterRecursiveBindings(tail)(false)
+
+let recursive formatterUnspanTopLevel item =
+    match item with
+        | TopLevelAt(_span, inner) -> formatterUnspanTopLevel(inner)
+        | _ -> item
+
+let formatterIsExternal item =
+    match formatterUnspanTopLevel(item) with
+        | TopLevelExternal(_) -> true
+        | _ -> false
+
+let recursive formatterTopLevelItem item =
+    match formatterUnspanTopLevel(item) with
+        | TopLevelExport(declaration) -> formatterExportDeclaration(declaration)
+        | TopLevelType(declaration) -> formatterTypeDeclaration(declaration)
+        | TopLevelTypeAlias(declaration) -> formatterTypeAliasDeclaration(declaration)
+        | TopLevelZeroCostType(declaration) -> formatterZeroCostTypeDeclaration(declaration)
+        | TopLevelExternal(declaration) -> formatterExternalDeclaration(declaration)
+        | TopLevelCapability(declaration) -> formatterCapabilityDeclaration(declaration)
+        | TopLevelProvide(declaration) -> formatterProvideDeclaration(declaration)
+        | TopLevelTrait(declaration) -> formatterTraitDeclaration(declaration)
+        | TopLevelImplementation(declaration) -> formatterImplementationDeclaration(declaration)
+        | TopLevelLet(binding, isRecursive) ->
+            if isRecursive
+            then formatterLetBinding("let recursive ")(binding)
+            else formatterLetBinding("let ")(binding)
+        | TopLevelRecursiveGroup(bindings) -> formatterRecursiveBindings(bindings)(true)
+        | TopLevelAt(_span, inner) -> formatterTopLevelItem(inner)
+
+let recursive formatterProgramItems items first previousExternal =
+    match items with
+        | [] -> ""
+        | item :: tail ->
+            let currentExternal = formatterIsExternal(item)
+            in
+                let separator =
+                    if first
+                    then ""
+                    else
+                        if previousExternal
+                        then
+                            if currentExternal
+                            then ""
+                            else "\n"
+                        else "\n"
+                in separator + formatterTopLevelItem(item) + formatterProgramItems(tail)(false)(currentExternal)
+
+let formatProgram program =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let declarations = formatterProgramItems(items)(true)(false)
+            in
+                match (items, body) with
+                    | ([], None) -> "\n"
+                    | ([], Some(expression)) -> formatExpression(expression)
+                    | (_, None) -> declarations
+                    | (_, Some(expression)) -> declarations + "\n" + formatExpression(expression)
