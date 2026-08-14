@@ -44,10 +44,10 @@ let recursive freeTypes semanticTypes =
                 in mergeVariables(headVariables)(tailVariables)
 and freeTypeVariables semanticType =
     match semanticType with
-        | TypeVariable(variableId) -> [variableId]
-        | TypeList(element) -> freeTypeVariables(element)
-        | TypeTuple(elements) -> freeTypes(elements)
-        | TypeFunction(argument, result, capabilityRow) ->
+        | SemVariable(variableId) -> [variableId]
+        | SemList(element) -> freeTypeVariables(element)
+        | SemTuple(elements) -> freeTypes(elements)
+        | SemFunction(argument, result, capabilityRow) ->
             let argumentVariables = freeTypeVariables(argument)
             in
                 let resultVariables = freeTypeVariables(result)
@@ -57,8 +57,8 @@ and freeTypeVariables semanticType =
                             | None -> []
                             | Some(row) -> freeTypeVariables(row)
                     in mergeVariables(argumentVariables)(mergeVariables(resultVariables)(rowVariables))
-        | TypeCapability(_name, arguments) -> freeTypes(arguments)
-        | TypeRow(capabilities, tail) ->
+        | SemCapability(_name, arguments) -> freeTypes(arguments)
+        | SemRow(capabilities, tail) ->
             let capabilityVariables = freeTypes(capabilities)
             in
                 let tailVariables =
@@ -66,8 +66,8 @@ and freeTypeVariables semanticType =
                         | None -> []
                         | Some(tailType) -> freeTypeVariables(tailType)
                 in mergeVariables(capabilityVariables)(tailVariables)
-        | TypeNamed(_symbolId, _name, arguments) -> freeTypes(arguments)
-        | TypePointer(pointee) -> freeTypeVariables(pointee)
+        | SemNamed(_symbolId, _name, arguments) -> freeTypes(arguments)
+        | SemPointer(pointee) -> freeTypeVariables(pointee)
         | _ -> []
 
 let freeConstraintVariables constraint =

@@ -4,6 +4,7 @@ import AshesCompiler.Semantics.Scope
 import AshesCompiler.Semantics.Types
 import UnificationTests
 import TypeSchemeTests
+import TypeInferenceTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -72,17 +73,17 @@ let run unit =
                                                                                         | (firstVariable, afterFirst) ->
                                                                                             let firstChecked =
                                                                                                 match firstVariable with
-                                                                                                    | TypeVariable(0) -> Unit
+                                                                                                    | SemVariable(0) -> Unit
                                                                                                     | _ -> test.fail("first type variable should have id zero")
                                                                                             in
                                                                                                 match freshTypeVariable(afterFirst) with
                                                                                                     | (secondVariable, _afterSecond) ->
                                                                                                         let secondChecked =
                                                                                                             match secondVariable with
-                                                                                                                | TypeVariable(1) -> Unit
+                                                                                                                | SemVariable(1) -> Unit
                                                                                                                 | _ -> test.fail("second type variable should have id one")
                                                                                                         in
-                                                                                                            let polymorphic = TypeFunction(TypeVariable(0))(TypeList(TypeVariable(1)))(Some(TypeRow([TypeCapability("State")([TypeVariable(0)])])(Some(TypeVariable(2)))))
+                                                                                                            let polymorphic = SemFunction(SemVariable(0))(SemList(SemVariable(1)))(Some(SemRow([SemCapability("State")([SemVariable(0)])])(Some(SemVariable(2)))))
                                                                                                             in
                                                                                                                 let occursChecked =
                                                                                                                     if occursInType(2)(polymorphic)
@@ -94,7 +95,7 @@ let run unit =
                                                                                                                         then test.fail("unrelated variable should not occur")
                                                                                                                         else Unit
                                                                                                                     in
-                                                                                                                        let substituted = applySubstitution([(0, TypeInt), (1, TypeString), (2, TypeRow([])(None))])(polymorphic)
+                                                                                                                        let substituted = applySubstitution([(0, SemInt), (1, SemString), (2, SemRow([])(None))])(polymorphic)
                                                                                                                         in
                                                                                                                             let formatted = formatSemanticType(substituted)
                                                                                                                             in
@@ -103,7 +104,9 @@ let run unit =
                                                                                                                                     let unificationChecked = UnificationTests.runUnificationTests(Unit)
                                                                                                                                     in
                                                                                                                                         let schemesChecked = TypeSchemeTests.runTypeSchemeTests(Unit)
-                                                                                                                                        in Ashes.IO.print("all self-hosted semantics foundation tests passed")
+                                                                                                                                        in
+                                                                                                                                            let inferenceChecked = TypeInferenceTests.runTypeInferenceTests(Unit)
+                                                                                                                                            in Ashes.IO.print("all self-hosted semantics foundation tests passed")
                                                                                                                                 else test.fail("unexpected substituted type: " + formatted)
                                                                     | None -> test.fail("nested scope should pop"))
 

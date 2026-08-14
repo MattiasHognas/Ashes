@@ -27,19 +27,19 @@ let expectArity left right =
         | _ -> test.fail("expected type arity mismatch")
 
 let runUnificationTests unit =
-    (let variableChecked = expectUnified("Int")(TypeVariable(0))(TypeInt)
+    (let variableChecked = expectUnified("Int")(SemVariable(0))(SemInt)
     in
-        let listChecked = expectUnified("List(Str)")(TypeList(TypeVariable(0)))(TypeList(TypeString))
+        let listChecked = expectUnified("List(Str)")(SemList(SemVariable(0)))(SemList(SemString))
         in
-            let functionChecked = expectUnified("Int -> List(Int) needs {State(Int)}")(TypeFunction(TypeVariable(0))(TypeList(TypeVariable(0)))(Some(TypeRow([TypeCapability("State")([TypeVariable(0)])])(None))))(TypeFunction(TypeInt)(TypeList(TypeInt))(Some(TypeRow([TypeCapability("State")([TypeInt])])(None))))
+            let functionChecked = expectUnified("Int -> List(Int) needs {State(Int)}")(SemFunction(SemVariable(0))(SemList(SemVariable(0)))(Some(SemRow([SemCapability("State")([SemVariable(0)])])(None))))(SemFunction(SemInt)(SemList(SemInt))(Some(SemRow([SemCapability("State")([SemInt])])(None))))
             in
-                let namedChecked = expectUnified("Result(Int, Str)")(TypeNamed(7)("Result")([TypeVariable(0), TypeString]))(TypeNamed(7)("Result")([TypeInt, TypeVariable(1)]))
+                let namedChecked = expectUnified("Result(Int, Str)")(SemNamed(7)("Result")([SemVariable(0), SemString]))(SemNamed(7)("Result")([SemInt, SemVariable(1)]))
                 in
-                    let occursChecked = expectInfinite(0)(TypeVariable(0))(TypeList(TypeVariable(0)))
+                    let occursChecked = expectInfinite(0)(SemVariable(0))(SemList(SemVariable(0)))
                     in
-                        let mismatchChecked = expectMismatch(TypeBool)(TypeString)
+                        let mismatchChecked = expectMismatch(SemBool)(SemString)
                         in
-                            let namedMismatchChecked = expectMismatch(TypeNamed(7)("Result")([]))(TypeNamed(8)("Result")([]))
+                            let namedMismatchChecked = expectMismatch(SemNamed(7)("Result")([]))(SemNamed(8)("Result")([]))
                             in
-                                let arityChecked = expectArity(TypeTuple([TypeInt]))(TypeTuple([TypeInt, TypeString]))
+                                let arityChecked = expectArity(SemTuple([SemInt]))(SemTuple([SemInt, SemString]))
                                 in Ashes.IO.print("all self-hosted unification tests passed"))
