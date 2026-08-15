@@ -20,6 +20,7 @@ import ParserCapabilityTraitTests
 import ParserFrontendParityTests
 import ImportHeaderTests
 import ImportResolutionTests
+import ModuleInterfaceTests
 let tokenTestsChecked = TokenTests.run(Unit)
 
 let lexerCoreTestsChecked = LexerCoreTests.run(Unit)
@@ -63,5 +64,7 @@ let parserFrontendParityTestsChecked = ParserFrontendParityTests.run(Unit)
 let importHeaderTestsChecked = ImportHeaderTests.run(Unit)
 
 let importResolutionTestsChecked = ImportResolutionTests.run(Unit)
+
+let moduleInterfaceTestsChecked = ModuleInterfaceTests.run(Unit)
 
 Ashes.IO.print("all self-hosted frontend tests passed")
