@@ -12,6 +12,7 @@ import RecordInferenceTests
 import ResultInferenceTests
 import CapabilityInferenceTests
 import TraitInferenceTests
+import TraitEvidenceAbiTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -147,6 +148,7 @@ let run unit =
     |> ResultInferenceTests.runResultInferenceTests
     |> CapabilityInferenceTests.runCapabilityInferenceTests
     |> TraitInferenceTests.runTraitInferenceTests
+    |> TraitEvidenceAbiTests.runTraitEvidenceAbiTests
     |> (given (_) -> Ashes.IO.print("all self-hosted semantics foundation tests passed"))
 
 run(Unit)
