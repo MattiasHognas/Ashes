@@ -223,13 +223,14 @@ same public behavior.
 - [~] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
   checks. Map module names to source paths and select project, include, dependency, or shipped-library
-  sources with ambiguity and reserved-namespace checks; filesystem discovery and recursive plan
-  construction remain.
+  sources with ambiguity and reserved-namespace checks. Construct deterministic reachable-module plans
+  in dependency-first order and reject cycles; filesystem-backed discovery remains.
 - [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
-- [ ] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
-  compiler-private names across stitched modules.
+- [~] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
+  compiler-private names across stitched modules. Dependency planning and cycle rejection are
+  implemented; stitched semantic scopes and private-name stability remain.
 - [ ] Parse and validate `ashes.json`, defaults, entry points, source roots, includes, output settings,
   dependencies, and dev dependencies.
 - [ ] Discover projects upward, honor explicit project selection, and construct a deterministic
