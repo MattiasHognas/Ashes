@@ -220,8 +220,9 @@ same public behavior.
 - [x] Separate and validate leading import headers while preserving their written forms, aliases,
   selectors, source lines, and imports-stripped UTF-8 body offsets for formatting and diagnostics;
   retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
-- [ ] Resolve whole-module, aliased, value-selector, and type-selector imports using the documented
-  source-root search order and ambiguity rules.
+- [~] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
+  interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
+  checks. Apply that resolver to modules discovered in the documented source-root search order.
 - [ ] Validate explicit exports and build value/type/constructor/submodule interfaces without implicit
   re-export.
 - [ ] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
