@@ -222,7 +222,9 @@ same public behavior.
   retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
 - [~] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
-  checks. Apply that resolver to modules discovered in the documented source-root search order.
+  checks. Map module names to source paths and select project, include, dependency, or shipped-library
+  sources with ambiguity and reserved-namespace checks; filesystem discovery and recursive plan
+  construction remain.
 - [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
