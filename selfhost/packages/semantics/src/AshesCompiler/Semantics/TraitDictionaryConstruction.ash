@@ -2,6 +2,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TraitResolution
+import AshesCompiler.Semantics.ProgramInference
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
@@ -28,6 +29,7 @@ type TraitDictionaryMethodField =
 type TraitDictionaryConstructionPlan =
     | constraint: TraitConstraint
     | methods: List(TraitDictionaryMethodField)
+    | methodConstructionOrder: List(Str)
     | requirements: List(TraitEvidencePlan)
     | supertraits: List(TraitEvidencePlan)
 
@@ -35,6 +37,7 @@ type TraitDictionaryConstructionError =
     | TraitDictionaryConstructionRequiresParameter(TraitConstraint)
     | TraitDictionaryConstructionUnknownTrait(TraitConstraint)
     | TraitDictionaryConstructionMissingMethod(TraitConstraint, Str)
+    | TraitDictionaryConstructionMethodCycle(TraitConstraint, Str)
     deriving {Eq, Show}
 
 type TraitDictionaryConstructionPlanning =
@@ -43,6 +46,11 @@ type TraitDictionaryConstructionPlanning =
 
 type TraitDictionaryMethodFieldPlanning =
     | fields: List(TraitDictionaryMethodField)
+    | error: Maybe(TraitDictionaryConstructionError)
+
+type TraitDictionaryMethodOrderBuild =
+    | completed: List(Str)
+    | reversedOrder: List(Str)
     | error: Maybe(TraitDictionaryConstructionError)
 
 let recursive findSuppliedTraitMethod methodName methods =
@@ -70,13 +78,62 @@ let recursive planTraitDictionaryMethodFields constraint methods suppliedMethods
                         | Some(implementation) -> planTraitDictionaryMethodFields(constraint)(tail)(suppliedMethods)(methodIndex + 1)(TraitDictionaryMethodField(methodIndex = methodIndex, methodName = methodName, source = TraitDictionaryDefaultMethod, implementation = implementation) :: reversed)
                         | None -> TraitDictionaryMethodFieldPlanning(fields = reverse(reversed), error = Some(TraitDictionaryConstructionMissingMethod(constraint)(methodName)))
 
+let recursive traitConstructionNameExists name names =
+    match names with
+        | [] -> false
+        | head :: tail ->
+            if head == name
+            then true
+            else traitConstructionNameExists(name)(tail)
+
+let recursive visitTraitMethodDependencies constraint traitName implementation methodName candidates allFields active completed reversedOrder =
+    match candidates with
+        | [] -> TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = None)
+        | (TraitDictionaryMethodField { methodIndex = _candidateIndex, methodName = candidateName, source = _candidateSource, implementation = _candidateImplementation } as candidate) :: tail ->
+            if candidateName == methodName
+            then visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(tail)(allFields)(active)(completed)(reversedOrder)
+            else
+                if expressionDependsOnTraitMethod(traitName)(candidateName)(implementation)
+                then
+                    match visitTraitMethodField(constraint)(traitName)(candidate)(allFields)(active)(completed)(reversedOrder) with
+                        | TraitDictionaryMethodOrderBuild { completed = nextCompleted, reversedOrder = nextOrder, error = None } -> visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(tail)(allFields)(active)(nextCompleted)(nextOrder)
+                        | failure -> failure
+                else visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(tail)(allFields)(active)(completed)(reversedOrder)
+and visitTraitMethodField constraint traitName field allFields active completed reversedOrder =
+    match field with
+        | TraitDictionaryMethodField { methodIndex = _methodIndex, methodName = methodName, source = _source, implementation = implementation } ->
+            if traitConstructionNameExists(methodName)(completed)
+            then TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = None)
+            else
+                if traitConstructionNameExists(methodName)(active)
+                then TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = Some(TraitDictionaryConstructionMethodCycle(constraint)(methodName)))
+                else
+                    match visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(allFields)(allFields)(methodName :: active)(completed)(reversedOrder) with
+                        | TraitDictionaryMethodOrderBuild { completed = dependencyCompleted, reversedOrder = dependencyOrder, error = None } -> TraitDictionaryMethodOrderBuild(completed = methodName :: dependencyCompleted, reversedOrder = methodName :: dependencyOrder, error = None)
+                        | failure -> failure
+
+let recursive planTraitMethodConstructionOrderFrom constraint traitName remaining allFields completed reversedOrder =
+    match remaining with
+        | [] -> TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = None)
+        | head :: tail ->
+            match visitTraitMethodField(constraint)(traitName)(head)(allFields)([])(completed)(reversedOrder) with
+                | TraitDictionaryMethodOrderBuild { completed = nextCompleted, reversedOrder = nextOrder, error = None } -> planTraitMethodConstructionOrderFrom(constraint)(traitName)(tail)(allFields)(nextCompleted)(nextOrder)
+                | failure -> failure
+
+let planTraitMethodConstructionOrder constraint traitName fields = planTraitMethodConstructionOrderFrom(constraint)(traitName)(fields)(fields)([])([])
+
+let finishTraitDictionaryInstancePlan constraint traitName fields requirements supertraits =
+    match planTraitMethodConstructionOrder(constraint)(traitName)(fields) with
+        | TraitDictionaryMethodOrderBuild { completed = _completed, reversedOrder = reversedOrder, error = None } -> TraitDictionaryConstructionPlanning(construction = Some(TraitDictionaryConstructionPlan(constraint = constraint, methods = fields, methodConstructionOrder = reverse(reversedOrder), requirements = requirements, supertraits = supertraits)), error = None)
+        | TraitDictionaryMethodOrderBuild { completed = _completed, reversedOrder = _reversedOrder, error = Some(error) } -> TraitDictionaryConstructionPlanning(construction = None, error = Some(error))
+
 let planTraitDictionaryInstance constraint implementation requirements supertraits environment =
     match constraint with
         | TraitConstraint { traitName = traitName, typeArguments = _typeArguments } ->
             match (resolveTraitBinding(traitName)(environment), implementation) with
                 | (Some(TraitInferenceDefinition { name = _name, parameterCount = _parameterCount, parameters = _parameters, methods = methods, supertraits = _traitSupertraits, provenance = _provenance }), TraitImplementationInferenceDefinition { traitName = _implementationTraitName, typeArguments = _implementationTypeArguments, requirements = _implementationRequirements, methods = suppliedMethods }) ->
                     match planTraitDictionaryMethodFields(constraint)(sortTraitConstructionMethods(methods))(suppliedMethods)(0)([]) with
-                        | TraitDictionaryMethodFieldPlanning { fields = fields, error = None } -> TraitDictionaryConstructionPlanning(construction = Some(TraitDictionaryConstructionPlan(constraint = constraint, methods = fields, requirements = requirements, supertraits = supertraits)), error = None)
+                        | TraitDictionaryMethodFieldPlanning { fields = fields, error = None } -> finishTraitDictionaryInstancePlan(constraint)(traitName)(fields)(requirements)(supertraits)
                         | TraitDictionaryMethodFieldPlanning { fields = _fields, error = Some(error) } -> TraitDictionaryConstructionPlanning(construction = None, error = Some(error))
                 | _ -> TraitDictionaryConstructionPlanning(construction = None, error = Some(TraitDictionaryConstructionUnknownTrait(constraint)))
 
