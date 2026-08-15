@@ -1,3 +1,4 @@
+import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitEvidenceAbi
@@ -7,8 +8,13 @@ export (
     type TraitEvidenceArgumentPlanning(..),
     type TraitFunctionApplicationError(..),
     type TraitFunctionApplicationPlanning(..),
+    type TraitEvidenceForwarding(..),
+    type TraitEvidenceForwardingArgument(..),
+    type TraitEvidenceForwardingError(..),
+    type TraitEvidenceForwardingPlanning(..),
     value planTraitEvidenceArguments,
     value planTraitFunctionApplication,
+    value planTraitEvidenceForwarding,
 )
 
 type TraitEvidenceArgument =
@@ -32,6 +38,25 @@ type TraitFunctionApplicationPlanning =
     | remainingOrdinaryArguments: Int
     | capturesEvidence: Bool
     | error: Maybe(TraitFunctionApplicationError)
+
+type TraitEvidenceForwarding =
+    | rootParameterIndex: Int
+    | supertraitPath: List(Int)
+    deriving {Eq, Show}
+
+type TraitEvidenceForwardingArgument =
+    | shape: TraitDictionaryAbiShape
+    | forwarding: TraitEvidenceForwarding
+    deriving {Eq, Show}
+
+type TraitEvidenceForwardingError =
+    | MissingActiveTraitEvidence(TraitConstraint)
+    deriving {Eq, Show}
+
+type TraitEvidenceForwardingPlanning =
+    | arguments: List(TraitEvidenceForwardingArgument)
+    | error: Maybe(TraitEvidenceForwardingError)
+    deriving {Eq, Show}
 
 let recursive planTraitEvidenceArgumentsFrom shapes environment reversed =
     match shapes with
@@ -77,3 +102,39 @@ let planTraitFunctionApplicationWithArity ordinaryArity suppliedOrdinaryArgument
 let planTraitFunctionApplication scheme suppliedOrdinaryArguments environment =
     match scheme with
         | TypeScheme { quantified = _quantified, body = body, constraints = constraints } -> planTraitFunctionApplicationWithArity(traitFunctionOrdinaryArity(body))(suppliedOrdinaryArguments)(constraints)(environment)
+
+let traitEvidenceShapeMatches target shape =
+    match shape with
+        | TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = constraint, methods = _methods, supertraits = _supertraits } -> traitConstraintStableKey(target) == traitConstraintStableKey(constraint)
+
+let recursive findTraitEvidenceForwardingInSupertraits shapes target rootParameterIndex reversedPath ordinal =
+    match shapes with
+        | [] -> None
+        | head :: tail ->
+            match findTraitEvidenceForwardingInShape(head)(target)(rootParameterIndex)(ordinal :: reversedPath) with
+                | Some(forwarding) -> Some(forwarding)
+                | None -> findTraitEvidenceForwardingInSupertraits(tail)(target)(rootParameterIndex)(reversedPath)(ordinal + 1)
+and findTraitEvidenceForwardingInShape shape target rootParameterIndex reversedPath =
+    if traitEvidenceShapeMatches(target)(shape)
+    then Some(TraitEvidenceForwarding(rootParameterIndex = rootParameterIndex, supertraitPath = reverse(reversedPath)))
+    else
+        match shape with
+            | TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = _constraint, methods = _methods, supertraits = supertraits } -> findTraitEvidenceForwardingInSupertraits(supertraits)(target)(rootParameterIndex)(reversedPath)(0)
+
+let recursive findTraitEvidenceForwarding shapes target =
+    match shapes with
+        | [] -> None
+        | (TraitDictionaryAbiShape { parameterIndex = parameterIndex, constraint = _constraint, methods = _methods, supertraits = _supertraits } as shape) :: tail ->
+            match findTraitEvidenceForwardingInShape(shape)(target)(parameterIndex)([]) with
+                | Some(forwarding) -> Some(forwarding)
+                | None -> findTraitEvidenceForwarding(tail)(target)
+
+let recursive planTraitEvidenceForwardingFrom requiredShapes activeShapes reversed =
+    match requiredShapes with
+        | [] -> TraitEvidenceForwardingPlanning(arguments = reverse(reversed), error = None)
+        | (TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = constraint, methods = _methods, supertraits = _supertraits } as shape) :: tail ->
+            match findTraitEvidenceForwarding(activeShapes)(constraint) with
+                | Some(forwarding) -> planTraitEvidenceForwardingFrom(tail)(activeShapes)(TraitEvidenceForwardingArgument(shape = shape, forwarding = forwarding) :: reversed)
+                | None -> TraitEvidenceForwardingPlanning(arguments = reverse(reversed), error = Some(MissingActiveTraitEvidence(constraint)))
+
+let planTraitEvidenceForwarding requiredConstraints activeConstraints environment = planTraitEvidenceForwardingFrom(planTraitEvidenceAbi(requiredConstraints)(environment))(planTraitEvidenceAbi(activeConstraints)(environment))([])
