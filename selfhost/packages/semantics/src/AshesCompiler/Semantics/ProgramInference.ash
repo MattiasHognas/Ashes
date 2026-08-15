@@ -13,6 +13,7 @@ export (
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,
+    value expressionDependsOnTraitMethod,
 )
 
 type ProgramInferenceError =
