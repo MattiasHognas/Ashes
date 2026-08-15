@@ -22,6 +22,7 @@ import ImportHeaderTests
 import ImportResolutionTests
 import ModuleInterfaceTests
 import ModuleSourceTests
+import ModulePlanTests
 let tokenTestsChecked = TokenTests.run(Unit)
 
 let lexerCoreTestsChecked = LexerCoreTests.run(Unit)
@@ -69,5 +70,7 @@ let importResolutionTestsChecked = ImportResolutionTests.run(Unit)
 let moduleInterfaceTestsChecked = ModuleInterfaceTests.run(Unit)
 
 let moduleSourceTestsChecked = ModuleSourceTests.run(Unit)
+
+let modulePlanTestsChecked = ModulePlanTests.run(Unit)
 
 Ashes.IO.print("all self-hosted frontend tests passed")

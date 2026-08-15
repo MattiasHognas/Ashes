@@ -6,4 +6,5 @@ import AshesCompiler.Frontend.ImportHeader
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.ModuleInterface
 import AshesCompiler.Frontend.ModuleSource
+import AshesCompiler.Frontend.ModulePlan
 Unit
