@@ -231,8 +231,9 @@ same public behavior.
 - [~] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
   compiler-private names across stitched modules. Dependency planning and cycle rejection are
   implemented; stitched semantic scopes and private-name stability remain.
-- [ ] Parse and validate `ashes.json`, defaults, entry points, source roots, includes, output settings,
-  dependencies, and dev dependencies.
+- [x] Parse and validate typed `ashes.json` manifests, including entry extensions, defaults, source
+  roots, includes, output settings, registry/path dependencies, dev dependencies, and forward-compatible
+  unknown fields. Filesystem path resolution and entry existence checks belong to project discovery.
 - [ ] Discover projects upward, honor explicit project selection, and construct a deterministic
   compilation plan from source-only packages.
 - [ ] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
