@@ -16,7 +16,7 @@ self-hosted port easier.
 
 | Area | Ported surface | State |
 |---|---|---|
-| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests |
+| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests |
 | Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
@@ -217,8 +217,9 @@ same public behavior.
 
 #### Modules, projects, externals, and whole-program semantics
 
-- [ ] Separate and validate leading import headers while preserving their written forms, aliases,
-  selectors, source lines, and imports-stripped body offsets for formatting and diagnostics.
+- [x] Separate and validate leading import headers while preserving their written forms, aliases,
+  selectors, source lines, and imports-stripped UTF-8 body offsets for formatting and diagnostics;
+  retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
 - [ ] Resolve whole-module, aliased, value-selector, and type-selector imports using the documented
   source-root search order and ambiguity rules.
 - [ ] Validate explicit exports and build value/type/constructor/submodule interfaces without implicit
