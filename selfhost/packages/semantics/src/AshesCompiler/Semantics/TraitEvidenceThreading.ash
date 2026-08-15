@@ -12,9 +12,13 @@ export (
     type TraitEvidenceForwardingArgument(..),
     type TraitEvidenceForwardingError(..),
     type TraitEvidenceForwardingPlanning(..),
+    type TraitMethodAccess(..),
+    type TraitMethodAccessError(..),
+    type TraitMethodAccessPlanning(..),
     value planTraitEvidenceArguments,
     value planTraitFunctionApplication,
     value planTraitEvidenceForwarding,
+    value planActiveTraitMethodAccess,
 )
 
 type TraitEvidenceArgument =
@@ -56,6 +60,22 @@ type TraitEvidenceForwardingError =
 type TraitEvidenceForwardingPlanning =
     | arguments: List(TraitEvidenceForwardingArgument)
     | error: Maybe(TraitEvidenceForwardingError)
+    deriving {Eq, Show}
+
+type TraitMethodAccess =
+    | forwarding: TraitEvidenceForwarding
+    | methodName: Str
+    | methodIndex: Int
+    deriving {Eq, Show}
+
+type TraitMethodAccessError =
+    | TraitMethodEvidenceUnavailable(TraitConstraint)
+    | TraitMethodNotInDictionary(TraitConstraint, Str)
+    deriving {Eq, Show}
+
+type TraitMethodAccessPlanning =
+    | access: Maybe(TraitMethodAccess)
+    | error: Maybe(TraitMethodAccessError)
     deriving {Eq, Show}
 
 let recursive planTraitEvidenceArgumentsFrom shapes environment reversed =
@@ -138,3 +158,50 @@ let recursive planTraitEvidenceForwardingFrom requiredShapes activeShapes revers
                 | None -> TraitEvidenceForwardingPlanning(arguments = reverse(reversed), error = Some(MissingActiveTraitEvidence(constraint)))
 
 let planTraitEvidenceForwarding requiredConstraints activeConstraints environment = planTraitEvidenceForwardingFrom(planTraitEvidenceAbi(requiredConstraints)(environment))(planTraitEvidenceAbi(activeConstraints)(environment))([])
+
+let recursive findTraitEvidenceShapeInSupertraits shapes target =
+    match shapes with
+        | [] -> None
+        | head :: tail ->
+            match findTraitEvidenceShapeInShape(head)(target) with
+                | Some(shape) -> Some(shape)
+                | None -> findTraitEvidenceShapeInSupertraits(tail)(target)
+and findTraitEvidenceShapeInShape shape target =
+    if traitEvidenceShapeMatches(target)(shape)
+    then Some(shape)
+    else
+        match shape with
+            | TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = _constraint, methods = _methods, supertraits = supertraits } -> findTraitEvidenceShapeInSupertraits(supertraits)(target)
+
+let recursive findTraitEvidenceShape shapes target =
+    match shapes with
+        | [] -> None
+        | head :: tail ->
+            match findTraitEvidenceShapeInShape(head)(target) with
+                | Some(shape) -> Some(shape)
+                | None -> findTraitEvidenceShape(tail)(target)
+
+let recursive findTraitMethodIndex methods methodName index =
+    match methods with
+        | [] -> None
+        | head :: tail ->
+            if head == methodName
+            then Some(index)
+            else findTraitMethodIndex(tail)(methodName)(index + 1)
+
+let planActiveTraitMethodAccessFrom shape forwarding constraint methodName =
+    match shape with
+        | TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = _shapeConstraint, methods = methods, supertraits = _supertraits } ->
+            match findTraitMethodIndex(methods)(methodName)(0) with
+                | Some(methodIndex) -> TraitMethodAccessPlanning(access = Some(TraitMethodAccess(forwarding = forwarding, methodName = methodName, methodIndex = methodIndex)), error = None)
+                | None -> TraitMethodAccessPlanning(access = None, error = Some(TraitMethodNotInDictionary(constraint)(methodName)))
+
+let planActiveTraitMethodAccessWithShapes constraint methodName activeShapes =
+    match findTraitEvidenceForwarding(activeShapes)(constraint) with
+        | None -> TraitMethodAccessPlanning(access = None, error = Some(TraitMethodEvidenceUnavailable(constraint)))
+        | Some(forwarding) ->
+            match findTraitEvidenceShape(activeShapes)(constraint) with
+                | Some(shape) -> planActiveTraitMethodAccessFrom(shape)(forwarding)(constraint)(methodName)
+                | None -> TraitMethodAccessPlanning(access = None, error = Some(TraitMethodEvidenceUnavailable(constraint)))
+
+let planActiveTraitMethodAccess constraint methodName activeConstraints environment = planActiveTraitMethodAccessWithShapes(constraint)(methodName)(planTraitEvidenceAbi(activeConstraints)(environment))
