@@ -38,103 +38,85 @@ let assertRecord : Expr -> Unit needs {ConsoleIO} =
                     | _ -> test.fail("expected two record fields")
             | _ -> test.fail("expected record construction")
 
-let run unit =
-    (let unsigned = ParserExpressionTests.expectClean("18446744073709551615u64")
+let checkUnsignedLiteral unit =
+    match "18446744073709551615u64"
+    |> ParserExpressionTests.expectClean
+    |> ParserExpressionTests.unspan with
+        | ExprUInt(value, bits, text) ->
+            if value != -1
+            then test.fail("expected u64 bit value")
+            else
+                if bits != 64
+                then test.fail("expected u64 width")
+                else test.assertEqual("18446744073709551615u64")(text)
+        | _ -> test.fail("expected u64 literal")
+
+let checkLiteralTuple unit =
+    (let elements =
+        "(99N, 3.14, \"hello\", '😀', true, false)"
+        |> ParserExpressionTests.expectClean
+        |> tupleElements
     in
-        let unsignedChecked =
-            match ParserExpressionTests.unspan(unsigned) with
-                | ExprUInt(value, bits, text) ->
-                    if value != -1
-                    then test.fail("expected u64 bit value")
-                    else
-                        if bits != 64
-                        then test.fail("expected u64 width")
-                        else test.assertEqual("18446744073709551615u64")(text)
-                | _ -> test.fail("expected u64 literal")
-        in
-            let literals = ParserExpressionTests.expectClean("(99N, 3.14, \"hello\", '😀', true, false)")
-            in
-                let elements = tupleElements(literals)
-                in
-                    let bigChecked =
-                        match ParserExpressionTests.unspan(expressionAt(0)(elements)) with
-                            | ExprBigInt(value) ->
-                                if value == "99"
-                                then Unit
-                                else test.fail("expected bigint digits")
-                            | _ -> test.fail("expected bigint literal")
-                    in
-                        let floatChecked =
-                            match ParserExpressionTests.unspan(expressionAt(1)(elements)) with
-                                | ExprFloat(value, text) ->
-                                    if value != 3.14
-                                    then test.fail("expected float value")
-                                    else
-                                        if text == "3.14"
-                                        then Unit
-                                        else test.fail("expected float text")
-                                | _ -> test.fail("expected float literal")
-                        in
-                            let stringChecked =
-                                match ParserExpressionTests.unspan(expressionAt(2)(elements)) with
-                                    | ExprString(value) ->
-                                        if value == "hello"
-                                        then Unit
-                                        else test.fail("expected string value")
-                                    | _ -> test.fail("expected string literal")
-                            in
-                                let runeChecked =
-                                    match ParserExpressionTests.unspan(expressionAt(3)(elements)) with
-                                        | ExprRune(value) ->
-                                            if value == 128512
-                                            then Unit
-                                            else test.fail("expected rune value")
-                                        | _ -> test.fail("expected rune literal")
-                                in
-                                    let booleansChecked =
-                                        match (ParserExpressionTests.unspan(expressionAt(4)(elements)), ParserExpressionTests.unspan(expressionAt(5)(elements))) with
-                                            | (ExprBool(truth), ExprBool(falsehood)) ->
-                                                if !truth
-                                                then test.fail("expected true literal")
-                                                else
-                                                    if falsehood
-                                                    then test.fail("expected false literal")
-                                                    else Unit
-                                            | _ -> test.fail("expected boolean literals")
-                                    in
-                                        let whitespaceCall = ParserExpressionTests.expectClean("map transform values")
-                                        in
-                                            let whitespaceCallChecked =
-                                                match ParserExpressionTests.unspan(whitespaceCall) with
-                                                    | ExprCall(first, values, true) ->
-                                                        match (ParserExpressionTests.unspan(first), ParserExpressionTests.unspan(values)) with
-                                                            | (ExprCall(_, _, true), ExprVar(name)) ->
-                                                                if name == "values"
-                                                                then Unit
-                                                                else test.fail("expected values argument")
-                                                            | _ -> test.fail("expected curried whitespace application")
-                                                    | _ -> test.fail("expected whitespace call")
-                                            in
-                                                let recordChecked = assertRecord(ParserExpressionTests.expectClean("Point(x = 1, y = 2)"))
-                                                in
-                                                    let sourceSpan = ParserExpressionTests.expectClean("\"é\" + 1")
-                                                    in
-                                                        let spanChecked =
-                                                            match sourceSpan with
-                                                                | ExprAt(span, _) ->
-                                                                    if span.start != 0
-                                                                    then test.fail("expected expression span start")
-                                                                    else
-                                                                        if span.end == 8
-                                                                        then Unit
-                                                                        else test.fail("expected expression span end")
-                                                                | _ -> test.fail("expected expression span")
-                                                        in
-                                                            let lowerRecord = parseExpression("point(x = 1)")
-                                                            in
-                                                                match lowerRecord.diagnostics with
-                                                                    | diagnostic :: [] ->
-                                                                        if diagnostic.message == "Named arguments are only allowed in record construction."
-                                                                        then Unit
-                                                                        else test.fail("expected named-argument diagnostic message")
-                                                                    | _ -> test.fail("expected named-argument diagnostic"))
+        (match elements
+        |> expressionAt(0)
+        |> ParserExpressionTests.unspan with
+            | ExprBigInt("99") -> Unit
+            | _ -> test.fail("expected bigint literal"))
+        |> (given (_) ->
+            match elements
+            |> expressionAt(1)
+            |> ParserExpressionTests.unspan with
+                | ExprFloat(value, text) -> test.assertEqual((3.14, "3.14"))((value, text))
+                | _ -> test.fail("expected float literal"))
+        |> (given (_) ->
+            match elements
+            |> expressionAt(2)
+            |> ParserExpressionTests.unspan with
+                | ExprString("hello") -> Unit
+                | _ -> test.fail("expected string literal"))
+        |> (given (_) ->
+            match elements
+            |> expressionAt(3)
+            |> ParserExpressionTests.unspan with
+                | ExprRune(128512) -> Unit
+                | _ -> test.fail("expected rune literal"))
+        |> (given (_) ->
+            match (elements
+            |> expressionAt(4)
+            |> ParserExpressionTests.unspan, elements
+            |> expressionAt(5)
+            |> ParserExpressionTests.unspan) with
+                | (ExprBool(true), ExprBool(false)) -> Unit
+                | _ -> test.fail("expected boolean literals")))
+
+let checkWhitespaceCall unit =
+    match "map transform values"
+    |> ParserExpressionTests.expectClean
+    |> ParserExpressionTests.unspan with
+        | ExprCall(first, values, true) ->
+            match (ParserExpressionTests.unspan(first), ParserExpressionTests.unspan(values)) with
+                | (ExprCall(_, _, true), ExprVar("values")) -> Unit
+                | _ -> test.fail("expected curried whitespace application")
+        | _ -> test.fail("expected whitespace call")
+
+let checkRecordAndSpan unit =
+    "Point(x = 1, y = 2)"
+    |> ParserExpressionTests.expectClean
+    |> assertRecord
+    |> (given (_) ->
+        match ParserExpressionTests.expectClean("\"é\" + 1") with
+            | ExprAt(span, _) -> test.assertEqual((0, 8))((span.start, span.end))
+            | _ -> test.fail("expected expression span"))
+
+let checkNamedArgumentDiagnostic unit =
+    match parseExpression("point(x = 1)") with
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: [] } -> test.assertEqual("Named arguments are only allowed in record construction.")(diagnostic.message)
+        | _ -> test.fail("expected named-argument diagnostic")
+
+let run unit =
+    unit
+    |> checkUnsignedLiteral
+    |> checkLiteralTuple
+    |> checkWhitespaceCall
+    |> checkRecordAndSpan
+    |> checkNamedArgumentDiagnostic

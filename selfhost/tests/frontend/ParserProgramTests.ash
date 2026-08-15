@@ -50,18 +50,13 @@ let run unit =
     in
         match parseProgram(source) with
             | ProgramParseResult { program = ProgramSyntax { items = exported :: alias :: nominal :: algebraic :: record :: binding :: [], body = programBody }, diagnostics = diagnostics } ->
-                let diagnosticsChecked = test.assertEqual([])(diagnostics)
-                in
-                    let exportChecked = checkExport(exported)
-                    in
-                        let aliasChecked = checkAlias(alias)
-                        in
-                            let nominalChecked = checkNominal(nominal)
-                            in
-                                let algebraicChecked = checkAlgebraic(algebraic)
-                                in
-                                    let recordChecked = checkRecord(record)
-                                    in
-                                        let bindingChecked = checkBinding(binding)
-                                        in checkBody(programBody)
+                diagnostics
+                |> test.assertEqual([])
+                |> (given (_) -> checkExport(exported))
+                |> (given (_) -> checkAlias(alias))
+                |> (given (_) -> checkNominal(nominal))
+                |> (given (_) -> checkAlgebraic(algebraic))
+                |> (given (_) -> checkRecord(record))
+                |> (given (_) -> checkBinding(binding))
+                |> (given (_) -> checkBody(programBody))
             | _ -> test.fail("expected ordered top-level items"))

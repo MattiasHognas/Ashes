@@ -15,7 +15,9 @@ let expectDiagnostics source =
         | _ -> test.fail("expected parser diagnostics")
 
 let checkLoneExpression unit =
-    match expectNoDiagnostics(parseProgram("42")) with
+    match "42"
+    |> parseProgram
+    |> expectNoDiagnostics with
         | ProgramSyntax { items = [], body = Some(body) } ->
             match ParserExpressionTests.unspan(body) with
                 | ExprInt(42) -> Unit
@@ -23,7 +25,9 @@ let checkLoneExpression unit =
         | _ -> test.fail("expected lone trailing expression")
 
 let checkConsecutiveDeclarations unit =
-    match expectNoDiagnostics(parseProgram("let x = 1\nlet y = 2")) with
+    match "let x = 1\nlet y = 2"
+    |> parseProgram
+    |> expectNoDiagnostics with
         | ProgramSyntax { items = first :: second :: [], body = None } ->
             match (ParserProgramTests.unspanTopLevel(first), ParserProgramTests.unspanTopLevel(second)) with
                 | (TopLevelLet(LetBindingSyntax { name = "x", value = _firstValue, sugarParameters = [], typeAnnotation = None, requirements = [] }, false), TopLevelLet(LetBindingSyntax { name = "y", value = _secondValue, sugarParameters = [], typeAnnotation = None, requirements = [] }, false)) -> Unit
@@ -31,7 +35,9 @@ let checkConsecutiveDeclarations unit =
         | _ -> test.fail("expected declaration-only program")
 
 let checkNestedLetBody unit =
-    match expectNoDiagnostics(parseProgram("let x = 1 in x")) with
+    match "let x = 1 in x"
+    |> parseProgram
+    |> expectNoDiagnostics with
         | ProgramSyntax { items = [], body = Some(body) } ->
             match ParserExpressionTests.unspan(body) with
                 | ExprLet("x", _value, _body, [], None, []) -> Unit
@@ -39,7 +45,9 @@ let checkNestedLetBody unit =
         | _ -> test.fail("expected expression program")
 
 let checkIndentedTrailingExpression unit =
-    match expectNoDiagnostics(parseProgram("let a = X.test(1)\n    Ashes.IO.print(a)")) with
+    match "let a = X.test(1)\n    Ashes.IO.print(a)"
+    |> parseProgram
+    |> expectNoDiagnostics with
         | ProgramSyntax { items = item :: [], body = Some(body) } ->
             let bindingChecked =
                 match ParserProgramTests.unspanTopLevel(item) with
@@ -55,21 +63,14 @@ let checkIndentedTrailingExpression unit =
         | _ -> test.fail("expected indented trailing expression")
 
 let run unit =
-    (let loneChecked = checkLoneExpression(Unit)
-    in
-        let consecutiveChecked = checkConsecutiveDeclarations(Unit)
-        in
-            let nestedChecked = checkNestedLetBody(Unit)
-            in
-                let indentedChecked = checkIndentedTrailingExpression(Unit)
-                in
-                    let emptyChecked = expectDiagnostics("")
-                    in
-                        let bareAndChecked = expectDiagnostics("and x = 1")
-                        in
-                            let groupedAndChecked = expectDiagnostics("let x = 1 and y = 2")
-                            in
-                                let unfinishedPyramidChecked = expectDiagnostics("let x = let y = 2 in y")
-                                in
-                                    let emptyDerivingChecked = expectDiagnostics("type Empty = | Empty deriving {}")
-                                    in expectDiagnostics("type Bad = | x: Int | Other(Int)"))
+    unit
+    |> checkLoneExpression
+    |> checkConsecutiveDeclarations
+    |> checkNestedLetBody
+    |> checkIndentedTrailingExpression
+    |> (given (_) -> expectDiagnostics(""))
+    |> (given (_) -> expectDiagnostics("and x = 1"))
+    |> (given (_) -> expectDiagnostics("let x = 1 and y = 2"))
+    |> (given (_) -> expectDiagnostics("let x = let y = 2 in y"))
+    |> (given (_) -> expectDiagnostics("type Empty = | Empty deriving {}"))
+    |> (given (_) -> expectDiagnostics("type Bad = | x: Int | Other(Int)"))
