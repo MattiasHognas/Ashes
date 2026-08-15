@@ -12,6 +12,8 @@ export (
 type ModuleImportExport =
     | ImportValueExport(Str)
     | ImportTypeExport(Str)
+    | ImportConstructorExport(Str)
+    | ImportModuleExport(Str)
     deriving {Eq, Show}
 
 type ModuleImportInterface =

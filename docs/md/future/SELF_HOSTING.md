@@ -223,8 +223,9 @@ same public behavior.
 - [~] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
   checks. Apply that resolver to modules discovered in the documented source-root search order.
-- [ ] Validate explicit exports and build value/type/constructor/submodule interfaces without implicit
-  re-export.
+- [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
+  programs without exporting externals, trailing bodies, private declarations, or imported modules
+  implicitly.
 - [ ] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
   compiler-private names across stitched modules.
 - [ ] Parse and validate `ashes.json`, defaults, entry points, source roots, includes, output settings,
