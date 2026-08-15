@@ -48,8 +48,18 @@ let expectAbstractEvidenceArgument unit =
         | TraitEvidenceArgumentPlanning { arguments = TraitEvidenceArgument { shape = TraitDictionaryAbiShape { parameterIndex = 0, constraint = constraint, methods = "equal" :: [], supertraits = [] }, evidence = TraitEvidenceParameter(evidenceConstraint) } :: [], error = None } -> test.assertEqual(constraint)(evidenceConstraint)
         | _ -> test.fail("unexpected abstract evidence argument")
 
+let expectEvidenceArgumentFailure unit =
+    (let missing = TraitConstraint(traitName = "Equal", typeArguments = [SemString])
+    in
+        match Unit
+        |> evidenceEnvironment
+        |> planTraitEvidenceArguments([missing]) with
+            | TraitEvidenceArgumentPlanning { arguments = [], error = Some(MissingTraitImplementation(goal, trace)) } -> test.assertEqual((missing, [missing]))((goal, trace))
+            | _ -> test.fail("missing concrete evidence should stop argument planning"))
+
 let runTraitEvidenceArgumentTests unit =
     unit
     |> expectConcreteEvidenceArguments
     |> expectAbstractEvidenceArgument
+    |> expectEvidenceArgumentFailure
     |> (given (_) -> Ashes.IO.print("all self-hosted trait evidence argument tests passed"))
