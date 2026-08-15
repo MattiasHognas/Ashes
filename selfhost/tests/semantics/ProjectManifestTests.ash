@@ -1,0 +1,59 @@
+import Ashes.Test as test
+import AshesCompiler.Semantics.ProjectManifest
+let assertNamed (name: Str) (expected: Result(ProjectManifestError, ProjectManifest)) (actual: Result(ProjectManifestError, ProjectManifest)) =
+    if expected == actual
+    then Unit
+    else test.fail("project manifest assertion failed: " + name)
+
+let emptyDefaults = ProjectDefaults(optimize = None)
+
+let checkDefaults unit =
+    "{\"entry\":\"src/Main.ash\",\"unknown\":123}"
+    |> parseProjectManifest
+    |> assertNamed("defaults")(Ok(ProjectManifest(entry = "src/Main.ash", name = None, namespace = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+
+let checkCompleteManifest unit =
+    "{\"entry\":\"Main.ash\",\"name\":\"demo\",\"namespace\":\"Demo\",\"sourceRoots\":[\"src\",\"generated\"],\"include\":[\"vendor\"],\"outDir\":\"build\",\"target\":\"linux-x64\",\"defaults\":{\"optimize\":true,\"future\":1},\"dependencies\":{\"json\":\"^1.2.0\",\"local\":{\"path\":\"../local\",\"namespace\":\"LocalApi\"}},\"devDependencies\":{\"checks\":{\"path\":\"../checks\"}}}"
+    |> parseProjectManifest
+    |> assertNamed("complete")(Ok(ProjectManifest(entry = "Main.ash", name = Some("demo"), namespace = Some("Demo"), sourceRoots = ["src", "generated"], includeRoots = ["vendor"], outDir = "build", target = Some("linux-x64"), defaults = ProjectDefaults(optimize = Some(true)), dependencies = [ProjectDependency(name = "json", source = RegistryDependency("^1.2.0")), ProjectDependency(name = "local", source = PathDependency("../local")(Some("LocalApi")))], devDependencies = [ProjectDependency(name = "checks", source = PathDependency("../checks")(None))])))
+
+let checkPermissiveArrays unit =
+    "{\"entry\":\"Main.ash\",\"sourceRoots\":[\"\",1,\"src\"],\"include\":false,\"outDir\":4,\"target\":null}"
+    |> parseProjectManifest
+    |> assertNamed("permissive arrays")(Ok(ProjectManifest(entry = "Main.ash", name = None, namespace = None, sourceRoots = ["src"], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+
+let checkInvalidJson unit =
+    ""
+    |> parseProjectManifest
+    |> assertNamed("invalid json")(Error(ProjectJsonParseError("unexpected end of input")))
+
+let checkNonObject unit =
+    "[]"
+    |> parseProjectManifest
+    |> assertNamed("non-object")(Error(ProjectManifestMustBeObject))
+
+let checkMissingEntry unit =
+    "{}"
+    |> parseProjectManifest
+    |> assertNamed("missing entry")(Error(MissingProjectEntry))
+
+let checkInvalidEntry unit =
+    "{\"entry\":\"Main.txt\"}"
+    |> parseProjectManifest
+    |> assertNamed("invalid entry")(Error(InvalidProjectEntry("Main.txt")))
+
+let checkIgnoredUnsupportedDependency unit =
+    "{\"entry\":\"Main.ASH\",\"dependencies\":{\"broken\":{\"namespace\":\"Broken\"}}}"
+    |> parseProjectManifest
+    |> assertNamed("ignored unsupported dependency")(Ok(ProjectManifest(entry = "Main.ASH", name = None, namespace = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+
+let run unit =
+    unit
+    |> checkDefaults
+    |> checkCompleteManifest
+    |> checkPermissiveArrays
+    |> checkInvalidJson
+    |> checkNonObject
+    |> checkMissingEntry
+    |> checkInvalidEntry
+    |> checkIgnoredUnsupportedDependency
