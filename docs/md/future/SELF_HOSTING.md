@@ -25,7 +25,7 @@ independently reviewable milestone per subsequent PR.
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
-| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; and deterministic hidden-dictionary ABI shape planning | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, and dictionary ABI layouts implemented; value-shape evidence threading and lowering remain |
+| Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; and ABI-ordered call-site evidence argument planning | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, and call-site evidence arguments implemented; value rewriting and lowering remain |
 | IR, optimizer, ownership, backend, linker | No self-hosted implementation yet | Not started |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined, but the tools are not ported | Not started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
@@ -206,9 +206,10 @@ same public behavior.
   constraints as hidden dictionary parameters.
 - [x] Diagnose missing, ambiguous, incoherent, non-terminating, and ambiguous-type-variable goals with
   canonical requirement traces.
-- [~] Plan hidden trait dictionary parameters, method fields, and specialized direct-supertrait fields
-  in deterministic ABI order. Thread those dictionaries through functions, closures, recursive calls,
-  partial applications, aggregates, and async frames.
+- [~] Plan hidden trait dictionary parameters, method fields, specialized direct-supertrait fields, and
+  concrete-or-parameter call-site evidence arguments in deterministic ABI order. Thread those
+  dictionaries through functions, closures, recursive calls, partial applications, aggregates, and
+  async frames.
 - [ ] Lower dictionary construction, inherited evidence, default dispatch, method selection, and safe
   concrete specialization without changing unoptimized behavior.
 - [ ] Register the shipped primitive and structural implementations and standard traits.
