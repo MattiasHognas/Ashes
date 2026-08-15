@@ -9,51 +9,93 @@ let scheme semanticType = TypeScheme(quantified = [], body = semanticType, const
 let expectResultType expected expression environment =
     match inferExpression(expression)(environment) with
         | TypeInferenceResult { semanticType = semanticType, substitution = substitution, supply = _supply, constraints = _constraints, error = None } ->
-            let actual = formatSemanticType(applySubstitution(substitution)(semanticType))
+            let actual =
+                semanticType
+                |> applySubstitution(substitution)
+                |> formatSemanticType
             in
                 if actual == expected
                 then Unit
                 else test.fail("expected " + expected + " but inferred " + actual)
         | _ -> test.fail("Result expression should infer")
 
-let runResultInferenceTests unit =
-    (let inputType = resultType(SemInt)(SemString)
+let resultEnvironment unit =
+    Unit
+    |> emptyTypeEnvironment
+    |> addTypeBinding("input")(SemString
+    |> resultType(SemInt)
+    |> scheme)
+
+let expectSuccessResultPipe unit =
+    (let mapper =
+        ExprLambda("text")(ExprEqual(ExprVar("text"))(ExprString("ok")))(None)
     in
-        let baseEnvironment = addTypeBinding("input")(scheme(inputType))(emptyTypeEnvironment(Unit))
+        Unit
+        |> resultEnvironment
+        |> expectResultType("Result(Int, Bool)")(ExprResultPipe(ExprVar("input"))(mapper)))
+
+let expectFlatResultPipe unit =
+    (let mapperType =
+        SemFunction(SemString)(resultType(SemInt)(SemBool))(None)
+    in
+        let environment =
+            Unit
+            |> resultEnvironment
+            |> addTypeBinding("flatMap")(scheme(mapperType))
         in
-            let successMapper = ExprLambda("text")(ExprEqual(ExprVar("text"))(ExprString("ok")))(None)
-            in
-                let successChecked = expectResultType("Result(Int, Bool)")(ExprResultPipe(ExprVar("input"))(successMapper))(baseEnvironment)
-                in
-                    let flatMapperType = SemFunction(SemString)(resultType(SemInt)(SemBool))(None)
-                    in
-                        let flatMapEnvironment = addTypeBinding("flatMap")(scheme(flatMapperType))(baseEnvironment)
-                        in
-                            let flatMapChecked = expectResultType("Result(Int, Bool)")(ExprResultPipe(ExprVar("input"))(ExprVar("flatMap")))(flatMapEnvironment)
-                            in
-                                let errorMapper = ExprLambda("error")(ExprString("mapped"))(None)
-                                in
-                                    let errorChecked = expectResultType("Result(Str, Str)")(ExprResultMapErrorPipe(ExprVar("input"))(errorMapper))(baseEnvironment)
-                                    in
-                                        let continuationType = SemFunction(SemString)(resultType(SemInt)(SemBool))(None)
-                                        in
-                                            let continuationEnvironment = addTypeBinding("continueWith")(scheme(continuationType))(baseEnvironment)
-                                            in
-                                                let letResult = ExprLetResult("value")(ExprVar("input"))(ExprCall(ExprVar("continueWith"))(ExprVar("value"))(false))
-                                                in
-                                                    let letResultChecked = expectResultType("Result(Int, Bool)")(letResult)(continuationEnvironment)
-                                                    in
-                                                        let invalidLeft = ExprResultPipe(ExprInt(1))(ExprLambda("value")(ExprVar("value"))(None))
-                                                        in
-                                                            let invalidLeftChecked =
-                                                                match inferExpression(invalidLeft)(emptyTypeEnvironment(Unit)) with
-                                                                    | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(ExpectedResultType(SemInt)) } -> Unit
-                                                                    | _ -> test.fail("Result pipelines should require a Result left operand")
-                                                            in
-                                                                let invalidBody = ExprLetResult("value")(ExprVar("input"))(ExprVar("value"))
-                                                                in
-                                                                    let invalidBodyChecked =
-                                                                        match inferExpression(invalidBody)(baseEnvironment) with
-                                                                            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(ExpectedResultType(SemString)) } -> Unit
-                                                                            | _ -> test.fail("let? bodies should produce Result")
-                                                                    in Ashes.IO.print("all self-hosted Result inference tests passed"))
+            expectResultType("Result(Int, Bool)")(ExprResultPipe(ExprVar("input"))(ExprVar("flatMap")))(environment))
+
+let expectErrorResultPipe unit =
+    (let mapper = ExprLambda("error")(ExprString("mapped"))(None)
+    in
+        Unit
+        |> resultEnvironment
+        |> expectResultType("Result(Str, Str)")(ExprResultMapErrorPipe(ExprVar("input"))(mapper)))
+
+let expectLetResult unit =
+    (let continuationType =
+        SemFunction(SemString)(resultType(SemInt)(SemBool))(None)
+    in
+        let environment =
+            Unit
+            |> resultEnvironment
+            |> addTypeBinding("continueWith")(scheme(continuationType))
+        in
+            let expression =
+                false
+                |> ExprCall(ExprVar("continueWith"))(ExprVar("value"))
+                |> ExprLetResult("value")(ExprVar("input"))
+            in expectResultType("Result(Int, Bool)")(expression)(environment))
+
+let rejectNonResultPipe unit =
+    (let expression =
+        None
+        |> ExprLambda("value")(ExprVar("value"))
+        |> ExprResultPipe(ExprInt(1))
+    in
+        match Unit
+        |> emptyTypeEnvironment
+        |> inferExpression(expression) with
+            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(ExpectedResultType(SemInt)) } -> Unit
+            | _ -> test.fail("Result pipelines should require a Result left operand"))
+
+let rejectNonResultBody unit =
+    (let expression = ExprLetResult("value")(ExprVar("input"))(ExprVar("value"))
+    in
+        match Unit
+        |> resultEnvironment
+        |> inferExpression(expression) with
+            | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(ExpectedResultType(SemString)) } -> Unit
+            | _ -> test.fail("let? bodies should produce Result"))
+
+let reportResultInferenceSuccess unit = Ashes.IO.print("all self-hosted Result inference tests passed")
+
+let runResultInferenceTests unit =
+    unit
+    |> expectSuccessResultPipe
+    |> expectFlatResultPipe
+    |> expectErrorResultPipe
+    |> expectLetResult
+    |> rejectNonResultPipe
+    |> rejectNonResultBody
+    |> reportResultInferenceSuccess

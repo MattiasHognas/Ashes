@@ -588,24 +588,32 @@ let expectConcreteTraitEvidenceResolution unit =
             |> expectSupertraitEvidence(environment))
 
 let expectMissingTraitEvidence environment unit =
-    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemString]))(environment) with
-        | TraitEvidenceResolution { plan = None, error = Some(MissingTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemString :: [] })) } -> Unit
+    match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemList(SemString)]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(MissingTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemString :: [] }, trace)) } ->
+            trace
+            |> formatTraitResolutionTrace
+            |> test.assertEqual("Equal(List(Str)) -> Equal(Str)")
         | _ -> test.fail("a missing concrete implementation should fail resolution")
 
 let expectAmbiguousTraitEvidence environment unit =
     match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemInt]))(environment) with
-        | TraitEvidenceResolution { plan = None, error = Some(AmbiguousTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] })) } -> Unit
+        | TraitEvidenceResolution { plan = None, error = Some(AmbiguousTraitImplementation(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] }, TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] } :: [])) } -> Unit
         | _ -> test.fail("multiple matching implementations should fail resolution")
 
 let expectCyclicTraitEvidence environment unit =
     match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemInt]))(environment) with
-        | TraitEvidenceResolution { plan = None, error = Some(CyclicTraitResolution(_trace)) } -> Unit
+        | TraitEvidenceResolution { plan = None, error = Some(CyclicTraitResolution(TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] } :: TraitConstraint { traitName = "Equal", typeArguments = SemList(SemInt) :: [] } :: TraitConstraint { traitName = "Equal", typeArguments = SemInt :: [] } :: [])) } -> Unit
         | _ -> test.fail("cyclic concrete requirements should fail resolution")
 
 let expectTraitEvidenceDepthLimit environment unit =
     match resolveTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [nestedListType(65)(SemInt)]))(environment) with
-        | TraitEvidenceResolution { plan = None, error = Some(TraitResolutionDepthExceeded(_goal, 64)) } -> Unit
+        | TraitEvidenceResolution { plan = None, error = Some(TraitResolutionDepthExceeded(_goal, 64, _trace)) } -> Unit
         | _ -> test.fail("trait resolution should enforce the C# depth limit")
+
+let expectAmbiguousTraitVariable environment unit =
+    match requireTraitEvidence(TraitConstraint(traitName = "Equal", typeArguments = [SemVariable(99)]))(environment) with
+        | TraitEvidenceResolution { plan = None, error = Some(AmbiguousTraitEvidence(TraitConstraint { traitName = "Equal", typeArguments = SemVariable(99) :: [] }, TraitConstraint { traitName = "Equal", typeArguments = SemVariable(99) :: [] } :: [])) } -> Unit
+        | _ -> test.fail("a required abstract goal should diagnose its ambiguous type variable")
 
 let expectTraitEvidenceResolutionFailures unit =
     (let baseEnvironment =
@@ -624,7 +632,8 @@ let expectTraitEvidenceResolutionFailures unit =
                 |> expectMissingTraitEvidence(baseEnvironment)
                 |> expectAmbiguousTraitEvidence(duplicateEnvironment)
                 |> expectCyclicTraitEvidence(cyclicEnvironment)
-                |> expectTraitEvidenceDepthLimit(baseEnvironment))
+                |> expectTraitEvidenceDepthLimit(baseEnvironment)
+                |> expectAmbiguousTraitVariable(baseEnvironment))
 
 let expectTraitEvidenceResolution unit =
     unit
