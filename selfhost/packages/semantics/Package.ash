@@ -9,4 +9,5 @@ import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.TraitEvidenceThreading
+import AshesCompiler.Semantics.TraitDictionaryConstruction
 Unit
