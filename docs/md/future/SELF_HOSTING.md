@@ -225,7 +225,7 @@ same public behavior.
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
   checks. Map module names to source paths and select project, include, dependency, or shipped-library
   sources with ambiguity and reserved-namespace checks. Construct deterministic reachable-module plans
-  in dependency-first order and reject cycles; filesystem-backed discovery remains.
+  in dependency-first order and reject cycles; filesystem-backed source enumeration remains.
 - [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
@@ -235,8 +235,9 @@ same public behavior.
 - [x] Parse and validate typed `ashes.json` manifests, including entry extensions, defaults, source
   roots, includes, output settings, registry/path dependencies, dev dependencies, and forward-compatible
   unknown fields. Filesystem path resolution and entry existence checks belong to project discovery.
-- [ ] Discover projects upward, honor explicit project selection, and construct a deterministic
-  compilation plan from source-only packages.
+- [~] Discover projects upward, honor explicit project selection, load manifests, resolve project
+  paths, and validate entry existence. Deterministic compilation planning from source-only packages
+  remains.
 - [ ] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
   coherence, and program-global providers/implementations.
 - [ ] Stitch the complete project while preserving original file/module spans, definition identities,

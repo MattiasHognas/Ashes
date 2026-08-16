@@ -11,4 +11,5 @@ import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TraitDictionaryConstruction
 import AshesCompiler.Semantics.ProjectManifest
+import AshesCompiler.Semantics.ProjectDiscovery
 Unit

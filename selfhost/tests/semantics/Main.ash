@@ -20,6 +20,7 @@ import TraitMethodAccessTests
 import TraitDictionaryConstructionTests
 import TraitMethodConstructionOrderTests
 import ProjectManifestTests
+import ProjectDiscoveryTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -163,6 +164,7 @@ let run unit =
     |> TraitDictionaryConstructionTests.runTraitDictionaryConstructionTests
     |> TraitMethodConstructionOrderTests.runTraitMethodConstructionOrderTests
     |> ProjectManifestTests.run
+    |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> (given (_) -> Ashes.IO.print("all self-hosted semantics foundation tests passed"))
 
 run(Unit)
