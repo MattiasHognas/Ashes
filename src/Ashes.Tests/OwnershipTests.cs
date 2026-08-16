@@ -487,6 +487,23 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void String_parameter_returned_on_every_branch_is_normalized_at_entry()
+    {
+        IrProgram ir = LowerProgram(
+            "type Box = | value: Str\nlet carry path = if Ashes.Text.byteLength(path) > 0 then Ok(Box(value = path)) else Error(path)\nmatch carry(\"value\") with | Ok(Box { value = value }) -> Ashes.Text.byteLength(value) | Error(error) -> Ashes.Text.byteLength(error)");
+
+        IrFunction carry = ir.Functions.Single(function =>
+            string.Equals(
+                function.Origin?.Source?.SourceName,
+                "carry",
+                StringComparison.Ordinal));
+        carry.Instructions.Any(instruction => instruction is IrInst.LoadArgumentOwnership).ShouldBeTrue();
+        ir.EntryFunction.Instructions.Any(instruction => instruction is
+            IrInst.MakeClosure { AcceptsRuntimeManagedArgument: true }
+            or IrInst.MakeClosureStack { AcceptsRuntimeManagedArgument: true }).ShouldBeTrue();
+    }
+
+    [Test]
     public void Higher_order_function_normalizes_copy_list_results_to_runtime_ownership()
     {
         IrProgram ir = LowerProgram(
