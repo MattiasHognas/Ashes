@@ -5812,8 +5812,7 @@ public sealed partial class Lowering
     {
         _usesClosures = true;
 
-        // Create type variables for param, return, and the arrow's capability row. The row variable
-        // becomes the body's ambient row: every operation performed and capability-performing call made while
+        // The row variable becomes the body's ambient row: every operation performed and capability-performing call made while
         // lowering the body inserts its capabilities there, so the arrow ends up carrying exactly the
         // capabilities the body performs (open, generalized at the enclosing let).
         var (paramTy, retTy, rowTy, funTy) = CreateLambdaTypes();
@@ -5845,6 +5844,7 @@ public sealed partial class Lowering
 
         LowerLambdaCoreFinalizeTcoOwnership(
             lam, reuseEntryCopies, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
+        LowerLambdaCoreNormalizeAlwaysReturnedStringParameter(lam, label, argSlot, paramTy);
 
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
@@ -5869,6 +5869,114 @@ public sealed partial class Lowering
             LowerLambdaCoreMakeClosure(
                 label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged, request),
             funTy);
+    }
+
+    private void LowerLambdaCoreNormalizeAlwaysReturnedStringParameter(
+        Expr.Lambda lambda,
+        string label,
+        int argumentSlot,
+        TypeRef argumentType)
+    {
+        if (_runtimeNormalizedFunctionArgumentLabels.Contains(label)
+            || Prune(argumentType) is not TypeRef.TStr
+            || !ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName))
+        {
+            return;
+        }
+
+        int generatedStart = _inst.Count;
+        int sourceTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(sourceTemp, argumentSlot));
+        int normalizedTemp = EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, argumentType);
+        Emit(new IrInst.StoreLocal(argumentSlot, normalizedTemp));
+        List<IrInst> generated = _inst.GetRange(generatedStart, _inst.Count - generatedStart);
+        _inst.RemoveRange(generatedStart, generated.Count);
+        _inst.InsertRange(0, generated);
+        _runtimeNormalizedFunctionArgumentLabels.Add(label);
+    }
+
+    private bool ResultAlwaysReachesVariable(
+        Expr expression,
+        string variableName,
+        int callDepth = 0)
+    {
+        if (callDepth > 32)
+        {
+            return false;
+        }
+
+        switch (expression)
+        {
+            case Expr.Var variable:
+                return string.Equals(variable.Name, variableName, StringComparison.Ordinal);
+            case Expr.Lambda nested:
+                return !string.Equals(nested.ParamName, variableName, StringComparison.Ordinal)
+                    && ResultAlwaysReachesVariable(nested.Body, variableName, callDepth);
+            case Expr.If conditional:
+                return ResultAlwaysReachesVariable(conditional.Then, variableName, callDepth)
+                    && ResultAlwaysReachesVariable(conditional.Else, variableName, callDepth);
+            case Expr.Match match:
+                return match.Cases.Count > 0
+                    && match.Cases.All(matchCase =>
+                        !PatternBinds(matchCase.Pattern, variableName)
+                        && ResultAlwaysReachesVariable(matchCase.Body, variableName, callDepth));
+            case Expr.RecordLit record:
+                return record.Fields.Any(field =>
+                    ResultAlwaysReachesVariable(field.Value, variableName, callDepth));
+            case Expr.TupleLit tuple:
+                return tuple.Elements.Any(element =>
+                    ResultAlwaysReachesVariable(element, variableName, callDepth));
+            case Expr.ListLit list:
+                return list.Elements.Any(element =>
+                    ResultAlwaysReachesVariable(element, variableName, callDepth));
+            case Expr.Cons cons:
+                return ResultAlwaysReachesVariable(cons.Head, variableName, callDepth)
+                    || ResultAlwaysReachesVariable(cons.Tail, variableName, callDepth);
+            case Expr.Call:
+                return CallResultAlwaysReachesVariable(
+                    expression,
+                    variableName,
+                    callDepth);
+            default:
+                return false;
+        }
+    }
+
+    private bool CallResultAlwaysReachesVariable(
+        Expr expression,
+        string variableName,
+        int callDepth)
+    {
+        var arguments = new List<Expr>();
+        Expr root = CollectCallArgs(expression, arguments);
+        if (root is Expr.Var constructor
+            && _constructorSymbols.ContainsKey(constructor.Name))
+        {
+            return arguments.Any(argument =>
+                ResultAlwaysReachesVariable(argument, variableName, callDepth));
+        }
+
+        if (!TryResolveKnownFunctionLabel(root, out string label)
+            || !_functionKeyByLabel.TryGetValue(label, out FuncKey function)
+            || !_maFuncs.TryGetValue(function, out var callee)
+            || arguments.Count != callee.Params.Count)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            if (ResultAlwaysReachesVariable(arguments[index], variableName, callDepth)
+                && ResultAlwaysReachesVariable(
+                    callee.Body,
+                    callee.Params[index],
+                    callDepth + 1))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private int FinalizeLambdaBodyOwnership(
@@ -8769,6 +8877,7 @@ public sealed partial class Lowering
             }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
+            lowered.Temp = DuplicateRuntimeManagedTcoOwnedArgument(argument, lowered.Temp, lowered.Type);
             return lowered;
         }
         finally

@@ -1119,6 +1119,11 @@ public sealed partial class Lowering
             return (null, null);
         }
 
+        if (TryTrackWholeRuntimeManagedMatchBinding(armPattern, ownedType, typeName) is { } wholeOwner)
+        {
+            return (wholeOwner, new HashSet<string>(StringComparer.Ordinal) { wholeOwner });
+        }
+
         string ownerName = $"$match_rc_{valueTemp}";
         int ownerSlot = NewLocal();
         Emit(new IrInst.StoreLocal(ownerSlot, valueTemp));
@@ -1147,6 +1152,33 @@ public sealed partial class Lowering
             excludedDropFieldIndices: excludedFieldIndices);
 
         return (ownerName, excludedFieldIndices is not null ? trackedNames : null);
+    }
+
+    /// <summary>
+    /// A plain variable pattern owns its entire fresh scrutinee. Reuse that binding's emitted slot
+    /// instead of creating a second owner slot for the same single reference; an unused synthetic
+    /// slot would otherwise be dropped immediately and leave the real binding dangling.
+    /// </summary>
+    private string? TryTrackWholeRuntimeManagedMatchBinding(
+        Pattern armPattern,
+        TypeRef ownedType,
+        string typeName)
+    {
+        if (armPattern is not Pattern.Var wholeBinding
+            || Lookup(wholeBinding.Name) is not Binding.Local wholeLocal)
+        {
+            return null;
+        }
+
+        TrackOwnedValue(
+            wholeBinding.Name,
+            wholeLocal.Slot,
+            typeName,
+            isResource: false,
+            wholeLocal.DefinitionSpan,
+            ownedType,
+            runtimeManaged: true);
+        return wholeBinding.Name;
     }
 
     /// <summary>
