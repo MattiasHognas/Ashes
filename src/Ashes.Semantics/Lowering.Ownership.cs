@@ -165,6 +165,34 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// A tail self-call receives a borrow when its argument is an iteration-local runtime owner.
+    /// Retain that successor before the current arm's lexical owner is released at the back edge.
+    /// Runtime-managed parameters are not ownership-scope entries and therefore do not enter here.
+    /// </summary>
+    private int DuplicateRuntimeManagedTcoOwnedArgument(
+        Expr argument,
+        int argumentTemp,
+        TypeRef argumentType)
+    {
+        if (argument is not Expr.Var variable
+            || LookupOwnedValue(variable.Name) is not
+            { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false })
+        {
+            return argumentTemp;
+        }
+
+        if (MayUseEmptyListRepresentation(Prune(argumentType)))
+        {
+            return EmitRuntimeManagedNullableDup(argumentTemp);
+        }
+
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(duplicatedTemp, argumentTemp, RuntimeManaged: true));
+        MarkRuntimeManagedTemp(duplicatedTemp);
+        return duplicatedTemp;
+    }
+
+    /// <summary>
     /// Resolves an ownership alias chain to the original owner name.
     /// If the name is not an alias, returns itself.
     /// </summary>

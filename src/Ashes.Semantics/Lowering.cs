@@ -8769,6 +8769,7 @@ public sealed partial class Lowering
             }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
+            lowered.Temp = DuplicateRuntimeManagedTcoOwnedArgument(argument, lowered.Temp, lowered.Type);
             return lowered;
         }
         finally
