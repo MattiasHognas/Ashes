@@ -4,6 +4,7 @@
 // - Exact active evidence is preferred before following deterministic supertrait paths.
 // - Partial application accounts for ordinary and hidden evidence arguments separately.
 // - A closure captures evidence exactly when unsupplied ordinary arguments keep it live.
+// - Value transport retains the destination separately from the evidence source path.
 
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
@@ -22,10 +23,14 @@ export (
     type TraitMethodAccess(..),
     type TraitMethodAccessError(..),
     type TraitMethodAccessPlanning(..),
+    type TraitEvidenceValueDestination(..),
+    type TraitEvidenceValueTransport(..),
+    type TraitEvidenceValueTransportPlanning(..),
     value planTraitEvidenceArguments,
     value planTraitFunctionApplication,
     value planTraitEvidenceForwarding,
     value planActiveTraitMethodAccess,
+    value planTraitEvidenceValueTransport,
 )
 
 type TraitEvidenceArgument =
@@ -83,6 +88,24 @@ type TraitMethodAccessError =
 type TraitMethodAccessPlanning =
     | access: Maybe(TraitMethodAccess)
     | error: Maybe(TraitMethodAccessError)
+    deriving {Eq, Show}
+
+type TraitEvidenceValueDestination =
+    | TraitEvidenceFunctionParameter
+    | TraitEvidenceClosureCapture
+    | TraitEvidenceAggregateCapture(List(Int))
+    | TraitEvidenceAsyncFrameCapture
+    deriving {Eq, Show}
+
+type TraitEvidenceValueTransport =
+    | destination: TraitEvidenceValueDestination
+    | shape: TraitDictionaryAbiShape
+    | forwarding: TraitEvidenceForwarding
+    deriving {Eq, Show}
+
+type TraitEvidenceValueTransportPlanning =
+    | transports: List(TraitEvidenceValueTransport)
+    | error: Maybe(TraitEvidenceForwardingError)
     deriving {Eq, Show}
 
 let recursive planTraitEvidenceArgumentsFrom shapes environment reversed =
@@ -165,6 +188,15 @@ let recursive planTraitEvidenceForwardingFrom requiredShapes activeShapes revers
                 | None -> TraitEvidenceForwardingPlanning(arguments = reverse(reversed), error = Some(MissingActiveTraitEvidence(constraint)))
 
 let planTraitEvidenceForwarding requiredConstraints activeConstraints environment = planTraitEvidenceForwardingFrom(planTraitEvidenceAbi(requiredConstraints)(environment))(planTraitEvidenceAbi(activeConstraints)(environment))([])
+
+let recursive attachTraitEvidenceDestination destination arguments =
+    match arguments with
+        | [] -> []
+        | TraitEvidenceForwardingArgument { shape = shape, forwarding = forwarding } :: tail -> TraitEvidenceValueTransport(destination = destination, shape = shape, forwarding = forwarding) :: attachTraitEvidenceDestination(destination)(tail)
+
+let planTraitEvidenceValueTransport destination requiredConstraints activeConstraints environment =
+    match planTraitEvidenceForwarding(requiredConstraints)(activeConstraints)(environment) with
+        | TraitEvidenceForwardingPlanning { arguments = arguments, error = error } -> TraitEvidenceValueTransportPlanning(transports = attachTraitEvidenceDestination(destination)(arguments), error = error)
 
 let recursive findTraitEvidenceShapeInSupertraits shapes target =
     match shapes with
