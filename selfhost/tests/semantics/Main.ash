@@ -21,6 +21,7 @@ import TraitDictionaryConstructionTests
 import TraitMethodConstructionOrderTests
 import TraitEvidenceValueTransportTests
 import TraitEvidenceRewritingTests
+import TraitEvidenceCallRewritingTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -169,6 +170,7 @@ let run unit =
     |> TraitMethodConstructionOrderTests.runTraitMethodConstructionOrderTests
     |> TraitEvidenceValueTransportTests.runTraitEvidenceValueTransportTests
     |> TraitEvidenceRewritingTests.runTraitEvidenceRewritingTests
+    |> TraitEvidenceCallRewritingTests.runTraitEvidenceCallRewritingTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests
