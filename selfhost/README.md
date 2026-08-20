@@ -73,7 +73,7 @@ dotnet run --project src/Ashes.Cli -- compile \
 /tmp/ashes-selfhost-semantics-tests
 ```
 
-Run the focused self-hosted project dependency tests with:
+Run the focused self-hosted project dependency and lock-file tests with:
 
 ```bash
 dotnet run --project src/Ashes.Cli -- compile \
