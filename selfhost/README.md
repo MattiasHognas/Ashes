@@ -21,6 +21,12 @@ layers listed below; tests are separate projects and use the package under test 
 | `cli` | `frontend`, `semantics`, `backend`, `formatter`, `test-runner` |
 | `fuzzing` | the public surfaces it exercises; fuzz execution remains outside compiler packages |
 
+Production package manifests are versioned and express cross-package dependencies as registry
+constraints. The repository manifests pair those portable contracts with committed locks and explicit
+root-level path overrides for local development; publishing strips the overrides, and the source
+archive includes the package entry even when it is outside `sourceRoots`. Test projects declare their
+own overrides because dependency-provided overrides are intentionally ignored.
+
 The eventual bootstrap stages, test infrastructure, CLI, LSP, DAP, TestRunner, and deterministic
 fuzzing runner will be implemented in Ashes as well. Host-language helper programs are not part of
 self-hosted implementation or its test path.
@@ -29,6 +35,7 @@ self-hosted implementation or its test path.
 
 | Area | Current self-hosted surface |
 |---|---|
+| Package contracts | Complete portable source archives for frontend, formatter, and semantics, with versioned registry dependencies, exact locks, and declared local overrides |
 | Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies |
 | Formatter | Canonical whole-program, declaration, expression, pattern, and type rendering with precedence preservation and idempotence coverage |
 | Semantics | Stable symbols and lexical scopes; source type resolution for primitives, parameters, transparent aliases, nominal and zero-cost applications, functions, tuples, pointers, and capability rows; semantic substitutions, unordered open-row unification, constrained schemes; annotation-aware Algorithm W inference for core expressions, operators, records, guarded matches, Result pipelines, and `let?`; sequential whole-program inference with polymorphic constructors and shared-monomorphic recursive groups; registered capability declarations with qualified, parameter-sharing operation schemes; open-row effect propagation through implicit and explicit operation calls, lambdas, higher-order calls, and Result mappers; complete handler-arm, `resume`, return-arm, shared-instance, and effect-discharge inference; coherent, complete, instance-specialized, type-checked static provider registration with exact concrete call-site satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection; registered trait declarations with constrained qualified method schemes, forward supertraits, cycle checks, and type-checked default bodies; and ordinary trait implementation registration with rigid generic heads, validated requirements, optional inherited defaults, substituted method/body capability-row checks, and deterministic duplicate/structural-overlap rejection |

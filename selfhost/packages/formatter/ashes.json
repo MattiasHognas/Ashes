@@ -1,10 +1,14 @@
 {
   "name": "ashes-compiler-formatter",
   "namespace": "AshesCompiler.Formatter",
+  "version": "0.1.0",
   "entry": "Package.ash",
   "sourceRoots": ["src"],
   "outDir": "out",
   "dependencies": {
-    "frontend": { "path": "../frontend" }
+    "AshesCompiler.Frontend": "=0.1.0"
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../frontend" }
   }
 }

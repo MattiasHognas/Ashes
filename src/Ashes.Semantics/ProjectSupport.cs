@@ -700,6 +700,13 @@ public static class ProjectSupport
         var capitalize = true;
         foreach (var c in name)
         {
+            if (c == '.')
+            {
+                builder.Append(c);
+                capitalize = true;
+                continue;
+            }
+
             if (!char.IsLetterOrDigit(c))
             {
                 capitalize = true;

@@ -37,6 +37,14 @@ public sealed class ResolverTests
     }
 
     [Test]
+    public void Dependency_names_preserve_dotted_namespace_segments()
+    {
+        Ashes.Semantics.ProjectSupport.PascalCase("json-parser").ShouldBe("JsonParser");
+        Ashes.Semantics.ProjectSupport.PascalCase("AshesCompiler.Frontend")
+            .ShouldBe("AshesCompiler.Frontend");
+    }
+
+    [Test]
     public async Task Resolver_picks_the_highest_compatible_version()
     {
         var index = new FakeIndex(new(StringComparer.Ordinal)

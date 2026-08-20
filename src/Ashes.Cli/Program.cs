@@ -109,7 +109,7 @@ static async Task AutoRestoreProjectAsync(string? projectOption, string? inputFi
 
     var lockFile = Ashes.Cli.Package.LockFile.Read(projectFile);
     var cache = new Ashes.Cli.Package.PackageCache();
-    var needsRestore = lockFile is null || lockFile.Package.Any(p => !cache.Has(p.Namespace, p.Version, p.Hash));
+    var needsRestore = Ashes.Cli.Package.PackageRestorePolicy.NeedsRestore(projectFile, lockFile, cache);
     if (!needsRestore)
     {
         return;

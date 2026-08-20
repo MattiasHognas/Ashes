@@ -153,9 +153,12 @@ resolved package identity. `ashes publish` removes `overrides` and `devDependenc
 manifest.
 
 **Namespace discipline.** A dependency is imported under its namespace — its `namespace` field, else the
-PascalCase of its name (`json-parser` → `JsonParser`). Every module a dependency exports must live under
-that namespace directory (its own entry file excepted), and no two dependencies may claim the same
-namespace; violations are `ASH028` / `ASH029` (see the [diagnostics reference](../reference/diagnostics.md)).
+PascalCase of its name (`json-parser` → `JsonParser`). Dots in an explicitly written dependency key are
+preserved as module separators (`AshesCompiler.Frontend` stays `AshesCompiler.Frontend`), allowing a
+registry dependency to name a package with an explicit dotted namespace. Every module a dependency
+exports must live under that namespace directory (its own entry file excepted), and no two dependencies
+may claim the same namespace; violations are `ASH028` / `ASH029` (see the
+[diagnostics reference](../reference/diagnostics.md)).
 
 ### 3.8 `defaults` (optional)
 A future-facing object for CLI defaults. In v0.x this is allowed but not required to be used.

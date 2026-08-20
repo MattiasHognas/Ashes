@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "package": [
+    {
+      "namespace": "AshesCompiler.Frontend",
+      "version": "0.1.0",
+      "source": "registry+https://pkg.ashes-lang.org",
+      "hash": "ash1:890b44376f55da311f3b1c34a5e1abb1bab6e377733a6b42a0760a3e6bac1622",
+      "dependencies": []
+    }
+  ]
+}

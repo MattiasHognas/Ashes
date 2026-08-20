@@ -91,7 +91,7 @@ same public behavior.
   behaviorally relevant stage-0 contracts without copying host-language API boilerplate.
 - [ ] Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
   public result: tokens, syntax, formatted source, diagnostics, inferred schemes, IR, and executables.
-- [ ] Make every self-hosted package buildable from a restored source-only dependency graph without
+- [x] Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
 
 #### Frontend and source model
