@@ -16,7 +16,13 @@ internal static class LlvmTargetSetup
         string targetTriple = ResolveTargetTriple(targetId);
         LlvmTargetHandle target = ResolveTarget(targetTriple);
         LlvmCodeGenOptLevel optLevel = ResolveOptLevel(optimizationLevel);
-        (string cpu, string features) = ResolveCpuAndFeatures(targetId, targetCpu);
+        LlvmCpuSelection cpuSelection = ResolveCpuSelection(
+            RuntimeInformation.ProcessArchitecture,
+            ResolveTargetArchitecture(targetId),
+            targetCpu);
+        (string cpu, string features) = cpuSelection.UseHostDetection
+            ? (LlvmApi.GetHostCPUName(), LlvmApi.GetHostCPUFeatures())
+            : (cpuSelection.Cpu, string.Empty);
 
         LlvmTargetMachineHandle machine = LlvmApi.CreateTargetMachine(target,
             targetTriple,
@@ -25,6 +31,11 @@ internal static class LlvmTargetSetup
             optLevel,
             LlvmRelocMode.Static,
             LlvmCodeModel.Default);
+        if (machine.Ptr == 0)
+        {
+            throw new InvalidOperationException(
+                $"LLVM could not create a target machine for '{targetTriple}' with CPU '{cpu}'.");
+        }
 
         LlvmContextHandle context = LlvmApi.ContextCreate();
         LlvmModuleHandle module = LlvmApi.ModuleCreateWithNameInContext($"ashes.{targetId}.module", context);
@@ -72,25 +83,44 @@ internal static class LlvmTargetSetup
         };
     }
 
-    // Resolve CPU name and features. When --target-cpu is not specified,
-    // use safe generic defaults (runs on any CPU of the target arch).
-    // When "native" is specified, LLVM detects the host CPU at compile time.
-    private static (string Cpu, string Features) ResolveCpuAndFeatures(string targetId, string? targetCpu)
+    internal static LlvmTargetArchitecture ResolveTargetArchitecture(string targetId)
+    {
+        return targetId switch
+        {
+            Backends.TargetIds.LinuxX64 or Backends.TargetIds.WindowsX64 => LlvmTargetArchitecture.X86_64,
+            Backends.TargetIds.LinuxArm64 or Backends.TargetIds.WindowsArm64 => LlvmTargetArchitecture.AArch64,
+            _ => throw new ArgumentOutOfRangeException(nameof(targetId), $"Unknown target '{targetId}'."),
+        };
+    }
+
+    // This decision is deliberately independent of LLVM host detection so every
+    // host/target combination can be tested on either supported architecture.
+    internal static LlvmCpuSelection ResolveCpuSelection(
+        Architecture hostArchitecture,
+        LlvmTargetArchitecture targetArchitecture,
+        string? targetCpu)
     {
         if (targetCpu is not null && targetCpu.Equals("native", StringComparison.OrdinalIgnoreCase))
         {
-            return (LlvmApi.GetHostCPUName(), LlvmApi.GetHostCPUFeatures());
+            LlvmTargetArchitecture? host = hostArchitecture switch
+            {
+                Architecture.X64 => LlvmTargetArchitecture.X86_64,
+                Architecture.Arm64 => LlvmTargetArchitecture.AArch64,
+                _ => null,
+            };
+            if (host != targetArchitecture)
+            {
+                string hostName = host?.ToDisplayName() ?? hostArchitecture.ToString();
+                throw new InvalidOperationException(
+                    $"--target-cpu native cannot be used when cross-compiling from {hostName} " +
+                    $"to {targetArchitecture.ToDisplayName()}. Specify an explicit target CPU or omit --target-cpu.");
+            }
+
+            return new LlvmCpuSelection(string.Empty, UseHostDetection: true);
         }
 
-        if (targetCpu is not null)
-        {
-            return (targetCpu, string.Empty);
-        }
-
-        bool isArm64 = string.Equals(targetId, Backends.TargetIds.LinuxArm64, StringComparison.Ordinal)
-            || string.Equals(targetId, Backends.TargetIds.WindowsArm64, StringComparison.Ordinal);
-        string cpu = isArm64 ? "generic" : "x86-64";
-        return (cpu, string.Empty);
+        string cpu = targetCpu ?? (targetArchitecture == LlvmTargetArchitecture.AArch64 ? "generic" : "x86-64");
+        return new LlvmCpuSelection(cpu, UseHostDetection: false);
     }
 
     private static void ApplyDataLayout(LlvmModuleHandle module, LlvmTargetMachineHandle machine)
@@ -138,6 +168,24 @@ internal static class LlvmTargetSetup
         }
     }
 }
+
+internal enum LlvmTargetArchitecture
+{
+    X86_64,
+    AArch64,
+}
+
+internal static class LlvmTargetArchitectureExtensions
+{
+    public static string ToDisplayName(this LlvmTargetArchitecture architecture) => architecture switch
+    {
+        LlvmTargetArchitecture.X86_64 => "x86-64",
+        LlvmTargetArchitecture.AArch64 => "aarch64",
+        _ => throw new ArgumentOutOfRangeException(nameof(architecture)),
+    };
+}
+
+internal readonly record struct LlvmCpuSelection(string Cpu, bool UseHostDetection);
 
 internal sealed record LlvmTargetContext(
     LlvmContextHandle Context,

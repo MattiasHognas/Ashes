@@ -16,6 +16,10 @@ public readonly record struct LlvmDIBuilderHandle(nint Ptr);
 public readonly record struct LlvmMetadataHandle(nint Ptr);
 public readonly record struct LlvmPassBuilderOptionsHandle(nint Ptr);
 public readonly record struct LlvmAttributeHandle(nint Ptr);
+public readonly record struct LlvmErrorHandle(nint Ptr)
+{
+    public bool IsSuccess => Ptr == 0;
+}
 
 // Enums
 public enum LlvmIntPredicate
@@ -108,6 +112,38 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMDisposeMessage")]
     public static partial void DisposeMessage(nint message);
 
+    // LLVM Error.h. LLVMGetErrorMessage consumes the error handle; its returned
+    // buffer has a distinct disposer and must not be passed to LLVMDisposeMessage.
+    [LibraryImport(Lib, EntryPoint = "LLVMGetErrorMessage")]
+    private static partial nint GetErrorMessageRaw(LlvmErrorHandle error);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMDisposeErrorMessage")]
+    private static partial void DisposeErrorMessage(nint message);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMConsumeError")]
+    public static partial void ConsumeError(LlvmErrorHandle error);
+
+    public static string GetErrorMessage(LlvmErrorHandle error)
+    {
+        if (error.IsSuccess)
+        {
+            throw new ArgumentException("A successful LLVM error handle has no diagnostic.", nameof(error));
+        }
+
+        nint ptr = GetErrorMessageRaw(error);
+        try
+        {
+            return Marshal.PtrToStringAnsi(ptr) ?? "unknown LLVM error";
+        }
+        finally
+        {
+            if (ptr != 0)
+            {
+                DisposeErrorMessage(ptr);
+            }
+        }
+    }
+
     // Host CPU detection
     [LibraryImport(Lib, EntryPoint = "LLVMGetHostCPUName")]
     private static partial nint GetHostCPUNameRaw();
@@ -119,7 +155,12 @@ internal static partial class LlvmApi
     public static string GetHostCPUName()
     {
         nint ptr = GetHostCPUNameRaw();
-        try { return Marshal.PtrToStringAnsi(ptr) ?? string.Empty; }
+        if (ptr == 0)
+        {
+            throw new InvalidOperationException("LLVM failed to detect the host CPU name.");
+        }
+
+        try { return Marshal.PtrToStringAnsi(ptr) ?? throw new InvalidOperationException("LLVM returned an empty host CPU name."); }
         finally { DisposeMessage(ptr); }
     }
 
@@ -127,7 +168,12 @@ internal static partial class LlvmApi
     public static string GetHostCPUFeatures()
     {
         nint ptr = GetHostCPUFeaturesRaw();
-        try { return Marshal.PtrToStringAnsi(ptr) ?? string.Empty; }
+        if (ptr == 0)
+        {
+            throw new InvalidOperationException("LLVM failed to detect the host CPU features.");
+        }
+
+        try { return Marshal.PtrToStringAnsi(ptr) ?? throw new InvalidOperationException("LLVM returned empty host CPU features."); }
         finally { DisposeMessage(ptr); }
     }
 
@@ -873,10 +919,10 @@ internal static partial class LlvmApi
     /// Run a pipeline of LLVM passes on the module.
     /// <paramref name="passes"/> is a comma-separated list of pass names,
     /// e.g. "default&lt;O2&gt;" or "instcombine,simplifycfg,mem2reg".
-    /// Returns 0 on success, non-zero when the pipeline fails to build or run.
+    /// Returns a null handle on success or an owned LLVM error on failure.
     /// </summary>
     [LibraryImport(Lib, EntryPoint = "LLVMRunPasses", StringMarshalling = StringMarshalling.Utf8)]
-    public static partial int RunPasses(
+    public static partial LlvmErrorHandle RunPasses(
         LlvmModuleHandle module,
         string passes,
         LlvmTargetMachineHandle targetMachine,

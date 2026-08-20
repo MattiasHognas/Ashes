@@ -244,7 +244,11 @@ internal static partial class LlvmCodegen
         string restoreAsm = state.Flavor == LlvmCodegenFlavor.LinuxArm64
             ? "mov x8, #139\n\tsvc #0"
             : "movq $$15, %rax\n\tsyscall";
-        LlvmValueHandle asm = LlvmApi.GetInlineAsm(LlvmApi.FunctionType(voidTy, []), restoreAsm, "~{memory}", true, false);
+        string restoreConstraints = state.Flavor == LlvmCodegenFlavor.LinuxArm64
+            ? "~{x0},~{x8},~{memory},~{cc}"
+            : "~{rax},~{rcx},~{r11},~{memory},~{cc}";
+        LlvmValueHandle asm = LlvmApi.GetInlineAsm(
+            LlvmApi.FunctionType(voidTy, []), restoreAsm, restoreConstraints, true, false);
         LlvmApi.BuildCall2(builder, LlvmApi.FunctionType(voidTy, []), asm, [], "");
         LlvmApi.BuildUnreachable(builder);
 

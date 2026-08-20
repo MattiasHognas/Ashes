@@ -746,9 +746,10 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitReadTcbBaseFromGs(LlvmCodegenState state)
     {
         LlvmTypeHandle readType = LlvmApi.FunctionType(state.I64, []);
-        // No side effects / no memory clobber: the self-pointer is invariant for the thread's
-        // lifetime, so LLVM may hoist and CSE the read (e.g. out of allocation loops).
-        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, "movq %gs:0, $0", "=r", false, false);
+        // The read is removable when unused, but it observes implicit memory outside the LLVM
+        // operand list. The memory clobber prevents motion across TCB initialization or a thread-
+        // pointer change while still allowing LLVM to CSE reads where the memory state is stable.
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, "movq %gs:0, $0", "=r,~{memory}", false, false);
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "tcb_base");
     }
 
@@ -765,7 +766,7 @@ internal static partial class LlvmCodegen
         string asm = IsArm64Flavor(state.Flavor)
             ? $"ldr $0, [x18, #{WindowsTebArenaSlotOffset}]"
             : $"movq %gs:{WindowsTebArenaSlotOffset}, $0";
-        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, asm, "=r", false, false);
+        LlvmValueHandle read = LlvmApi.GetInlineAsm(readType, asm, "=r,~{memory}", false, false);
         return LlvmApi.BuildCall2(state.Target.Builder, readType, read, [], "teb_tcb_base");
     }
 
@@ -808,7 +809,7 @@ internal static partial class LlvmCodegen
         LlvmTypeHandle fnType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
         LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType,
             "mrs x9, tpidr_el0\n\tcbnz x9, 1f\n\tmsr tpidr_el0, $0\n\t1:",
-            "r,~{x9}", true, false);
+            "r,~{x9},~{memory}", true, false);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
     }
 
@@ -817,7 +818,7 @@ internal static partial class LlvmCodegen
     private static void EmitArm64SetThreadPointer(LlvmCodegenState state, LlvmValueHandle blockAddr)
     {
         LlvmTypeHandle fnType = LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64]);
-        LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType, "msr tpidr_el0, $0", "r", true, false);
+        LlvmValueHandle asm = LlvmApi.GetInlineAsm(fnType, "msr tpidr_el0, $0", "r,~{memory}", true, false);
         LlvmApi.BuildCall2(state.Target.Builder, fnType, asm, [blockAddr], "");
     }
 
