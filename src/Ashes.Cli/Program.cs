@@ -36,7 +36,7 @@ static int Usage(int exitCode = 2)
     table.AddRow("[yellow]-o[/], [yellow]--out[/]", "Output path (compile only). If omitted, derived from input name.");
     table.AddRow("[yellow]--expr[/]", "Use inline source instead of reading a .ash file.");
     table.AddRow("[yellow]-O0[/]..[yellow]-O3[/]", "Select LLVM optimization level. Test semantic pipelines use --pipeline optimized|lowered|both.");
-    table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake, native). Defaults to x86-64 on x86-64 targets and generic on ARM64.");
+    table.AddRow("[yellow]--target-cpu[/]", "Target a specific CPU (e.g. skylake). 'native' requires matching host and target architectures. Defaults to x86-64 on x86-64 targets and generic on ARM64.");
     table.AddRow("[yellow]--parallel-stack-size[/]", "Per-worker stack size for structured parallelism (e.g. 2M, 1048576). Defaults to 1M.");
     table.AddRow("[yellow]--parallel-workers[/]", "Max concurrent parallel workers. Defaults to the machine's core count, detected at program start.");
     table.AddRow("[yellow]--debug[/], [yellow]-g[/]", "Emit DWARF debug info. Defaults to -O0; an explicit -O1/-O2/-O3 is honored.");

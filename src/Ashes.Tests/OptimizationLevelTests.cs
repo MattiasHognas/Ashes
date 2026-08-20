@@ -136,6 +136,34 @@ public sealed class OptimizationLevelTests
         result.Stdout.ShouldBe("42");
     }
 
+    [Test]
+    [Arguments(BackendOptimizationLevel.O0)]
+    [Arguments(BackendOptimizationLevel.O1)]
+    [Arguments(BackendOptimizationLevel.O2)]
+    [Arguments(BackendOptimizationLevel.O3)]
+    public async Task Curried_closure_chain_produces_correct_output(BackendOptimizationLevel level)
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
+        const string source = "let add = given (a) -> given (b) -> given (c) -> a + b + c in Ashes.IO.print(add(10)(12)(20))";
+        ExecutionResult result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
+        result.Stdout.ShouldBe("42");
+    }
+
+    [Test]
+    [Arguments(BackendOptimizationLevel.O0)]
+    [Arguments(BackendOptimizationLevel.O1)]
+    [Arguments(BackendOptimizationLevel.O2)]
+    [Arguments(BackendOptimizationLevel.O3)]
+    public async Task Parallel_tls_arena_produces_correct_output(BackendOptimizationLevel level)
+    {
+        if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
+
+        const string source = "match Ashes.Task.Parallel.both(given (u) -> 20 + 1)(given (u) -> 20 + 1) with | (a, b) -> Ashes.IO.print(a + b)";
+        ExecutionResult result = await CompileAndRunAsync(source, level).ConfigureAwait(false);
+        result.Stdout.ShouldBe("42");
+    }
+
     // Tail-recursive loop
 
     [Test]

@@ -2643,10 +2643,12 @@ runs an IR optimization pass pipeline:
 
 ### 18.2 Backend Optimizations
 
-The LLVM backend applies instruction-level optimizations during code
-generation via the target machine's optimization level (O0 through O3).
-This includes register allocation, instruction scheduling, and
-peephole optimizations performed by LLVM's code generator.
+At O1 through O3, the LLVM backend runs LLVM 22's corresponding standard New
+Pass Manager pipeline (`default<O1>`, `default<O2>`, or `default<O3>`) before
+code generation. O0 skips the pass pipeline. The target machine also applies
+the selected optimization level during instruction selection, register
+allocation, scheduling, and peephole optimization. Preoptimized runtime
+bitcode is linked after the program pipeline and is not reprocessed by it.
 
 ### 18.3 Tail-Call Optimization
 

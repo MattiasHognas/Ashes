@@ -369,14 +369,10 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Runs a targeted LLVM new pass manager pipeline on the module.
-    /// Uses a custom pass string (not <c>default&lt;ON&gt;</c>) to avoid
-    /// aggressive transforms that miscompile freestanding inline-assembly
-    /// code — in particular <c>simplifycfg</c> (merges blocks across
-    /// inline-asm boundaries), loop vectorization, and loop unrolling.
-    /// O1: mem2reg, dce, early-cse.
-    /// O2: adds reassociate, instcombine, gvn, inline.
-    /// O3: adds licm (via loop-mssa), dse.
+    /// Runs LLVM 22's standard new-pass-manager pipeline for the selected level.
+    /// These pipelines safely optimize Ashes' inline assembly because every operation
+    /// with externally visible effects is marked side-effecting and every operation
+    /// that observes or changes implicit memory state has a memory clobber.
     /// At O0 no passes are run — codegen output is used as-is.
     /// </summary>
     internal static void RunLlvmOptimizationPasses(LlvmTargetContext target, Backends.BackendOptimizationLevel level)
@@ -386,51 +382,33 @@ internal static partial class LlvmCodegen
             return; // No optimization at O0
         }
 
-        // Use a targeted pass pipeline instead of "default<ON>" to avoid
-        // aggressive transforms (loop unrolling, vectorization, lib-call
-        // recognition, simplifycfg) that can miscompile freestanding
-        // inline-assembly code. Each level adds progressively more passes.
-        //
-        // Excluded passes:
-        //   simplifycfg – merges blocks across inline-asm boundaries → SIGSEGV
-        //   loop-vectorize / slp-vectorize – introduces libc vector calls
-        //   loop-unroll – code-size explosion for marginal gain
         string passString = level switch
         {
-            Backends.BackendOptimizationLevel.O1 =>
-                "function(mem2reg,dce,early-cse)",
-            Backends.BackendOptimizationLevel.O2 =>
-                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
-                ",cgscc(inline)" +
-                // Second inline round: the first round inlines a curried wrapper whose body
-                // builds-and-returns a closure; gvn then forwards the stored code pointer into
-                // the caller's indirect call, instcombine turns it into a direct call, and only
-                // then can that callee be inlined. One extra round collapses these chains.
-                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
-                ",cgscc(inline)" +
-                ",function(dce,instcombine<no-verify-fixpoint>)",
-            Backends.BackendOptimizationLevel.O3 =>
-                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn,loop-mssa(licm))" +
-                ",cgscc(inline)" +
-                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
-                ",cgscc(inline)" +
-                ",function(dce,instcombine<no-verify-fixpoint>,gvn,dse)",
-            _ =>
-                "function(mem2reg,dce,early-cse,reassociate,instcombine<no-verify-fixpoint>,gvn)" +
-                ",cgscc(inline)" +
-                ",function(dce,instcombine<no-verify-fixpoint>,gvn,instcombine<no-verify-fixpoint>)" +
-                ",cgscc(inline)" +
-                ",function(dce,instcombine<no-verify-fixpoint>)",
+            Backends.BackendOptimizationLevel.O1 => "default<O1>",
+            Backends.BackendOptimizationLevel.O2 => "default<O2>",
+            Backends.BackendOptimizationLevel.O3 => "default<O3>",
+            _ => throw new ArgumentOutOfRangeException(nameof(level)),
         };
 
+        RunLlvmPassPipeline(target, passString);
+    }
+
+    internal static void RunLlvmPassPipeline(LlvmTargetContext target, string passString)
+    {
         LlvmPassBuilderOptionsHandle passOptions = LlvmApi.CreatePassBuilderOptions();
+        if (passOptions.Ptr == 0)
+        {
+            throw new InvalidOperationException("LLVM could not create pass-builder options.");
+        }
+
         try
         {
-            int err = LlvmApi.RunPasses(target.Module, passString, target.TargetMachine, passOptions);
-            if (err != 0)
+            LlvmErrorHandle error = LlvmApi.RunPasses(target.Module, passString, target.TargetMachine, passOptions);
+            if (!error.IsSuccess)
             {
-                // Non-fatal: if passes fail, continue with unoptimized code.
-                // This can happen in edge cases; the code is still correct.
+                string diagnostic = LlvmApi.GetErrorMessage(error);
+                throw new InvalidOperationException(
+                    $"LLVM optimization pipeline '{passString}' failed: {diagnostic}");
             }
         }
         finally
