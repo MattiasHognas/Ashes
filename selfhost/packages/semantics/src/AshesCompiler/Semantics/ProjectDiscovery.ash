@@ -69,7 +69,7 @@ let moduleName style entryPath =
     match basename(style)(entryPath) with
         | name -> Ashes.Text.take(name)(Ashes.Text.length(name) - 4)
 
-let projectLayout style projectFilePath projectDirectory manifest = ProjectLayout(projectFilePath = projectFilePath, projectDirectory = projectDirectory, entryPath = join(style)(projectDirectory)(manifest.entry), entryModuleName = moduleName(style)(manifest.entry), sourceRoots = resolvePaths(style)(projectDirectory)(manifest.sourceRoots), includeRoots = resolvePaths(style)(projectDirectory)(manifest.includeRoots), outDir = join(style)(projectDirectory)(manifest.outDir), manifest = manifest)
+let projectLayout style projectFilePath projectDirectory (manifest: ProjectManifest) = ProjectLayout(projectFilePath = projectFilePath, projectDirectory = projectDirectory, entryPath = join(style)(projectDirectory)(manifest.entry), entryModuleName = moduleName(style)(manifest.entry), sourceRoots = resolvePaths(style)(projectDirectory)(manifest.sourceRoots), includeRoots = resolvePaths(style)(projectDirectory)(manifest.includeRoots), outDir = join(style)(projectDirectory)(manifest.outDir), manifest = manifest)
 
 let validateEntry style projectDirectory projectFilePath manifest =
     match projectLayout(style)(projectFilePath)(projectDirectory)(manifest) with

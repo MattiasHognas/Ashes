@@ -236,8 +236,8 @@ let parserStartsSourceLine bytes position = parserOnlyIndentBefore(bytes)(positi
 
 let parserSourceColumn bytes position = position - parserLineStart(bytes)(position)
 
-let parserPreviousCompletesCall reversedTokens =
-    (let recursive findCallOpen remaining depth =
+let parserPreviousCompletesCall (reversedTokens: List(Token)) =
+    (let recursive findCallOpen (remaining: List(Token)) depth =
         match remaining with
             | [] -> false
             | token :: tail ->
@@ -263,7 +263,7 @@ let parserPreviousCompletesCall reversedTokens =
                 else false
             | [] -> false)
 
-let parserStartsDeclarationBinding tokens =
+let parserStartsDeclarationBinding (tokens: List(Token)) =
     match tokens with
         | pipe :: name :: equals :: _ ->
             if pipe.kind != Pipe
@@ -277,8 +277,8 @@ let parserStartsDeclarationBinding tokens =
                     else equals.kind == Colon
         | _ -> false
 
-let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes tokens =
-    (let recursive split remaining reversed sawToken parenthesisDepth bracketDepth braceDepth =
+let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
+    (let recursive split (remaining: List(Token)) reversed sawToken parenthesisDepth bracketDepth braceDepth =
         match remaining with
             | [] -> (reverseList(reversed), [])
             | token :: tail ->
@@ -339,11 +339,11 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes tokens =
                                     in split(tail)(token :: reversed)(true)(nextParenthesisDepth)(nextBracketDepth)(nextBraceDepth)
     in split(tokens)([])(false)(0)(0)(0))
 
-let recursive parserTokensBeforeEof tokens =
+let recursive parserTokensBeforeEof (tokens: List(Token)) =
     match tokens with
         | [] -> []
-        | token :: tail ->
-            if token.kind == EOF
+        | (Token { kind = kind, text = _text, intValue = _intValue, floatValue = _floatValue, position = _position, length = _length } as token) :: tail ->
+            if kind == EOF
             then []
             else token :: parserTokensBeforeEof(tail)
 
@@ -392,15 +392,17 @@ let parserCapabilityArguments capabilityReference =
     match capabilityReference with
         | CapabilityRefSyntax { name = _name, args = arguments } -> arguments
 
+let recursive parserConvertCapabilities (remaining: List(CapabilityRefSyntax)) =
+    match remaining with
+        | [] -> []
+        | capabilityReference :: tail -> (parserCapabilityName(capabilityReference), parserCapabilityArguments(capabilityReference)) :: parserConvertCapabilities(tail)
+
 let parserNeedsParts (needsRow: NeedsRowSyntax) =
-    (let recursive convert (capabilities: List(CapabilityRefSyntax)) =
-        match capabilities with
-            | [] -> []
-            | capabilityReference :: tail -> (parserCapabilityName(capabilityReference), parserCapabilityArguments(capabilityReference)) :: convert(tail)
-    in (convert(needsRow.capabilities), needsRow.tailVariable))
+    match needsRow with
+        | NeedsRowSyntax { capabilities = capabilities, tailVariable = tailVariable } -> (parserConvertCapabilities(capabilities), tailVariable)
 
 let parserPipeStartsArm (state: ParserState) =
-    (let recursive scan tokens parenthesisDepth bracketDepth =
+    (let recursive scan (tokens: List(Token)) parenthesisDepth bracketDepth =
         match tokens with
             | [] -> false
             | token :: tail ->

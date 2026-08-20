@@ -663,6 +663,45 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void BuildCompilationLayout_should_register_dependency_types_before_entry_type_fields()
+    {
+        string root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(root, "ashes.json"),
+                """{"entry":"Main.ash","sourceRoots":["."]}""");
+            File.WriteAllText(
+                Path.Combine(root, "Dependency.ash"),
+                """
+                export (type Imported(..))
+                type Imported = | Imported(Int)
+                """);
+            File.WriteAllText(
+                Path.Combine(root, "Main.ash"),
+                """
+                import Dependency.Imported
+                type Wrapper =
+                    | value: Imported
+                0
+                """);
+
+            AshesProject project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
+            ProjectCompilationPlan plan = ProjectSupport.BuildCompilationPlan(project);
+            CombinedCompilationLayout layout = ProjectSupport.BuildCompilationLayout(plan);
+            Diagnostics diagnostics = new();
+            Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+            _ = new Lowering(diagnostics).Lower(program);
+
+            diagnostics.ThrowIfAny();
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void Declarations_only_file_with_stitched_import_compiles()
     {
         // A module-style file (imports + declarations, no trailing expression) compiled directly —
