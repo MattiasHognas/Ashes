@@ -5,6 +5,7 @@
 // - It does not depend on semantic analysis, formatting, or native code generation.
 
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Frontend.TokenSerialization
 import AshesCompiler.Frontend.Lexer
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Parser
