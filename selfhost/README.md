@@ -81,3 +81,7 @@ dotnet run --project src/Ashes.Cli -- compile \
   -o /tmp/ashes-selfhost-project-tests
 /tmp/ashes-selfhost-project-tests
 ```
+
+These tests cover recursive path dependencies and restored registry packages consumed from the selected
+manifest's lock file and content-addressed source cache. Registry resolution, downloads, cache writes,
+and source-hash verification remain CLI work.

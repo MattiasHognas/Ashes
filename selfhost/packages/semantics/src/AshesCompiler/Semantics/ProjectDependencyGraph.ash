@@ -1,7 +1,9 @@
 import Ashes.Collection.List.append as appendList
+import Ashes.Collection.List.foldLeft
 import Ashes.IO.Path
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Semantics.ProjectDiscovery
+import AshesCompiler.Semantics.ProjectLockFile
 import AshesCompiler.Semantics.ProjectManifest
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 export (
@@ -9,6 +11,7 @@ export (
     type ProjectDependencyGraph(..),
     type ProjectDependencyGraphError(..),
     value resolveProjectDependencyGraph,
+    value resolveProjectDependencyGraphFromCache,
 )
 
 type ResolvedProjectDependency =
@@ -32,6 +35,12 @@ type ProjectDependencyGraphError =
     | ProjectDependencyCycle(Str, Str)
     | ProjectDependencyNamespaceConflict(Str, Str, Str)
     | ProjectDependencyModuleOutsideNamespace(Str, Str, Str)
+    | ProjectLockPathProbeError(Str, Str)
+    | ProjectLockReadError(Str, Str)
+    | ProjectLockInvalid(Str, ProjectLockFileError)
+    | ProjectLockedPackageMissing(Str, Str, Str)
+    | ProjectLockedPackageProjectError(Str, ProjectDiscoveryError)
+    | ProjectCacheDirectoryError(Str)
     deriving {Eq, Show}
 
 type ProjectDependencyGraphState =
@@ -289,6 +298,10 @@ let stateWithDependency dependency directory (state: ProjectDependencyGraphState
 
 let dependencyManifestPath style directory = join(style)(directory)("ashes.json")
 
+let layoutProjectFilePath (layout: ProjectLayout) =
+    match layout with
+        | ProjectLayout { projectFilePath = path, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = _manifest } -> path
+
 let recursive resolveDependencyList style dependencies manifestDirectory isDev chain state =
     match dependencies with
         | [] -> Ok(state)
@@ -404,7 +417,113 @@ let resolveRootDependencies style (layout: ProjectLayout) =
             |> resolveDependencyListFrom(style)(projectDirectory)(false)([])(ProjectDependencyGraphState(dependencies = [], visitedDirectories = []))
             |> continueRootDevDependencies(style)(projectDirectory)(devDependencies)
 
-let resolveProjectDependencyGraph style layout =
-    match resolveRootDependencies(style)(layout) with
+let lockedPackageNamespace (package: LockedPackage) =
+    match package with
+        | LockedPackage { namespace = namespace, version = _version, source = _source, hash = _hash, dependencies = _dependencies } -> namespace
+
+let lockedPackageVersion (package: LockedPackage) =
+    match package with
+        | LockedPackage { namespace = _namespace, version = version, source = _source, hash = _hash, dependencies = _dependencies } -> version
+
+let loadLockedPackage style cacheRoot state package =
+    (let namespace =
+        package
+        |> deepCopy
+        |> lockedPackageNamespace
+    in
+        let version =
+            package
+            |> deepCopy
+            |> lockedPackageVersion
+        in
+            let packageDirectory = cachePathFor(style)(cacheRoot)(package)
+            in
+                let manifestPath =
+                    packageDirectory
+                    |> deepCopy
+                    |> dependencyManifestPath(style)
+                in
+                    match Ashes.IO.File.exists(manifestPath) with
+                        | Error(error) ->
+                            error
+                            |> ProjectLockPathProbeError(manifestPath)
+                            |> Error
+                        | Ok(false) ->
+                            packageDirectory
+                            |> ProjectLockedPackageMissing(namespace)(version)
+                            |> Error
+                        | Ok(true) ->
+                            match loadProject(style)(manifestPath) with
+                                | Error(error) ->
+                                    error
+                                    |> ProjectLockedPackageProjectError(namespace)
+                                    |> Error
+                                | Ok(layout) ->
+                                    match namespace
+                                    |> deepCopy
+                                    |> checkDependencyNamespace(deepCopy(namespace))(state) with
+                                        | Error(error) -> Error(error)
+                                        | Ok(_) ->
+                                            match layout
+                                            |> layoutEntryPath
+                                            |> validateDependencyNamespace(style)(deepCopy(namespace))(deepCopy(namespace))(layoutSourceRoots(layout)) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(Unit) ->
+                                                    state
+                                                    |> stateWithDependency(dependencyRecord(deepCopy(namespace))(namespace)(false)(layout))(packageDirectory)
+                                                    |> Ok)
+
+let addLockedPackage style cacheRoot result package =
+    match result with
+        | Error(error) -> Error(error)
+        | Ok(state) -> loadLockedPackage(style)(cacheRoot)(state)(package)
+
+let resolveLockedPackages style cacheRoot packages state =
+    foldLeft(addLockedPackage(style)(cacheRoot))(Ok(state))(packages)
+
+let readProjectLock style cacheRoot path state =
+    match Ashes.IO.File.readText(path) with
+        | Error(error) ->
+            error
+            |> ProjectLockReadError(path)
+            |> Error
+        | Ok(source) ->
+            match parseProjectLockFile(source) with
+                | Error(error) ->
+                    error
+                    |> ProjectLockInvalid(path)
+                    |> Error
+                | Ok(ProjectLockFile { version = _version, packages = packages }) -> resolveLockedPackages(style)(cacheRoot)(packages)(state)
+
+let addLockedDependencies style cacheRoot layout state =
+    (let path =
+        layout
+        |> layoutProjectFilePath
+        |> lockFilePath(style)
+    in
+        match Ashes.IO.File.exists(path) with
+            | Error(error) ->
+                error
+                |> ProjectLockPathProbeError(path)
+                |> Error
+            | Ok(false) -> Ok(state)
+            | Ok(true) -> readProjectLock(style)(cacheRoot)(path)(state))
+
+let finishProjectDependencyGraph result =
+    match result with
         | Error(error) -> Error(error)
         | Ok(ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = _visitedDirectories }) -> Ok(ProjectDependencyGraph(dependencies = dependencies))
+
+let resolveProjectDependencyGraphFromCache style cacheRoot layout =
+    match resolveRootDependencies(style)(layout) with
+        | Error(error) -> Error(error)
+        | Ok(state) ->
+            state
+            |> addLockedDependencies(style)(cacheRoot)(layout)
+            |> finishProjectDependencyGraph
+
+let resolveProjectDependencyGraph style layout =
+    match Ashes.IO.Environment.cacheDirectory(Unit) with
+        | Error(error) -> Error(ProjectCacheDirectoryError(error))
+        | Ok(cacheDirectory) ->
+            resolveProjectDependencyGraphFromCache(style)(join(style)(cacheDirectory)("ashes"))(layout)

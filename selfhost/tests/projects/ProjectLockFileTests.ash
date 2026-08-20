@@ -30,6 +30,14 @@ let checkLockPaths unit =
     |> (given (_) -> lockFilePath(Windows)("C:\\work\\ashes-test.json"))
     |> test.assertEqual("C:\\work\\ashes-test.lock")
 
+let checkCachePaths unit =
+    LockedPackage(namespace = "Json", version = "1.2.3", source = "registry+https://pkg.example", hash = "ash1:abc", dependencies = [])
+    |> cachePathFor(Unix)("/cache/ashes")
+    |> test.assertEqual("/cache/ashes/pkg/Json/1.2.3/abc")
+    |> (given (_) -> LockedPackage(namespace = "Json", version = "1.2.3", source = "registry+https://pkg.example", hash = "legacy", dependencies = []))
+    |> cachePathFor(Windows)("C:\\cache\\ashes")
+    |> test.assertEqual("C:\\cache\\ashes\\pkg\\Json\\1.2.3\\legacy")
+
 let checkInvalidVersion unit =
     "{\"version\":2,\"package\":[]}"
     |> parseProjectLockFile
@@ -45,6 +53,7 @@ let run unit =
     |> checkValidLock
     |> checkDefaults
     |> checkLockPaths
+    |> (given (_) -> checkCachePaths(Unit))
     |> checkInvalidVersion
     |> checkInvalidPackage
     |> (given (_) -> Ashes.IO.print("all self-hosted project lock file tests passed"))
