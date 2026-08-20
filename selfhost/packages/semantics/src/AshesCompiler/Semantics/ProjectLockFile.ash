@@ -1,3 +1,10 @@
+// Parses the versioned lock file used to locate immutable registry packages.
+//
+// Invariants:
+// - Required package identity, version, checksum, and namespace data are validated together.
+// - Lock-file names follow the selected manifest extension, including colocated test manifests.
+// - Cache paths are content-addressed and package order is preserved for deterministic diagnostics.
+
 import Ashes.IO.Path
 import Ashes.Text.Json
 import Ashes.Internal.deepCopy as deepCopy

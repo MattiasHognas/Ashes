@@ -1,3 +1,10 @@
+// Resolves path and locked registry dependencies into the compiler's project graph.
+//
+// Invariants:
+// - The compiler consumes the existing lock file and cache; it never selects registry versions.
+// - Root overrides are applied before path dependencies, and dev dependencies are root-only.
+// - Dependency namespaces are unique and every dependency module stays beneath its namespace.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.foldLeft
 import Ashes.IO.Path
@@ -590,6 +597,8 @@ let recursive resolveRootOverrideList style projectDirectory lockPath packages o
                 | Error(error) -> Error(error)
                 | Ok(next) -> resolveRootOverrideList(style)(projectDirectory)(lockPath)(packages)(rest)(next)
 
+// Overrides are a root policy: resolve them before ordinary root paths so the locked namespace is
+// replaced consistently, and never inherit them while traversing dependency manifests.
 let resolveRootOverrides style packages (layout: ProjectLayout) =
     (let manifest = layoutManifest(layout)
     in

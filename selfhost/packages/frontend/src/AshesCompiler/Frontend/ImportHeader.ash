@@ -1,3 +1,10 @@
+// Reads the leading import region without parsing the rest of a module.
+//
+// Invariants:
+// - Only imports before the first non-import top-level form belong to the header.
+// - Written import text and source order are retained for deterministic diagnostics.
+// - Body offsets and import spans are absolute UTF-8 byte offsets.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy

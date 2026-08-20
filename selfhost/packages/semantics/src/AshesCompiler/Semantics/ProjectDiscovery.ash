@@ -1,3 +1,10 @@
+// Discovers, selects, and loads a project manifest and its filesystem layout.
+//
+// Invariants:
+// - Explicit project selection wins; otherwise discovery walks upward from the requested path.
+// - Manifest paths are resolved relative to the manifest directory.
+// - Loading validates the entry file but does not resolve dependencies.
+
 import Ashes.IO.Path
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Semantics.ProjectManifest

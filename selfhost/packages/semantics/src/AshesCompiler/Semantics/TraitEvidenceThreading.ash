@@ -1,3 +1,10 @@
+// Plans how trait evidence is supplied, forwarded, and captured across function calls.
+//
+// Invariants:
+// - Exact active evidence is preferred before following deterministic supertrait paths.
+// - Partial application accounts for ordinary and hidden evidence arguments separately.
+// - A closure captures evidence exactly when unsupplied ordinary arguments keep it live.
+
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TraitResolution

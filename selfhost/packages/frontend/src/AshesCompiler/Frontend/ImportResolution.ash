@@ -1,3 +1,10 @@
+// Resolves import headers against typed module interfaces.
+//
+// Invariants:
+// - An uppercase final segment is disambiguated with the longest matching module path.
+// - Aliases and selectors are checked for local-name collisions after resolution.
+// - Results preserve source order and the written import for stable diagnostics.
+
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportHeader

@@ -1,3 +1,10 @@
+// Plans the reachable module graph from an entry module and its resolved imports.
+//
+// Invariants:
+// - Every planned import is resolved against a module interface before compilation.
+// - Dependencies precede dependents and otherwise retain deterministic source order.
+// - Missing modules and import cycles are reported instead of producing partial plans.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy

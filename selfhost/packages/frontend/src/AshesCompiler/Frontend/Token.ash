@@ -1,3 +1,10 @@
+// Defines lexical tokens and the frontend's canonical source-location model.
+//
+// Invariants:
+// - All absolute positions, lengths, and span bounds count UTF-8 bytes.
+// - Span helpers normalize empty or inverted bounds without inventing source text.
+// - Token text is the exact source spelling, independent of decoded literal values.
+
 export (
     type TokenKind(..),
     type Token(..),

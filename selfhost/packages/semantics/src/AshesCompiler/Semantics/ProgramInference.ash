@@ -1,3 +1,10 @@
+// Infers and validates a complete program in sequential top-level declaration order.
+//
+// Invariants:
+// - A declaration is visible only to later declarations unless it is explicitly recursive.
+// - Recursive groups are monomorphic while inferred and generalized only after the group succeeds.
+// - Trait registration, coherence, defaults, and termination checks produce deterministic errors.
+
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
@@ -843,6 +850,8 @@ let recursive firstNonDecreasingRequirement headSize requirements =
                 then Some(traitName)
                 else firstNonDecreasingRequirement(headSize)(tail)
 
+// Structural decrease is load-bearing only for generic heads. Concrete heads cannot expand through
+// substitution and are instead bounded by exact cycle detection and the resolution-depth guard.
 let nonDecreasingImplementationRequirement headTypes requirements =
     if semanticTypesAreConcrete(headTypes)
     then None

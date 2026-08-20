@@ -1,3 +1,10 @@
+// Resolves source type syntax into semantic types within a declaration context.
+//
+// Invariants:
+// - Nominal types retain stable symbol identity while aliases expand transparently.
+// - Alias cycles are rejected before they can create an infinite semantic type.
+// - Capability rows are resolved as unordered structures with an optional open tail.
+
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.reverse

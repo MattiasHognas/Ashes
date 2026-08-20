@@ -1,3 +1,10 @@
+// Infers expression and pattern types with substitutions, constraints, and capability rows.
+//
+// Invariants:
+// - Substitutions and fresh-variable supplies are threaded left to right through strict evaluation.
+// - Let values are generalized only after their right-hand side succeeds.
+// - Ambient capability rows remain part of the environment and are never independently generalized.
+
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.TypeExpr
@@ -1455,6 +1462,8 @@ and inferWith expression environment substitution supply ambientRow =
                                                         | failure -> failure
                         | failure -> failure
                 | failure -> failure
+        // The ambient capability row belongs to the surrounding environment; only the successful
+        // value type and its selected trait constraints are generalized for the body.
         | ExprLet(name, value, body, _parameters, annotation, requirements) ->
             match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
                 | TypeInferenceResult { semanticType = valueType, substitution = valueSubstitution, supply = valueSupply, constraints = valueConstraints, error = None } ->

@@ -1,3 +1,10 @@
+// Tokenizes Ashes source while retaining exact spellings and source locations.
+//
+// Invariants:
+// - Token positions, lengths, and diagnostic spans are UTF-8 byte counts.
+// - Malformed input produces source-ordered diagnostics and scanning always advances.
+// - Token text remains the original spelling needed by parsing and formatting.
+
 import Ashes.Text.Regex.compile as compileRegex
 import Ashes.Text.Regex.isMatch as regexIsMatch
 import AshesCompiler.Frontend.Token

@@ -1,3 +1,10 @@
+// Enumerates the Ashes source files contributed by a project's configured source roots.
+//
+// Invariants:
+// - Only .ash files are returned and duplicate paths keep their first occurrence.
+// - Traversal order is deterministic across roots and directory entries.
+// - A root read failure is fatal, while an unreadable nested directory does not erase other sources.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.IO.Path

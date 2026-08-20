@@ -1,3 +1,10 @@
+// Implements free-variable analysis, let generalization, and scheme instantiation.
+//
+// Invariants:
+// - Generalization quantifies only variables not free in the surrounding environment.
+// - Every instantiation replaces quantified variables with a fresh, self-contained set.
+// - Trait constraints travel with their scheme and remain canonical after substitution.
+
 import AshesCompiler.Semantics.Types
 export (
     type InstantiationResult(..),
@@ -125,6 +132,8 @@ let generalize environment semanticType constraints =
             let generalizedVariables = removeEnvironmentVariables(environmentVariables)(candidateVariables)
             in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
+// Build the whole quantified-variable renaming from one supply before applying it to the body and
+// constraints, so separate instantiations cannot accidentally share inference variables.
 let recursive instantiateQuantifiers quantified supply substitution =
     match quantified with
         | [] -> (substitution, supply)

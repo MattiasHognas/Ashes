@@ -1,3 +1,10 @@
+// Parses tokens with forward-only state and recoverable diagnostics.
+//
+// Invariants:
+// - Failed expectations synthesize zero-width tokens so parsing can continue.
+// - Programs follow import* declaration* expression? with sequential top-level scope.
+// - Parsed nodes retain UTF-8 byte spans without changing their semantic shape.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Text.join
@@ -1705,6 +1712,7 @@ let parserParseTopLevelValue sourceBytes declarationColumn state = parserParseDe
 
 let parserParseDeclarationBindingValue sourceBytes declarationColumn state = parserParseDelimitedTopLevelValue(sourceBytes)(declarationColumn)(true)(state)
 
+// A top-level let whose next tokens form a pattern starts the trailing expression instead of a declaration.
 let recursive parserParseProgramItems sourceBytes reversedItems state =
     if parserIsExportDeclaration(state)
     then

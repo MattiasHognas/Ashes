@@ -1,3 +1,10 @@
+// Defines the stable identities assigned to bound semantic declarations.
+//
+// Invariants:
+// - Symbol identifiers, not display names, determine declaration identity.
+// - Kind and optional qualification remain attached for later resolution and diagnostics.
+// - Declaration spans use the frontend's UTF-8 byte coordinate system.
+
 import AshesCompiler.Frontend.Token
 export (
     type SymbolKind(..),

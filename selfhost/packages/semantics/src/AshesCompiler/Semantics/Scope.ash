@@ -1,3 +1,10 @@
+// Maintains immutable lexical scopes and stable symbol allocation during binding.
+//
+// Invariants:
+// - Duplicate declarations are rejected only within the current lexical frame.
+// - Resolution searches from the innermost frame outward.
+// - Leaving a scope never rewinds the next symbol identifier.
+
 import AshesCompiler.Semantics.Symbols
 export (
     type SemanticScope(..),

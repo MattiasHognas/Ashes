@@ -1,3 +1,10 @@
+// Plans deterministic runtime dictionaries from resolved trait implementations.
+//
+// Invariants:
+// - Explicit implementation methods override defaults and fields follow ABI method order.
+// - Default methods are constructed after the defaults on which they depend.
+// - Cyclic defaults and missing required methods fail before a dictionary is emitted.
+
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
