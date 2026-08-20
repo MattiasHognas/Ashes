@@ -1,3 +1,10 @@
+// Defines the canonical parameter and method layout used for trait evidence.
+//
+// Invariants:
+// - Canonical constraints receive deterministic evidence-parameter indices.
+// - Dictionary method slots are ordered ordinally by method name.
+// - Specialized supertrait shapes are deduplicated without changing their required layout.
+
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import Ashes.Collection.List.map

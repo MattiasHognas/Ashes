@@ -1,3 +1,10 @@
+// Resolves concrete trait goals into instance or hidden-parameter evidence plans.
+//
+// Invariants:
+// - Concrete goals recurse through selected implementation requirements and supertraits.
+// - Abstract goals remain hidden evidence parameters and do not refine inference variables.
+// - Candidate order, cycle traces, and the finite resolution-depth guard are deterministic.
+
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import Ashes.Collection.List.reverse
@@ -281,6 +288,8 @@ let recursive resolveTraitDependencies dependencies environment trace depth reve
                 | TraitEvidenceResolution { plan = Some(plan), error = None } -> resolveTraitDependencies(tail)(environment)(trace)(depth)(plan :: reversed)
                 | TraitEvidenceResolution { plan = _plan, error = Some(error) } -> TraitDependencyResolution(plans = reverse(reversed), error = Some(error))
                 | _ -> TraitDependencyResolution(plans = reverse(reversed), error = Some(MissingTraitImplementation(head)(canonicalResolutionTrace(head)(trace))))
+// Generic goals must shrink through requirements; concrete goals are safe under the exact cycle and
+// depth guards even when their selected implementation has a same-sized requirement.
 and resolveMatchedTraitEvidence goal implementation substitutions environment trace depth =
     match implementation with
         | TraitImplementationInferenceDefinition { traitName = _traitName, typeArguments = _typeArguments, requirements = requirements, methods = _methods } ->

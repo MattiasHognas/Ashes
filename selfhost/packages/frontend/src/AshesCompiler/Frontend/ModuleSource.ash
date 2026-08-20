@@ -1,3 +1,10 @@
+// Maps module names to source files across project, include, dependency, and shipped roots.
+//
+// Invariants:
+// - Module A.B maps to A/B.ash beneath each eligible root.
+// - Multiple matching files are an ambiguity error; root ordering is not a precedence rule.
+// - The reserved Ashes namespace resolves only from the shipped library root.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy

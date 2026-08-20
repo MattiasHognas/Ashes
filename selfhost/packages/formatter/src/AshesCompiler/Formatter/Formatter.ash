@@ -1,3 +1,10 @@
+// Renders parsed syntax in the canonical Ashes source form.
+//
+// Invariants:
+// - Source spans never affect rendered text.
+// - Parentheses preserve precedence and associativity, not the original layout.
+// - Top-level declarations use canonical spacing and the result has one terminal newline.
+
 import AshesCompiler.Frontend.Syntax
 import Ashes.Collection.List.sortBy
 export (
@@ -157,6 +164,7 @@ let recursive formatterUnspanExpr : Expr -> Expr =
             | ExprAt(_span, inner) -> formatterUnspanExpr(inner)
             | _ -> expression
 
+// Giving the right operand a tighter parent precedence preserves left associativity.
 let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Str =
     given (parent) ->
         given (precedence) ->
@@ -593,6 +601,7 @@ let recursive formatterTopLevelItem item =
         | TopLevelRecursiveGroup(bindings) -> formatterRecursiveBindings(bindings)(true)
         | TopLevelAt(_span, inner) -> formatterTopLevelItem(inner)
 
+// Consecutive externals form one declaration block; every other top-level boundary gets a blank line.
 let recursive formatterProgramItems items first previousExternal =
     match items with
         | [] -> ""

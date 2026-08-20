@@ -1,3 +1,10 @@
+// Turns a resolved project graph into a dependency-ordered module compilation plan.
+//
+// Invariants:
+// - Project, include, dependency, and shipped sources retain their namespace boundaries.
+// - Imports are parsed and resolved against built interfaces before modules are ordered.
+// - Ambiguous, missing, or cyclic modules fail planning rather than selecting an arbitrary source.
+
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.IO.Path

@@ -40,6 +40,15 @@ Ashes' sequential type-declaration model. Match cases and handler arms are typed
 `Expr`; this removes the two mutual type-declaration cycles in the C# record graph without weakening
 the public expression, pattern, or type categories.
 
+## Module documentation
+
+Every production `.ash` module starts with its responsibility and load-bearing invariants. Local
+comments explain non-obvious behavioral contracts, ordering rules, ownership constraints, and
+algorithmic choices where the code alone does not explain why they matter. The .NET stage-0 comments
+are audit input for these contracts, but C#-specific API narration and implementation details are not
+copied into the pure-Ashes sources. Migration status remains in this README and
+`docs/md/future/SELF_HOSTING.md`, not in module headers.
+
 ## Test discipline
 
 Each port starts with pure-Ashes tests derived from the current implementation's observable

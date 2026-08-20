@@ -1,3 +1,10 @@
+// Unifies semantic types into a pure substitution or a structured error.
+//
+// Invariants:
+// - The occurs check rejects infinite types before extending a substitution.
+// - Capability rows are order-independent and open tails absorb only unmatched capabilities.
+// - Two open rows share one fresh tail so neither unmatched side is assigned twice.
+
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.reverse
 export (
@@ -103,6 +110,8 @@ and unifyOptionalRows left right substitution =
         | (Some(leftRow), Some(rightRow)) -> unifyWith(substitution)(leftRow)(rightRow)
         | (None, Some(rightRow)) -> unifyWith(substitution)(SemRow([])(None))(rightRow)
         | (Some(leftRow), None) -> unifyWith(substitution)(leftRow)(SemRow([])(None))
+// When both rows are open, one shared fresh tail prevents either unmatched capability set from
+// being assigned independently to both row variables.
 and unifyRows leftCapabilities leftTail rightCapabilities rightTail substitution leftRow rightRow =
     match unifyCommonCapabilities(leftCapabilities)(rightCapabilities)(substitution) with
         | UnificationResult { substitution = afterCommon, error = None } ->

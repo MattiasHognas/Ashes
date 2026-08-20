@@ -1,3 +1,10 @@
+// Parses the project manifest into the typed configuration consumed by semantic planning.
+//
+// Invariants:
+// - Entry paths must name Ashes source while unknown fields remain forward-compatible.
+// - Dependency and override source forms remain explicit for graph-level validation.
+// - Defaults, roots, and output settings retain their distinction until layout resolution.
+
 import Ashes.Text
 import Ashes.Text.Json
 import Ashes.Internal.deepCopy as deepCopy

@@ -1,3 +1,10 @@
+// Defines the frontend syntax tree shared by parsing, formatting, and semantics.
+//
+// Invariants:
+// - Patterns, type expressions, expressions, and declarations remain distinct categories.
+// - At wrappers attach UTF-8 byte spans without altering the enclosed syntax.
+// - Declaration order reflects the language's sequential top-level scope.
+
 import AshesCompiler.Frontend.Token
 export (
     type Pattern(..),

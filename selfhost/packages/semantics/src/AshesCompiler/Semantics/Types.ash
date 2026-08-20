@@ -1,3 +1,10 @@
+// Defines semantic types, trait constraints, substitutions, and fresh-variable supplies.
+//
+// Invariants:
+// - Named type identity is carried by stable symbols rather than display text.
+// - Substitutions are applied recursively through every type and constraint component.
+// - Trait constraints have a deterministic canonical order with exact duplicates removed.
+
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
 export (

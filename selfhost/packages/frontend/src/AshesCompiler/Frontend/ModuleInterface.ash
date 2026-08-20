@@ -1,3 +1,10 @@
+// Builds the explicit public interface of a parsed module.
+//
+// Invariants:
+// - Only export declarations contribute bindings; imports are never implicit re-exports.
+// - Externals and a trailing expression are not module exports.
+// - Constructor exports remain associated with their declared type and duplicates are rejected.
+
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportResolution

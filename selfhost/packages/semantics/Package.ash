@@ -1,3 +1,9 @@
+// Public package root for self-hosted binding, typing, traits, and project planning.
+//
+// Boundary:
+// - Semantics consumes frontend contracts and does not depend on formatter or backend code.
+// - Project planning reads manifests, locks, cache entries, and source files but never solves packages.
+
 import AshesCompiler.Semantics.Symbols
 import AshesCompiler.Semantics.Scope
 import AshesCompiler.Semantics.Types
