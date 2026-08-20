@@ -221,11 +221,11 @@ same public behavior.
 - [x] Separate and validate leading import headers while preserving their written forms, aliases,
   selectors, source lines, and imports-stripped UTF-8 body offsets for formatting and diagnostics;
   retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
-- [~] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
+- [x] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
   checks. Map module names to source paths and select project, include, dependency, or shipped-library
   sources with ambiguity and reserved-namespace checks. Construct deterministic reachable-module plans
-  in dependency-first order and reject cycles; filesystem-backed source enumeration remains.
+  in dependency-first order, reject cycles, and enumerate filesystem-backed sources deterministically.
 - [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
