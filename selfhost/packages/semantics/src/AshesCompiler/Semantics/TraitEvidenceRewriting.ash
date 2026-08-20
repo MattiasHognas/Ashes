@@ -9,15 +9,22 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TraitEvidenceAbi
+import AshesCompiler.Semantics.TraitEvidenceThreading
 import Ashes.Collection.List.append as appendList
 export (
+    type TraitConstrainedReferenceRewriting(..),
     value rewriteTraitConstrainedValue,
+    value rewriteTraitConstrainedReference,
 )
 
 type TraitMethodRewriteResolution =
     | TraitMethodRewriteMissing
     | TraitMethodRewriteUnique(Str)
     | TraitMethodRewriteAmbiguous
+
+type TraitConstrainedReferenceRewriting =
+    | expression: Maybe(Expr)
+    | error: Maybe(TraitEvidenceForwardingError)
 
 let recursive lastQualifiedNamePart parts =
     match parts with
@@ -317,3 +324,31 @@ let rewriteTraitConstrainedValue value constraints environment =
             value
             |> rewriteTraitMethodReferences(shapes)
             |> prependTraitDictionaryParameters(shapes)
+
+let recursive traitForwardedEvidenceNameFrom rootParameterIndex parentPath path =
+    match path with
+        | [] -> traitEvidenceParameterName(rootParameterIndex)
+        | ordinal :: tail ->
+            match tail with
+                | [] -> traitSuperDictionaryParameterName(rootParameterIndex)(parentPath)(ordinal)
+                | _ -> traitForwardedEvidenceNameFrom(rootParameterIndex)(parentPath + "_" + Ashes.Text.fromInt(ordinal))(tail)
+
+let traitForwardedEvidenceName forwarding =
+    match forwarding with
+        | TraitEvidenceForwarding { rootParameterIndex = rootParameterIndex, supertraitPath = path } -> traitForwardedEvidenceNameFrom(rootParameterIndex)("root")(path)
+
+let recursive applyForwardedTraitEvidence expression arguments =
+    match arguments with
+        | [] -> expression
+        | TraitEvidenceForwardingArgument { shape = _shape, forwarding = forwarding } :: tail ->
+            applyForwardedTraitEvidence(ExprCall(expression)(forwarding
+            |> traitForwardedEvidenceName
+            |> ExprVar)(false))(tail)
+
+let rewriteTraitConstrainedReference reference requiredConstraints activeConstraints environment =
+    match planTraitEvidenceForwarding(requiredConstraints)(activeConstraints)(environment) with
+        | TraitEvidenceForwardingPlanning { arguments = arguments, error = None } ->
+            TraitConstrainedReferenceRewriting(expression = arguments
+            |> applyForwardedTraitEvidence(reference)
+            |> Some, error = None)
+        | TraitEvidenceForwardingPlanning { arguments = _arguments, error = Some(error) } -> TraitConstrainedReferenceRewriting(expression = None, error = Some(error))
