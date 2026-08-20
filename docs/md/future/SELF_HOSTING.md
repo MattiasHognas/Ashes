@@ -1,6 +1,6 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-15. This document contains both the capability audit of what Ashes-the-language,
+Status as of 2026-08-20. This document contains both the capability audit of what Ashes-the-language,
 its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
 and the implementation handoff for the active self-hosted toolchain migration. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap and the
@@ -232,9 +232,10 @@ same public behavior.
 - [~] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
   compiler-private names across stitched modules. Dependency planning and cycle rejection are
   implemented; stitched semantic scopes and private-name stability remain.
-- [x] Parse and validate typed `ashes.json` manifests, including entry extensions, defaults, source
-  roots, includes, output settings, registry/path dependencies, dev dependencies, and forward-compatible
-  unknown fields. Filesystem path resolution and entry existence checks belong to project discovery.
+- [x] Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
+  defaults, source roots, includes, output settings, registry/path dependencies, dev dependencies,
+  root-level local `overrides`, and forward-compatible unknown fields. Filesystem path resolution and
+  entry existence checks belong to project discovery.
 - [x] Discover projects upward, honor explicit project selection, load manifests, resolve project
   paths, validate entry existence, and deterministically plan reachable modules from source-only
   packages.
@@ -242,9 +243,11 @@ same public behavior.
   coherence, and program-global providers/implementations. Recursive path dependency resolution,
   dev-dependency propagation, cycle and namespace validation, diamond deduplication, and compilation
   planning across dependency source roots are complete. The typed versioned lock-file model, strict
-  parser, selected-manifest lock-path mapping, content-addressed cache-path mapping, and consumption of
-  restored locked packages as validated dependency source roots are also complete; registry resolution,
-  cache materialization and hash verification, and the program-global coherence work remain.
+  parser, selected-manifest lock-path mapping, content-addressed cache-path mapping, consumption of
+  restored locked packages as validated dependency source roots, and root-only local override
+  substitution with exact locked namespace/version checks are also complete; dependency-declared
+  overrides are ignored. Registry resolution, cache materialization and hash verification, and the
+  program-global coherence work remain.
 - [ ] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them

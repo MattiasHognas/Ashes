@@ -105,7 +105,7 @@ let finishProjectLayout style projectFilePath projectDirectory manifest entry so
 
 let projectLayout style projectFilePath projectDirectory (manifest: ProjectManifest) =
     match deepCopy(manifest) with
-        | ProjectManifest { entry = entry, name = _name, namespace = _namespace, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } ->
+        | ProjectManifest { entry = entry, name = _name, namespace = _namespace, version = _version, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } ->
             entry
             |> deepCopy
             |> join(style)(deepCopy(projectDirectory))

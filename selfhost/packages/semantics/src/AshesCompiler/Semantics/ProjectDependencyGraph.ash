@@ -40,12 +40,20 @@ type ProjectDependencyGraphError =
     | ProjectLockInvalid(Str, ProjectLockFileError)
     | ProjectLockedPackageMissing(Str, Str, Str)
     | ProjectLockedPackageProjectError(Str, ProjectDiscoveryError)
+    | ProjectOverrideNotLocked(Str, Str)
+    | ProjectOverrideInvalid(Str)
+    | ProjectOverrideNamespaceMismatch(Str, Str, Str)
+    | ProjectOverrideVersionMismatch(Str, Str, Maybe(Str))
     | ProjectCacheDirectoryError(Str)
     deriving {Eq, Show}
 
 type ProjectDependencyGraphState =
     | dependencies: List(ResolvedProjectDependency)
     | visitedDirectories: List(Str)
+
+type ProjectRootOverrideResolution =
+    | state: ProjectDependencyGraphState
+    | overriddenNamespaces: List(Str)
 
 let recursive containsText (value: Str) (values: List(Str)) =
     match values with
@@ -170,13 +178,13 @@ let pascalCase value =
 
 let manifestFallbackName dependencyName (manifest: ProjectManifest) =
     match manifest with
-        | ProjectManifest { entry = _entry, name = Some(name), namespace = _namespace, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } -> name
-        | ProjectManifest { entry = _entry, name = None, namespace = _namespace, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } -> dependencyName
+        | ProjectManifest { entry = _entry, name = Some(name), namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } -> name
+        | ProjectManifest { entry = _entry, name = None, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } -> dependencyName
 
 let manifestNamespace (dependencyName: Str) (manifest: ProjectManifest) =
     match manifest with
-        | ProjectManifest { entry = _entry, name = _name, namespace = Some(namespace), sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } -> namespace
-        | ProjectManifest { entry = _entry, name = _name, namespace = None, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } ->
+        | ProjectManifest { entry = _entry, name = _name, namespace = Some(namespace), version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } -> namespace
+        | ProjectManifest { entry = _entry, name = _name, namespace = None, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } ->
             manifest
             |> manifestFallbackName(dependencyName)
             |> pascalCase
@@ -288,13 +296,25 @@ let layoutManifest (layout: ProjectLayout) =
     match layout with
         | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _directory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = manifest } -> manifest
 
+let manifestVersion (manifest: ProjectManifest) =
+    match manifest with
+        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = _overrides } -> version
+
+let manifestOverrides (manifest: ProjectManifest) =
+    match manifest with
+        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies, overrides = overrides } -> overrides
+
 let manifestDependencies (manifest: ProjectManifest) =
     match manifest with
-        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = _devDependencies } -> dependencies
+        | ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = _devDependencies, overrides = _overrides } -> dependencies
 
 let stateWithDependency dependency directory (state: ProjectDependencyGraphState) =
     match state with
         | ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = visitedDirectories } -> ProjectDependencyGraphState(dependencies = appendList(dependencies)([dependency]), visitedDirectories = directory :: visitedDirectories)
+
+let stateHasVisited directory (state: ProjectDependencyGraphState) =
+    match state with
+        | ProjectDependencyGraphState { dependencies = _dependencies, visitedDirectories = visitedDirectories } -> containsText(directory)(visitedDirectories)
 
 let dependencyManifestPath style directory = join(style)(directory)("ashes.json")
 
@@ -410,11 +430,11 @@ let continueRootDevDependencies style projectDirectory devDependencies dependenc
         | Error(error) -> Error(error)
         | Ok(state) -> resolveDependencyList(style)(devDependencies)(projectDirectory)(true)([])(state)
 
-let resolveRootDependencies style (layout: ProjectLayout) =
+let resolveRootDependenciesFrom style state (layout: ProjectLayout) =
     match layout with
-        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = ProjectManifest { entry = _entry, name = _name, namespace = _namespace, sourceRoots = _manifestSourceRoots, includeRoots = _manifestIncludeRoots, outDir = _manifestOutDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies } } ->
+        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = ProjectManifest { entry = _entry, name = _name, namespace = _namespace, version = _version, sourceRoots = _manifestSourceRoots, includeRoots = _manifestIncludeRoots, outDir = _manifestOutDir, target = _target, defaults = _defaults, dependencies = dependencies, devDependencies = devDependencies, overrides = _overrides } } ->
             dependencies
-            |> resolveDependencyListFrom(style)(projectDirectory)(false)([])(ProjectDependencyGraphState(dependencies = [], visitedDirectories = []))
+            |> resolveDependencyListFrom(style)(projectDirectory)(false)([])(state)
             |> continueRootDevDependencies(style)(projectDirectory)(devDependencies)
 
 let lockedPackageNamespace (package: LockedPackage) =
@@ -424,6 +444,163 @@ let lockedPackageNamespace (package: LockedPackage) =
 let lockedPackageVersion (package: LockedPackage) =
     match package with
         | LockedPackage { namespace = _namespace, version = version, source = _source, hash = _hash, dependencies = _dependencies } -> version
+
+let recursive findLockedPackageByNamespace namespace packages =
+    match packages with
+        | [] -> None
+        | package :: rest ->
+            if lockedPackageNamespace(package) == namespace
+            then Some(package)
+            else findLockedPackageByNamespace(namespace)(rest)
+
+let lockedPackageForOverride name packages =
+    match packages
+    |> deepCopy
+    |> findLockedPackageByNamespace(name) with
+        | Some(package) -> Some(package)
+        | None ->
+            findLockedPackageByNamespace(pascalCase(name))(packages)
+
+let rootOverrideState (resolution: ProjectRootOverrideResolution) =
+    match resolution with
+        | ProjectRootOverrideResolution { state = state, overriddenNamespaces = _overriddenNamespaces } -> state
+
+let rootOverriddenNamespaces (resolution: ProjectRootOverrideResolution) =
+    match resolution with
+        | ProjectRootOverrideResolution { state = _state, overriddenNamespaces = overriddenNamespaces } -> overriddenNamespaces
+
+let finishRootOverrideChildren namespace overriddenNamespaces childrenResult =
+    match childrenResult with
+        | Error(error) -> Error(error)
+        | Ok(state) -> Ok(ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces))
+
+let continueValidRootOverride style name namespace directory layout resolution =
+    (let state = rootOverrideState(resolution)
+    in
+        let overriddenNamespaces = rootOverriddenNamespaces(resolution)
+        in
+            if stateHasVisited(directory)(state)
+            then Ok(ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces))
+            else
+                let nextState =
+                    stateWithDependency(dependencyRecord(name)(namespace)(false)(layout))(directory)(state)
+                in
+                    layout
+                    |> layoutManifest
+                    |> manifestDependencies
+                    |> resolveDependencyListFrom(style)(directory)(false)([directory])(nextState)
+                    |> finishRootOverrideChildren(namespace)(overriddenNamespaces))
+
+let validateRootOverrideNamespace style name expectedNamespace directory layout resolution =
+    (let state = rootOverrideState(resolution)
+    in
+        match expectedNamespace
+        |> deepCopy
+        |> checkDependencyNamespace(name)(state) with
+            | Error(error) -> Error(error)
+            | Ok(namespace) ->
+                match layout
+                |> layoutEntryPath
+                |> validateDependencyNamespace(style)(name)(namespace)(layoutSourceRoots(layout)) with
+                    | Error(error) -> Error(error)
+                    | Ok(Unit) -> continueValidRootOverride(style)(name)(namespace)(directory)(layout)(resolution))
+
+let validateRootOverrideVersion style name expectedNamespace expectedVersion directory layout resolution =
+    (let manifest = layoutManifest(layout)
+    in
+        let actualNamespace =
+            manifest
+            |> deepCopy
+            |> manifestNamespace(name)
+        in
+            if actualNamespace != expectedNamespace
+            then
+                expectedNamespace
+                |> ProjectOverrideNamespaceMismatch(name)(actualNamespace)
+                |> Error
+            else
+                match manifestVersion(manifest) with
+                    | Some(actualVersion) ->
+                        if actualVersion == expectedVersion
+                        then validateRootOverrideNamespace(style)(name)(expectedNamespace)(directory)(layout)(resolution)
+                        else
+                            Some(actualVersion)
+                            |> ProjectOverrideVersionMismatch(name)(expectedVersion)
+                            |> Error
+                    | None ->
+                        None
+                        |> ProjectOverrideVersionMismatch(name)(expectedVersion)
+                        |> Error)
+
+let classifyMissingRootOverride style name manifestPath =
+    (let dependencyDirectory =
+        Ashes.Text.take(deepCopy(manifestPath))(Ashes.Text.length(manifestPath) - Ashes.Text.length(separator(style) + "ashes.json"))
+    in
+        match dependencyDirectory
+        |> deepCopy
+        |> Ashes.IO.Directory.entries with
+            | Error(_error) ->
+                dependencyDirectory
+                |> ProjectDependencyPathNotFound(name)
+                |> Error
+            | Ok(_entries) ->
+                manifestPath
+                |> ProjectDependencyManifestNotFound(name)
+                |> Error)
+
+let loadRootOverride style projectDirectory name path package resolution =
+    (let directory =
+        path
+        |> join(style)(projectDirectory)
+        |> normalize(style)
+    in
+        let manifestPath = dependencyManifestPath(style)(directory)
+        in
+            match loadProject(style)(manifestPath) with
+                | Error(ProjectReadError(_path, _error)) -> classifyMissingRootOverride(style)(name)(manifestPath)
+                | Error(error) ->
+                    error
+                    |> ProjectDependencyProjectError(name)
+                    |> Error
+                | Ok(layout) ->
+                    validateRootOverrideVersion(style)(name)(package
+                    |> deepCopy
+                    |> lockedPackageNamespace)(lockedPackageVersion(package))(directory)(layout)(resolution))
+
+let resolveRootOverride style projectDirectory lockPath packages resolution (override: ProjectOverride) =
+    match override with
+        | ProjectOverride { name = name, path = path } ->
+            match packages
+            |> deepCopy
+            |> lockedPackageForOverride(name) with
+                | None ->
+                    lockPath
+                    |> ProjectOverrideNotLocked(name)
+                    |> Error
+                | Some(package) ->
+                    match path with
+                        | None -> Error(ProjectOverrideInvalid(name))
+                        | Some(value) -> loadRootOverride(style)(projectDirectory)(name)(value)(package)(resolution)
+
+let recursive resolveRootOverrideList style projectDirectory lockPath packages overrides resolution =
+    match overrides with
+        | [] -> Ok(resolution)
+        | override :: rest ->
+            match resolveRootOverride(style)(projectDirectory)(lockPath)(deepCopy(packages))(resolution)(override) with
+                | Error(error) -> Error(error)
+                | Ok(next) -> resolveRootOverrideList(style)(projectDirectory)(lockPath)(packages)(rest)(next)
+
+let resolveRootOverrides style packages (layout: ProjectLayout) =
+    (let manifest = layoutManifest(layout)
+    in
+        let projectDirectory = layoutDirectory(layout)
+        in
+            let lockPath =
+                layout
+                |> layoutProjectFilePath
+                |> lockFilePath(style)
+            in
+                resolveRootOverrideList(style)(projectDirectory)(lockPath)(packages)(manifestOverrides(manifest))(ProjectRootOverrideResolution(state = ProjectDependencyGraphState(dependencies = [], visitedDirectories = []), overriddenNamespaces = [])))
 
 let loadLockedPackage style cacheRoot state package =
     (let namespace =
@@ -473,15 +650,18 @@ let loadLockedPackage style cacheRoot state package =
                                                     |> stateWithDependency(dependencyRecord(deepCopy(namespace))(namespace)(false)(layout))(packageDirectory)
                                                     |> Ok)
 
-let addLockedPackage style cacheRoot result package =
+let addLockedPackage style cacheRoot overriddenNamespaces result package =
     match result with
         | Error(error) -> Error(error)
-        | Ok(state) -> loadLockedPackage(style)(cacheRoot)(state)(package)
+        | Ok(state) ->
+            if containsText(lockedPackageNamespace(package))(overriddenNamespaces)
+            then Ok(state)
+            else loadLockedPackage(style)(cacheRoot)(state)(package)
 
-let resolveLockedPackages style cacheRoot packages state =
-    foldLeft(addLockedPackage(style)(cacheRoot))(Ok(state))(packages)
+let resolveLockedPackages style cacheRoot overriddenNamespaces packages state =
+    foldLeft(addLockedPackage(style)(cacheRoot)(overriddenNamespaces))(Ok(state))(packages)
 
-let readProjectLock style cacheRoot path state =
+let readProjectLockPackages path =
     match Ashes.IO.File.readText(path) with
         | Error(error) ->
             error
@@ -493,9 +673,9 @@ let readProjectLock style cacheRoot path state =
                     error
                     |> ProjectLockInvalid(path)
                     |> Error
-                | Ok(ProjectLockFile { version = _version, packages = packages }) -> resolveLockedPackages(style)(cacheRoot)(packages)(state)
+                | Ok(ProjectLockFile { version = _version, packages = packages }) -> Ok(packages)
 
-let addLockedDependencies style cacheRoot layout state =
+let lockedPackagesForLayout style layout =
     (let path =
         layout
         |> layoutProjectFilePath
@@ -506,21 +686,37 @@ let addLockedDependencies style cacheRoot layout state =
                 error
                 |> ProjectLockPathProbeError(path)
                 |> Error
-            | Ok(false) -> Ok(state)
-            | Ok(true) -> readProjectLock(style)(cacheRoot)(path)(state))
+            | Ok(false) -> Ok([])
+            | Ok(true) -> readProjectLockPackages(path))
 
 let finishProjectDependencyGraph result =
     match result with
         | Error(error) -> Error(error)
         | Ok(ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = _visitedDirectories }) -> Ok(ProjectDependencyGraph(dependencies = dependencies))
 
-let resolveProjectDependencyGraphFromCache style cacheRoot layout =
-    match resolveRootDependencies(style)(layout) with
+let finishResolvedRootDependencies style cacheRoot packages resolution rootResult =
+    match rootResult with
         | Error(error) -> Error(error)
         | Ok(state) ->
             state
-            |> addLockedDependencies(style)(cacheRoot)(layout)
+            |> resolveLockedPackages(style)(cacheRoot)(rootOverriddenNamespaces(resolution))(packages)
             |> finishProjectDependencyGraph
+
+let continueResolvedRootOverrides style cacheRoot layout packages overrideResult =
+    match overrideResult with
+        | Error(error) -> Error(error)
+        | Ok(resolution) ->
+            layout
+            |> resolveRootDependenciesFrom(style)(rootOverrideState(resolution))
+            |> finishResolvedRootDependencies(style)(cacheRoot)(packages)(resolution)
+
+let resolveProjectDependencyGraphFromCache style cacheRoot layout =
+    match lockedPackagesForLayout(style)(layout) with
+        | Error(error) -> Error(error)
+        | Ok(packages) ->
+            layout
+            |> resolveRootOverrides(style)(deepCopy(packages))
+            |> continueResolvedRootOverrides(style)(cacheRoot)(layout)(packages)
 
 let resolveProjectDependencyGraph style layout =
     match Ashes.IO.Environment.cacheDirectory(Unit) with

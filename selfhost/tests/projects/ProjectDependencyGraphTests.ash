@@ -307,6 +307,113 @@ let checkInvalidLock root =
             | Error(error) -> test.fail("unexpected invalid lock result: " + graphErrorText(error))
             | Ok(_) -> test.fail("invalid lock should fail"))
 
+let prepareRootOverride root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale root override")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> createDirectory(root)("local/src/B"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("import B.Value\nB.Value.value"))
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":{\"path\":\"../local\"}}}"))
+    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"B\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"))
+    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeFile(root)("local/src/B.ash")("0"))
+    |> (given (_) -> writeFile(root)("local/src/B/Value.ash")("let value = 42"))
+
+let checkRootOverride root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(error) -> test.fail("root override should replace the absent cached package: " + graphErrorText(error))
+            | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
+                let localDirectory = join(Unix)(root)("local")
+                in test.assertEqual([ResolvedProjectDependency(name = "B", namespace = "B", sourceRoots = [join(Unix)(localDirectory)("src")], projectDirectory = localDirectory, entryPath = join(Unix)(localDirectory)("src/B.ash"), isDev = false)])(dependencies))
+
+let prepareMismatchedOverrideVersion root =
+    root
+    |> prepareRootOverride
+    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.4\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+
+let checkMismatchedOverrideVersion root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectOverrideVersionMismatch("B", "1.2.3", Some("1.2.4"))) -> Unit
+            | Error(error) -> test.fail("unexpected override version result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("an override version mismatch should fail"))
+
+let prepareMismatchedOverrideNamespace root =
+    root
+    |> prepareRootOverride
+    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"Other\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+
+let checkMismatchedOverrideNamespace root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectOverrideNamespaceMismatch("B", "Other", "B")) -> Unit
+            | Error(error) -> test.fail("unexpected override namespace result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("an override namespace mismatch should fail"))
+
+let prepareInvalidOverride root =
+    root
+    |> prepareRootOverride
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":\"../local\"}}"))
+
+let checkInvalidOverride root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectOverrideInvalid("B")) -> Unit
+            | Error(error) -> test.fail("unexpected invalid override result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("an override without a path object should fail"))
+
+let prepareUnlockedOverride root =
+    root
+    |> prepareRootOverride
+    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":1,\"package\":[]}"))
+
+let checkUnlockedOverride root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectOverrideNotLocked("B", _path)) -> Unit
+            | Error(error) -> test.fail("unexpected unlocked override result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("an override absent from the lock should fail"))
+
+let prepareDependencyOverride root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale dependency override")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> createDirectory(root)("dep/src"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"dep\":{\"path\":\"../dep\"}}}"))
+    |> (given (_) -> writeFile(root)("dep/src/Dep.ash")("0"))
+    |> (given (_) -> writeFile(root)("dep/ashes.json")("{\"entry\":\"src/Dep.ash\",\"overrides\":{\"Missing\":{\"path\":\"../missing\"}}}"))
+
+let checkDependencyOverrideIgnored root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraph
+    |> (given (result) ->
+        match result with
+            | Error(error) -> test.fail("dependency overrides should be ignored: " + graphErrorText(error))
+            | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
+                dependencies
+                |> dependencySummary
+                |> test.assertEqual(["dep|Dep|normal"]))
+
 let runProjectDependencyGraphTests root =
     root
     |> prepareResolvedGraph
@@ -330,6 +437,18 @@ let runProjectDependencyGraphTests root =
     |> (given (_) -> checkMissingLockedPackage(root))
     |> (given (_) -> prepareInvalidLock(root))
     |> (given (_) -> checkInvalidLock(root))
+    |> (given (_) -> prepareRootOverride(root))
+    |> (given (_) -> checkRootOverride(root))
+    |> (given (_) -> prepareMismatchedOverrideVersion(root))
+    |> (given (_) -> checkMismatchedOverrideVersion(root))
+    |> (given (_) -> prepareMismatchedOverrideNamespace(root))
+    |> (given (_) -> checkMismatchedOverrideNamespace(root))
+    |> (given (_) -> prepareInvalidOverride(root))
+    |> (given (_) -> checkInvalidOverride(root))
+    |> (given (_) -> prepareUnlockedOverride(root))
+    |> (given (_) -> checkUnlockedOverride(root))
+    |> (given (_) -> prepareDependencyOverride(root))
+    |> (given (_) -> checkDependencyOverrideIgnored(root))
     |> (given (_) -> Ashes.IO.Directory.removeTree(root))
     |> requireUnit("remove project graph fixtures")
 
