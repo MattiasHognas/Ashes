@@ -10,17 +10,17 @@ let emptyDefaults = ProjectDefaults(optimize = None)
 let checkDefaults unit =
     "{\"entry\":\"src/Main.ash\",\"unknown\":123}"
     |> parseProjectManifest
-    |> assertNamed("defaults")(Ok(ProjectManifest(entry = "src/Main.ash", name = None, namespace = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+    |> assertNamed("defaults")(Ok(ProjectManifest(entry = "src/Main.ash", name = None, namespace = None, version = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [], overrides = [])))
 
 let checkCompleteManifest unit =
-    "{\"entry\":\"Main.ash\",\"name\":\"demo\",\"namespace\":\"Demo\",\"sourceRoots\":[\"src\",\"generated\"],\"include\":[\"vendor\"],\"outDir\":\"build\",\"target\":\"linux-x64\",\"defaults\":{\"optimize\":true,\"future\":1},\"dependencies\":{\"json\":\"^1.2.0\",\"local\":{\"path\":\"../local\",\"namespace\":\"LocalApi\"}},\"devDependencies\":{\"checks\":{\"path\":\"../checks\"}}}"
+    "{\"entry\":\"Main.ash\",\"name\":\"demo\",\"namespace\":\"Demo\",\"version\":\"1.2.3\",\"sourceRoots\":[\"src\",\"generated\"],\"include\":[\"vendor\"],\"outDir\":\"build\",\"target\":\"linux-x64\",\"defaults\":{\"optimize\":true,\"future\":1},\"dependencies\":{\"json\":\"^1.2.0\",\"local\":{\"path\":\"../local\",\"namespace\":\"LocalApi\"}},\"devDependencies\":{\"checks\":{\"path\":\"../checks\"}},\"overrides\":{\"json\":{\"path\":\"../json\"},\"broken\":\"../broken\"}}"
     |> parseProjectManifest
-    |> assertNamed("complete")(Ok(ProjectManifest(entry = "Main.ash", name = Some("demo"), namespace = Some("Demo"), sourceRoots = ["src", "generated"], includeRoots = ["vendor"], outDir = "build", target = Some("linux-x64"), defaults = ProjectDefaults(optimize = Some(true)), dependencies = [ProjectDependency(name = "json", source = RegistryDependency("^1.2.0")), ProjectDependency(name = "local", source = PathDependency("../local")(Some("LocalApi")))], devDependencies = [ProjectDependency(name = "checks", source = PathDependency("../checks")(None))])))
+    |> assertNamed("complete")(Ok(ProjectManifest(entry = "Main.ash", name = Some("demo"), namespace = Some("Demo"), version = Some("1.2.3"), sourceRoots = ["src", "generated"], includeRoots = ["vendor"], outDir = "build", target = Some("linux-x64"), defaults = ProjectDefaults(optimize = Some(true)), dependencies = [ProjectDependency(name = "json", source = RegistryDependency("^1.2.0")), ProjectDependency(name = "local", source = PathDependency("../local")(Some("LocalApi")))], devDependencies = [ProjectDependency(name = "checks", source = PathDependency("../checks")(None))], overrides = [ProjectOverride(name = "json", path = Some("../json")), ProjectOverride(name = "broken", path = None)])))
 
 let checkPermissiveArrays unit =
     "{\"entry\":\"Main.ash\",\"sourceRoots\":[\"\",1,\"src\"],\"include\":false,\"outDir\":4,\"target\":null}"
     |> parseProjectManifest
-    |> assertNamed("permissive arrays")(Ok(ProjectManifest(entry = "Main.ash", name = None, namespace = None, sourceRoots = ["src"], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+    |> assertNamed("permissive arrays")(Ok(ProjectManifest(entry = "Main.ash", name = None, namespace = None, version = None, sourceRoots = ["src"], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [], overrides = [])))
 
 let checkInvalidJson unit =
     ""
@@ -45,7 +45,7 @@ let checkInvalidEntry unit =
 let checkIgnoredUnsupportedDependency unit =
     "{\"entry\":\"Main.ASH\",\"dependencies\":{\"broken\":{\"namespace\":\"Broken\"}}}"
     |> parseProjectManifest
-    |> assertNamed("ignored unsupported dependency")(Ok(ProjectManifest(entry = "Main.ASH", name = None, namespace = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [])))
+    |> assertNamed("ignored unsupported dependency")(Ok(ProjectManifest(entry = "Main.ASH", name = None, namespace = None, version = None, sourceRoots = ["."], includeRoots = [], outDir = "out", target = None, defaults = emptyDefaults, dependencies = [], devDependencies = [], overrides = [])))
 
 let run unit =
     unit
