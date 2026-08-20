@@ -2126,40 +2126,89 @@ static void CollectRegistryRootsRecursive(
 
         foreach (var dep in deps.EnumerateObject())
         {
-            string? constraint = null;
-            if (dep.Value.ValueKind == System.Text.Json.JsonValueKind.String)
+            CollectRegistryDependency(dep, dir, roots, visited);
+        }
+    }
+
+    // Overrides are root-only source substitutions. Their own portable dependencies still
+    // participate in this project's resolution, but overrides inside those manifests are ignored.
+    if (topLevel)
+    {
+        CollectOverrideRegistryRoots(doc.RootElement, dir, roots, visited);
+    }
+}
+
+static void CollectRegistryDependency(
+    System.Text.Json.JsonProperty dependency,
+    string projectDirectory,
+    List<Ashes.Cli.Package.DependencyReq> roots,
+    HashSet<string> visited)
+{
+    string? constraint = dependency.Value.ValueKind == System.Text.Json.JsonValueKind.String
+        ? dependency.Value.GetString()
+        : null;
+    if (dependency.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
+    {
+        if (dependency.Value.TryGetProperty("path", out var pathElement) &&
+            pathElement.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            var dependencyDirectory = Path.GetFullPath(Path.Combine(projectDirectory, pathElement.GetString()!));
+            if (visited.Add(dependencyDirectory))
             {
-                constraint = dep.Value.GetString();
-            }
-            else if (dep.Value.ValueKind == System.Text.Json.JsonValueKind.Object)
-            {
-                if (dep.Value.TryGetProperty("path", out var pathEl) && pathEl.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    var depDir = Path.GetFullPath(Path.Combine(dir, pathEl.GetString()!));
-                    if (visited.Add(depDir))
-                    {
-                        CollectRegistryRootsRecursive(Path.Combine(depDir, "ashes.json"), roots, visited, topLevel: false);
-                    }
-
-                    continue;
-                }
-
-                if (dep.Value.TryGetProperty("git", out _))
-                {
-                    continue; // git dependencies are resolved separately
-                }
-
-                if (dep.Value.TryGetProperty("version", out var ver) && ver.ValueKind == System.Text.Json.JsonValueKind.String)
-                {
-                    constraint = ver.GetString();
-                }
+                CollectRegistryRootsRecursive(
+                    Path.Combine(dependencyDirectory, "ashes.json"), roots, visited, topLevel: false);
             }
 
-            if (constraint is not null)
-            {
-                roots.Add(new Ashes.Cli.Package.DependencyReq(
-                    ProjectSupport.PascalCase(dep.Name), Ashes.Cli.Package.VersionConstraint.Parse(constraint), "manifest"));
-            }
+            return;
+        }
+
+        if (dependency.Value.TryGetProperty("git", out _))
+        {
+            return;
+        }
+
+        if (dependency.Value.TryGetProperty("version", out var version) &&
+            version.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            constraint = version.GetString();
+        }
+    }
+
+    if (constraint is not null)
+    {
+        roots.Add(new Ashes.Cli.Package.DependencyReq(
+            ProjectSupport.PascalCase(dependency.Name),
+            Ashes.Cli.Package.VersionConstraint.Parse(constraint),
+            "manifest"));
+    }
+}
+
+static void CollectOverrideRegistryRoots(
+    System.Text.Json.JsonElement manifest,
+    string projectDirectory,
+    List<Ashes.Cli.Package.DependencyReq> roots,
+    HashSet<string> visited)
+{
+    if (!manifest.TryGetProperty("overrides", out var overrides) ||
+        overrides.ValueKind != System.Text.Json.JsonValueKind.Object)
+    {
+        return;
+    }
+
+    foreach (var entry in overrides.EnumerateObject())
+    {
+        if (entry.Value.ValueKind != System.Text.Json.JsonValueKind.Object ||
+            !entry.Value.TryGetProperty("path", out var pathElement) ||
+            pathElement.ValueKind != System.Text.Json.JsonValueKind.String)
+        {
+            continue;
+        }
+
+        var dependencyDirectory = Path.GetFullPath(Path.Combine(projectDirectory, pathElement.GetString()!));
+        if (visited.Add(dependencyDirectory))
+        {
+            CollectRegistryRootsRecursive(
+                Path.Combine(dependencyDirectory, "ashes.json"), roots, visited, topLevel: false);
         }
     }
 }

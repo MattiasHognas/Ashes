@@ -56,7 +56,7 @@ registry base URL in `~/.ashes/credentials.json`.
 | Command | Synopsis | Notes |
 |---|---|---|
 | `ashes login`   | `ashes login [--registry <r>] (--as <account> \| --token <t>)` | `--as` mints a token via the registry; `--token` stores a provided one. |
-| `ashes publish` | `ashes publish [--registry <r>] [--project <ashes.json>] [--version <v>]` | Packages the project's `.ash` sources (plus `ashes.json`/README/LICENSE), computes the `ash1:` content hash, and uploads. Namespace derives from `namespace` or the PascalCase package name; version from `--version` or the manifest. Requires a prior `login`. |
+| `ashes publish` | `ashes publish [--registry <r>] [--project <ashes.json>] [--version <v>]` | Packages the project's `.ash` sources (plus a portable `ashes.json` and README/LICENSE), computes the `ash1:` content hash, and uploads. Rejects object-valued runtime dependencies; strips `overrides` and `devDependencies`. Namespace derives from `namespace` or the PascalCase package name; version from `--version` or the manifest. Requires a prior `login`. |
 | `ashes yank`    | `ashes yank <namespace> <version> [--undo] [--registry <r>]` | Marks a version un-resolvable for new builds (existing locks still resolve); `--undo` reverses it. Owner-only. |
 | `ashes search`  | `ashes search <query> [--registry <r>]` | Prints a ranked list (namespace, latest, description). |
 | `ashes info`    | `ashes info <namespace>[@<version>] [--registry <r>]` | Shows owners and, for the selected (or latest) version, its capability row and dependencies. |
@@ -698,8 +698,11 @@ ashes restore [--project <manifest>] [--registry <name-or-url>] [--frozen] [--of
    graph) and writes the selected manifest's lock file; then validates **path dependencies** (a missing
    path or non-project fails with `ASH030` / `ASH031`) and lists every resolved dependency with its
    namespace.
-3. Each cached package's content is verified against the lock's `ash1:` hash (`ASH034` on mismatch).
-4. `build` / `run` / `test` **auto-restore** when a project's lock is missing or a locked package is not
+3. Applies root-level path `overrides` without changing the registry-only lock graph. Overrides in a
+   dependency's manifest are ignored. The local package must declare the selected package's namespace
+   and exact locked version.
+4. Each cached package's content is verified against the lock's `ash1:` hash (`ASH034` on mismatch).
+5. `build` / `run` / `test` **auto-restore** when a project's lock is missing or a locked package is not
    cached (against the default registry). Use `ashes restore` explicitly to target a specific registry,
    or with `--frozen` / `--offline`.
 
@@ -758,8 +761,9 @@ the same base name: `ashes.json` maps to `ashes.lock`, while `ashes-test.json` m
 | `include` | string array | No | `[]` | Additional directories searched for imported modules. |
 | `outDir` | string | No | `"out"` | Directory where the compiled binary is written. |
 | `target` | string (enum) | No | OS default | Default back end target; overridden by `--target` on the command line. |
-| `dependencies` | object | No | `{}` | Runtime dependency map. Values are registry version constraints or path dependency objects. |
-| `devDependencies` | object | No | `{}` | Build/test dependency map with the same value forms as `dependencies`. |
+| `dependencies` | object | No | `{}` | Runtime dependency map. Values are registry version constraints or local path objects; publishing rejects local path objects. |
+| `devDependencies` | object | No | `{}` | Build/test dependency map with the same value forms as `dependencies`; never published. |
+| `overrides` | object | No | `{}` | Root-only map from a direct or transitive registry package to `{ "path": "..." }`. The local namespace and version must exactly match the selected lock entry. Never published. |
 
 ### Example
 

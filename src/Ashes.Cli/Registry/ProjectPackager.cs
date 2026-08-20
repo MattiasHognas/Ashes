@@ -9,11 +9,20 @@ namespace Ashes.Cli.Registry;
 /// <c>.ash</c> modules under the source roots plus a few root metadata files.</summary>
 internal static class ProjectPackager
 {
-    public static IReadOnlyList<(string Path, byte[] Bytes)> GatherFiles(AshesProject project)
+    public static IReadOnlyList<(string Path, byte[] Bytes)> GatherFiles(
+        AshesProject project,
+        byte[]? publishedManifest = null)
     {
         var root = project.ProjectDirectory;
         var files = new List<(string Path, byte[] Bytes)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        if (publishedManifest is not null)
+        {
+            // A selected named manifest (for example ashes-lib.json) is normalized to the package
+            // contract name inside the archive.
+            Add(files, seen, "ashes.json", publishedManifest);
+        }
 
         foreach (var sourceRoot in project.SourceRoots)
         {
@@ -35,6 +44,11 @@ internal static class ProjectPackager
             var lower = basename.ToLowerInvariant();
             if (lower is "ashes.json" || lower.StartsWith("readme", StringComparison.Ordinal) || lower.StartsWith("license", StringComparison.Ordinal))
             {
+                if (lower is "ashes.json" && publishedManifest is not null)
+                {
+                    continue;
+                }
+
                 Add(files, seen, root, name);
             }
         }
@@ -97,6 +111,15 @@ internal static class ProjectPackager
         if (seen.Add(relative))
         {
             files.Add((relative, File.ReadAllBytes(absolutePath)));
+        }
+    }
+
+    private static void Add(
+        List<(string Path, byte[] Bytes)> files, HashSet<string> seen, string relativePath, byte[] bytes)
+    {
+        if (seen.Add(relativePath))
+        {
+            files.Add((relativePath, bytes));
         }
     }
 }
