@@ -4,7 +4,10 @@
   "sourceRoots": ["."],
   "outDir": "out",
   "devDependencies": {
-    "frontend": { "path": "../../packages/frontend" },
+    "AshesCompiler.Frontend": "=0.1.0",
     "formatter": { "path": "../../packages/formatter" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" }
   }
 }

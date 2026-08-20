@@ -1,4 +1,5 @@
 using Ashes.Cli.Registry;
+using Ashes.Cli.Package;
 using Ashes.Semantics;
 using Shouldly;
 
@@ -135,5 +136,96 @@ public sealed class RegistryClientTests
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    [Test]
+    public void ProjectPackager_includes_an_entry_outside_source_roots()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "ashes-packager-tests", Guid.NewGuid().ToString("N"));
+        string sourceRoot = Path.Combine(root, "src");
+        Directory.CreateDirectory(sourceRoot);
+        string entry = Path.Combine(root, "Package.ash");
+        File.WriteAllText(entry, "Unit\n");
+        File.WriteAllText(Path.Combine(sourceRoot, "Library.ash"), "let value = 42\n");
+        try
+        {
+            AshesProject project = new(
+                Path.Combine(root, "ashes.json"),
+                root,
+                entry,
+                "Package",
+                "library",
+                [sourceRoot],
+                [],
+                Path.Combine(root, "out"),
+                null);
+
+            IReadOnlyList<(string Path, byte[] Bytes)> files = ProjectPackager.GatherFiles(project);
+
+            files.Select(file => file.Path).ShouldContain("Package.ash");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void Self_hosted_packages_have_complete_portable_source_archives()
+    {
+        string repositoryRoot = FindRepoRoot();
+        string packagesRoot = Path.Combine(repositoryRoot, "selfhost", "packages");
+        Dictionary<string, string> sourceHashes = new(StringComparer.Ordinal);
+
+        foreach (string packageName in (string[])["frontend", "formatter", "semantics"])
+        {
+            string manifestPath = Path.Combine(packagesRoot, packageName, "ashes.json");
+            ManifestInfo manifest = Manifest.Read(manifestPath);
+            Manifest.EnsurePublishable(manifest);
+
+            AshesProject project = ProjectSupport.LoadProject(manifestPath);
+            IReadOnlyList<(string Path, byte[] Bytes)> files =
+                ProjectPackager.GatherFiles(project, manifest.PublishedBytes);
+
+            files.Select(file => file.Path).ShouldContain("ashes.json");
+            files.Select(file => file.Path).ShouldContain("Package.ash");
+            string publishedManifest = System.Text.Encoding.UTF8.GetString(manifest.PublishedBytes);
+            publishedManifest.ShouldNotContain("overrides");
+            publishedManifest.ShouldNotContain("\"path\"");
+            sourceHashes[project.Name!] = SourceHasher.Compute(files);
+        }
+
+        string frontendHash = sourceHashes["ashes-compiler-frontend"];
+        foreach (string manifestPath in (string[])
+                 [
+                     Path.Combine(packagesRoot, "formatter", "ashes.json"),
+                     Path.Combine(packagesRoot, "semantics", "ashes.json"),
+                     Path.Combine(repositoryRoot, "selfhost", "tests", "formatter", "ashes.json"),
+                     Path.Combine(repositoryRoot, "selfhost", "tests", "semantics", "ashes.json"),
+                     Path.Combine(repositoryRoot, "selfhost", "tests", "projects", "ashes.json"),
+                 ])
+        {
+            LockedPackage lockedFrontend = LockFile.Read(manifestPath)!
+                .Package
+                .ShouldHaveSingleItem();
+            lockedFrontend.Namespace.ShouldBe("AshesCompiler.Frontend");
+            lockedFrontend.Hash.ShouldBe(frontendHash);
+        }
+    }
+
+    private static string FindRepoRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Ashes.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Could not find Ashes repository root.");
     }
 }

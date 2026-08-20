@@ -24,6 +24,11 @@ internal static class ProjectPackager
             Add(files, seen, "ashes.json", publishedManifest);
         }
 
+        if (File.Exists(project.EntryPath))
+        {
+            Add(files, seen, root, project.EntryPath);
+        }
+
         foreach (var sourceRoot in project.SourceRoots)
         {
             var dir = Path.GetFullPath(Path.Combine(root, sourceRoot));

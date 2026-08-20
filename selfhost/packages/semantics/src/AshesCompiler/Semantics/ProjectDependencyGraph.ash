@@ -170,9 +170,12 @@ let recursive pascalCaseCharacters remaining capitalize result =
     match Ashes.Text.unconsText(remaining) with
         | None -> result
         | Some((head, tail)) ->
-            if isAsciiLetterOrDigit(head)
-            then continuePascalCase(tail)(capitalize)(result)(head)
-            else pascalCaseCharacters(tail)(true)(result)
+            if head == "."
+            then pascalCaseCharacters(tail)(true)(result + ".")
+            else
+                if isAsciiLetterOrDigit(head)
+                then continuePascalCase(tail)(capitalize)(result)(head)
+                else pascalCaseCharacters(tail)(true)(result)
 and continuePascalCase (tail: Str) (capitalize: Bool) (result: Str) (head: Str) =
     if capitalize
     then pascalCaseCharacters(tail)(false)(result + upperAscii(head))

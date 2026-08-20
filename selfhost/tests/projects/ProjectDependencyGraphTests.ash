@@ -110,6 +110,30 @@ let checkCompilationPlan root =
     |> continueCompilationPlan
     |> checkCompilationPlanResult
 
+let prepareDottedDependencyNamespace root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale dotted dependency namespace")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> createDirectory(root)("dep/src/AshesCompiler/Frontend"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("import AshesCompiler.Frontend.Value\nAshesCompiler.Frontend.Value.value"))
+    |> (given (_) -> writeFile(root)("dep/Package.ash")("Unit"))
+    |> (given (_) -> writeFile(root)("dep/src/AshesCompiler/Frontend/Value.ash")("let value = 42"))
+    |> (given (_) -> writeFile(root)("dep/ashes.json")("{\"entry\":\"Package.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"ashes-compiler.frontend\":{\"path\":\"../dep\"}}}"))
+
+let checkDottedDependencyNamespace root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraph
+    |> (given (result) ->
+        match result with
+            | Error(error) -> test.fail("dotted dependency namespace should resolve: " + graphErrorText(error))
+            | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
+                dependencies
+                |> dependencySummary
+                |> test.assertEqual(["ashes-compiler.frontend|AshesCompiler.Frontend|normal"]))
+
 let prepareMissingPath root =
     root
     |> Ashes.IO.Directory.removeTree
@@ -419,6 +443,8 @@ let runProjectDependencyGraphTests root =
     |> prepareResolvedGraph
     |> (given (_) -> checkResolvedGraph(root))
     |> (given (_) -> checkCompilationPlan(root))
+    |> (given (_) -> prepareDottedDependencyNamespace(root))
+    |> (given (_) -> checkDottedDependencyNamespace(root))
     |> (given (_) -> prepareMissingPath(root))
     |> (given (_) -> checkMissingPath(root))
     |> (given (_) -> prepareMissingManifest(root))

@@ -5,5 +5,8 @@
   "outDir": "out",
   "devDependencies": {
     "semantics": { "path": "../../packages/semantics" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" }
   }
 }

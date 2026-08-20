@@ -51,6 +51,49 @@ public sealed class CacheAndLockTests
     }
 
     [Test]
+    public void Auto_restore_does_not_require_cached_sources_for_root_overrides()
+    {
+        string dir = TempDir();
+        try
+        {
+            string dependencyDirectory = Path.Combine(dir, "frontend");
+            Directory.CreateDirectory(dependencyDirectory);
+            File.WriteAllText(
+                Path.Combine(dependencyDirectory, "ashes.json"),
+                """{ "name": "frontend", "namespace": "AshesCompiler.Frontend", "version": "0.1.0", "entry": "Package.ash" }""");
+            File.WriteAllText(Path.Combine(dependencyDirectory, "Package.ash"), "Unit\n");
+
+            string manifestPath = Path.Combine(dir, "ashes.json");
+            File.WriteAllText(
+                manifestPath,
+                """{ "entry": "Main.ash", "dependencies": { "AshesCompiler.Frontend": "=0.1.0" }, "overrides": { "AshesCompiler.Frontend": { "path": "frontend" } } }""");
+            File.WriteAllText(Path.Combine(dir, "Main.ash"), "Unit\n");
+            LockFile lockFile = new()
+            {
+                Version = 1,
+                Package =
+                [
+                    new LockedPackage(
+                        "AshesCompiler.Frontend",
+                        "0.1.0",
+                        "registry+https://pkg.ashes-lang.org",
+                        "ash1:frontend",
+                        []),
+                ],
+            };
+            lockFile.Write(manifestPath);
+
+            PackageCache emptyCache = new(Path.Combine(dir, "cache"));
+
+            PackageRestorePolicy.NeedsRestore(manifestPath, lockFile, emptyCache).ShouldBeFalse();
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task PackageCache_stores_and_extracts_a_tarball()
     {
         var root = TempDir();
