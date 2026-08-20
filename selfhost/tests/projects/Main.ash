@@ -1,2 +1,5 @@
 import ProjectDependencyGraphTests
-ProjectDependencyGraphTests.run(Unit)
+import ProjectLockFileTests
+Unit
+|> ProjectDependencyGraphTests.run
+|> ProjectLockFileTests.run
