@@ -1,4 +1,5 @@
 using Ashes.Cli.Registry;
+using Ashes.Semantics;
 using Shouldly;
 
 namespace Ashes.Cli.Tests;
@@ -58,7 +59,7 @@ public sealed class RegistryClientTests
     }
 
     [Test]
-    public void Manifest_reads_publish_fields_and_only_registry_dependencies()
+    public void Manifest_rejects_non_portable_runtime_dependencies_and_sanitizes_local_fields()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".json");
         File.WriteAllText(path,
@@ -72,6 +73,12 @@ public sealed class RegistryClientTests
               "dependencies": {
                 "json": "^1.0",
                 "local": { "path": "../local" }
+              },
+              "devDependencies": {
+                "test-helper": { "path": "../test-helper" }
+              },
+              "overrides": {
+                "json": { "path": "../json" }
               }
             }
             """);
@@ -86,10 +93,47 @@ public sealed class RegistryClientTests
             manifest.Dependencies.Count.ShouldBe(1); // the path dependency is not published metadata
             manifest.Dependencies[0].Namespace.ShouldBe("json");
             manifest.Dependencies[0].Req.ShouldBe("^1.0");
+            manifest.NonPortableDependencies.ShouldBe(["local"]);
+
+            var exception = Should.Throw<CliUserException>(() => Manifest.EnsurePublishable(manifest));
+            exception.Message.ShouldContain("local");
+            exception.Message.ShouldContain("overrides");
+
+            var published = System.Text.Encoding.UTF8.GetString(manifest.PublishedBytes);
+            published.ShouldContain("\"json\": \"^1.0\"");
+            published.ShouldNotContain("overrides");
+            published.ShouldNotContain("devDependencies");
         }
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    [Test]
+    public void ProjectPackager_uses_the_portable_manifest_bytes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "ashes-packager-tests", Guid.NewGuid().ToString("N"));
+        var sourceRoot = Path.Combine(root, "src");
+        Directory.CreateDirectory(sourceRoot);
+        var entry = Path.Combine(sourceRoot, "Main.ash");
+        var manifestPath = Path.Combine(root, "ashes-lib.json");
+        File.WriteAllText(entry, "Ashes.IO.print(\"hi\")\n");
+        File.WriteAllText(manifestPath, "{ \"overrides\": {} }");
+        File.WriteAllText(Path.Combine(root, "ashes.json"), "{ \"unrelated\": true }");
+        try
+        {
+            var project = new AshesProject(
+                manifestPath, root, entry, "Main", "app", [sourceRoot], [], Path.Combine(root, "out"), null);
+
+            var files = ProjectPackager.GatherFiles(project, "{ \"portable\": true }\n"u8.ToArray());
+
+            System.Text.Encoding.UTF8.GetString(files.Single(file => string.Equals(file.Path, "ashes.json", StringComparison.Ordinal)).Bytes)
+                .ShouldBe("{ \"portable\": true }\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
         }
     }
 }

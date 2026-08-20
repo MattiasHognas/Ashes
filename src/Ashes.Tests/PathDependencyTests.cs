@@ -139,6 +139,48 @@ public sealed class PathDependencyTests
         ex.Message.ShouldContain("ASH035");
     }
 
+    [Test]
+    public void A_root_override_replaces_the_locked_registry_source()
+    {
+        var manifest = WriteOverrideWorkspace(localVersion: "1.2.3", lockedVersion: "1.2.3");
+
+        var project = ProjectSupport.LoadProject(manifest);
+
+        var dependency = project.Dependencies.ShouldHaveSingleItem();
+        dependency.Name.ShouldBe("B");
+        dependency.Namespace.ShouldBe("B");
+        dependency.ProjectDirectory.ShouldBe(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(manifest)!, "../B")));
+    }
+
+    [Test]
+    public void A_root_override_must_match_the_locked_version()
+    {
+        var manifest = WriteOverrideWorkspace(localVersion: "1.2.4", lockedVersion: "1.2.3");
+
+        var exception = Should.Throw<InvalidOperationException>(() => ProjectSupport.LoadProject(manifest));
+
+        exception.Message.ShouldContain("must declare version '1.2.3'");
+        exception.Message.ShouldContain("1.2.4");
+    }
+
+    [Test]
+    public void Overrides_declared_by_a_dependency_are_ignored()
+    {
+        var root = NewRoot();
+        Directory.CreateDirectory(Path.Combine(root, "A", "src"));
+        Directory.CreateDirectory(Path.Combine(root, "app", "src"));
+        File.WriteAllText(Path.Combine(root, "A", "ashes.json"),
+            """{ "name": "A", "entry": "src/A.ash", "sourceRoots": ["src"], "overrides": { "B": { "path": "../missing-B" } } }""");
+        File.WriteAllText(Path.Combine(root, "A", "src", "A.ash"), "let value = 1\n");
+        File.WriteAllText(Path.Combine(root, "app", "ashes.json"),
+            """{ "name": "app", "entry": "src/Main.ash", "sourceRoots": ["src"], "dependencies": { "A": { "path": "../A" } } }""");
+        File.WriteAllText(Path.Combine(root, "app", "src", "Main.ash"), "Ashes.IO.print(\"hi\")\n");
+
+        var project = ProjectSupport.LoadProject(Path.Combine(root, "app", "ashes.json"));
+
+        project.Dependencies.ShouldHaveSingleItem().Namespace.ShouldBe("A");
+    }
+
     private static string WriteWorkspace()
     {
         var root = NewRoot();
@@ -156,6 +198,24 @@ public sealed class PathDependencyTests
             "import Greet\nAshes.IO.print(Greet.hello(\"hi\"))\n");
 
         return Path.Combine(root, "app", "ashes.json");
+    }
+
+    private static string WriteOverrideWorkspace(string localVersion, string lockedVersion)
+    {
+        var root = NewRoot();
+        Directory.CreateDirectory(Path.Combine(root, "B", "src"));
+        Directory.CreateDirectory(Path.Combine(root, "app", "src"));
+        File.WriteAllText(Path.Combine(root, "B", "ashes.json"),
+            $$"""{ "name": "B", "namespace": "B", "version": "{{localVersion}}", "entry": "src/B.ash", "sourceRoots": ["src"] }""");
+        File.WriteAllText(Path.Combine(root, "B", "src", "B.ash"), "let value = 1\n");
+
+        var manifest = Path.Combine(root, "app", "ashes.json");
+        File.WriteAllText(manifest,
+            """{ "name": "app", "entry": "src/Main.ash", "sourceRoots": ["src"], "dependencies": { "B": "^1.2.0" }, "overrides": { "B": { "path": "../B" } } }""");
+        File.WriteAllText(Path.Combine(root, "app", "src", "Main.ash"), "Ashes.IO.print(\"hi\")\n");
+        File.WriteAllText(ProjectSupport.GetLockFilePath(manifest),
+            $$"""{ "version": 1, "package": [{ "namespace": "B", "version": "{{lockedVersion}}", "source": "registry+test", "hash": "ash1:test", "dependencies": [] }] }""");
+        return manifest;
     }
 
     private static string NewRoot()

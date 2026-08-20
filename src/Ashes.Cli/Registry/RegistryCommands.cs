@@ -31,14 +31,16 @@ internal static class RegistryCommands
     public static async Task<int> PublishAsync(string[] args, CancellationToken ct)
     {
         var opts = ArgScanner.Parse(args);
-        var (project, manifestPath) = LoadProject(opts.Value("project"));
+        var manifestPath = ResolveProjectPath(opts.Value("project"));
         var manifest = Manifest.Read(manifestPath);
+        Manifest.EnsurePublishable(manifest);
+        var project = ProjectSupport.LoadProject(manifestPath);
 
         var ns = ProjectPackager.DeriveNamespace(manifest.Namespace, project.Name);
         var version = opts.Value("version") ?? manifest.Version
             ?? throw new CliUsageException("No version: set \"version\" in ashes.json or pass --version <v>.");
 
-        var files = ProjectPackager.GatherFiles(project);
+        var files = ProjectPackager.GatherFiles(project, manifest.PublishedBytes);
         if (files.Count == 0)
         {
             throw new CliUserException("Nothing to publish: no .ash sources found under the source roots.");
@@ -154,12 +156,18 @@ internal static class RegistryCommands
 
     private static (AshesProject Project, string ManifestPath) LoadProject(string? projectOption)
     {
+        var path = ResolveProjectPath(projectOption);
+        return (ProjectSupport.LoadProject(path), path);
+    }
+
+    private static string ResolveProjectPath(string? projectOption)
+    {
         var path = projectOption ?? Path.Combine(Directory.GetCurrentDirectory(), "ashes.json");
         if (!File.Exists(path))
         {
             throw new CliUserException("No ashes.json found; run inside a project or pass --project <path>.");
         }
 
-        return (ProjectSupport.LoadProject(path), path);
+        return path;
     }
 }

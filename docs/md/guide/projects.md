@@ -105,7 +105,7 @@ Default backend target.
 
 If omitted, the CLI may choose a reasonable default based on the host OS.
 
-### 3.7 `dependencies` / `devDependencies` (optional)
+### 3.7 `dependencies` / `devDependencies` / `overrides` (optional)
 
 A map of dependency names to a version constraint (string) or an object. `devDependencies` has the same
 shape but is only needed to build and test the project — never part of a published library's surface.
@@ -127,6 +127,30 @@ Example:
   "test-helper": { "path": "../test-helper" }
 }
 ```
+
+Runtime path dependencies are useful for applications that are never published, but they are not a
+portable package contract. `ashes publish` rejects an object-valued entry in `dependencies`; published
+libraries must name every runtime dependency with a registry version constraint. Path dependencies in
+`devDependencies` remain local-only and are allowed.
+
+Use a root-level `overrides` map to develop against a local checkout while preserving the registry
+contract and lock graph:
+
+```json
+"dependencies": {
+  "B": "^1.2.0"
+},
+"overrides": {
+  "B": { "path": "../B" }
+}
+```
+
+An override may target a direct or transitive registry dependency. It replaces that package's cached
+sources for the current root project only; overrides declared by dependencies are ignored. The local
+project must declare the same namespace and the exact version selected for that package in
+`ashes.lock`. This makes the lock portable and prevents a local checkout from silently changing the
+resolved package identity. `ashes publish` removes `overrides` and `devDependencies` from the archived
+manifest.
 
 **Namespace discipline.** A dependency is imported under its namespace — its `namespace` field, else the
 PascalCase of its name (`json-parser` → `JsonParser`). Every module a dependency exports must live under
@@ -296,6 +320,8 @@ Materializes and validates dependencies.
   package into the shared cache, and writes the resolved graph to the selected manifest's lock file.
   `--frozen` fails if resolution would change that lock (`ASH033`); `--offline` trusts it and only
   verifies the cache.
+- Applies root-level path `overrides` after registry resolution. Each local package must match the
+  selected lock entry's namespace and version; the registry-only lock graph is unchanged.
 - `ashes build` / `run` / `test` **auto-restore** first when the lock is missing or stale, so running
   `restore` explicitly is rarely necessary.
 - `ashes install` is retired; use `restore` (or `add` to add a dependency).

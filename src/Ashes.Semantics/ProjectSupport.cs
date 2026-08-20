@@ -393,13 +393,113 @@ public static class ProjectSupport
         var result = new List<ResolvedDependency>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        // Overrides are a root-project policy. Resolve them before ordinary path dependencies so a
+        // checkout named in both places is only loaded once, and never inspect overrides recursively.
+        var overriddenNamespaces = CollectRootOverrides(
+            root, projectFilePath, projectDirectory, result, visited);
+
         // A dependency's own `dependencies` are pulled transitively; its `devDependencies` are not
         // (they build/test that package only). So the root follows both maps, recursion follows only
         // `dependencies`, and dev-ness is inherited down each chain.
         CollectPathDependencies(root, projectDirectory, "dependencies", isDev: false, result, visited, []);
         CollectPathDependencies(root, projectDirectory, "devDependencies", isDev: true, result, visited, []);
-        AddLockedDependencies(projectFilePath, result);
+        AddLockedDependencies(projectFilePath, result, overriddenNamespaces);
         return result;
+    }
+
+    private static HashSet<string> CollectRootOverrides(
+        JsonElement manifest,
+        string projectFilePath,
+        string projectDirectory,
+        List<ResolvedDependency> accumulator,
+        HashSet<string> visited)
+    {
+        var overridden = new HashSet<string>(StringComparer.Ordinal);
+        if (!manifest.TryGetProperty("overrides", out var overrides) ||
+            overrides.ValueKind != JsonValueKind.Object)
+        {
+            return overridden;
+        }
+
+        var lockedVersions = ReadLockedVersions(projectFilePath);
+        foreach (var entry in overrides.EnumerateObject())
+        {
+            var expectedNamespace = lockedVersions.ContainsKey(entry.Name)
+                ? entry.Name
+                : PascalCase(entry.Name);
+            if (!lockedVersions.TryGetValue(expectedNamespace, out var lockedVersion))
+            {
+                throw new InvalidOperationException(
+                    $"ASH033: override '{entry.Name}' does not name a package in {Path.GetFileName(GetLockFilePath(projectFilePath))}. Run 'ashes restore'.");
+            }
+
+            var (dependency, dependencyManifest) = ResolveRootOverride(
+                entry, projectDirectory, expectedNamespace, lockedVersion);
+            overridden.Add(expectedNamespace);
+            if (!visited.Add(dependency.ProjectDirectory))
+            {
+                continue;
+            }
+
+            accumulator.Add(dependency);
+
+            using var dependencyDocument = JsonDocument.Parse(File.ReadAllText(dependencyManifest));
+            CollectPathDependencies(
+                dependencyDocument.RootElement,
+                dependency.ProjectDirectory,
+                "dependencies",
+                isDev: false,
+                accumulator,
+                visited,
+                [dependency.ProjectDirectory]);
+        }
+
+        return overridden;
+    }
+
+    private static (ResolvedDependency Dependency, string ManifestPath) ResolveRootOverride(
+        JsonProperty entry, string projectDirectory, string expectedNamespace, string lockedVersion)
+    {
+        if (entry.Value.ValueKind != JsonValueKind.Object ||
+            !entry.Value.TryGetProperty("path", out var pathElement) ||
+            pathElement.ValueKind != JsonValueKind.String)
+        {
+            throw new InvalidOperationException(
+                $"ASH047: override '{entry.Name}' must be an object with a string 'path'.");
+        }
+
+        var dependencyDirectory = Path.GetFullPath(ResolvePath(projectDirectory, pathElement.GetString()!));
+        var dependencyManifest = Path.Combine(dependencyDirectory, "ashes.json");
+        if (!Directory.Exists(dependencyDirectory))
+        {
+            throw new InvalidOperationException(
+                $"ASH030: override '{entry.Name}' path not found: {pathElement.GetString()}");
+        }
+
+        if (!File.Exists(dependencyManifest))
+        {
+            throw new InvalidOperationException(
+                $"ASH031: override '{entry.Name}' at '{pathElement.GetString()}' is not an Ashes project (no ashes.json).");
+        }
+
+        var (actualNamespace, version, roots, entryFile) = ReadDependencyManifest(
+            dependencyManifest, dependencyDirectory, namespaceOverride: null, entry.Name);
+        if (!string.Equals(actualNamespace, expectedNamespace, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"ASH047: override '{entry.Name}' declares namespace '{actualNamespace}', expected '{expectedNamespace}'.");
+        }
+
+        if (version is null || !string.Equals(version, lockedVersion, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"ASH047: override '{entry.Name}' must declare version '{lockedVersion}', but declares '{version ?? "<missing>"}'.");
+        }
+
+        return (new ResolvedDependency(entry.Name, actualNamespace, roots, dependencyDirectory, IsDev: false)
+        {
+            EntryFile = entryFile,
+        }, dependencyManifest);
     }
 
     private static void CollectPathDependencies(
@@ -449,7 +549,7 @@ public static class ProjectSupport
             var nsOverride = entry.Value.TryGetProperty("namespace", out var entryNs) && entryNs.ValueKind == JsonValueKind.String
                 ? entryNs.GetString()
                 : null;
-            var (ns, roots, entryFile) = ReadDependencyManifest(depManifest, depDir, nsOverride, entry.Name);
+            var (ns, _, roots, entryFile) = ReadDependencyManifest(depManifest, depDir, nsOverride, entry.Name);
             accumulator.Add(new ResolvedDependency(entry.Name, ns, roots, depDir, isDev) { EntryFile = entryFile });
 
             using var depDoc = JsonDocument.Parse(File.ReadAllText(depManifest));
@@ -466,7 +566,8 @@ public static class ProjectSupport
     /// </summary>
     private static void AddLockedDependencies(
         string projectFilePath,
-        List<ResolvedDependency> accumulator)
+        List<ResolvedDependency> accumulator,
+        IReadOnlySet<string> overriddenNamespaces)
     {
         string lockPath = GetLockFilePath(projectFilePath);
         if (!File.Exists(lockPath))
@@ -492,6 +593,11 @@ public static class ProjectSupport
                 continue;
             }
 
+            if (overriddenNamespaces.Contains(ns))
+            {
+                continue;
+            }
+
             var cacheDir = CachePathFor(ns, version, hash);
             var manifest = Path.Combine(cacheDir, "ashes.json");
             if (!File.Exists(manifest))
@@ -500,9 +606,39 @@ public static class ProjectSupport
                     $"ASH033: locked package '{ns}@{version}' is not in the cache. Run 'ashes restore'.");
             }
 
-            var (_, roots, entryFile) = ReadDependencyManifest(manifest, cacheDir, ns, ns);
+            var (_, _, roots, entryFile) = ReadDependencyManifest(manifest, cacheDir, ns, ns);
             accumulator.Add(new ResolvedDependency(ns, ns, roots, cacheDir, IsDev: false) { EntryFile = entryFile });
         }
+    }
+
+    private static IReadOnlyDictionary<string, string> ReadLockedVersions(string projectFilePath)
+    {
+        var versions = new Dictionary<string, string>(StringComparer.Ordinal);
+        var lockPath = GetLockFilePath(projectFilePath);
+        if (!File.Exists(lockPath))
+        {
+            return versions;
+        }
+
+        using var document = JsonDocument.Parse(File.ReadAllText(lockPath));
+        if (document.RootElement.ValueKind != JsonValueKind.Object ||
+            !document.RootElement.TryGetProperty("package", out var packages) ||
+            packages.ValueKind != JsonValueKind.Array)
+        {
+            return versions;
+        }
+
+        foreach (var package in packages.EnumerateArray())
+        {
+            var packageNamespace = ReadString(package, "namespace");
+            var packageVersion = ReadString(package, "version");
+            if (packageNamespace is not null && packageVersion is not null)
+            {
+                versions[packageNamespace] = packageVersion;
+            }
+        }
+
+        return versions;
     }
 
     /// <summary>
@@ -516,7 +652,7 @@ public static class ProjectSupport
         return Path.ChangeExtension(Path.GetFullPath(projectFilePath), ".lock");
     }
 
-    private static (string Namespace, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(
+    private static (string Namespace, string? Version, IReadOnlyList<string> Roots, string? EntryFile) ReadDependencyManifest(
         string manifestPath, string depDir, string? namespaceOverride, string depKey)
     {
         using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
@@ -535,7 +671,7 @@ public static class ProjectSupport
         var entryValue = ReadString(manifest, "entry");
         var entryFile = entryValue is null ? null : ResolvePath(depDir, entryValue);
 
-        return (ns, sourceRoots.Select(x => ResolvePath(depDir, x)).ToList(), entryFile);
+        return (ns, ReadString(manifest, "version"), sourceRoots.Select(x => ResolvePath(depDir, x)).ToList(), entryFile);
     }
 
     /// <summary>Root of the shared content-addressed package cache (<c>$XDG_CACHE_HOME/ashes</c>, else
