@@ -54,7 +54,9 @@ let recursive collectMatches roots relativePath available seen reversed =
                 else collectMatches(rest)(relativePath)(available)(rootedPath(root)(relativePath) :: seen)(rootedPath(root)(relativePath) :: reversed)
             else collectMatches(rest)(relativePath)(available)(seen)(reversed)
 
-let allProjectRoots roots = appendList(roots.sourceRoots)(appendList(roots.includeRoots)(roots.dependencyRoots))
+let allProjectRoots (roots: ModuleSourceRoots) =
+    match roots with
+        | ModuleSourceRoots { sourceRoots = sourceRoots, includeRoots = includeRoots, dependencyRoots = dependencyRoots, shippedRoot = _shippedRoot } -> appendList(sourceRoots)(appendList(includeRoots)(dependencyRoots))
 
 let projectMatches roots relativePath available =
     match collectMatches(allProjectRoots(roots))(relativePath)(available)([])([]) with

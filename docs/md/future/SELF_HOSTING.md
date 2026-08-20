@@ -235,9 +235,9 @@ same public behavior.
 - [x] Parse and validate typed `ashes.json` manifests, including entry extensions, defaults, source
   roots, includes, output settings, registry/path dependencies, dev dependencies, and forward-compatible
   unknown fields. Filesystem path resolution and entry existence checks belong to project discovery.
-- [~] Discover projects upward, honor explicit project selection, load manifests, resolve project
-  paths, and validate entry existence. Deterministic compilation planning from source-only packages
-  remains.
+- [x] Discover projects upward, honor explicit project selection, load manifests, resolve project
+  paths, validate entry existence, and deterministically plan reachable modules from source-only
+  packages.
 - [ ] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
   coherence, and program-global providers/implementations.
 - [ ] Stitch the complete project while preserving original file/module spans, definition identities,

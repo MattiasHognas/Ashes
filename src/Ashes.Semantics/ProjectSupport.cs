@@ -1581,7 +1581,7 @@ public static class ProjectSupport
                 continue;
             }
 
-            if (layout.EntryTypeDeclFragments is { } fragments && start < layout.BodyStart
+            if (layout.EntryTypeDeclFragments is { } fragments
                 && TryMapTypeDeclFragmentDiagnostic(
                     entry, start, length, fragments, entryStrippedSource, entryOriginalSource,
                     originalLineStarts, entryFilePath, results))
@@ -1720,27 +1720,24 @@ public static class ProjectSupport
         ProjectModule entryModule,
         string? entrySourceOverride)
     {
-        Dictionary<string, ModuleSourceShape> shapes = BuildModuleShapes(
-            orderedModules,
-            entryModule,
-            entrySourceOverride);
+        Dictionary<string, ModuleSourceShape> shapes = BuildModuleShapes(orderedModules, entryModule, entrySourceOverride);
 
         (IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
-            IReadOnlyDictionary<string, string> exportAnnotations) = BuildExportMetadata(
-                orderedModules,
-                shapes);
+            IReadOnlyDictionary<string, string> exportAnnotations) = BuildExportMetadata(orderedModules, shapes);
 
         var entryShape = shapes[entryModule.ModuleName];
-        var nonEntryModules = orderedModules
-            .Where(module => !string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var nonEntryModules = orderedModules.Where(module =>
+            !string.Equals(module.FilePath, entryModule.FilePath, StringComparison.OrdinalIgnoreCase)).ToList();
 
         var prefix = new StringBuilder();
 
         // Track module offset regions as content is appended
         var moduleOffsets = new List<(string FilePath, int StartOffset, int EndOffset)>();
 
-        AppendHoistedTypeDeclarations(prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
+        int entryTypeDeclarationsStart = AppendHoistedTypeDeclarations(
+            prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments =
+            OffsetEntryTypeDeclFragments(entryShape, entryTypeDeclarationsStart);
 
         var constructorModules = BuildConstructorModuleNames(orderedModules, entryModule, entrySourceOverride);
         var functionSourceNames = BuildFunctionSourceNames(orderedModules, entryModule, shapes);
@@ -1778,8 +1775,18 @@ public static class ProjectSupport
             constructorModules,
             functionSourceNames,
             moduleProvenanceByPath,
+            entryTypeDeclFragments,
             appendFlatEntryBare);
     }
+
+    private static IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>?
+        OffsetEntryTypeDeclFragments(ModuleSourceShape entryShape, int combinedStart)
+        => entryShape.TypeDeclFragments?
+            .Select(fragment => (
+                combinedStart + fragment.FragmentStart,
+                fragment.OriginalStart,
+                fragment.Length))
+            .ToArray();
 
     private static Dictionary<string, ModuleSourceShape> BuildModuleShapes(
         IReadOnlyList<ProjectModule> modules,
@@ -1944,7 +1951,7 @@ public static class ProjectSupport
         return result;
     }
 
-    private static void AppendHoistedTypeDeclarations(
+    private static int AppendHoistedTypeDeclarations(
         StringBuilder prefix,
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         ProjectModule entryModule,
@@ -1952,16 +1959,8 @@ public static class ProjectSupport
         IReadOnlyList<ProjectModule> nonEntryModules,
         Dictionary<string, ModuleSourceShape> shapes)
     {
-        // Entry module type declarations
-        if (entryShape.TypeDeclarationsSource.Length > 0)
-        {
-            var start = prefix.Length;
-            prefix.Append(entryShape.TypeDeclarationsSource);
-            EnsureEndsWithNewline(prefix);
-            moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
-        }
-
-        // Non-entry module type declarations
+        // The plan is dependency-first, and Ashes type declarations are sequential. Hoist imported
+        // module types in that same order so entry and dependent declarations can resolve them.
         foreach (var module in nonEntryModules)
         {
             var typeDecls = shapes[module.ModuleName].TypeDeclarationsSource;
@@ -1973,6 +1972,17 @@ public static class ProjectSupport
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
             }
         }
+
+        int entryTypeDeclarationsStart = prefix.Length;
+        if (entryShape.TypeDeclarationsSource.Length > 0)
+        {
+            int start = prefix.Length;
+            prefix.Append(entryShape.TypeDeclarationsSource);
+            EnsureEndsWithNewline(prefix);
+            moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
+        }
+
+        return entryTypeDeclarationsStart;
     }
 
     private static void EnsureEndsWithNewline(StringBuilder source)
@@ -2040,6 +2050,7 @@ public static class ProjectSupport
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
         IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments,
         bool appendFlatEntryBare)
     {
         if (appendFlatEntryBare)
@@ -2052,7 +2063,8 @@ public static class ProjectSupport
                 moduleOffsets,
                 constructorModules,
                 functionSourceNames,
-                moduleProvenanceByPath);
+                moduleProvenanceByPath,
+                entryTypeDeclFragments);
         }
 
         if (prefix.Length > entryShape.TypeDeclarationsSource.Length)
@@ -2065,7 +2077,8 @@ public static class ProjectSupport
                 moduleOffsets,
                 constructorModules,
                 functionSourceNames,
-                moduleProvenanceByPath);
+                moduleProvenanceByPath,
+                entryTypeDeclFragments);
         }
 
         if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
@@ -2093,7 +2106,8 @@ public static class ProjectSupport
             moduleOffsets,
             constructorModules,
             functionSourceNames,
-            moduleProvenanceByPath);
+            moduleProvenanceByPath,
+            entryTypeDeclFragments);
     }
 
     private static CombinedCompilationLayout AppendParenthesizedEntryLayout(
@@ -2104,7 +2118,8 @@ public static class ProjectSupport
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
-        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath)
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments)
     {
         // A declarations-only entry needs an inert trailing value because its result is discarded.
         entryExpression = EnsureTrailingEntryExpression(entryShape, entryExpression);
@@ -2118,7 +2133,7 @@ public static class ProjectSupport
             entryOffset,
             entryShape.TypeDeclarationsSource.Length,
             moduleOffsets,
-            entryShape.TypeDeclFragments,
+            entryTypeDeclFragments,
             constructorModules,
             functionSourceNames,
             moduleProvenanceByPath);
@@ -2132,7 +2147,8 @@ public static class ProjectSupport
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
-        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath)
+        IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
+        IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments)
     {
         int offset = prefix.Length;
         prefix.Append(entryExpression);
@@ -2142,7 +2158,7 @@ public static class ProjectSupport
             offset,
             entryShape.TypeDeclarationsSource.Length,
             moduleOffsets,
-            entryShape.TypeDeclFragments,
+            entryTypeDeclFragments,
             constructorModules,
             functionSourceNames,
             moduleProvenanceByPath);
