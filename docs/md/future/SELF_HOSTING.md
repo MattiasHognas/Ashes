@@ -17,7 +17,7 @@ Neither implementation may be removed or changed merely to make the self-hosted 
 
 | Area | Ported surface | State |
 |---|---|---|
-| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests |
+| Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams also have shared stage-0/self-hosted parity fixtures |
 | Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
@@ -89,8 +89,10 @@ same public behavior.
   regex, and installed-layout capabilities identified by the prerequisite audit below.
 - [x] Document every production module's responsibility and load-bearing invariants, preserving
   behaviorally relevant stage-0 contracts without copying host-language API boilerplate.
-- [ ] Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
-  public result: tokens, syntax, formatted source, diagnostics, inferred schemes, IR, and executables.
+- [~] Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
+  public result. Versioned token-stream fixtures now compare every public token field between stage 0
+  and the pure-Ashes lexer; syntax, formatted source, diagnostics, inferred schemes, IR, and executable
+  parity formats remain.
 - [x] Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
 

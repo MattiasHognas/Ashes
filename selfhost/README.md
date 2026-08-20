@@ -36,7 +36,7 @@ self-hosted implementation or its test path.
 | Area | Current self-hosted surface |
 |---|---|
 | Package contracts | Complete portable source archives for frontend, formatter, and semantics, with versioned registry dependencies, exact locks, and declared local overrides |
-| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies |
+| Frontend | Source tokens, UTF-8 spans, lexical diagnostics, the complete lexer, the typed AST model, expression/pattern/type parsing, and whole-program parsing for every current declaration form and trailing bodies; versioned token-stream parity against stage 0 |
 | Formatter | Canonical whole-program, declaration, expression, pattern, and type rendering with precedence preservation and idempotence coverage |
 | Semantics | Stable symbols and lexical scopes; source type resolution for primitives, parameters, transparent aliases, nominal and zero-cost applications, functions, tuples, pointers, and capability rows; semantic substitutions, unordered open-row unification, constrained schemes; annotation-aware Algorithm W inference for core expressions, operators, records, guarded matches, Result pipelines, and `let?`; sequential whole-program inference with polymorphic constructors and shared-monomorphic recursive groups; registered capability declarations with qualified, parameter-sharing operation schemes; open-row effect propagation through implicit and explicit operation calls, lambdas, higher-order calls, and Result mappers; complete handler-arm, `resume`, return-arm, shared-instance, and effect-discharge inference; coherent, complete, instance-specialized, type-checked static provider registration with exact concrete call-site satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection; registered trait declarations with constrained qualified method schemes, forward supertraits, cycle checks, and type-checked default bodies; and ordinary trait implementation registration with rigid generic heads, validated requirements, optional inherited defaults, substituted method/body capability-row checks, and deterministic duplicate/structural-overlap rejection |
 | Projects | Typed manifests and lock files; discovery and deterministic source enumeration; recursive path dependency graphs; restored locked packages consumed from the content-addressed cache; root-only local overrides with exact locked namespace/version validation; and reachable compilation planning across project, include, and dependency roots |
@@ -71,6 +71,17 @@ dotnet run --project src/Ashes.Cli -- compile \
   -o /tmp/ashes-selfhost-frontend-tests
 /tmp/ashes-selfhost-frontend-tests
 ```
+
+Run the shared stage-0/self-hosted token parity fixtures with:
+
+```bash
+dotnet run --project src/Ashes.Cli -- compile \
+  --project selfhost/tests/frontend-token-parity/ashes.json \
+  -o /tmp/ashes-selfhost-frontend-token-parity-tests
+/tmp/ashes-selfhost-frontend-token-parity-tests selfhost/parity/frontend/tokens
+```
+
+The fixture schema and extension rules are documented in [`parity/README.md`](parity/README.md).
 
 Run the self-hosted formatter tests with:
 

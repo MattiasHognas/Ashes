@@ -1,0 +1,9 @@
+{
+  "name": "ashes-compiler-frontend-token-parity-tests",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "frontend": { "path": "../../packages/frontend" }
+  }
+}
