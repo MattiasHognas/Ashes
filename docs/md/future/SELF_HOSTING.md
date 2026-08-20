@@ -238,8 +238,11 @@ same public behavior.
 - [x] Discover projects upward, honor explicit project selection, load manifests, resolve project
   paths, validate entry existence, and deterministically plan reachable modules from source-only
   packages.
-- [ ] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
-  coherence, and program-global providers/implementations.
+- [~] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
+  coherence, and program-global providers/implementations. Recursive path dependency resolution,
+  dev-dependency propagation, cycle and namespace validation, diamond deduplication, and compilation
+  planning across dependency source roots are complete; registry restoration and the program-global
+  coherence work remain.
 - [ ] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them

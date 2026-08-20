@@ -28,6 +28,9 @@ type ProjectDiscoveryError =
     | ProjectEntryNotFound(Str)
     deriving {Eq, Show}
 
+type ProjectLayoutBuilder =
+    | BuildingProjectLayout(Str, Str, Str, Str, List(Str), List(Str), Str, ProjectManifest)
+
 let recursive discoverNormalized style directory =
     match "ashes.json"
     |> join(style)(directory)
@@ -67,9 +70,46 @@ let recursive resolvePaths style directory paths =
 
 let moduleName style entryPath =
     match basename(style)(entryPath) with
-        | name -> Ashes.Text.take(name)(Ashes.Text.length(name) - 4)
+        | name ->
+            Ashes.Text.take(deepCopy(name))(Ashes.Text.length(name) - 4)
 
-let projectLayout style projectFilePath projectDirectory (manifest: ProjectManifest) = ProjectLayout(projectFilePath = projectFilePath, projectDirectory = projectDirectory, entryPath = join(style)(projectDirectory)(manifest.entry), entryModuleName = moduleName(style)(manifest.entry), sourceRoots = resolvePaths(style)(projectDirectory)(manifest.sourceRoots), includeRoots = resolvePaths(style)(projectDirectory)(manifest.includeRoots), outDir = join(style)(projectDirectory)(manifest.outDir), manifest = manifest)
+let beginProjectLayout style file directory manifest entry sourceRoots includeRoots outDir entryPath =
+    BuildingProjectLayout(file)(directory)(entryPath)(moduleName(style)(entry))(sourceRoots)(includeRoots)(outDir)(manifest)
+
+let resolveProjectSourceRoots style (builder: ProjectLayoutBuilder) =
+    match builder with
+        | BuildingProjectLayout(f, d, e, n, s, i, o, m) ->
+            BuildingProjectLayout(f)(d)(e)(n)(resolvePaths(style)(deepCopy(d))(s))(i)(o)(m)
+
+let resolveProjectIncludeRoots style (builder: ProjectLayoutBuilder) =
+    match builder with
+        | BuildingProjectLayout(f, d, e, n, s, i, o, m) ->
+            BuildingProjectLayout(f)(d)(e)(n)(s)(resolvePaths(style)(deepCopy(d))(i))(o)(m)
+
+let resolveProjectOutput style (builder: ProjectLayoutBuilder) =
+    match builder with
+        | BuildingProjectLayout(f, d, e, n, s, i, o, m) ->
+            BuildingProjectLayout(f)(d)(e)(n)(s)(i)(join(style)(deepCopy(d))(o))(m)
+
+let completeProjectLayout (builder: ProjectLayoutBuilder) =
+    match builder with
+        | BuildingProjectLayout(f, d, e, n, s, i, o, m) -> ProjectLayout(projectFilePath = f, projectDirectory = d, entryPath = e, entryModuleName = n, sourceRoots = s, includeRoots = i, outDir = o, manifest = m)
+
+let finishProjectLayout style projectFilePath projectDirectory manifest entry sourceRoots includeRoots outDir entryPath =
+    entryPath
+    |> beginProjectLayout(style)(projectFilePath)(projectDirectory)(manifest)(deepCopy(entry))(sourceRoots)(includeRoots)(outDir)
+    |> resolveProjectSourceRoots(style)
+    |> resolveProjectIncludeRoots(style)
+    |> resolveProjectOutput(style)
+    |> completeProjectLayout
+
+let projectLayout style projectFilePath projectDirectory (manifest: ProjectManifest) =
+    match deepCopy(manifest) with
+        | ProjectManifest { entry = entry, name = _name, namespace = _namespace, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = outDir, target = _target, defaults = _defaults, dependencies = _dependencies, devDependencies = _devDependencies } ->
+            entry
+            |> deepCopy
+            |> join(style)(deepCopy(projectDirectory))
+            |> finishProjectLayout(style)(projectFilePath)(projectDirectory)(manifest)(deepCopy(entry))(sourceRoots)(includeRoots)(outDir)
 
 let validateEntry style projectDirectory projectFilePath manifest =
     match projectLayout(style)(projectFilePath)(projectDirectory)(manifest) with

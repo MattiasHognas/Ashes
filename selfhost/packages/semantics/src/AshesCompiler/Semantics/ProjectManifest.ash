@@ -1,5 +1,6 @@
 import Ashes.Text
 import Ashes.Text.Json
+import Ashes.Internal.deepCopy as deepCopy
 export (
     type ProjectDefaults(..),
     type ProjectDependencySource(..),
@@ -56,7 +57,7 @@ let recursive findField (key: Str) (json: ManifestJson) =
 
 let optionalStringField (key: Str) (json: ManifestJson) =
     match findField(key)(json) with
-        | Some(JsonStr(value)) -> Some(value)
+        | Some(JsonStr(value)) -> Some(deepCopy(value))
         | _ -> None
 
 let optionalBoolField (key: Str) (json: ManifestJson) =
@@ -70,7 +71,7 @@ let recursive collectStringArray (json: ManifestJson) =
         | JsonArray(JsonStr(value), rest) ->
             if Ashes.Text.trim(value) == ""
             then collectStringArray(rest)
-            else value :: collectStringArray(rest)
+            else deepCopy(value) :: collectStringArray(rest)
         | JsonArray(_value, rest) -> collectStringArray(rest)
         | _ -> []
 
@@ -124,10 +125,10 @@ let requiredEntry (json: ManifestJson) =
 
 let dependencyFromValue (name: Str) (value: ManifestJson) =
     match value with
-        | JsonStr(constraint) -> Some(ProjectDependency(name = name, source = RegistryDependency(constraint)))
+        | JsonStr(constraint) -> Some(ProjectDependency(name = deepCopy(name), source = RegistryDependency(deepCopy(constraint))))
         | JsonObject(_key, _field, _rest) ->
             match optionalStringField("path")(value) with
-                | Some(path) -> Some(ProjectDependency(name = name, source = PathDependency(path)(optionalStringField("namespace")(value))))
+                | Some(path) -> Some(ProjectDependency(name = deepCopy(name), source = PathDependency(path)(optionalStringField("namespace")(value))))
                 | None -> None
         | _ -> None
 
@@ -145,12 +146,12 @@ let dependenciesField (key: Str) (json: ManifestJson) =
         | None -> []
         | Some(value) -> dependenciesFromObject(value)
 
-let finishManifest (json: ManifestJson) (entry: Str) (dependencies: List(ProjectDependency)) = Ok(ProjectManifest(entry = entry, name = optionalStringField("name")(json), namespace = optionalStringField("namespace")(json), sourceRoots = sourceRootsField(json), includeRoots = stringArrayField("include")(json), outDir = outDirField(json), target = optionalStringField("target")(json), defaults = defaultsField(json), dependencies = dependencies, devDependencies = dependenciesField("devDependencies")(json)))
+let finishManifest (json: ManifestJson) (entry: Str) (dependencies: List(ProjectDependency)) = Ok(ProjectManifest(entry = entry, name = optionalStringField("name")(deepCopy(json)), namespace = optionalStringField("namespace")(deepCopy(json)), sourceRoots = sourceRootsField(deepCopy(json)), includeRoots = stringArrayField("include")(deepCopy(json)), outDir = outDirField(deepCopy(json)), target = optionalStringField("target")(deepCopy(json)), defaults = defaultsField(deepCopy(json)), dependencies = dependencies, devDependencies = dependenciesField("devDependencies")(json)))
 
-let buildManifest (json: ManifestJson) (entry: Str) = finishManifest(json)(entry)(dependenciesField("dependencies")(json))
+let buildManifest (json: ManifestJson) (entry: Str) = finishManifest(json)(entry)(dependenciesField("dependencies")(deepCopy(json)))
 
 let parseManifestObject (json: ManifestJson) =
-    match requiredEntry(json) with
+    match requiredEntry(deepCopy(json)) with
         | Error(error) -> Error(error)
         | Ok(entry) -> buildManifest(json)(entry)
 
