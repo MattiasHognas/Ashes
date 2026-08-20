@@ -242,8 +242,9 @@ same public behavior.
   coherence, and program-global providers/implementations. Recursive path dependency resolution,
   dev-dependency propagation, cycle and namespace validation, diamond deduplication, and compilation
   planning across dependency source roots are complete. The typed versioned lock-file model, strict
-  parser, and selected-manifest lock-path mapping are also complete; registry restoration, cache
-  materialization, and the program-global coherence work remain.
+  parser, selected-manifest lock-path mapping, content-addressed cache-path mapping, and consumption of
+  restored locked packages as validated dependency source roots are also complete; registry resolution,
+  cache materialization and hash verification, and the program-global coherence work remain.
 - [ ] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them

@@ -50,6 +50,14 @@ let loadGraph (manifestPath: Str) =
             |> resolveProjectDependencyGraph(Unix)
             |> typedGraphResult
 
+let loadGraphFromCache cacheRoot manifestPath =
+    match loadProject(Unix)(manifestPath) with
+        | Error(_error) -> test.fail("root project should load")
+        | Ok(layout) ->
+            layout
+            |> resolveProjectDependencyGraphFromCache(Unix)(cacheRoot)
+            |> typedGraphResult
+
 let prepareResolvedGraph root =
     root
     |> Ashes.IO.Directory.removeTree
@@ -237,6 +245,68 @@ let checkOutsideNamespace root =
             | Error(_error) -> test.fail("unexpected module namespace result")
             | Ok(_) -> test.fail("module outside dependency namespace should fail"))
 
+let prepareLockedPackage root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale locked package")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> createDirectory(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("import Json.Codec\nJson.Codec.value"))
+    |> (given (_) -> writeFile(root)("app/ashes-test.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"json\":\"^1.2.0\"}}"))
+    |> (given (_) -> writeFile(root)("app/ashes-test.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Json\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:deadbeef\",\"dependencies\":[]}]}"))
+    |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/ashes.json")("{\"name\":\"ignored-manifest-name\",\"entry\":\"src/Json.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json.ash")("0"))
+    |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json/Codec.ash")("let value = 42"))
+
+let checkLockedPackage root =
+    "app/ashes-test.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(error) -> test.fail("locked package should resolve: " + graphErrorText(error))
+            | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
+                let packageDirectory = join(Unix)(root)("cache/pkg/Json/1.2.3/deadbeef")
+                in test.assertEqual([ResolvedProjectDependency(name = "Json", namespace = "Json", sourceRoots = [join(Unix)(packageDirectory)("src")], projectDirectory = packageDirectory, entryPath = join(Unix)(packageDirectory)("src/Json.ash"), isDev = false)])(dependencies))
+
+let prepareMissingLockedPackage root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale missing locked package")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\"}"))
+    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Missing\",\"version\":\"2.0.0\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"))
+
+let checkMissingLockedPackage root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectLockedPackageMissing("Missing", "2.0.0", _path)) -> Unit
+            | Error(error) -> test.fail("unexpected missing locked package result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("missing locked package should fail"))
+
+let prepareInvalidLock root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale invalid lock")
+    |> (given (_) -> createDirectory(root)("app/src"))
+    |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
+    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\"}"))
+    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":2}"))
+
+let checkInvalidLock root =
+    "app/ashes.json"
+    |> join(Unix)(root)
+    |> loadGraphFromCache(join(Unix)(root)("cache"))
+    |> (given (result) ->
+        match result with
+            | Error(ProjectLockInvalid(_path, UnsupportedProjectLockVersion(2))) -> Unit
+            | Error(error) -> test.fail("unexpected invalid lock result: " + graphErrorText(error))
+            | Ok(_) -> test.fail("invalid lock should fail"))
+
 let runProjectDependencyGraphTests root =
     root
     |> prepareResolvedGraph
@@ -254,6 +324,12 @@ let runProjectDependencyGraphTests root =
     |> (given (_) -> checkNamespaceConflict(root))
     |> (given (_) -> prepareOutsideNamespace(root))
     |> (given (_) -> checkOutsideNamespace(root))
+    |> (given (_) -> prepareLockedPackage(root))
+    |> (given (_) -> checkLockedPackage(root))
+    |> (given (_) -> prepareMissingLockedPackage(root))
+    |> (given (_) -> checkMissingLockedPackage(root))
+    |> (given (_) -> prepareInvalidLock(root))
+    |> (given (_) -> checkInvalidLock(root))
     |> (given (_) -> Ashes.IO.Directory.removeTree(root))
     |> requireUnit("remove project graph fixtures")
 

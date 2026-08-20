@@ -5,6 +5,7 @@ export (
     type LockedPackage(..),
     type ProjectLockFile(..),
     type ProjectLockFileError(..),
+    value cachePathFor,
     value lockFilePath,
     value parseProjectLockFile,
 )
@@ -32,6 +33,26 @@ type ProjectLockFileError =
     deriving {Eq, Show}
 
 type alias LockJson = Json(Bool, Int, Float, Str)
+
+let recursive hashKeyAfterColon remaining =
+    match Ashes.Text.unconsText(remaining) with
+        | None -> None
+        | Some((head, tail)) ->
+            if head == ":"
+            then Some(tail)
+            else hashKeyAfterColon(tail)
+
+let hashKey hash =
+    match hashKeyAfterColon(hash) with
+        | Some(key) -> key
+        | None -> hash
+
+let cachePathFor style cacheRoot (package: LockedPackage) =
+    match package with
+        | LockedPackage { namespace = namespace, version = version, source = _source, hash = hash, dependencies = _dependencies } ->
+            hash
+            |> hashKey
+            |> join(style)(join(style)(join(style)(join(style)(cacheRoot)("pkg"))(namespace))(version))
 
 let lockFilePath style projectFilePath =
     match projectFilePath
