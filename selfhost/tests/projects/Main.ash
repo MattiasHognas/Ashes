@@ -1,0 +1,2 @@
+import ProjectDependencyGraphTests
+ProjectDependencyGraphTests.run(Unit)

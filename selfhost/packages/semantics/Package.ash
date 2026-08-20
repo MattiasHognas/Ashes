@@ -13,5 +13,6 @@ import AshesCompiler.Semantics.TraitDictionaryConstruction
 import AshesCompiler.Semantics.ProjectManifest
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
+import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 Unit

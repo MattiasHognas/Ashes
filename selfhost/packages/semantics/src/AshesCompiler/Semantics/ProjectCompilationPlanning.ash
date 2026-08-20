@@ -12,6 +12,7 @@ import AshesCompiler.Frontend.ModulePlan.ModulePlanUnit
 import AshesCompiler.Frontend.ModulePlan.PlannedModule
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.Parser
+import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectSourceEnumeration.ProjectSourceEnumerationError
@@ -27,6 +28,7 @@ type ProjectCompilationPlan =
     deriving {Eq, Show}
 
 type ProjectCompilationError =
+    | ProjectCompilationDependencyGraphError(ProjectDependencyGraphError)
     | ProjectCompilationSourceEnumerationError(ProjectSourceEnumerationError)
     | ProjectCompilationUnmappedSource(Str)
     | ProjectCompilationMissingModule(Str, List(Str))
@@ -45,6 +47,14 @@ type IndexedProjectSource =
 type LoadedProjectModule =
     | unit: ModulePlanUnit
     | dependencies: List(Str)
+
+let projectEntryPath (layout: ProjectLayout) =
+    match layout with
+        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = _manifest } -> entryPath
+
+let projectEntryModuleName (layout: ProjectLayout) =
+    match layout with
+        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = _manifest } -> entryModuleName
 
 let recursive containsText (value: Str) (values: List(Str)) =
     match values with
@@ -76,7 +86,9 @@ let recursive relativeSourcePath (style: Style) (roots: List(Str)) (path: Str) =
     match roots with
         | [] -> None
         | root :: rest ->
-            match relativeTo(style)(root)(deepCopy(path)) with
+            match path
+            |> deepCopy
+            |> relativeTo(style)(root) with
                 | relative ->
                     if isOutsideRoot(style)(relative)
                     then relativeSourcePath(style)(rest)(path)
@@ -84,13 +96,19 @@ let recursive relativeSourcePath (style: Style) (roots: List(Str)) (path: Str) =
 
 let moduleNameFromRelative (style: Style) (relative: Str) =
     match Ashes.Text.take(deepCopy(relative))(Ashes.Text.length(relative) - 4) with
-        | withoutExtension -> Ashes.Text.join(".")(Ashes.Text.split(withoutExtension)(separator(style)))
+        | withoutExtension ->
+            style
+            |> separator
+            |> Ashes.Text.split(withoutExtension)
+            |> Ashes.Text.join(".")
 
 let indexedSource (style: Style) (roots: List(Str)) (entryPath: Str) (entryModuleName: Str) (path: Str) =
     if path == entryPath
     then Ok(IndexedProjectSource(name = deepCopy(entryModuleName), path = path))
     else
-        match relativeSourcePath(style)(roots)(deepCopy(path)) with
+        match path
+        |> deepCopy
+        |> relativeSourcePath(style)(roots) with
             | None -> Error(ProjectCompilationUnmappedSource(path))
             | Some(relative) -> Ok(IndexedProjectSource(name = moduleNameFromRelative(style)(relative), path = path))
 
@@ -106,9 +124,9 @@ let recursive indexSources (style: Style) (roots: List(Str)) (entryPath: Str) (e
                         | Ok(sources) -> Ok(source :: sources)
 
 let ensureEntrySource (layout: ProjectLayout) (paths: List(Str)) =
-    if containsText(layout.entryPath)(paths)
+    if containsText(projectEntryPath(layout))(paths)
     then paths
-    else layout.entryPath :: paths
+    else projectEntryPath(layout) :: paths
 
 let recursive dropLast (parts: List(Str)) =
     match parts with
@@ -117,7 +135,9 @@ let recursive dropLast (parts: List(Str)) =
         | head :: rest -> head :: dropLast(rest)
 
 let parentModuleName (name: Str) =
-    match dropLast(Ashes.Text.split(name)(".")) with
+    match "."
+    |> Ashes.Text.split(name)
+    |> dropLast with
         | parts ->
             match Ashes.Text.join(".")(parts) with
                 | "" -> None
@@ -154,14 +174,22 @@ let finishLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSour
                 | _diagnostic :: _ -> Error(ProjectCompilationParseError(path))
                 | [] ->
                     match buildModuleInterface(name)([])(program) with
-                        | Error(error) -> Error(ProjectCompilationInterfaceError(path)(error))
+                        | Error(error) ->
+                            error
+                            |> ProjectCompilationInterfaceError(path)
+                            |> Error
                         | Ok(moduleInterface) ->
-                            match dependencyModuleNames(sources)(deepCopy(imports)) with
+                            match imports
+                            |> deepCopy
+                            |> dependencyModuleNames(sources) with
                                 | dependencies -> Ok(LoadedProjectModule(unit = ModulePlanUnit(name = name, source = ProjectModuleSource(path), imports = imports, interface = moduleInterface), dependencies = dependencies))
 
 let parseLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) (source: Str) =
     match parseImportHeader(source) with
-        | Error(error) -> Error(ProjectCompilationImportHeaderError(path)(error))
+        | Error(error) ->
+            error
+            |> ProjectCompilationImportHeaderError(path)
+            |> Error
         | Ok(header) ->
             match header with
                 | ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports } ->
@@ -172,36 +200,50 @@ let parseLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSourc
 
 let readIndexedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) =
     match Ashes.IO.File.readText(path) with
-        | Error(error) -> Error(ProjectCompilationReadError(path)(error))
+        | Error(error) ->
+            error
+            |> ProjectCompilationReadError(path)
+            |> Error
         | Ok(source) -> parseLoadedModule(name)(path)(sources)(source)
 
 let loadNamedModule (name: Str) (sources: List(IndexedProjectSource)) =
     match pathsForModule(name)(sources) with
-        | [] -> Error(ProjectCompilationMissingModule(name)(indexedModuleNames(sources)))
+        | [] ->
+            sources
+            |> indexedModuleNames
+            |> ProjectCompilationMissingModule(name)
+            |> Error
         | path :: [] -> readIndexedModule(name)(path)(sources)
-        | paths -> Error(ProjectCompilationAmbiguousModule(name)(paths))
+        | paths ->
+            paths
+            |> ProjectCompilationAmbiguousModule(name)
+            |> Error
 
 let recursive loadReachableModules (pending: List(Str)) (loaded: List(Str)) (reversedUnits: List(ModulePlanUnit)) (sources: List(IndexedProjectSource)) =
     match pending with
-        | [] -> Ok(reverseList(reversedUnits))
+        | [] ->
+            reversedUnits
+            |> reverseList
+            |> Ok
         | name :: rest ->
             if containsText(name)(loaded)
             then loadReachableModules(rest)(loaded)(reversedUnits)(sources)
             else
                 match loadNamedModule(name)(sources) with
                     | Error(error) -> Error(error)
-                    | Ok(loadedModule) -> loadReachableModules(appendList(loadedModule.dependencies)(rest))(name :: loaded)(loadedModule.unit :: reversedUnits)(sources)
+                    | Ok(loadedModule) ->
+                        loadReachableModules(appendList(loadedModule.dependencies)(rest))(name :: loaded)(loadedModule.unit :: reversedUnits)(sources)
 
 let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
-    match loadReachableModules([layout.entryModuleName])([])([])(sources) with
+    match loadReachableModules([projectEntryModuleName(layout)])([])([])(sources) with
         | Error(error) -> Error(error)
         | Ok(units) ->
-            match buildModulePlan(layout.entryModuleName)(units) with
+            match buildModulePlan(projectEntryModuleName(layout))(units) with
                 | Error(error) -> Error(ProjectCompilationModulePlanError(error))
                 | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules))
 
 let indexEnumeratedSources (style: Style) (layout: ProjectLayout) (roots: List(Str)) (paths: List(Str)) =
-    match indexSources(style)(roots)(layout.entryPath)(layout.entryModuleName)(paths) with
+    match indexSources(style)(roots)(projectEntryPath(layout))(projectEntryModuleName(layout))(paths) with
         | Error(error) -> Error(error)
         | Ok(sources) -> planIndexedSources(layout)(paths)(sources)
 
@@ -209,11 +251,38 @@ let projectSourceRoots (layout: ProjectLayout) =
     match layout with
         | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = _outDir, manifest = _manifest } -> appendList(sourceRoots)(includeRoots)
 
+let recursive dependencySourceRoots dependencies =
+    match dependencies with
+        | [] -> []
+        | ResolvedProjectDependency { name = _name, namespace = _namespace, sourceRoots = roots, projectDirectory = _projectDirectory, entryPath = _entryPath, isDev = _isDev } :: rest ->
+            rest
+            |> dependencySourceRoots
+            |> appendList(roots)
+
+let compilationSourceRoots (layout: ProjectLayout) (graph: ProjectDependencyGraph) =
+    match graph with
+        | ProjectDependencyGraph { dependencies = dependencies } ->
+            dependencies
+            |> dependencySourceRoots
+            |> appendList(projectSourceRoots(layout))
+
+let planCompilationRoots style (layout: ProjectLayout) roots =
+    match enumerateProjectSourceFiles(style)(roots) with
+        | Error(error) -> Error(ProjectCompilationSourceEnumerationError(error))
+        | Ok(enumerated) ->
+            enumerated
+            |> ensureEntrySource(layout)
+            |> indexEnumeratedSources(style)(layout)(roots)
+
+let continueProjectDependencyGraph style (layout: ProjectLayout) graphResult =
+    match graphResult with
+        | Error(error) -> Error(ProjectCompilationDependencyGraphError(error))
+        | Ok(graph) ->
+            graph
+            |> compilationSourceRoots(layout)
+            |> planCompilationRoots(style)(layout)
+
 let buildProjectCompilationPlan (style: Style) (layout: ProjectLayout) =
-    match projectSourceRoots(layout) with
-        | roots ->
-            match enumerateProjectSourceFiles(style)(roots) with
-                | Error(error) -> Error(ProjectCompilationSourceEnumerationError(error))
-                | Ok(enumerated) ->
-                    match ensureEntrySource(layout)(enumerated) with
-                        | paths -> indexEnumeratedSources(style)(layout)(roots)(paths)
+    layout
+    |> resolveProjectDependencyGraph(style)
+    |> continueProjectDependencyGraph(style)(layout)

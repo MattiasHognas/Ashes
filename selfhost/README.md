@@ -72,3 +72,12 @@ dotnet run --project src/Ashes.Cli -- compile \
   -o /tmp/ashes-selfhost-semantics-tests
 /tmp/ashes-selfhost-semantics-tests
 ```
+
+Run the focused self-hosted project dependency tests with:
+
+```bash
+dotnet run --project src/Ashes.Cli -- compile \
+  --project selfhost/tests/projects/ashes.json \
+  -o /tmp/ashes-selfhost-project-tests
+/tmp/ashes-selfhost-project-tests
+```
