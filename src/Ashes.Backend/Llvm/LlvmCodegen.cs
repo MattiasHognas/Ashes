@@ -2264,11 +2264,10 @@ internal static partial class LlvmCodegen
                 EmitMakeClosureStack(state, makeClosureStack.FuncLabel, LoadTemp(state, makeClosureStack.EnvPtrTemp),
                     makeClosureStack.EnvSizeBytes, makeClosureStack.ReturnsRuntimeManaged, makeClosureStack.AcceptsRuntimeManagedArgument)),
             IrInst.CallClosure callClosure => StoreTemp(state, callClosure.Target, EmitCallClosure(state, LoadTemp(state, callClosure.ClosureTemp), LoadTemp(state, callClosure.ArgTemp),
-                LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp),
-                isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return ret && ret.Source == callClosure.Target)),
+                LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp))),
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
                 LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
-                isTailCall: index + 1 < instructions.Count && instructions[index + 1] is IrInst.Return retK && retK.Source == callKnown.Target)),
+                isTailCall: CanEmitNativeTailCall(callKnown, index, instructions))),
             IrInst.LoadArgumentOwnership loadOwnership => StoreTemp(
                 state,
                 loadOwnership.Target,
@@ -2292,6 +2291,15 @@ internal static partial class LlvmCodegen
         => flagTemp < 0
             ? LlvmApi.ConstInt(state.I64, 0, 0)
             : LoadTemp(state, flagTemp);
+
+    private static bool CanEmitNativeTailCall(
+        IrInst.CallKnown call,
+        int index,
+        IReadOnlyList<IrInst> instructions)
+        => !call.EnvironmentIsStackAllocated
+            && index + 1 < instructions.Count
+            && instructions[index + 1] is IrInst.Return ret
+            && ret.Source == call.Target;
 
     private static bool? EmitInstructionGroup7(LlvmCodegenState state, IrInst instruction, int index)
     {

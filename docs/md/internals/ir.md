@@ -228,6 +228,7 @@ duplicate stays identity-preserving so an empty value is its own result.
 |-------------|--------|-------------|
 | `MakeClosure` | `Target`, `FuncLabel`, `EnvPtrTemp`, `EnvSizeBytes`, ownership flags | Allocate a closure payload, optionally behind an RC header |
 | `CallClosure` | `Target`, `ClosureTemp`, `ArgTemp`, `RuntimeManagedArgumentFlagTemp` | Call closure with an optional retained-RC argument ownership flag |
+| `CallKnown` | `Target`, `FuncLabel`, `EnvTemp`, `ArgTemp`, ownership flag, `EnvironmentIsStackAllocated` | Devirtualized closure call with explicit environment lifetime provenance |
 
 A closure payload is 32 bytes:
 `[code, env, packed_env_size_and_ownership, dropper]`. The packed word uses bit 63
@@ -241,7 +242,10 @@ direct-parameter entry adopts a transferred RC root when `owns_arg` is set and
 otherwise performs the defensive arena-to-RC graph copy. The caller retains a
 non-fresh root before transfer; fresh owned results can transfer their existing
 reference. Curried parameters captured in closure environments cannot consume
-this direct-argument flag.
+this direct-argument flag. Indirect closure calls are native `notail` calls because their environment
+may live in the current frame. A devirtualized `CallKnown` is eligible for a native tail call only when
+`EnvironmentIsStackAllocated` is false; recursive source-level TCO remains the explicit IR back-edge
+transformation and does not depend on this backend optimization.
 
 ### Algebraic Data Types (ADTs)
 

@@ -27,4 +27,5 @@ import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ModuleReferenceRewriting
+import AshesCompiler.Semantics.ProjectSyntaxStitching
 Unit

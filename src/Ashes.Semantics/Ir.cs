@@ -698,12 +698,16 @@ public abstract record IrInst
     /// <param name="ArgTemp">Temp holding the argument value.</param>
     /// <param name="RuntimeManagedArgumentFlagTemp">Temp holding the ownership-transfer flag for the argument;
     /// -1 when unused.</param>
+    /// <param name="EnvironmentIsStackAllocated">True when the environment pointer names storage in
+    /// the caller's frame. Such a call must not become a native sibling tail call because the callee
+    /// reads the environment after the caller frame would have been released.</param>
     public sealed record CallKnown(
         int Target,
         string FuncLabel,
         int EnvTemp,
         int ArgTemp,
-        int RuntimeManagedArgumentFlagTemp = -1
+        int RuntimeManagedArgumentFlagTemp = -1,
+        bool EnvironmentIsStackAllocated = false
     ) : IrInst;
     /// <summary>
     /// Loads the hidden closure-call ownership flag. A true value means the caller transferred an

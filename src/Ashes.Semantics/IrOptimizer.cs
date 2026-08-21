@@ -507,7 +507,8 @@ public static class IrOptimizer
                         k.Label,
                         k.EnvTemp,
                         cc.ArgTemp,
-                        cc.RuntimeManagedArgumentFlagTemp)
+                        cc.RuntimeManagedArgumentFlagTemp,
+                        EnvironmentIsStackAllocated: def is IrInst.MakeClosureStack { EnvSizeBytes: > 0 })
                     { Location = cc.Location });
                     changed = true;
                     continue;

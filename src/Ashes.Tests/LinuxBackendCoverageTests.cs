@@ -41,6 +41,56 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_keeps_stack_environment_alive_across_returned_call()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.CallKnown(2, "caller", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0,
+            3,
+            false);
+        IrFunction caller = new(
+            "caller",
+            [
+                new IrInst.AllocStack(0, 8),
+                new IrInst.LoadConstInt(1, 42),
+                new IrInst.StoreMemOffset(0, 0, 1),
+                new IrInst.LoadConstInt(2, 0),
+                new IrInst.CallKnown(3, "callee", 0, 2, EnvironmentIsStackAllocated: true),
+                new IrInst.Return(3),
+            ],
+            2,
+            4,
+            true);
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.Return(0),
+            ],
+            2,
+            1,
+            true);
+        IrProgram program = new(entry, [caller, callee], [], true, false, false, false, true, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(program).ConfigureAwait(false);
+
+        result.Stdout.ShouldBe("42\n");
+        result.ExitCode.ShouldBe(0);
+    }
+
+    [Test]
     public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
     {
         if (!OperatingSystem.IsLinux())
