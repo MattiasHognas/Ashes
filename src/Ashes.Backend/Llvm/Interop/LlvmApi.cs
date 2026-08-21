@@ -43,6 +43,7 @@ public enum LlvmCodeModel { Default = 0, JITDefault = 1, Tiny = 2, Small = 3, Ke
 public enum LlvmLinkage { External = 0, Internal = 8 }
 public enum LlvmCodeGenFileType { Assembly = 0, Object = 1 }
 public enum LlvmVerifierFailureAction { AbortProcess = 0, PrintMessage = 1, ReturnStatus = 2 }
+public enum LlvmTailCallKind { None = 0, Tail = 1, MustTail = 2, NoTail = 3 }
 
 public enum LlvmTypeKind
 {
@@ -476,8 +477,8 @@ internal static partial class LlvmApi
     public static partial LlvmValueHandle BuildUnreachable(LlvmBuilderHandle b);
 
     // Tail call support
-    [LibraryImport(Lib, EntryPoint = "LLVMSetTailCall")]
-    public static partial void SetTailCall(LlvmValueHandle callInst, int isTailCall);
+    [LibraryImport(Lib, EntryPoint = "LLVMSetTailCallKind")]
+    public static partial void SetTailCallKind(LlvmValueHandle callInst, LlvmTailCallKind kind);
 
     // Function attributes
     [LibraryImport(Lib, EntryPoint = "LLVMGetEnumAttributeKindForName", StringMarshalling = StringMarshalling.Utf8)]

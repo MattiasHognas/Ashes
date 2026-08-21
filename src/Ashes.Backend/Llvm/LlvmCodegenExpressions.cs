@@ -113,21 +113,18 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitCallClosure(
         LlvmCodegenState state,
         LlvmValueHandle closurePtr,
-        LlvmValueHandle argValue,
-        bool isTailCall = false)
+        LlvmValueHandle argValue)
         => EmitCallClosure(
             state,
             closurePtr,
             argValue,
-            LlvmApi.ConstInt(state.I64, 0, 0),
-            isTailCall);
+            LlvmApi.ConstInt(state.I64, 0, 0));
 
     private static LlvmValueHandle EmitCallClosure(
         LlvmCodegenState state,
         LlvmValueHandle closurePtr,
         LlvmValueHandle argValue,
-        LlvmValueHandle runtimeManagedArgumentFlag,
-        bool isTailCall = false)
+        LlvmValueHandle runtimeManagedArgumentFlag)
     {
         LlvmValueHandle codePtr = LoadMemory(state, closurePtr, 0, "closure_code");
         LlvmValueHandle envPtr = LoadMemory(state, closurePtr, 8, "closure_env");
@@ -143,10 +140,9 @@ internal static partial class LlvmCodegen
                 runtimeManagedArgumentFlag
             ],
             "closure_call");
-        if (isTailCall)
-        {
-            LlvmApi.SetTailCall(callInst, 1);
-        }
+        // An indirect closure can carry an environment in the current frame. Keep the native call
+        // non-tail so LLVM cannot release that frame before the callee reads the environment.
+        LlvmApi.SetTailCallKind(callInst, LlvmTailCallKind.NoTail);
 
         return callInst;
     }
@@ -173,10 +169,9 @@ internal static partial class LlvmCodegen
                 runtimeManagedArgumentFlag
             ],
             "known_call");
-        if (isTailCall)
-        {
-            LlvmApi.SetTailCall(callInst, 1);
-        }
+        LlvmApi.SetTailCallKind(
+            callInst,
+            isTailCall ? LlvmTailCallKind.Tail : LlvmTailCallKind.NoTail);
 
         return callInst;
     }

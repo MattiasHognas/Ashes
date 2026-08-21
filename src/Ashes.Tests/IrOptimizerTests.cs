@@ -407,6 +407,39 @@ public sealed class IrOptimizerTests
         optimized.UsesClosures.ShouldBe(unoptimized.UsesClosures);
     }
 
+    [Test]
+    public void Devirtualized_stack_closure_call_retains_environment_lifetime()
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 8),
+            new IrInst.MakeClosureStack(1, "callee", 0, 8),
+            new IrInst.LoadConstInt(2, 42),
+            new IrInst.CallClosure(3, 1, 2),
+            new IrInst.Return(3),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 4, false);
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.PrintInt(0),
+                new IrInst.Return(0),
+            ],
+            2,
+            1,
+            false);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrInst.CallKnown call = optimized.EntryFunction.Instructions
+            .OfType<IrInst.CallKnown>()
+            .ShouldHaveSingleItem();
+        call.EnvironmentIsStackAllocated.ShouldBeTrue(
+            "A direct tail jump cannot outlive the caller frame that owns its environment.");
+    }
+
     // Erased RC marker and resource-cleanup tests
 
     [Test]

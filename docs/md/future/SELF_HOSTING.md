@@ -272,8 +272,10 @@ same public behavior.
 - [~] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins. Semantic definition plans now retain source spans,
   source paths, module names, package identities, qualified names, and compiler names; rewritten module
-  syntax retains its `At` spans. Combining the rewritten modules into one program and retaining
-  source-function origins remain.
+  syntax retains its `At` spans. Rewritten modules are now combined in dependency order, compile-time
+  exports and non-entry bodies are removed, the single entry body is retained, and half-open module
+  regions plus definition-to-item placements preserve deterministic source/package provenance.
+  Retaining source-function origins through the future IR remains.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules.
 - [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
