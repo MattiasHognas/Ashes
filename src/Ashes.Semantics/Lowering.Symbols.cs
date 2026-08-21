@@ -1693,6 +1693,13 @@ public sealed partial class Lowering
                 || _tcoCtx?.InTailPosition == true)
             {
                 argumentTemp = DuplicatePerceusPatternOwnerForAggregate(arguments[i], argumentTemp);
+                if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
+                {
+                    argumentTemp = DuplicateRuntimeManagedOwnedValueForTransfer(
+                        arguments[i],
+                        argumentTemp,
+                        argumentType);
+                }
             }
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);

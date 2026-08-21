@@ -96,11 +96,14 @@ internal enum LoweredValueRuntimeRepresentation
 /// <summary>
 /// Explicit demand passed from an ownership-aware consumer to the expression producing its value.
 /// <see cref="ConsumerCanOwn"/> records the semantic proof; <see cref="RuntimeRepresentation"/>
-/// records the physical representation the producer is permitted to emit. The returned
-/// <see cref="LoweredValue.Ownership"/> records what was actually emitted.
+/// records the physical representation the producer is permitted to emit.
+/// <see cref="TransfersRuntimeManagedChildren"/> marks a function-return boundary where an arena
+/// aggregate must retain borrowed runtime-managed children beyond the producer's lexical cleanup.
+/// The returned <see cref="LoweredValue.Ownership"/> records what was actually emitted.
 /// </summary>
 internal readonly record struct LoweredValueRequest(
     bool ConsumerCanOwn,
+    bool TransfersRuntimeManagedChildren,
     LoweredValueRuntimeRepresentation RuntimeRepresentation,
     string? RuntimeListTailBinding,
     bool RuntimeListTailShared,
@@ -115,6 +118,7 @@ internal readonly record struct LoweredValueRequest(
         LoweredValueRuntimeRepresentation representation) =>
         new(
             ConsumerCanOwn: true,
+            TransfersRuntimeManagedChildren: false,
             representation,
             RuntimeListTailBinding: null,
             RuntimeListTailShared: false,
