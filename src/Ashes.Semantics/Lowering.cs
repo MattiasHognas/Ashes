@@ -2955,7 +2955,7 @@ public sealed partial class Lowering
         PushTraitConstraintScope();
         (int valueTemp, TypeRef valueType) value = LowerTraitValidationAwareLetValue(
             let,
-            request.WithoutExpectedType(),
+            request.WithoutExpectedType() with { TransfersRuntimeManagedChildren = false },
             out IReadOnlyList<TraitConstraint> writtenRequirements);
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
@@ -3106,7 +3106,7 @@ public sealed partial class Lowering
             && !runtimeManagedBytes && !runtimeManagedBigInt
             && !runtimeManagedTuple && !runtimeManagedRecord && !runtimeManagedClosure)
         {
-            return LowerExpr(body, request).AsPair();
+            return LowerExpr(body, WithEscapingConsumerOwnership(request)).AsPair();
         }
 
         return LowerEscapingRuntimeManagedResult(
@@ -3121,6 +3121,15 @@ public sealed partial class Lowering
             runtimeManagedClosure,
             request);
     }
+
+    private LoweredValueRequest WithEscapingConsumerOwnership(LoweredValueRequest request) =>
+        request with
+        {
+            ConsumerCanOwn = request.ConsumerCanOwn
+                || _activeFunctionOrigin is { Kind: not IrFunctionOriginKind.ProgramEntry },
+            TransfersRuntimeManagedChildren =
+                _activeFunctionOrigin is { Kind: not IrFunctionOriginKind.ProgramEntry },
+        };
 
     // True when the escaping result IS a tuple (directly, or through the arms of a match/if or the
     // body of a let, walked via the shared CollectFreshEscapeTerminals engine — see
