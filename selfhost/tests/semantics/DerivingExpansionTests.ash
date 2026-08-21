@@ -173,22 +173,104 @@ let rejectDuplicateTrait unit =
             | Error(DuplicateDerivedTrait("Token", "Eq")) -> Unit
             | _ -> test.fail("qualified and leaf spellings of the same derived trait should be duplicates"))
 
+let derivingProgram declaration items = ProgramSyntax(items = appendTexts(items)([TopLevelType(declaration)]), body = None)
+
+let expectUnsupportedDerivedDeclaration expectedName expectedTrait declaration items =
+    match items
+    |> derivingProgram(declaration)
+    |> expandDerivedImplementations with
+        | Error(UnsupportedDerivedField(typeName, traitName)) ->
+            typeName
+            |> test.assertEqual(expectedName)
+            |> (given (_) -> test.assertEqual(expectedTrait)(traitName))
+        | _ -> test.fail("expected unsupported derived field " + expectedName + ":" + expectedTrait)
+
+let derivedFieldDeclaration name traitName fieldType = ordinaryType(name)([])([constructor(name)([fieldType])])([traitName])
+
+let expectUnsupportedDerivedField expectedName expectedTrait fieldType items =
+    fieldType
+    |> derivedFieldDeclaration(expectedName)(expectedTrait)
+    |> (given (declaration) -> expectUnsupportedDerivedDeclaration(expectedName)(expectedTrait)(declaration)(items))
+
+let nonRegularTreeField unit = TypeApplied("Tree")([TypeApplied("List")([TypeNamed("a")])])
+
+let callbackField unit = TypeArrow(TypeNamed("Int"))(TypeNamed("Int"))([])(None)
+
+let nonRegularTreeDeclaration unit =
+    [nonRegularTreeField(Unit)]
+    |> constructor("Branch")
+    |> (given (branch) -> ordinaryType("Tree")([TypeParameter(name = "a")])([branch])(["Eq"]))
+
+let opaqueHandleItems unit =
+    [None
+    |> ExternalOpaqueType("Handle")
+    |> TopLevelExternal]
+
+let resourceDatabaseItems unit =
+    [Some("databaseClose")
+    |> ExternalOpaqueType("Database")
+    |> TopLevelExternal]
+
+let clockCapabilityItems unit = [TopLevelCapability(CapabilityDecl(name = "Clock", typeParameters = [], operations = []))]
+
+let nativeHandleAlias unit = TopLevelTypeAlias(TypeAliasDecl(name = "NativeHandle", typeParameters = [], target = TypeNamed("Handle")))
+
+let nativeHandleAliasItems unit =
+    [None
+    |> ExternalOpaqueType("Handle")
+    |> TopLevelExternal, nativeHandleAlias(Unit)]
+
 let rejectUnsupportedFields unit =
-    (let functionType = TypeArrow(TypeNamed("Int"))(TypeNamed("Int"))([])(None)
-    in
-        let invalidFunction = ordinaryType("Callback")([])([constructor("Callback")([functionType])])(["Eq"])
-        in
-            let invalidRecursion = ordinaryType("Tree")([TypeParameter(name = "a")])([constructor("Branch")([TypeApplied("Tree")([TypeApplied("List")([TypeNamed("a")])])])])(["Eq"])
-            in
-                let functionChecked =
-                    match expandDerivedImplementations(ProgramSyntax(items = [TopLevelType(invalidFunction)], body = None)) with
-                        | Error(UnsupportedDerivedField("Callback", "Eq")) -> Unit
-                        | _ -> test.fail("function payloads should reject deriving")
-                in
-                    ((given (_) ->
-                        match expandDerivedImplementations(ProgramSyntax(items = [TopLevelType(invalidRecursion)], body = None)) with
-                            | Error(UnsupportedDerivedField("Tree", "Eq")) -> Unit
-                            | _ -> test.fail("non-regular recursive payloads should reject deriving")))(functionChecked))
+    Unit
+    |> callbackField
+    |> (given (fieldType) -> expectUnsupportedDerivedField("Callback")("Eq")(fieldType)([]))
+    |> (given (_) ->
+        Unit
+        |> nonRegularTreeDeclaration
+        |> (given (declaration) -> expectUnsupportedDerivedDeclaration("Tree")("Eq")(declaration)([])))
+
+let rejectSemanticallyUnsupportedFields unit =
+    Unit
+    |> opaqueHandleItems
+    |> expectUnsupportedDerivedField("OpaqueBox")("Show")(TypeNamed("Handle"))
+    |> (given (_) ->
+        Unit
+        |> resourceDatabaseItems
+        |> expectUnsupportedDerivedField("ResourceBox")("Eq")(TypeApplied("List")([TypeNamed("Database")])))
+    |> (given (_) ->
+        Unit
+        |> clockCapabilityItems
+        |> expectUnsupportedDerivedField("CapabilityBox")("Hash")(TypeNamed("Clock")))
+    |> (given (_) ->
+        Unit
+        |> nativeHandleAliasItems
+        |> expectUnsupportedDerivedField("AliasBox")("Ord")(TypeNamed("NativeHandle")))
+
+let derivingInferenceUnit packageId items = ProgramInferenceUnit(packageId = packageId, program = ProgramSyntax(items = items, body = None))
+
+let opaqueHandleInferenceUnit unit =
+    Unit
+    |> opaqueHandleItems
+    |> derivingInferenceUnit("dependency")
+
+let opaqueBoxItems unit =
+    [TypeNamed("Handle")
+    |> derivedFieldDeclaration("OpaqueBox")("Show")
+    |> TopLevelType]
+
+let opaqueBoxInferenceUnit unit =
+    Unit
+    |> opaqueBoxItems
+    |> derivingInferenceUnit("entry")
+
+let rejectUnsupportedFieldFromSeparateUnit unit =
+    [opaqueHandleInferenceUnit(Unit), opaqueBoxInferenceUnit(Unit)]
+    |> (given (units) ->
+        inferProgramUnitsFrom(standardTraitEnvironment(Unit))(units)(None)("entry"))
+    |> (given (result) ->
+        match result with
+            | ProgramInferenceResult { error = Some(ProgramDerivingExpansionError(UnsupportedDerivedField("OpaqueBox", "Show"))) } -> Unit
+            | _ -> test.fail("stitched units should share deriving eligibility context"))
 
 let expectExpansionBeforeCoherence unit =
     (let declaration = ordinaryType("Color")([])([constructor("Red")([]), constructor("Blue")([TypeNamed("Int")])])(["Eq", "Ord", "Show", "Hash"])
@@ -210,5 +292,7 @@ let runDerivingExpansionTests unit =
     |> rejectUnsupportedTrait
     |> rejectDuplicateTrait
     |> rejectUnsupportedFields
+    |> rejectSemanticallyUnsupportedFields
+    |> rejectUnsupportedFieldFromSeparateUnit
     |> expectExpansionBeforeCoherence
     |> (given (_) -> Ashes.IO.print("all self-hosted deriving expansion tests passed"))
