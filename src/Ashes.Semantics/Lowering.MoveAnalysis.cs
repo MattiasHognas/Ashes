@@ -160,6 +160,8 @@ public sealed partial class Lowering
     }
 
     private readonly Dictionary<FuncKey, ResultReachState> _maResultReach = new();
+    private readonly Dictionary<FuncKey, HashSet<FuncKey>> _maResultReachDependents = new();
+    private FuncKey? _maCurrentResultReachFunction;
 
     // Stable per-function ownership contracts materialized after the move-safety and result-reach
     // fixpoints converge. Later lowering passes read this table instead of reaching into the analysis
@@ -2907,41 +2909,89 @@ public sealed partial class Lowering
     private void ComputeResultReach()
     {
         _maResultReach.Clear();
-        foreach (var name in _maFuncs.Keys)
+        _maResultReachDependents.Clear();
+        var worklist = new Queue<FuncKey>();
+        var queued = new HashSet<FuncKey>();
+        foreach (FuncKey name in _maFuncs.Keys)
         {
             _maResultReach[name] = ReachBottom();
+            worklist.Enqueue(name);
+            queued.Add(name);
         }
 
-        bool changed = true;
-        while (changed)
+        while (worklist.TryDequeue(out FuncKey name))
         {
-            changed = false;
-            foreach (var (name, info) in _maFuncs)
+            queued.Remove(name);
+            ResultReachState computed = ComputeResultReachForFunction(name, _maFuncs[name]);
+            ResultReachState merged = ReachJoin(_maResultReach[name], computed);
+            if (ReachEquals(_maResultReach[name], merged))
             {
-                var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
-                foreach (var p in info.Params)
-                {
-                    env[p] = new ResultReachState(
-                        new Dictionary<string, int>(StringComparer.Ordinal) { [p] = 1 },
-                        ResultReachCause.None);
-                }
+                continue;
+            }
 
-                _maReachToken = 0;
-                _maSelfRecursive = _maNestedRecursive.TryGetValue(name, out var nr)
-                    ? (name, nr.Recursive, nr.RecursiveName, nr.Outer, nr.Acc)
-                    : null;
-                IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(name)
-                    ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
-                var computed = StripSyntheticTokens(ResultReach(info.Body, env, scope));
-                _maSelfRecursive = null;
-                var merged = ReachJoin(_maResultReach[name], computed);
-                if (!ReachEquals(_maResultReach[name], merged))
-                {
-                    _maResultReach[name] = merged;
-                    changed = true;
-                }
+            _maResultReach[name] = merged;
+            EnqueueResultReachDependents(name, worklist, queued);
+        }
+    }
+
+    private ResultReachState ComputeResultReachForFunction(
+        FuncKey function,
+        (List<string> Params, Expr Body) info)
+    {
+        var env = new Dictionary<string, ResultReachState>(StringComparer.Ordinal);
+        foreach (string parameter in info.Params)
+        {
+            env[parameter] = new ResultReachState(
+                new Dictionary<string, int>(StringComparer.Ordinal) { [parameter] = 1 },
+                ResultReachCause.None);
+        }
+
+        _maReachToken = 0;
+        _maCurrentResultReachFunction = function;
+        _maSelfRecursive = _maNestedRecursive.TryGetValue(function, out var nested)
+            ? (function, nested.Recursive, nested.RecursiveName, nested.Outer, nested.Acc)
+            : null;
+        IReadOnlyDictionary<string, FuncKey> scope = _maFunctionScopes.GetValueOrDefault(function)
+            ?? new Dictionary<string, FuncKey>(StringComparer.Ordinal);
+        ResultReachState computed = StripSyntheticTokens(ResultReach(info.Body, env, scope));
+        _maSelfRecursive = null;
+        _maCurrentResultReachFunction = null;
+        return computed;
+    }
+
+    private void EnqueueResultReachDependents(
+        FuncKey function,
+        Queue<FuncKey> worklist,
+        HashSet<FuncKey> queued)
+    {
+        if (!_maResultReachDependents.TryGetValue(function, out HashSet<FuncKey>? dependents))
+        {
+            return;
+        }
+
+        foreach (FuncKey dependent in dependents)
+        {
+            if (queued.Add(dependent))
+            {
+                worklist.Enqueue(dependent);
             }
         }
+    }
+
+    private void RecordResultReachDependency(FuncKey callee)
+    {
+        if (_maCurrentResultReachFunction is not { } caller)
+        {
+            return;
+        }
+
+        if (!_maResultReachDependents.TryGetValue(callee, out HashSet<FuncKey>? dependents))
+        {
+            dependents = [];
+            _maResultReachDependents.Add(callee, dependents);
+        }
+
+        dependents.Add(caller);
     }
 
     /// <summary>
@@ -3530,6 +3580,7 @@ public sealed partial class Lowering
         Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
+        RecordResultReachDependency(sr.Func);
         if (!_maResultReach.TryGetValue(sr.Func, out var selfSummary))
         {
             return ReachBottom();
@@ -3624,6 +3675,7 @@ public sealed partial class Lowering
         Dictionary<string, ResultReachState> env,
         IReadOnlyDictionary<string, FuncKey> scope)
     {
+        RecordResultReachDependency(key);
         if (args.Count != info.Params.Count
             || !_maResultReach.TryGetValue(key, out var summary))
         {

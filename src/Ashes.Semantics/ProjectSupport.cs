@@ -3525,11 +3525,14 @@ public static class ProjectSupport
         var hasFlatBinding = false;
         var hoistedCapabilityOrProvide = false;
         var cursor = 0;
+        var sourceIndex = new SourceTextIndex(source);
+        var sourceLexer = new StringOffsetLexer(source, new Diagnostics());
 
         foreach (var item in program.Items)
         {
             if (!TryShapeFlatItem(
-                    source, item, typeDeclarations, typeDeclFragments, groups, hoistedSpans,
+                    source, sourceIndex, sourceLexer, item,
+                    typeDeclarations, typeDeclFragments, groups, hoistedSpans,
                     ref hasFlatBinding, ref hoistedCapabilityOrProvide, ref cursor))
             {
                 return false;
@@ -3577,6 +3580,8 @@ public static class ProjectSupport
 
     private static bool TryShapeFlatItem(
         string source,
+        SourceTextIndex sourceIndex,
+        StringOffsetLexer sourceLexer,
         TopLevelItem item,
         StringBuilder typeDeclarations,
         List<(int FragmentStart, int OriginalStart, int Length)> typeDeclFragments,
@@ -3633,10 +3638,14 @@ public static class ProjectSupport
                     ref hoistedCapabilityOrProvide, ref cursor);
 
             case TopLevelItem.LetDecl letDecl:
-                return TryShapeFlatLetDecl(source, letDecl, groups, ref hasFlatBinding, ref cursor);
+                return TryShapeFlatLetDecl(
+                    source, sourceIndex, sourceLexer, letDecl,
+                    groups, ref hasFlatBinding, ref cursor);
 
             case TopLevelItem.RecursiveGroup recursiveGroup:
-                return TryShapeFlatRecursiveGroup(source, recursiveGroup, groups, ref hasFlatBinding, ref cursor);
+                return TryShapeFlatRecursiveGroup(
+                    source, sourceIndex, sourceLexer, recursiveGroup,
+                    groups, ref hasFlatBinding, ref cursor);
 
             default:
                 return false;
@@ -3686,12 +3695,16 @@ public static class ProjectSupport
 
     private static bool TryShapeFlatLetDecl(
         string source,
+        SourceTextIndex sourceIndex,
+        StringOffsetLexer sourceLexer,
         TopLevelItem.LetDecl letDecl,
         List<ModuleBindingGroup> groups,
         ref bool hasFlatBinding,
         ref int cursor)
     {
-        if (!TryExtractFlatBindingValue(source, letDecl.Value, ref cursor, out var valueSource, out var annotation))
+        if (!TryExtractFlatBindingValue(
+                source, sourceIndex, sourceLexer, letDecl.Value,
+                ref cursor, out var valueSource, out var annotation))
         {
             return false;
         }
@@ -3705,6 +3718,8 @@ public static class ProjectSupport
 
     private static bool TryShapeFlatRecursiveGroup(
         string source,
+        SourceTextIndex sourceIndex,
+        StringOffsetLexer sourceLexer,
         TopLevelItem.RecursiveGroup recursiveGroup,
         List<ModuleBindingGroup> groups,
         ref bool hasFlatBinding,
@@ -3716,6 +3731,8 @@ public static class ProjectSupport
             (string name, Expr value) = recursiveGroup.Bindings[index];
             if (!TryExtractFlatBindingValue(
                     source,
+                    sourceIndex,
+                    sourceLexer,
                     value,
                     ref cursor,
                     out string valueSource,
@@ -3770,20 +3787,24 @@ public static class ProjectSupport
     /// function sugar (<c>let f x y = body</c>) is reconstructed into an explicit lambda chain so the
     /// stitched binding stays a plain value expression.
     /// </summary>
-    private static bool TryExtractFlatBindingValue(string source, Expr value, ref int cursor, out string valueSource)
-    {
-        return TryExtractFlatBindingValue(source, value, ref cursor, out valueSource, out _);
-    }
-
-    private static bool TryExtractFlatBindingValue(string source, Expr value, ref int cursor, out string valueSource, out string? annotation)
+    private static bool TryExtractFlatBindingValue(
+        string source,
+        SourceTextIndex sourceIndex,
+        StringOffsetLexer sourceLexer,
+        Expr value,
+        ref int cursor,
+        out string valueSource,
+        out string? annotation)
     {
         valueSource = string.Empty;
-        if (!TryScanFlatLetHeader(source, cursor, out var parameters, out var valueStart, out annotation))
+        if (!TryScanFlatLetHeader(
+                source, sourceLexer, cursor,
+                out var parameters, out var valueStart, out annotation))
         {
             return false;
         }
 
-        var valueEnd = new SourceTextIndex(source).ToUtf16Offset(AstSpans.GetOrDefault(value).End);
+        var valueEnd = sourceIndex.ToUtf16Offset(AstSpans.GetOrDefault(value).End);
         if (valueEnd <= valueStart || valueEnd > source.Length)
         {
             return false;
@@ -3795,7 +3816,7 @@ public static class ProjectSupport
         // recorded value end stops before the closing `)`. Extending past the closing brackets that
         // balance opens within the extracted value keeps the stitched binding syntactically complete;
         // for an already-balanced value (the common case) this is a no-op.
-        valueEnd = ExtendToBalancedEnd(source, valueStart, valueEnd);
+        valueEnd = ExtendToBalancedEnd(sourceLexer, valueEnd);
         if (valueEnd > source.Length)
         {
             return false;
@@ -3819,10 +3840,8 @@ public static class ProjectSupport
     /// value end by the dropped closers; re-balancing recovers them. Returns <paramref name="astEnd"/>
     /// unchanged when the value is already balanced.
     /// </summary>
-    private static int ExtendToBalancedEnd(string source, int from, int astEnd)
+    private static int ExtendToBalancedEnd(StringOffsetLexer lexer, int astEnd)
     {
-        var diag = new Diagnostics();
-        var lexer = new StringOffsetLexer(source[from..], diag);
         var depth = 0;
         var reachedAstEnd = false;
 
@@ -3846,7 +3865,7 @@ public static class ProjectSupport
                     break;
             }
 
-            var absoluteEnd = from + token.Position + token.Length;
+            var absoluteEnd = token.Position + token.Length;
             if (absoluteEnd >= astEnd)
             {
                 reachedAstEnd = true;
@@ -3867,12 +3886,13 @@ public static class ProjectSupport
     /// starting at <paramref name="from"/>, returning any ML-style sugar parameters and the source
     /// position immediately after the value-introducing <c>=</c>.
     /// </summary>
-    private static bool TryScanFlatLetHeader(string source, int from, out IReadOnlyList<string> parameters, out int valueStart)
-    {
-        return TryScanFlatLetHeader(source, from, out parameters, out valueStart, out _);
-    }
-
-    private static bool TryScanFlatLetHeader(string source, int from, out IReadOnlyList<string> parameters, out int valueStart, out string? annotation)
+    private static bool TryScanFlatLetHeader(
+        string source,
+        StringOffsetLexer lexer,
+        int from,
+        out IReadOnlyList<string> parameters,
+        out int valueStart,
+        out string? annotation)
     {
         parameters = [];
         valueStart = from;
@@ -3882,10 +3902,12 @@ public static class ProjectSupport
             return false;
         }
 
-        var diag = new Diagnostics();
-        var lexer = new StringOffsetLexer(source[from..], diag);
-
-        var token = lexer.Next();
+        Token token;
+        do
+        {
+            token = lexer.Next();
+        }
+        while (token.Kind != TokenKind.EOF && token.Position < from);
         if (token.Kind is TokenKind.Let or TokenKind.And)
         {
             token = lexer.Next();
@@ -3905,11 +3927,11 @@ public static class ProjectSupport
 
         if (token.Kind == TokenKind.Colon)
         {
-            return TryScanAnnotatedLetHeader(source, from, lexer, token, out valueStart, out annotation);
+            return TryScanAnnotatedLetHeader(source, lexer, token, out valueStart, out annotation);
         }
 
         var collected = new List<string>();
-        if (!TryScanLetParameters(source, from, lexer, ref token, collected))
+        if (!TryScanLetParameters(source, lexer, ref token, collected))
         {
             return false;
         }
@@ -3920,17 +3942,21 @@ public static class ProjectSupport
         }
 
         parameters = collected;
-        valueStart = from + token.Position + token.Text.Length;
+        valueStart = token.Position + token.Text.Length;
         return true;
     }
 
-    private static bool TryScanLetParameters(string source, int from, StringOffsetLexer lexer, ref Token token, List<string> collected)
+    private static bool TryScanLetParameters(
+        string source,
+        StringOffsetLexer lexer,
+        ref Token token,
+        List<string> collected)
     {
         while (token.Kind is TokenKind.Ident or TokenKind.LParen)
         {
             if (token.Kind == TokenKind.LParen)
             {
-                if (!TryScanParenthesizedParameter(source, from, lexer, ref token, collected))
+                if (!TryScanParenthesizedParameter(source, lexer, ref token, collected))
                 {
                     return false;
                 }
@@ -3946,15 +3972,19 @@ public static class ProjectSupport
     }
 
     private static bool TryScanAnnotatedLetHeader(
-        string source, int from, StringOffsetLexer lexer, Token token, out int valueStart, out string? annotation)
+        string source,
+        StringOffsetLexer lexer,
+        Token token,
+        out int valueStart,
+        out string? annotation)
     {
-        valueStart = from;
+        valueStart = token.Position;
         annotation = null;
 
         // Annotated binding: skip the type expression up to the value-introducing `=`, capturing
         // the annotation source so a stitched module binding can keep it (a `needs {Cap(a)}` row is
         // what marks a generic dictionary-passing function).
-        var annotationStart = from + token.Position + token.Text.Length;
+        var annotationStart = token.Position + token.Text.Length;
         var depth = 0;
         while (token.Kind != TokenKind.EOF)
         {
@@ -3970,8 +4000,8 @@ public static class ProjectSupport
                     depth--;
                     break;
                 case TokenKind.Equals when depth == 0:
-                    annotation = source[annotationStart..(from + token.Position)].Trim();
-                    valueStart = from + token.Position + token.Text.Length;
+                    annotation = source[annotationStart..token.Position].Trim();
+                    valueStart = token.Position + token.Text.Length;
                     return true;
             }
         }
@@ -3980,7 +4010,10 @@ public static class ProjectSupport
     }
 
     private static bool TryScanParenthesizedParameter(
-        string source, int from, StringOffsetLexer lexer, ref Token token, List<string> collected)
+        string source,
+        StringOffsetLexer lexer,
+        ref Token token,
+        List<string> collected)
     {
         // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
         // verbatim so the `given ({param}) ->` reconstruction keeps the annotation.
@@ -3990,7 +4023,7 @@ public static class ProjectSupport
             return false;
         }
 
-        var innerStart = from + token.Position;
+        var innerStart = token.Position;
         token = lexer.Next();
         if (token.Kind != TokenKind.Colon)
         {
@@ -4016,7 +4049,7 @@ public static class ProjectSupport
             }
         }
 
-        collected.Add(source[innerStart..(from + token.Position)].Trim());
+        collected.Add(source[innerStart..token.Position].Trim());
         token = lexer.Next();
         return true;
     }
@@ -4104,7 +4137,7 @@ public static class ProjectSupport
                 {
                     // Parenthesized annotated parameter: `(name: Type)` — capture the inner text
                     // verbatim so the `given ({param}) ->` re-wrap keeps the annotation.
-                    if (!TryScanParenthesizedParameter(source, 0, lexer, ref equals, sugarParams))
+                    if (!TryScanParenthesizedParameter(source, lexer, ref equals, sugarParams))
                     {
                         return false;
                     }

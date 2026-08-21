@@ -72,7 +72,7 @@ public sealed partial class Lowering
     /// dropping the closure value. Recursion is cycle-guarded for recursive ADTs.
     /// </summary>
     private readonly Dictionary<TypeRef, bool> _resourceBearingByResolvedType =
-        new(ReferenceEqualityComparer.Instance);
+        new(ConcreteTypeRefEqualityComparer.Instance);
 
     private bool IsResourceBearing(TypeRef type)
     {

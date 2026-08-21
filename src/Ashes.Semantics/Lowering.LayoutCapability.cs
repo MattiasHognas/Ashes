@@ -3,12 +3,163 @@ namespace Ashes.Semantics;
 public sealed partial class Lowering
 {
     private readonly Dictionary<TypeRef, OrdinaryHeapLayoutCapability> _ordinaryHeapLayoutCapabilities =
-        new(ReferenceEqualityComparer.Instance);
+        new(ConcreteTypeRefEqualityComparer.Instance);
+
+    private sealed class ConcreteTypeRefEqualityComparer : IEqualityComparer<TypeRef>
+    {
+        public static ConcreteTypeRefEqualityComparer Instance { get; } = new();
+
+        public bool Equals(TypeRef? left, TypeRef? right)
+        {
+            if (ReferenceEquals(left, right))
+            {
+                return true;
+            }
+
+            if (left is null || right is null || left.GetType() != right.GetType())
+            {
+                return false;
+            }
+
+            return (left, right) switch
+            {
+                (TypeRef.TUInt a, TypeRef.TUInt b) => a.Bits == b.Bits,
+                (TypeRef.TList a, TypeRef.TList b) => Equals(a.Element, b.Element),
+                (TypeRef.TTuple a, TypeRef.TTuple b) => EqualTypes(a.Elements, b.Elements),
+                (TypeRef.TFun a, TypeRef.TFun b) =>
+                    Equals(a.Arg, b.Arg) && Equals(a.Ret, b.Ret) && Equals(a.Row, b.Row),
+                (TypeRef.TVar a, TypeRef.TVar b) => a.Id == b.Id,
+                (TypeRef.TCapability a, TypeRef.TCapability b) =>
+                    ReferenceEquals(a.Symbol, b.Symbol) && EqualTypes(a.Args, b.Args),
+                (TypeRef.TRow a, TypeRef.TRow b) =>
+                    EqualCapabilities(a.Capabilities, b.Capabilities) && Equals(a.Tail, b.Tail),
+                (TypeRef.TNamedType a, TypeRef.TNamedType b) =>
+                    ReferenceEquals(a.Symbol, b.Symbol) && EqualTypes(a.TypeArgs, b.TypeArgs),
+                (TypeRef.TTypeParam a, TypeRef.TTypeParam b) => ReferenceEquals(a.Symbol, b.Symbol),
+                (TypeRef.TOpaque a, TypeRef.TOpaque b) =>
+                    string.Equals(a.Name, b.Name, StringComparison.Ordinal),
+                (TypeRef.TPtr a, TypeRef.TPtr b) => Equals(a.Pointee, b.Pointee),
+                _ => true,
+            };
+        }
+
+        public int GetHashCode(TypeRef type)
+        {
+            HashCode hash = new();
+            hash.Add(type.GetType());
+            AddTypeHash(ref hash, type);
+            return hash.ToHashCode();
+        }
+
+        private static bool EqualTypes(IReadOnlyList<TypeRef> left, IReadOnlyList<TypeRef> right)
+        {
+            if (left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < left.Count; index++)
+            {
+                if (!Instance.Equals(left[index], right[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool EqualCapabilities(
+            IReadOnlyList<TypeRef.TCapability> left,
+            IReadOnlyList<TypeRef.TCapability> right)
+        {
+            if (left.Count != right.Count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < left.Count; index++)
+            {
+                if (!Instance.Equals(left[index], right[index]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void AddTypeHash(ref HashCode hash, TypeRef type)
+        {
+            switch (type)
+            {
+                case TypeRef.TUInt unsigned:
+                    hash.Add(unsigned.Bits);
+                    break;
+                case TypeRef.TList list:
+                    hash.Add(Instance.GetHashCode(list.Element));
+                    break;
+                case TypeRef.TTuple tuple:
+                    AddTypesHash(ref hash, tuple.Elements);
+                    break;
+                case TypeRef.TFun function:
+                    hash.Add(Instance.GetHashCode(function.Arg));
+                    hash.Add(Instance.GetHashCode(function.Ret));
+                    hash.Add(function.Row is null ? 0 : Instance.GetHashCode(function.Row));
+                    break;
+                case TypeRef.TVar variable:
+                    hash.Add(variable.Id);
+                    break;
+                case TypeRef.TCapability capability:
+                    hash.Add(capability.Symbol, ReferenceEqualityComparer.Instance);
+                    AddTypesHash(ref hash, capability.Args);
+                    break;
+                case TypeRef.TRow row:
+                    AddCapabilitiesHash(ref hash, row.Capabilities);
+                    hash.Add(row.Tail is null ? 0 : Instance.GetHashCode(row.Tail));
+                    break;
+                case TypeRef.TNamedType named:
+                    hash.Add(named.Symbol, ReferenceEqualityComparer.Instance);
+                    AddTypesHash(ref hash, named.TypeArgs);
+                    break;
+                case TypeRef.TTypeParam parameter:
+                    hash.Add(parameter.Symbol, ReferenceEqualityComparer.Instance);
+                    break;
+                case TypeRef.TOpaque opaque:
+                    hash.Add(opaque.Name, StringComparer.Ordinal);
+                    break;
+                case TypeRef.TPtr pointer:
+                    hash.Add(Instance.GetHashCode(pointer.Pointee));
+                    break;
+            }
+        }
+
+        private static void AddTypesHash(ref HashCode hash, IReadOnlyList<TypeRef> types)
+        {
+            hash.Add(types.Count);
+            foreach (TypeRef type in types)
+            {
+                hash.Add(Instance.GetHashCode(type));
+            }
+        }
+
+        private static void AddCapabilitiesHash(
+            ref HashCode hash,
+            IReadOnlyList<TypeRef.TCapability> capabilities)
+        {
+            hash.Add(capabilities.Count);
+            foreach (TypeRef.TCapability capability in capabilities)
+            {
+                hash.Add(Instance.GetHashCode(capability));
+            }
+        }
+    }
 
     private OrdinaryHeapLayoutCapability GetOrdinaryHeapLayoutCapability(TypeRef type)
     {
         TypeRef resolved = EraseZeroCostTypeRepresentation(type);
-        bool cacheable = !ValueTypeRemainsAbstract(resolved);
+        bool remainsAbstract = ValueTypeRemainsAbstract(resolved);
+        bool cacheable = !remainsAbstract;
         if (cacheable
             && _ordinaryHeapLayoutCapabilities.TryGetValue(
                 resolved,
@@ -18,7 +169,7 @@ public sealed partial class Lowering
         }
 
         OrdinaryHeapLayoutCapability capability =
-            ComputeOrdinaryHeapLayoutCapability(resolved);
+            ComputeOrdinaryHeapLayoutCapability(resolved, remainsAbstract);
         if (cacheable)
         {
             _ordinaryHeapLayoutCapabilities[resolved] = capability;
@@ -27,7 +178,9 @@ public sealed partial class Lowering
         return capability;
     }
 
-    private OrdinaryHeapLayoutCapability ComputeOrdinaryHeapLayoutCapability(TypeRef resolved)
+    private OrdinaryHeapLayoutCapability ComputeOrdinaryHeapLayoutCapability(
+        TypeRef resolved,
+        bool remainsAbstract)
     {
         OrdinaryHeapStructuralCopyKind structuralCopy = GetStructuralCopyKind(
             resolved,
@@ -39,9 +192,10 @@ public sealed partial class Lowering
             resolved,
             new HashSet<TypeSymbol>());
         bool containsResourceOrBorrowedView = IsResourceBearing(resolved);
-        bool unresolved = ContainsUnresolvedLayoutType(
-            resolved,
-            new HashSet<TypeSymbol>());
+        bool unresolved = remainsAbstract
+            && ContainsUnresolvedLayoutType(
+                resolved,
+                new HashSet<TypeSymbol>());
 
         GetRuntimeAdtLayoutSupport(
             resolved,

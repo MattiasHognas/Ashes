@@ -1053,13 +1053,9 @@ internal static partial class LlvmCodegen
     private static void EmitHeapEnsureSpace(LlvmCodegenState state, LlvmValueHandle sizeBytes, LlvmValueHandle cursorSlot, LlvmValueHandle endSlot)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_check");
         var growBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_grow");
         var continueBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "heap_ok");
 
-        LlvmApi.BuildBr(builder, checkBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, checkBlock);
         LlvmValueHandle cursor = LlvmApi.BuildLoad2(builder, state.I64, cursorSlot, "heap_check_cursor");
         LlvmValueHandle needed = LlvmApi.BuildAdd(builder, cursor, sizeBytes, "heap_check_needed");
         LlvmValueHandle heapEnd = LlvmApi.BuildLoad2(builder, state.I64, endSlot, "heap_end");
@@ -1067,10 +1063,62 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, overflow, growBlock, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, growBlock);
-        EmitHeapGrow(state, cursorSlot, endSlot, sizeBytes);
-        LlvmApi.BuildBr(builder, checkBlock);
+        LlvmValueHandle helper = GetOrEmitHeapGrowHelper(state);
+        LlvmApi.BuildCall2(
+            builder,
+            HeapGrowHelperType(state),
+            helper,
+            [cursorSlot, endSlot, sizeBytes],
+            "");
+        LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+    }
+
+    private const string HeapGrowHelperName = "__ashes_heap_grow";
+
+    private static LlvmTypeHandle HeapGrowHelperType(LlvmCodegenState state) =>
+        LlvmApi.FunctionType(
+            LlvmApi.VoidTypeInContext(state.Target.Context),
+            [state.I64Ptr, state.I64Ptr, state.I64]);
+
+    private static LlvmValueHandle GetOrEmitHeapGrowHelper(LlvmCodegenState state)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, HeapGrowHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, HeapGrowHelperName, HeapGrowHelperType(state));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+
+        LlvmCodegenState helperState = state with
+        {
+            Function = fn,
+            TempSlots = [],
+            LocalSlots = [],
+            LabelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+            FallthroughBlocks = [],
+            IsEntry = false,
+        };
+        LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        EmitHeapGrow(
+            helperState,
+            LlvmApi.GetParam(fn, 0),
+            LlvmApi.GetParam(fn, 1),
+            LlvmApi.GetParam(fn, 2));
+        LlvmApi.BuildRetVoid(builder);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
     }
 
     private static readonly byte[] HeapAllocFailedMessage =
@@ -1240,28 +1288,12 @@ internal static partial class LlvmCodegen
         var reclaimDoneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_done");
         LlvmApi.BuildCondBr(builder, sameChunk, reclaimDoneBlock, freeChunksBlock);
 
-        // Slow path: abandoned chunks exist — walk the linked list and free them.
+        // Slow path: abandoned chunks exist — use one module-level implementation instead of
+        // making LLVM lower the same reclamation loop at every ownership-scope exit.
         LlvmApi.PositionBuilderAtEnd(builder, freeChunksBlock);
-        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "reclaim_cur_end_slot");
-        LlvmApi.BuildStore(builder, preRestoreEnd, curEndSlot);
-        var loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "reclaim_free_loop");
-        LlvmApi.BuildBr(builder, loopBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
-        LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "reclaim_loop_cur_end");
-        // curEnd points at the chunk's footer, which records the chunk's own base (chunks are
-        // variable-sized, so the base cannot be reconstructed from a fixed size). The header at that
-        // base links to the previous chunk's end. size = (curEnd + footer) - base.
-        LlvmValueHandle curBase = LoadMemory(state, curEnd, 0, "reclaim_loop_cur_base");
-        LlvmValueHandle prevEnd = LoadMemory(state, curBase, 0, "reclaim_loop_prev_end");
-        LlvmValueHandle curSize = LlvmApi.BuildSub(builder,
-            LlvmApi.BuildAdd(builder, curEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "reclaim_loop_cur_top"),
-            curBase, "reclaim_loop_cur_size");
-        EmitFreeOsMemory(state, curBase, curSize, "reclaim_free_chunk");
-        LlvmValueHandle nextEnd = prevEnd;
-        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
-        LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "reclaim_loop_done");
-        LlvmApi.BuildCondBr(builder, doneFreeing, reclaimDoneBlock, loopBlock);
+        LlvmValueHandle helper = GetOrEmitReclaimArenaChunksHelper(state);
+        LlvmApi.BuildCall2(builder, ReclaimArenaChunksHelperType(state), helper, [savedEnd, preRestoreEnd], "");
+        LlvmApi.BuildBr(builder, reclaimDoneBlock);
 
         // Merge point.
         LlvmApi.PositionBuilderAtEnd(builder, reclaimDoneBlock);
@@ -1273,6 +1305,74 @@ internal static partial class LlvmCodegen
         }
 
         return false;
+    }
+
+    private const string ReclaimArenaChunksHelperName = "__ashes_reclaim_arena_chunks";
+
+    private static LlvmTypeHandle ReclaimArenaChunksHelperType(LlvmCodegenState state) =>
+        LlvmApi.FunctionType(LlvmApi.VoidTypeInContext(state.Target.Context), [state.I64, state.I64]);
+
+    private static LlvmValueHandle GetOrEmitReclaimArenaChunksHelper(LlvmCodegenState state)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, ReclaimArenaChunksHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        LlvmValueHandle fn = LlvmApi.AddFunction(
+            state.Target.Module,
+            ReclaimArenaChunksHelperName,
+            ReclaimArenaChunksHelperType(state));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+
+        LlvmCodegenState helperState = state with
+        {
+            Function = fn,
+            TempSlots = [],
+            LocalSlots = [],
+            LabelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+            FallthroughBlocks = [],
+            IsEntry = false,
+        };
+        LlvmValueHandle savedEnd = LlvmApi.GetParam(fn, 0);
+        LlvmValueHandle preRestoreEnd = LlvmApi.GetParam(fn, 1);
+        LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        LlvmBasicBlockHandle loopBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "reclaim_free_loop");
+        LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "reclaim_done");
+
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "reclaim_cur_end_slot");
+        LlvmApi.BuildStore(builder, preRestoreEnd, curEndSlot);
+        LlvmApi.BuildBr(builder, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, loopBlock);
+        LlvmValueHandle curEnd = LlvmApi.BuildLoad2(builder, state.I64, curEndSlot, "reclaim_loop_cur_end");
+        // curEnd points at the chunk's footer, which records the chunk's own base (chunks are
+        // variable-sized, so the base cannot be reconstructed from a fixed size). The header at that
+        // base links to the previous chunk's end. size = (curEnd + footer) - base.
+        LlvmValueHandle curBase = LoadMemory(helperState, curEnd, 0, "reclaim_loop_cur_base");
+        LlvmValueHandle prevEnd = LoadMemory(helperState, curBase, 0, "reclaim_loop_prev_end");
+        LlvmValueHandle curSize = LlvmApi.BuildSub(builder,
+            LlvmApi.BuildAdd(builder, curEnd, LlvmApi.ConstInt(state.I64, ChunkFooterBytes, 0), "reclaim_loop_cur_top"),
+            curBase, "reclaim_loop_cur_size");
+        EmitFreeOsMemory(helperState, curBase, curSize, "reclaim_free_chunk");
+        LlvmValueHandle nextEnd = prevEnd;
+        LlvmApi.BuildStore(builder, nextEnd, curEndSlot);
+        LlvmValueHandle doneFreeing = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, nextEnd, savedEnd, "reclaim_loop_done");
+        LlvmApi.BuildCondBr(builder, doneFreeing, doneBlock, loopBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, doneBlock);
+        LlvmApi.BuildRetVoid(builder);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
     }
 
     /// <summary>
@@ -1366,6 +1466,66 @@ internal static partial class LlvmCodegen
             : EmitCopyOutStringValue(state, srcPtr, state.HeapCursorSlot, state.HeapEndSlot);
 
     private static LlvmValueHandle EmitCopyOutRuntimeManagedStringValue(
+        LlvmCodegenState state,
+        LlvmValueHandle srcPtr)
+    {
+        LlvmValueHandle helper = GetOrEmitCopyOutRuntimeManagedStringHelper(state);
+        return LlvmApi.BuildCall2(
+            state.Target.Builder,
+            CopyOutRuntimeManagedStringHelperType(state),
+            helper,
+            [srcPtr, state.RcFreeListSlot, state.RcArenaCursorSlot, state.RcArenaEndSlot],
+            "copy_out_rc_str_result");
+    }
+
+    private const string CopyOutRuntimeManagedStringHelperName = "__ashes_copy_out_rc_string";
+
+    private static LlvmTypeHandle CopyOutRuntimeManagedStringHelperType(LlvmCodegenState state) =>
+        LlvmApi.FunctionType(state.I64, [state.I64, state.I64Ptr, state.I64Ptr, state.I64Ptr]);
+
+    private static LlvmValueHandle GetOrEmitCopyOutRuntimeManagedStringHelper(LlvmCodegenState state)
+    {
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, CopyOutRuntimeManagedStringHelperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        LlvmValueHandle fn = LlvmApi.AddFunction(
+            state.Target.Module,
+            CopyOutRuntimeManagedStringHelperName,
+            CopyOutRuntimeManagedStringHelperType(state));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+
+        LlvmCodegenState helperState = state with
+        {
+            Function = fn,
+            TempSlots = [],
+            LocalSlots = [],
+            LabelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+            FallthroughBlocks = [],
+            RcFreeListSlot = LlvmApi.GetParam(fn, 1),
+            RcArenaCursorSlot = LlvmApi.GetParam(fn, 2),
+            RcArenaEndSlot = LlvmApi.GetParam(fn, 3),
+            IsEntry = false,
+        };
+        LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        LlvmApi.BuildRet(builder, EmitCopyOutRuntimeManagedStringValueBody(
+            helperState,
+            LlvmApi.GetParam(fn, 0)));
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
+    }
+
+    private static LlvmValueHandle EmitCopyOutRuntimeManagedStringValueBody(
         LlvmCodegenState state,
         LlvmValueHandle srcPtr)
     {

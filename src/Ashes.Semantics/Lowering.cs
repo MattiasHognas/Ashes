@@ -1067,6 +1067,7 @@ public sealed partial class Lowering
         _usesAsync |= ExprContainsAwait(expr)
             || ContainsAsyncSpawn(expr)
             || FreeVars(expr, []).Contains("async");
+        AnalyzeDirectCalleeOnlyUses(expr);
         // Entry function lowering (no env/arg params)
         PushTraitConstraintScope();
         var (resultTemp, resultType) = LowerExpr(expr);
@@ -3609,7 +3610,7 @@ public sealed partial class Lowering
         var stackAllocateClosure = !_collectInferredTraitElaboration
             && !_inCoroutineBody
             && let.Value is Expr.Lambda
-            && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+            && UsesLetNameOnlyAsDirectCallee(let);
         if (stackAllocateClosure && let.Value is Expr.Lambda lambda)
         {
             return LowerLambda(lambda, stackAllocateClosure: true);
@@ -3986,7 +3987,7 @@ public sealed partial class Lowering
             return false;
         }
 
-        bool directCall = UsesNameOnlyAsDirectCallee(let.Body, let.Name);
+        bool directCall = UsesLetNameOnlyAsDirectCallee(let);
         bool directEscape = IsDirectBindingResult(let.Body, let.Name);
         if ((!directCall && !directEscape)
             || directEscape && !directCall && _lambdaDepth > 0
@@ -4245,21 +4246,9 @@ public sealed partial class Lowering
         return !_collectInferredTraitElaboration
             && (ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
             || body is Expr.Let closureLet
-            && (UsesNameOnlyAsDirectCalleeForClosureCapture(closureLet.Body, closureLet.Name)
+            && (UsesLetNameOnlyAsDirectCallee(closureLet)
                 || IsDirectBindingResult(closureLet.Body, closureLet.Name))
             && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName));
-    }
-
-    private bool UsesNameOnlyAsDirectCalleeForClosureCapture(Expr expression, string name)
-    {
-        try
-        {
-            return UsesNameOnlyAsDirectCallee(expression, name);
-        }
-        catch (NotSupportedException)
-        {
-            return false;
-        }
     }
 
     private bool IsRuntimeRcClosureCaptureSafeStringProducer(Expr expression)
@@ -12252,196 +12241,6 @@ public sealed partial class Lowering
         var guard = cases[0].Guard;
         return (guard is null || !ExprReferencesName(guard, name, shadowedInArm))
             && !ExprReferencesName(cases[0].Body, name, shadowedInArm);
-    }
-
-    // The node-kind dispatch is split into ordered groups; each group returns null for the kinds
-    // it does not handle so the next group sees them.
-    private static bool UsesNameOnlyAsDirectCallee(Expr expr, string targetName, bool shadowed = false, bool allowDirectCallee = false)
-    {
-        return UsesNameOnlyAsDirectCalleeAtomOrArith(expr, targetName, shadowed, allowDirectCallee)
-            ?? UsesNameOnlyAsDirectCalleeBitwiseOrCompare(expr, targetName, shadowed)
-            ?? UsesNameOnlyAsDirectCalleeApplicationOrAggregate(expr, targetName, shadowed)
-            ?? UsesNameOnlyAsDirectCalleeBinderForms(expr, targetName, shadowed);
-    }
-
-    private static bool? UsesNameOnlyAsDirectCalleeAtomOrArith(Expr expr, string targetName, bool shadowed, bool allowDirectCallee)
-    {
-        switch (expr)
-        {
-            case Expr.IntLit:
-            case Expr.UIntLit:
-            case Expr.BigIntLit:
-            case Expr.FloatLit:
-            case Expr.StrLit or Expr.RuneLit:
-            case Expr.BoolLit:
-            case Expr.QualifiedVar:
-                return true;
-
-            case Expr.Var v:
-                return shadowed || !string.Equals(v.Name, targetName, StringComparison.Ordinal) || allowDirectCallee;
-
-            case Expr.Add add:
-                return UsesNameOnlyAsDirectCallee(add.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(add.Right, targetName, shadowed);
-            case Expr.Subtract sub:
-                return UsesNameOnlyAsDirectCallee(sub.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(sub.Right, targetName, shadowed);
-            case Expr.Multiply mul:
-                return UsesNameOnlyAsDirectCallee(mul.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(mul.Right, targetName, shadowed);
-            case Expr.Divide div:
-                return UsesNameOnlyAsDirectCallee(div.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(div.Right, targetName, shadowed);
-            case Expr.Modulo modExpr:
-                return UsesNameOnlyAsDirectCallee(modExpr.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(modExpr.Right, targetName, shadowed);
-            default:
-                return null;
-        }
-    }
-
-    private static bool? UsesNameOnlyAsDirectCalleeBitwiseOrCompare(Expr expr, string targetName, bool shadowed)
-    {
-        switch (expr)
-        {
-            case Expr.BitwiseAnd bitAnd:
-                return UsesNameOnlyAsDirectCallee(bitAnd.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(bitAnd.Right, targetName, shadowed);
-            case Expr.BitwiseOr bitOr:
-                return UsesNameOnlyAsDirectCallee(bitOr.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(bitOr.Right, targetName, shadowed);
-            case Expr.BitwiseXor bitXor:
-                return UsesNameOnlyAsDirectCallee(bitXor.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(bitXor.Right, targetName, shadowed);
-            case Expr.ShiftLeft shiftLeft:
-                return UsesNameOnlyAsDirectCallee(shiftLeft.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(shiftLeft.Right, targetName, shadowed);
-            case Expr.ShiftRight shiftRight:
-                return UsesNameOnlyAsDirectCallee(shiftRight.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(shiftRight.Right, targetName, shadowed);
-            case Expr.BitwiseNot bitwiseNot:
-                return UsesNameOnlyAsDirectCallee(bitwiseNot.Operand, targetName, shadowed);
-            case Expr.LogicalNot logicalNot:
-                return UsesNameOnlyAsDirectCallee(logicalNot.Operand, targetName, shadowed);
-            case Expr.GreaterThan gt:
-                return UsesNameOnlyAsDirectCallee(gt.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(gt.Right, targetName, shadowed);
-            case Expr.GreaterOrEqual ge:
-                return UsesNameOnlyAsDirectCallee(ge.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(ge.Right, targetName, shadowed);
-            case Expr.LessThan lt:
-                return UsesNameOnlyAsDirectCallee(lt.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(lt.Right, targetName, shadowed);
-            case Expr.LessOrEqual le:
-                return UsesNameOnlyAsDirectCallee(le.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(le.Right, targetName, shadowed);
-            case Expr.Equal eq:
-                return UsesNameOnlyAsDirectCallee(eq.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(eq.Right, targetName, shadowed);
-            case Expr.NotEqual ne:
-                return UsesNameOnlyAsDirectCallee(ne.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(ne.Right, targetName, shadowed);
-            default:
-                return null;
-        }
-    }
-
-    private static bool? UsesNameOnlyAsDirectCalleeApplicationOrAggregate(Expr expr, string targetName, bool shadowed)
-    {
-        switch (expr)
-        {
-            case Expr.ResultPipe pipe:
-                return UsesNameOnlyAsDirectCallee(pipe.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(pipe.Right, targetName, shadowed);
-            case Expr.ResultMapErrorPipe pipe:
-                return UsesNameOnlyAsDirectCallee(pipe.Left, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(pipe.Right, targetName, shadowed);
-            case Expr.Call call:
-                return UsesNameOnlyAsDirectCallee(call.Func, targetName, shadowed, allowDirectCallee: true)
-                    && UsesNameOnlyAsDirectCallee(call.Arg, targetName, shadowed);
-            case Expr.TupleLit tuple:
-                return tuple.Elements.All(elem => UsesNameOnlyAsDirectCallee(elem, targetName, shadowed));
-            case Expr.ListLit list:
-                return list.Elements.All(elem => UsesNameOnlyAsDirectCallee(elem, targetName, shadowed));
-            case Expr.Cons cons:
-                return UsesNameOnlyAsDirectCallee(cons.Head, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(cons.Tail, targetName, shadowed);
-            case Expr.If iff:
-                return UsesNameOnlyAsDirectCallee(iff.Cond, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(iff.Then, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(iff.Else, targetName, shadowed);
-            default:
-                return null;
-        }
-    }
-
-    private static bool UsesNameOnlyAsDirectCalleeBinderForms(Expr expr, string targetName, bool shadowed)
-    {
-        switch (expr)
-        {
-            case Expr.Let let:
-                return UsesNameOnlyAsDirectCallee(let.Value, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(let.Body, targetName, shadowed || string.Equals(let.Name, targetName, StringComparison.Ordinal));
-            case Expr.LetResult letResult:
-                return UsesNameOnlyAsDirectCallee(letResult.Value, targetName, shadowed)
-                    && UsesNameOnlyAsDirectCallee(letResult.Body, targetName, shadowed || string.Equals(letResult.Name, targetName, StringComparison.Ordinal));
-            case Expr.LetRecursive letRecursive:
-                {
-                    bool nextShadowed = shadowed || string.Equals(letRecursive.Name, targetName, StringComparison.Ordinal);
-                    return UsesNameOnlyAsDirectCallee(letRecursive.Value, targetName, nextShadowed)
-                        && UsesNameOnlyAsDirectCallee(letRecursive.Body, targetName, nextShadowed);
-                }
-            case RecursiveGroupExpr group:
-                {
-                    bool nextShadowed = shadowed
-                        || group.Bindings.Any(binding => string.Equals(binding.Name, targetName, StringComparison.Ordinal));
-                    return group.Bindings.All(binding =>
-                            UsesNameOnlyAsDirectCallee(binding.Value, targetName, nextShadowed))
-                        && UsesNameOnlyAsDirectCallee(group.Body, targetName, nextShadowed);
-                }
-            case Expr.Lambda lam:
-                return UsesNameOnlyAsDirectCallee(lam.Body, targetName, shadowed || string.Equals(lam.ParamName, targetName, StringComparison.Ordinal));
-            case Expr.Match match:
-                return UsesNameOnlyAsDirectCalleeMatch(match, targetName, shadowed);
-            case Expr.Await awaitExpr:
-                return UsesNameOnlyAsDirectCallee(awaitExpr.Task, targetName, shadowed);
-            case Expr.Perform perform:
-                return UsesNameOnlyAsDirectCallee(perform.Operation, targetName, shadowed);
-            case Expr.Handle:
-                // Conservative: a handler's arms may use the name in arbitrary positions.
-                return false;
-            case Expr.RecordLit rl:
-                return rl.Fields.All(f => UsesNameOnlyAsDirectCallee(f.Value, targetName, shadowed));
-            case Expr.RecordUpdate ru:
-                return UsesNameOnlyAsDirectCallee(ru.Target, targetName, shadowed)
-                    && ru.Updates.All(u => UsesNameOnlyAsDirectCallee(u.Value, targetName, shadowed));
-            default:
-                throw new NotSupportedException(expr.GetType().Name);
-        }
-    }
-
-    private static bool UsesNameOnlyAsDirectCalleeMatch(Expr.Match match, string targetName, bool shadowed)
-    {
-        if (!UsesNameOnlyAsDirectCallee(match.Value, targetName, shadowed))
-        {
-            return false;
-        }
-
-        foreach (var matchCase in match.Cases)
-        {
-            bool caseShadowed = shadowed || PatternBindings(matchCase.Pattern).Any(boundName => string.Equals(boundName, targetName, StringComparison.Ordinal));
-            if (matchCase.Guard is not null && !UsesNameOnlyAsDirectCallee(matchCase.Guard, targetName, caseShadowed))
-            {
-                return false;
-            }
-
-            if (!UsesNameOnlyAsDirectCallee(matchCase.Body, targetName, caseShadowed))
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /// <summary>

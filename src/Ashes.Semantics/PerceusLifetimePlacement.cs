@@ -64,6 +64,9 @@ internal static class PerceusLifetimePlacement
             .Select(drop => drop.OwnerSlot)
             .Distinct()
             .ToArray();
+        IReadOnlyList<HashSet<int>>? dominators = null;
+        var usedTempsByInstruction = new Dictionary<IrInst, int[]>(
+            ReferenceEqualityComparer.Instance);
 
         foreach (int ownerSlot in ownerSlots)
         {
@@ -76,7 +79,10 @@ internal static class PerceusLifetimePlacement
                 continue;
             }
 
-            PlaceOwner(instructions, ownerSlot, anchor, anchors[0].index, ref tempCount, functionLabel, borrowedArgumentCalls);
+            PlaceOwner(
+                instructions, ownerSlot, anchor, anchors[0].index,
+                ref tempCount, ref dominators, usedTempsByInstruction,
+                functionLabel, borrowedArgumentCalls);
         }
 
         return new LifetimePlacementResult(instructions, tempCount);
@@ -88,6 +94,8 @@ internal static class PerceusLifetimePlacement
         IrInst.RcDrop anchor,
         int anchorIndex,
         ref int tempCount,
+        ref IReadOnlyList<HashSet<int>>? dominators,
+        Dictionary<IrInst, int[]> usedTempsByInstruction,
         string functionLabel,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls)
     {
@@ -104,7 +112,9 @@ internal static class PerceusLifetimePlacement
             return;
         }
 
-        HashSet<int> region = ReachableBeforeBoundary(blocks, definitionBlock, boundaryBlock);
+        dominators ??= ComputeDominators(blocks);
+        HashSet<int> region = ReachableBeforeBoundary(
+            blocks, dominators, definitionBlock, boundaryBlock);
         if (region.Count == 0)
         {
             return;
@@ -115,7 +125,12 @@ internal static class PerceusLifetimePlacement
         {
             Block block = blocks[blockIndex];
             block.OwnerLoads = FindOwnerLoads(instructions, block, ownerSlot);
-            block.OwnerUses = FindOwnerUses(instructions, block, ownerSlot, ownerAliases);
+            block.OwnerUses = FindOwnerUses(
+                instructions,
+                block,
+                ownerSlot,
+                ownerAliases,
+                usedTempsByInstruction);
             block.HasUse = block.OwnerUses.Count > 0;
         }
 
@@ -359,10 +374,10 @@ internal static class PerceusLifetimePlacement
         List<IrInst> instructions,
         Block block,
         int ownerSlot,
-        HashSet<int> aliases)
+        HashSet<int> aliases,
+        Dictionary<IrInst, int[]> usedTempsByInstruction)
     {
         var uses = new List<int>();
-        var usedTemps = new HashSet<int>();
         for (int i = block.Start; i < block.End; i++)
         {
             if (instructions[i] is IrInst.LoadLocal { Slot: var slot } && slot == ownerSlot)
@@ -371,15 +386,32 @@ internal static class PerceusLifetimePlacement
                 continue;
             }
 
-            usedTemps.Clear();
-            IrOptimizer.CollectUsedTemps(instructions[i], usedTemps);
-            if (usedTemps.Overlaps(aliases))
+            int[] usedTemps = GetUsedTemps(
+                instructions[i],
+                usedTempsByInstruction);
+            if (usedTemps.Any(aliases.Contains))
             {
                 uses.Add(i);
             }
         }
 
         return uses;
+    }
+
+    private static int[] GetUsedTemps(
+        IrInst instruction,
+        Dictionary<IrInst, int[]> usedTempsByInstruction)
+    {
+        if (usedTempsByInstruction.TryGetValue(instruction, out int[]? usedTemps))
+        {
+            return usedTemps;
+        }
+
+        HashSet<int> collected = [];
+        IrOptimizer.CollectUsedTemps(instruction, collected);
+        usedTemps = [.. collected];
+        usedTempsByInstruction[instruction] = usedTemps;
+        return usedTemps;
     }
 
     private static List<int> FindOwnerLoads(List<IrInst> instructions, Block block, int ownerSlot)
@@ -422,9 +454,12 @@ internal static class PerceusLifetimePlacement
         added.Add(instruction);
     }
 
-    private static HashSet<int> ReachableBeforeBoundary(List<Block> blocks, int start, int boundary)
+    private static HashSet<int> ReachableBeforeBoundary(
+        List<Block> blocks,
+        IReadOnlyList<HashSet<int>> dominators,
+        int start,
+        int boundary)
     {
-        IReadOnlyList<HashSet<int>> dominators = ComputeDominators(blocks);
         var reachable = new HashSet<int>();
         var pending = new Stack<int>();
         pending.Push(start);
