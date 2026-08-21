@@ -1442,10 +1442,9 @@ public sealed partial class Lowering
         int bodySlot = NewLocal();
         Emit(new IrInst.StoreLocal(bodySlot, bodyTemp));
         var resultName = $"__handle_result_{_nextCapabilitySiteId++}";
-        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal)
-        {
-            [resultName] = new Binding.Local(bodySlot, bodyType),
-        });
+        _scopes.Push(System.Collections.Immutable.ImmutableSortedDictionary
+            .Create<string, Binding>(StringComparer.Ordinal)
+            .Add(resultName, new Binding.Local(bodySlot, bodyType)));
         var scrutinee = new Expr.Var(resultName);
         AstSpans.Set(scrutinee, GetSpan(returnArm.Body));
         var returnMatch = new Expr.Match(scrutinee, [new MatchCase(returnArm.Parameters[0], returnArm.Body)], GetSpan(handle).Start);

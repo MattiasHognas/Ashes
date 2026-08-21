@@ -469,7 +469,7 @@ public sealed partial class Lowering
         IReadOnlyList<string>? parameterNames = null,
         bool isParameter = false)
     {
-        if (!IsValidSpan(span))
+        if (_collectInferredTraitElaboration || !IsValidSpan(span))
         {
             return;
         }
@@ -516,6 +516,11 @@ public sealed partial class Lowering
 
     private void RegisterHoverParameterNames(TextSpan definitionSpan, Expr value)
     {
+        if (_collectInferredTraitElaboration)
+        {
+            return;
+        }
+
         if (GetDeclaredHoverParameterNames(value) is { Count: > 0 } parameterNames)
         {
             _hoverParameterNamesByDefinitionStart[definitionSpan.Start] = parameterNames;

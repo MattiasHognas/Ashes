@@ -617,10 +617,12 @@ public sealed partial class Lowering
             }
         }
 
-        var inlineScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
+        var inlineScope = _scopes.Peek();
         for (int i = 0; i < paramNames.Count; i++)
         {
-            inlineScope[paramNames[i]] = new Binding.Local(argSlots[i], argTypes[i]);
+            inlineScope = inlineScope.SetItem(
+                paramNames[i],
+                new Binding.Local(argSlots[i], argTypes[i]));
         }
 
         _scopes.Push(inlineScope);
@@ -1975,7 +1977,7 @@ public sealed partial class Lowering
         _specializationConcreteParamTypes = concreteParamTypes;
         _specializationParamCursor = 0;
         _scopes.Clear();
-        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+        _scopes.Push(System.Collections.Immutable.ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
         _lambdaDepth = savedLambdaDepth == 0 ? 1 : savedLambdaDepth;
 
         int instBefore = _inst.Count;

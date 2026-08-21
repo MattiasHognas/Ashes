@@ -475,7 +475,7 @@ public sealed partial class Lowering
         {
             type = WithCapabilityRow(type, BuiltinCapabilityRow(runtimeCapabilities));
         }
-        _scopes.Peek()[function.Name] = new Binding.ExternalFunction(irFunction, type);
+        SetCurrentScopeBinding(function.Name, new Binding.ExternalFunction(irFunction, type));
     }
 
     private IReadOnlyList<string> ResolveExternalRuntimeCapabilities(

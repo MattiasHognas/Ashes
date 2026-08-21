@@ -2,9 +2,33 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    private readonly Dictionary<TypeRef, OrdinaryHeapLayoutCapability> _ordinaryHeapLayoutCapabilities =
+        new(ReferenceEqualityComparer.Instance);
+
     private OrdinaryHeapLayoutCapability GetOrdinaryHeapLayoutCapability(TypeRef type)
     {
         TypeRef resolved = EraseZeroCostTypeRepresentation(type);
+        bool cacheable = !ValueTypeRemainsAbstract(resolved);
+        if (cacheable
+            && _ordinaryHeapLayoutCapabilities.TryGetValue(
+                resolved,
+                out OrdinaryHeapLayoutCapability? cached))
+        {
+            return cached;
+        }
+
+        OrdinaryHeapLayoutCapability capability =
+            ComputeOrdinaryHeapLayoutCapability(resolved);
+        if (cacheable)
+        {
+            _ordinaryHeapLayoutCapabilities[resolved] = capability;
+        }
+
+        return capability;
+    }
+
+    private OrdinaryHeapLayoutCapability ComputeOrdinaryHeapLayoutCapability(TypeRef resolved)
+    {
         OrdinaryHeapStructuralCopyKind structuralCopy = GetStructuralCopyKind(
             resolved,
             out int? staticCopySizeBytes);
@@ -37,7 +61,6 @@ public sealed partial class Lowering
         List<OrdinaryHeapLayoutChild> children = DescribeOrdinaryHeapChildren(resolved);
         bool containsOwnedChild = children.Any(child =>
             child.DropKind != OrdinaryHeapChildDropKind.None);
-
         OrdinaryHeapLayoutRejection rejections = BuildLayoutRejections(
             containsResourceOrBorrowedView,
             ownedChildrenDroppable,

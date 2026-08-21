@@ -195,7 +195,19 @@ public sealed partial class Lowering
             _primaryFunctionLabelBySource.TryAdd(source, function.Label);
         }
 
-        CaptureValuePlacements(origin);
+        if (_collectInferredTraitElaboration)
+        {
+            function = function with
+            {
+                Instructions = [],
+                LocalNames = new Dictionary<int, string>(),
+                LocalTypes = new Dictionary<int, TypeRef>(),
+            };
+        }
+        else
+        {
+            CaptureValuePlacements(origin);
+        }
         _funcs.Add(function with { Origin = origin });
     }
 

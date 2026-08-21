@@ -2107,8 +2107,7 @@ public sealed partial class Lowering
         TraitEvidencePlan.Instance implementation = (TraitEvidencePlan.Instance)plan;
         includedTraits.Add(implementation.Goal.Trait.QualifiedName);
         Dictionary<string, (int Temp, TypeRef Type)> methodValues = new(StringComparer.Ordinal);
-        Dictionary<string, Binding> methodScope = new(_scopes.Peek(), StringComparer.Ordinal);
-        _scopes.Push(methodScope);
+        _scopes.Push(_scopes.Peek());
         foreach (TraitMethodSymbol method in OrderTraitMethodsForConstruction(implementation, span))
         {
             (int Temp, TypeRef Type) methodValue = BuildTraitImplementationMethod(implementation, method, span);
@@ -2116,7 +2115,9 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, methodValue.Temp));
             string bindingName = TraitImplementationMethodBindingName(implementation.Goal.Trait, method.Name);
-            _scopes.Peek()[bindingName] = new Binding.Local(slot, methodValue.Type, method.Span);
+            SetCurrentScopeBinding(
+                bindingName,
+                new Binding.Local(slot, methodValue.Type, method.Span));
         }
         _scopes.Pop();
         List<(int Temp, TypeRef Type)> fields = implementation.Goal.Trait.Methods.Values

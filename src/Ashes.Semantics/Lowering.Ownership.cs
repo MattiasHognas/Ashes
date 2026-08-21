@@ -71,7 +71,28 @@ public sealed partial class Lowering
     /// excluded: a resource captured by a closure is handled by the escape logic (Gap B), not by
     /// dropping the closure value. Recursion is cycle-guarded for recursive ADTs.
     /// </summary>
-    private bool IsResourceBearing(TypeRef type) => IsResourceBearing(type, new HashSet<string>(StringComparer.Ordinal));
+    private readonly Dictionary<TypeRef, bool> _resourceBearingByResolvedType =
+        new(ReferenceEqualityComparer.Instance);
+
+    private bool IsResourceBearing(TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        bool cacheable = !ValueTypeRemainsAbstract(pruned);
+        if (cacheable && _resourceBearingByResolvedType.TryGetValue(pruned, out bool cached))
+        {
+            return cached;
+        }
+
+        bool result = IsResourceBearing(
+            pruned,
+            new HashSet<string>(StringComparer.Ordinal));
+        if (cacheable)
+        {
+            _resourceBearingByResolvedType[pruned] = result;
+        }
+
+        return result;
+    }
 
     private bool IsResourceBearing(TypeRef type, HashSet<string> visiting)
     {
@@ -230,7 +251,7 @@ public sealed partial class Lowering
             // A direct resource is not also "resource-bearing"; only aggregates that nest a resource
             // need the recursive walk at drop time.
             bool isResourceBearing = !isResource && type is not null && IsResourceBearing(type);
-            _ownershipScopes.Peek()[name] = new OwnershipInfo(
+            var info = new OwnershipInfo(
                 slot,
                 typeName,
                 isResource,
@@ -243,6 +264,47 @@ public sealed partial class Lowering
                 excludedDropFieldIndices,
                 perceusPatternOwner,
                 perceusRootParameterSlot);
+            Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Peek();
+            if (scope.TryGetValue(name, out OwnershipInfo? previous))
+            {
+                RemoveOwnedValueFromIndex(name, previous);
+            }
+
+            scope[name] = info;
+            AddOwnedValueToIndex(name, info);
+        }
+    }
+
+    private void AddOwnedValueToIndex(string name, OwnershipInfo info)
+    {
+        if (!_ownedValuesByName.TryGetValue(name, out List<OwnershipInfo>? values))
+        {
+            values = [];
+            _ownedValuesByName.Add(name, values);
+        }
+
+        values.Add(info);
+    }
+
+    private void RemoveOwnedValueFromIndex(string name, OwnershipInfo info)
+    {
+        if (!_ownedValuesByName.TryGetValue(name, out List<OwnershipInfo>? values))
+        {
+            return;
+        }
+
+        for (int i = values.Count - 1; i >= 0; i--)
+        {
+            if (ReferenceEquals(values[i], info))
+            {
+                values.RemoveAt(i);
+                break;
+            }
+        }
+
+        if (values.Count == 0)
+        {
+            _ownedValuesByName.Remove(name);
         }
     }
 
@@ -255,22 +317,22 @@ public sealed partial class Lowering
     {
         // A stable pattern owner deliberately supersedes the old parent-alias path. Check that exact
         // live identity before consulting the compatibility alias map, which is source-name keyed.
-        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
+        if (_ownedValuesByName.TryGetValue(name, out List<OwnershipInfo>? directValues))
         {
-            if (scope.TryGetValue(name, out OwnershipInfo? direct)
-                && direct.PerceusPatternOwner)
+            for (int i = directValues.Count - 1; i >= 0; i--)
             {
-                return direct;
+                if (directValues[i].PerceusPatternOwner)
+                {
+                    return directValues[i];
+                }
             }
         }
 
         var resolved = ResolveOwnershipAlias(name);
-        foreach (Dictionary<string, OwnershipInfo> scope in _ownershipScopes)
+        if (_ownedValuesByName.TryGetValue(resolved, out List<OwnershipInfo>? resolvedValues)
+            && resolvedValues.Count > 0)
         {
-            if (scope.TryGetValue(resolved, out OwnershipInfo? info))
-            {
-                return info;
-            }
+            return resolvedValues[^1];
         }
 
         return null;
@@ -1474,6 +1536,12 @@ public sealed partial class Lowering
     /// </summary>
     private void EmitArenaWatermark()
     {
+        if (_collectInferredTraitElaboration)
+        {
+            _arenaWatermarks.Push((-1, -1));
+            return;
+        }
+
         int cursorSlot = NewLocal();
         int endSlot = NewLocal();
         _arenaWatermarks.Push((cursorSlot, endSlot));
@@ -1489,6 +1557,31 @@ public sealed partial class Lowering
     private void PushOwnershipScope()
     {
         _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
+    }
+
+    private void PopTrackedOwnershipScope()
+    {
+        Dictionary<string, OwnershipInfo> scope = _ownershipScopes.Pop();
+        foreach ((string name, OwnershipInfo info) in scope)
+        {
+            RemoveOwnedValueFromIndex(name, info);
+        }
+    }
+
+    private void ClearOwnershipScopes()
+    {
+        _ownershipScopes.Clear();
+        _ownedValuesByName.Clear();
+    }
+
+    private void RestoreOwnershipScope(Dictionary<string, OwnershipInfo> savedScope)
+    {
+        var scope = new Dictionary<string, OwnershipInfo>(savedScope, StringComparer.Ordinal);
+        _ownershipScopes.Push(scope);
+        foreach ((string name, OwnershipInfo info) in scope)
+        {
+            AddOwnedValueToIndex(name, info);
+        }
     }
 
     /// <summary>
@@ -1514,6 +1607,13 @@ public sealed partial class Lowering
     ///   <paramref name="resultTemp"/>. Otherwise it equals <paramref name="resultTemp"/>.</returns>
     private int PopOwnershipScope(TypeRef? resultType = null, int resultTemp = -1)
     {
+        if (_collectInferredTraitElaboration)
+        {
+            PopTrackedOwnershipScope();
+            _arenaWatermarks.Pop();
+            return resultTemp;
+        }
+
         SkipDropsForResourcesEscapingViaResult(resultTemp);
         bool hadAliveOwned = HasAliveOwnedValuesInCurrentScope();
         EmitDropsForCurrentScope();
@@ -1545,7 +1645,7 @@ public sealed partial class Lowering
             // No arena action; the caller retains the original result pointer.
         }
 
-        _ownershipScopes.Pop();
+        PopTrackedOwnershipScope();
         return resultTemp;
     }
 
@@ -1593,7 +1693,7 @@ public sealed partial class Lowering
             MarkRuntimeManagedTemp(copyDest);
         }
         Emit(new IrInst.ReclaimArenaChunks(endSlot, preRestoreEndSlot));
-        _ownershipScopes.Pop();
+        PopTrackedOwnershipScope();
         if (guardResultSlot >= 0)
         {
             Emit(new IrInst.StoreLocal(guardResultSlot, copyDest));
