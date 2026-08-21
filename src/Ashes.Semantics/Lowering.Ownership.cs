@@ -165,11 +165,12 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// A tail self-call receives a borrow when its argument is an iteration-local runtime owner.
-    /// Retain that successor before the current arm's lexical owner is released at the back edge.
-    /// Runtime-managed parameters are not ownership-scope entries and therefore do not enter here.
+    /// A transferred aggregate child or tail self-call argument receives a borrow when its source is
+    /// an iteration-local runtime owner. Retain that successor before the current lexical owner is
+    /// released. Runtime-managed parameters are not ownership-scope entries and therefore do not
+    /// enter here.
     /// </summary>
-    private int DuplicateRuntimeManagedTcoOwnedArgument(
+    private int DuplicateRuntimeManagedOwnedValueForTransfer(
         Expr argument,
         int argumentTemp,
         TypeRef argumentType)
