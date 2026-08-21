@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using Ashes.Frontend;
 
@@ -1265,8 +1266,8 @@ public sealed partial class Lowering
         Debug.Assert(stateStructSlot == 0, "State struct slot must be 0");
 
         _scopes.Clear();
-        _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
-        _ownershipScopes.Clear();
+        _scopes.Push(ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
+        ClearOwnershipScopes();
         _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
         _arenaWatermarks.Clear();
         _arenaWatermarks.Push((-1, -1));
@@ -1331,7 +1332,7 @@ public sealed partial class Lowering
         List<IrInst> Instructions,
         int NextTempSlot,
         int NextLocalSlot,
-        Dictionary<string, Binding>[] Scopes,
+        ImmutableSortedDictionary<string, Binding>[] Scopes,
         Dictionary<string, OwnershipInfo>[] OwnershipScopes,
         (int CursorSlot, int EndSlot)[] ArenaWatermarks,
         TcoContext? TcoCtx,
@@ -1479,12 +1480,12 @@ public sealed partial class Lowering
         _scopes.Clear();
         foreach (var scope in saved.Scopes.Reverse())
         {
-            _scopes.Push(new Dictionary<string, Binding>(scope, StringComparer.Ordinal));
+            _scopes.Push(scope);
         }
-        _ownershipScopes.Clear();
+        ClearOwnershipScopes();
         foreach (var scope in saved.OwnershipScopes.Reverse())
         {
-            _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(scope, StringComparer.Ordinal));
+            RestoreOwnershipScope(scope);
         }
         _arenaWatermarks.Clear();
         foreach (var watermark in saved.ArenaWatermarks.Reverse())
@@ -2276,14 +2277,11 @@ public sealed partial class Lowering
         // locals/env can't cross the function boundary and are captured above instead. Bottom-up so an
         // inner scope's binding wins.
         var globalBindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        foreach (var enclosingScope in _scopes.Reverse())
+        foreach (var (bindingName, binding) in _scopes.Peek())
         {
-            foreach (var (bindingName, binding) in enclosingScope)
+            if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
             {
-                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
-                {
-                    globalBindings[bindingName] = binding;
-                }
+                globalBindings[bindingName] = binding;
             }
         }
 
@@ -2361,7 +2359,7 @@ public sealed partial class Lowering
         var scope = _scopes.Peek();
         foreach (var (bindingName, binding) in globalBindings)
         {
-            scope[bindingName] = binding;
+            scope = scope.SetItem(bindingName, binding);
         }
 
         for (int i = 0; i < captureNames.Count; i++)
@@ -2369,8 +2367,10 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
             RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-            scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+            scope = scope.SetItem(captureNames[i], new Binding.Local(slot, captureTypes[i]));
         }
+        _scopes.Pop();
+        _scopes.Push(scope);
 
         var (valueTemp, valueType) = LowerExpr(valueArg);
         Unify(valueType, successType);
@@ -2501,14 +2501,11 @@ public sealed partial class Lowering
         }
 
         var globalBindings = new Dictionary<string, Binding>(StringComparer.Ordinal);
-        foreach (var enclosingScope in _scopes.Reverse())
+        foreach (var (bindingName, binding) in _scopes.Peek())
         {
-            foreach (var (bindingName, binding) in enclosingScope)
+            if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
             {
-                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
-                {
-                    globalBindings[bindingName] = binding;
-                }
+                globalBindings[bindingName] = binding;
             }
         }
 
@@ -2571,7 +2568,7 @@ public sealed partial class Lowering
         var scope = _scopes.Peek();
         foreach (var (bindingName, binding) in globalBindings)
         {
-            scope[bindingName] = binding;
+            scope = scope.SetItem(bindingName, binding);
         }
 
         var paramSlotByName = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -2580,12 +2577,14 @@ public sealed partial class Lowering
             int slot = NewLocal();
             Emit(new IrInst.StoreLocal(slot, coroutineCaptureTemps[i]));
             RecordLocalDebugInfo(slot, captureNames[i], captureTypes[i]);
-            scope[captureNames[i]] = new Binding.Local(slot, captureTypes[i]);
+            scope = scope.SetItem(captureNames[i], new Binding.Local(slot, captureTypes[i]));
             if (info.ParamNames.Contains(captureNames[i]))
             {
                 paramSlotByName[captureNames[i]] = slot;
             }
         }
+        _scopes.Pop();
+        _scopes.Push(scope);
 
         // A parameter the body never reads is not captured; the back-edge still stores its new
         // value by arity, so give it a scratch slot.

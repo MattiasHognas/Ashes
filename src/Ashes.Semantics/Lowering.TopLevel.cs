@@ -561,18 +561,27 @@ public sealed partial class Lowering
 
         // The members remain monomorphic to one another while their bodies are inferred, then expose
         // the jointly generalized constrained schemes to the continuation.
-        var parent = _scopes.Peek();
-        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal);
-        for (int i = 0; i < bindings.Count; i++)
-        {
-            int memberSlot = tcoSlots?[i] ?? setup.Slots[i];
-            child[bindings[i].Name] = new Binding.Scheme(memberSlot, schemes[i], setup.Members[i].Span);
-        }
-
-        _scopes.Push(child);
+        PushRecursiveGroupContinuationScope(bindings, setup, schemes, tcoSlots);
         var (bodyTemp, bodyType) = LowerExpr(group.Body, request);
         _scopes.Pop();
         return (bodyTemp, bodyType);
+    }
+
+    private void PushRecursiveGroupContinuationScope(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        RecursiveGroupSetup setup,
+        TypeScheme[] schemes,
+        int[]? tcoSlots)
+    {
+        var child = _scopes.Peek();
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            int memberSlot = tcoSlots?[i] ?? setup.Slots[i];
+            child = child.SetItem(
+                bindings[i].Name,
+                new Binding.Scheme(memberSlot, schemes[i], setup.Members[i].Span));
+        }
+        _scopes.Push(child);
     }
 
     private void RegisterRecursiveGroupHoverParameterNames(RecursiveGroupExpr group)
@@ -1005,10 +1014,9 @@ public sealed partial class Lowering
 
         int dispatchSlot = NewLocal();
         var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
-        var dispatchScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
-        {
-            [dispatchName] = new Binding.Local(dispatchSlot, dispatchRecursiveType)
-        };
+        var dispatchScope = _scopes.Peek().SetItem(
+            dispatchName,
+            new Binding.Local(dispatchSlot, dispatchRecursiveType));
         _scopes.Push(dispatchScope);
 
         int paramCount = arity + 1; // the dispatch tag plus the shared parameters

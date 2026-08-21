@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using Ashes.Frontend;
 
@@ -111,12 +112,17 @@ public sealed partial class Lowering
     private readonly Dictionary<string, int> _coroutineHelperArity = new(StringComparer.Ordinal);
     private int _nextAsyncLoopId;
 
-    private readonly Stack<Dictionary<string, Binding>> _scopes = new();
+    private readonly Stack<ImmutableSortedDictionary<string, Binding>> _scopes = new();
 
 
     // Stack of ownership scopes, parallel to _scopes.
     // Each scope level tracks owned values introduced at that level.
     private readonly Stack<Dictionary<string, OwnershipInfo>> _ownershipScopes = new();
+
+    // Ownership scopes are intentionally sparse, so looking up a name by walking every lexical
+    // level is expensive in deeply nested programs. Keep the live entries for each source name in
+    // outer-to-inner order while retaining the scope dictionaries as the cleanup authority.
+    private readonly Dictionary<string, List<OwnershipInfo>> _ownedValuesByName = new(StringComparer.Ordinal);
 
     // Arena watermark local slot pairs (cursor, end) for each ownership scope.
     // SaveArenaState is emitted at scope entry; RestoreArenaState may be emitted
@@ -177,57 +183,172 @@ public sealed partial class Lowering
     private readonly Dictionary<int, int> _reuseBindingSeenBySlot = new();
     private readonly Dictionary<int, string> _reuseTrackedSlotNames = new();
 
-    private static int CountNameOccurrences(object? node, string name)
+    private static Dictionary<string, int> CountNameOccurrences(
+        IEnumerable<Expr> expressions,
+        IEnumerable<string> trackedNames)
     {
-        if (node is null or string)
+        var counts = trackedNames
+            .Distinct(StringComparer.Ordinal)
+            .ToDictionary(name => name, _ => 0, StringComparer.Ordinal);
+        foreach (Expr expression in expressions)
         {
-            return 0;
+            CountNameOccurrences(expression, counts);
         }
 
-        int count = node is Expr.Var v && string.Equals(v.Name, name, StringComparison.Ordinal) ? 1 : 0;
-        if (node is System.Runtime.CompilerServices.ITuple tuple)
+        return counts;
+    }
+
+    private static int CountNameOccurrences(Expr expression, string name)
+    {
+        Dictionary<string, int> counts = CountNameOccurrences([expression], [name]);
+        return counts[name];
+    }
+
+    private static void CountNameOccurrences(Expr expression, Dictionary<string, int> counts)
+    {
+        if (CountNameOccurrencesAtomOrArithmetic(expression, counts)
+            || CountNameOccurrencesBitwiseOrCompare(expression, counts)
+            || CountNameOccurrencesApplicationOrAggregate(expression, counts))
         {
-            for (int i = 0; i < tuple.Length; i++)
+            return;
+        }
+
+        CountNameOccurrencesBinderForms(expression, counts);
+    }
+
+    private static bool CountNameOccurrencesAtomOrArithmetic(
+        Expr expression,
+        Dictionary<string, int> counts)
+    {
+        switch (expression)
+        {
+            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit or Expr.StrLit or Expr.RuneLit
+                or Expr.BoolLit or Expr.QualifiedVar:
+                return true;
+            case Expr.Var variable:
+                if (counts.ContainsKey(variable.Name))
+                {
+                    counts[variable.Name]++;
+                }
+                return true;
+            case Expr.Add value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.Subtract value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.Multiply value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.Divide value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.Modulo value: CountBoth(value.Left, value.Right, counts); return true;
+            default: return false;
+        }
+    }
+
+    private static bool CountNameOccurrencesBitwiseOrCompare(
+        Expr expression,
+        Dictionary<string, int> counts)
+    {
+        switch (expression)
+        {
+            case Expr.BitwiseAnd value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.BitwiseOr value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.BitwiseXor value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.ShiftLeft value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.ShiftRight value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.BitwiseNot value: CountNameOccurrences(value.Operand, counts); return true;
+            case Expr.LogicalNot value: CountNameOccurrences(value.Operand, counts); return true;
+            case Expr.GreaterThan value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.GreaterOrEqual value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.LessThan value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.LessOrEqual value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.Equal value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.NotEqual value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.ResultPipe value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.ResultMapErrorPipe value: CountBoth(value.Left, value.Right, counts); return true;
+            default: return false;
+        }
+    }
+
+    private static bool CountNameOccurrencesApplicationOrAggregate(
+        Expr expression,
+        Dictionary<string, int> counts)
+    {
+        switch (expression)
+        {
+            case Expr.Call value: CountBoth(value.Func, value.Arg, counts); return true;
+            case Expr.TupleLit value: CountNameOccurrences(value.Elements, counts); return true;
+            case Expr.ListLit value: CountNameOccurrences(value.Elements, counts); return true;
+            case Expr.Cons value: CountBoth(value.Head, value.Tail, counts); return true;
+            case Expr.If value:
+                CountNameOccurrences(value.Cond, counts);
+                CountNameOccurrences(value.Then, counts);
+                CountNameOccurrences(value.Else, counts);
+                return true;
+            case Expr.RecordLit value:
+                CountNameOccurrences(value.Fields.Select(field => field.Value), counts);
+                return true;
+            case Expr.RecordUpdate value:
+                CountNameOccurrences(value.Target, counts);
+                CountNameOccurrences(value.Updates.Select(update => update.Value), counts);
+                return true;
+            default: return false;
+        }
+    }
+
+    private static void CountNameOccurrencesBinderForms(
+        Expr expression,
+        Dictionary<string, int> counts)
+    {
+        switch (expression)
+        {
+            case Expr.Let value: CountBoth(value.Value, value.Body, counts); return;
+            case Expr.LetResult value: CountBoth(value.Value, value.Body, counts); return;
+            case Expr.LetRecursive value: CountBoth(value.Value, value.Body, counts); return;
+            case RecursiveGroupExpr value:
+                CountNameOccurrences(value.Bindings.Select(binding => binding.Value), counts);
+                CountNameOccurrences(value.Body, counts);
+                return;
+            case Expr.Lambda value: CountNameOccurrences(value.Body, counts); return;
+            case Expr.Match value: CountNameOccurrences(value, counts); return;
+            case Expr.Await value: CountNameOccurrences(value.Task, counts); return;
+            case Expr.Perform value: CountNameOccurrences(value.Operation, counts); return;
+            case CapabilityPostExpr value: CountBoth(value.Value, value.PostLambda, counts); return;
+            case Expr.Handle value:
+                CountNameOccurrences(value.Body, counts);
+                CountNameOccurrences(value.Arms.Select(arm => arm.Body), counts);
+                return;
+            default: throw new NotSupportedException(expression.GetType().Name);
+        }
+    }
+
+    private static void CountNameOccurrences(
+        Expr.Match expression,
+        Dictionary<string, int> counts)
+    {
+        CountNameOccurrences(expression.Value, counts);
+        foreach (MatchCase matchCase in expression.Cases)
+        {
+            CountNameOccurrences(matchCase.Body, counts);
+            if (matchCase.Guard is not null)
             {
-                count += CountNameOccurrences(tuple[i], name);
+                CountNameOccurrences(matchCase.Guard, counts);
             }
-
-            return count;
         }
+    }
 
-        if (node is System.Collections.IEnumerable seq)
+    private static void CountNameOccurrences(
+        IEnumerable<Expr> expressions,
+        Dictionary<string, int> counts)
+    {
+        foreach (Expr expression in expressions)
         {
-            foreach (var item in seq)
-            {
-                count += CountNameOccurrences(item, name);
-            }
-
-            return count;
+            CountNameOccurrences(expression, counts);
         }
+    }
 
-        if (node is not (Expr or Pattern or MatchCase))
-        {
-            return 0;
-        }
-
-        foreach (var prop in node.GetType().GetProperties())
-        {
-            if (prop.GetIndexParameters().Length > 0)
-            {
-                continue;
-            }
-
-            var t = prop.PropertyType;
-            if (typeof(Expr).IsAssignableFrom(t)
-                || typeof(Pattern).IsAssignableFrom(t)
-                || typeof(MatchCase).IsAssignableFrom(t)
-                || (typeof(System.Collections.IEnumerable).IsAssignableFrom(t) && t != typeof(string)))
-            {
-                count += CountNameOccurrences(prop.GetValue(node), name);
-            }
-        }
-
-        return count;
+    private static void CountBoth(
+        Expr left,
+        Expr right,
+        Dictionary<string, int> counts)
+    {
+        CountNameOccurrences(left, counts);
+        CountNameOccurrences(right, counts);
     }
 
     /// <summary>Branch adjustment for the CO-23 seen-counters: references in a mutually-exclusive
@@ -246,14 +367,12 @@ public sealed partial class Lowering
         // sibling references are pre-credited as seen (they can never execute after a constructor
         // on this path).
         var snapshot = new Dictionary<int, int>(_reuseBindingSeenBySlot);
+        Dictionary<string, int> occurrenceCounts = CountNameOccurrences(
+            otherBranches,
+            _reuseTrackedSlotNames.Values);
         foreach (var (slot, name) in _reuseTrackedSlotNames)
         {
-            int credit = 0;
-            foreach (var other in otherBranches)
-            {
-                credit += CountNameOccurrences(other, name);
-            }
-
+            int credit = occurrenceCounts[name];
             if (credit > 0)
             {
                 _reuseBindingSeenBySlot[slot] = _reuseBindingSeenBySlot.GetValueOrDefault(slot) + credit;
@@ -440,7 +559,7 @@ public sealed partial class Lowering
     // functions it references (Ashes_Map_makeNode, ...) as globals, even though it is generated deep
     // inside a loop body whose scope no longer contains them. See LowerLambdaCore.
     private int _lambdaDepth;
-    private Dictionary<string, Binding>[] _topLevelScopeStack = [];
+    private ImmutableSortedDictionary<string, Binding>[] _topLevelScopeStack = [];
 
     // Registry of top-level functions with an EMPTY closure environment (no captures), keyed by binding
     // name → (IR label, generalized type scheme). Such a function's closure can be reconstructed anywhere
@@ -731,7 +850,7 @@ public sealed partial class Lowering
         {
             AddStdIOBindings(rootScope);
         }
-        _scopes.Push(rootScope);
+        _scopes.Push(rootScope.ToImmutableSortedDictionary(StringComparer.Ordinal));
         _ownershipScopes.Push(new Dictionary<string, OwnershipInfo>(StringComparer.Ordinal));
         // Root scope: push sentinel arena watermark (no restore will happen at program exit)
         _arenaWatermarks.Push((-1, -1));
@@ -999,8 +1118,11 @@ public sealed partial class Lowering
 
     private void FinishEntryInference(TypeRef resultType)
     {
-        ResolveDeferredTcoResets();
-        ResolveDeferredTupleMaterializations();
+        if (!_collectInferredTraitElaboration)
+        {
+            ResolveDeferredTcoResets();
+            ResolveDeferredTupleMaterializations();
+        }
         CheckUnhandledCapabilities();
         LastLoweredType = Prune(resultType);
     }
@@ -3484,7 +3606,8 @@ public sealed partial class Lowering
         // the scheduler and is re-entered later on a fresh frame. A closure or ADT that only ever
         // appears as a direct callee or scrutinee still cannot live on that stack, because the use may
         // sit after an await. Both stay region-backed inside a coroutine.
-        var stackAllocateClosure = !_inCoroutineBody
+        var stackAllocateClosure = !_collectInferredTraitElaboration
+            && !_inCoroutineBody
             && let.Value is Expr.Lambda
             && UsesNameOnlyAsDirectCallee(let.Body, let.Name);
         if (stackAllocateClosure && let.Value is Expr.Lambda lambda)
@@ -3854,7 +3977,8 @@ public sealed partial class Lowering
         LoweredValueRequest request,
         out (int Temp, TypeRef Type) lowered)
     {
-        if (!AllowsAsyncIndependentRcPlacement
+        if (_collectInferredTraitElaboration
+            || !AllowsAsyncIndependentRcPlacement
             || !AllowsOrdinaryRcPlacement
             || !IsRuntimeRcCopyClosureProducer(let.Value))
         {
@@ -4118,11 +4242,12 @@ public sealed partial class Lowering
 
     private bool IsImmediateRuntimeClosureCaptureUse(Expr body, string bindingName)
     {
-        return ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
+        return !_collectInferredTraitElaboration
+            && (ClosureBranchesCaptureForKnownCopyResult(body, bindingName)
             || body is Expr.Let closureLet
             && (UsesNameOnlyAsDirectCalleeForClosureCapture(closureLet.Body, closureLet.Name)
                 || IsDirectBindingResult(closureLet.Body, closureLet.Name))
-            && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName);
+            && ClosureBranchesCaptureForKnownCopyResult(closureLet.Value, bindingName));
     }
 
     private bool UsesNameOnlyAsDirectCalleeForClosureCapture(Expr expression, string name)
@@ -4941,16 +5066,21 @@ public sealed partial class Lowering
 
     private void PushLetScope(Expr.Let let, int slot, TypeScheme scheme)
     {
-        var parent = _scopes.Peek();
-        _scopes.Push(new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
-        {
-            [let.Name] = new Binding.Scheme(slot, scheme, AstSpans.GetLetNameOrDefault(let))
-        });
+        _scopes.Push(_scopes.Peek().SetItem(
+            let.Name,
+            new Binding.Scheme(slot, scheme, AstSpans.GetLetNameOrDefault(let))));
+    }
+
+    private void SetCurrentScopeBinding(string name, Binding binding)
+    {
+        ImmutableSortedDictionary<string, Binding> scope = _scopes.Pop();
+        _scopes.Push(scope.SetItem(name, binding));
     }
 
     private void TrackLetOwnership(Expr.Let let, int slot, int valueTemp, TypeRef valueType)
     {
-        if (_borrowedTraitDictionaryBindings.Contains(let.Name))
+        if (_collectInferredTraitElaboration
+            || _borrowedTraitDictionaryBindings.Contains(let.Name))
         {
             return;
         }
@@ -5017,7 +5147,7 @@ public sealed partial class Lowering
     {
         // Preserve the result only when the scope has drops that could otherwise
         // invalidate or overwrite the temp holding the body result.
-        if (HasAliveOwnedValuesInCurrentScope())
+        if (!_collectInferredTraitElaboration && HasAliveOwnedValuesInCurrentScope())
         {
             int resultSlot = NewLocal();
             Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
@@ -5113,11 +5243,9 @@ public sealed partial class Lowering
         var boundSlot = NewLocal();
         Emit(new IrInst.StoreLocal(boundSlot, payloadTemp));
         RecordLocalDebugInfo(boundSlot, letResult.Name, successType);
-        var child = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal)
-        {
-            [letResult.Name] = new Binding.Local(boundSlot, Prune(successType), AstSpans.GetLetResultNameOrDefault(letResult))
-        };
-        _scopes.Push(child);
+        _scopes.Push(_scopes.Peek().SetItem(
+            letResult.Name,
+            new Binding.Local(boundSlot, Prune(successType), AstSpans.GetLetResultNameOrDefault(letResult))));
         RecordHoverType(AstSpans.GetLetResultNameOrDefault(letResult), letResult.Name, successType);
     }
 
@@ -5295,12 +5423,9 @@ public sealed partial class Lowering
             : NewTypeVar();
         RecordLocalDebugInfo(slot, letRecursive.Name, recursiveType);
 
-        var parent = _scopes.Peek();
-        var child = new Dictionary<string, Binding>(parent, StringComparer.Ordinal)
-        {
-            [letRecursive.Name] = new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))
-        };
-        _scopes.Push(child);
+        _scopes.Push(_scopes.Peek().SetItem(
+            letRecursive.Name,
+            new Binding.Local(slot, recursiveType, AstSpans.GetLetRecursiveNameOrDefault(letRecursive))));
         return recursiveType;
     }
 
@@ -5585,7 +5710,7 @@ public sealed partial class Lowering
             letRecursive.Name.StartsWith("__trait_validate_implementation_", StringComparison.Ordinal)
                 || letRecursive.Name.StartsWith("__trait_impl_", StringComparison.Ordinal),
             SuppressSourceConstraintDiagnostics(letRecursive.Name));
-        Dictionary<string, Binding> selfScope = _scopes.Pop();
+        ImmutableSortedDictionary<string, Binding> selfScope = _scopes.Pop();
         TypeScheme recursiveScheme = GeneralizeBindingType(Prune(schemeType), requirements);
         RecordInferredTraitBindingElaboration(
             letRecursive,
@@ -5599,11 +5724,12 @@ public sealed partial class Lowering
                 _traitDictionaryFunctionsByRecursiveBinding.GetValueOrDefault(TraitBindingKey(letRecursive));
             RegisterTraitDictionaryScheme(recursiveScheme, dictionaryInfo);
         }
-        _scopes.Push(selfScope);
-        selfScope[letRecursive.Name] = new Binding.Scheme(
-            slot,
-            recursiveScheme,
-            AstSpans.GetLetRecursiveNameOrDefault(letRecursive));
+        _scopes.Push(selfScope.SetItem(
+            letRecursive.Name,
+            new Binding.Scheme(
+                slot,
+                recursiveScheme,
+                AstSpans.GetLetRecursiveNameOrDefault(letRecursive))));
         ValidateBindingConstraintBoundary(
             recursiveScheme,
             GetSpan(letRecursive));
@@ -6730,7 +6856,7 @@ public sealed partial class Lowering
         List<IrInst> Inst,
         int TempSlot,
         int LocalSlot,
-        Dictionary<string, Binding>[] Scopes,
+        ImmutableSortedDictionary<string, Binding>[] Scopes,
         bool InCoroutineBody,
         Dictionary<int, string> LocalNames,
         Dictionary<int, TypeRef> LocalTypes,
@@ -6851,12 +6977,10 @@ public sealed partial class Lowering
     // Lambda bodies are lowered as separate functions with a fresh scope. Slot/env bindings are
     // captured elsewhere, but scope-independent bindings must be re-seeded so direct calls to
     // intrinsics, externals, and prelude values still resolve inside helper functions.
-    private static void LowerLambdaCoreReseedScopeIndependentBindings(Dictionary<string, Binding> scope, Dictionary<string, Binding>[] enclosingScopes)
+    private static void LowerLambdaCoreReseedScopeIndependentBindings(
+        Dictionary<string, Binding> scope,
+        ImmutableSortedDictionary<string, Binding>[] enclosingScopes)
     {
-        // Every pushed scope is a complete copy of its parent plus the new bindings, so the topmost
-        // snapshot already contains the final visible binding for every name. Walking the entire
-        // stack rescans progressively larger copies for every lambda and becomes cubic across a
-        // large top-level let chain.
         if (enclosingScopes.Length == 0)
         {
             return;
@@ -6871,7 +6995,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, IReadOnlyDictionary<int, string> knownCaptureLabels, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, Dictionary<string, Binding>[] enclosingScopes)
+    private void LowerLambdaCoreBuildScope(Expr.Lambda lam, string label, TypeRef paramTy, int argSlot, HashSet<string> free, IReadOnlyList<string> captures, IReadOnlyDictionary<int, string> knownCaptureLabels, string? selfName, TypeRef? selfType, IReadOnlyList<string>? selfAliases, RecursiveGroupContext? recursiveGroup, ImmutableSortedDictionary<string, Binding>[] enclosingScopes)
     {
         // Bind param name as local slot
         var scope = new Dictionary<string, Binding>(StringComparer.Ordinal);
@@ -6923,7 +7047,7 @@ public sealed partial class Lowering
         LowerLambdaCoreBindSpecializationGlobals(scope, free);
 
         _scopes.Clear();
-        _scopes.Push(scope);
+        _scopes.Push(scope.ToImmutableSortedDictionary(StringComparer.Ordinal));
     }
 
     private static Binding CreateCapturedBinding(Binding binding, int environmentIndex)
@@ -7022,7 +7146,9 @@ public sealed partial class Lowering
         var scope = _scopes.Peek();
         tco.ParamSlots.Clear();
 
-        LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
+        scope = LowerLambdaCoreBindTcoParamSlots(lam, captures, scope, tco);
+        _scopes.Pop();
+        _scopes.Push(scope);
         LowerLambdaCoreIdentifyRuntimeManagedTcoParams(
             scope,
             tco,
@@ -7071,7 +7197,11 @@ public sealed partial class Lowering
             || type is TypeRef.TNamedType named
                 && (CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named));
 
-    private void LowerLambdaCoreBindTcoParamSlots(Expr.Lambda lam, IReadOnlyList<string> captures, Dictionary<string, Binding> scope, TcoContext tco)
+    private ImmutableSortedDictionary<string, Binding> LowerLambdaCoreBindTcoParamSlots(
+        Expr.Lambda lam,
+        IReadOnlyList<string> captures,
+        ImmutableSortedDictionary<string, Binding> scope,
+        TcoContext tco)
     {
         // Only create mutable local copies for captured params that are PART OF
         // the recursive function's lambda chain (not arbitrary outer captures).
@@ -7104,12 +7234,15 @@ public sealed partial class Lowering
                 Emit(new IrInst.StoreLocal(localSlot, loadTemp));
                 RecordLocalDebugInfo(localSlot, capName, scope[capName].Type);
                 // Override binding to use local slot
-                scope[capName] = new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan);
+                scope = scope.SetItem(
+                    capName,
+                    new Binding.Local(localSlot, scope[capName].Type, scope[capName].DefinitionSpan));
             }
         }
 
         LowerLambdaCoreBuildTcoParamSlots(scope, tco);
         tco.BuildParamStaticFacts();
+        return scope;
     }
 
     private void LowerLambdaCoreBuildTcoParamSlots(
@@ -7863,12 +7996,16 @@ public sealed partial class Lowering
     {
         var func = new IrFunction(
             Label: label,
-            Instructions: new List<IrInst>(_inst),
+            Instructions: _collectInferredTraitElaboration ? [] : new List<IrInst>(_inst),
             LocalCount: _nextLocalSlot,
             TempCount: _nextTempSlot,
             HasEnvAndArgParams: true,
-            LocalNames: new Dictionary<int, string>(_localNames),
-            LocalTypes: SnapshotLocalTypes()
+            LocalNames: _collectInferredTraitElaboration
+                ? new Dictionary<int, string>()
+                : new Dictionary<int, string>(_localNames),
+            LocalTypes: _collectInferredTraitElaboration
+                ? new Dictionary<int, TypeRef>()
+                : SnapshotLocalTypes()
         );
 
         AddFunction(func, origin);
@@ -7888,7 +8025,7 @@ public sealed partial class Lowering
         _scopes.Clear();
         foreach (var s in frame.Scopes.Reverse())
         {
-            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
+            _scopes.Push(s);
         }
 
         _lambdaDepth--;
@@ -10860,7 +10997,7 @@ public sealed partial class Lowering
         _scopes.Clear();
         foreach (var s in savedScopes.Reverse())
         {
-            _scopes.Push(new Dictionary<string, Binding>(s, StringComparer.Ordinal));
+            _scopes.Push(s);
         }
 
         // Produce a closure pointing at the outermost thunk layer, with a null env.
@@ -10888,7 +11025,7 @@ public sealed partial class Lowering
             _localNames.Clear();
             _localTypes.Clear();
             _scopes.Clear();
-            _scopes.Push(new Dictionary<string, Binding>(StringComparer.Ordinal));
+            _scopes.Push(ImmutableSortedDictionary.Create<string, Binding>(StringComparer.Ordinal));
 
             int envSlot = NewLocal(); // slot 0 — must stay 0 (backend convention)
             int argSlot = NewLocal(); // slot 1

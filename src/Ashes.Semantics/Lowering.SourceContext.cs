@@ -62,7 +62,10 @@ public sealed partial class Lowering
     /// </summary>
     private void Emit(IrInst inst)
     {
-        if (_sourceIndex is not null && _currentSourceExpr is not null && !IsRuntimeMachinery(inst))
+        if (!_collectInferredTraitElaboration
+            && _sourceIndex is not null
+            && _currentSourceExpr is not null
+            && !IsRuntimeMachinery(inst))
         {
             TextSpan span = AstSpans.GetOrDefault(_currentSourceExpr);
             if (ResolveSourceLocation(span) is { } resolved)
@@ -71,7 +74,10 @@ public sealed partial class Lowering
             }
         }
 
-        RecordEmittedTempOwnership(inst);
+        if (!_collectInferredTraitElaboration)
+        {
+            RecordEmittedTempOwnership(inst);
+        }
         _inst.Add(inst);
     }
 

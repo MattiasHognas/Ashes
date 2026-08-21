@@ -487,8 +487,7 @@ public sealed partial class Lowering
         {
             var caseFailLabel = i == match.Cases.Count - 1 ? noMatchLabel : NewLabel("match_next");
             var armCleanupLabel = NewLabel("match_arm_cleanup");
-            var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
-            _scopes.Push(caseScope);
+            _scopes.Push(_scopes.Peek());
             // Save the arena watermark before pattern matching and body evaluation
             // so allocations in guard expressions and the arm body are covered.
             EmitArenaWatermark();
@@ -996,8 +995,7 @@ public sealed partial class Lowering
         {
             Emit(new IrInst.Label(armLabels[i]));
 
-            var caseScope = new Dictionary<string, Binding>(_scopes.Peek(), StringComparer.Ordinal);
-            _scopes.Push(caseScope);
+            _scopes.Push(_scopes.Peek());
             EmitArenaWatermark();
             PushOwnershipScope();
 
@@ -1497,7 +1495,7 @@ public sealed partial class Lowering
         foreach (var (name, type) in bindingTypes)
         {
             int slot = NewLocal();
-            _scopes.Peek()[name] = new Binding.Local(slot, Prune(type));
+            SetCurrentScopeBinding(name, new Binding.Local(slot, Prune(type)));
         }
     }
 
@@ -1990,7 +1988,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(slot, valueTemp));
         RecordLocalBytesProvenance(slot, valueTemp);
         RecordLocalDebugInfo(slot, name, bindingTypes[name]);
-        _scopes.Peek()[name] = new Binding.Local(slot, Prune(bindingTypes[name]));
+        SetCurrentScopeBinding(name, new Binding.Local(slot, Prune(bindingTypes[name])));
         if (binder is Pattern.Var variable)
         {
             _tcoCtx?.RegisterPatternBindingSlot(variable, slot);
