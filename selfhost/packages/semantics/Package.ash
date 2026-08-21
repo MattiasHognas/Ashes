@@ -25,4 +25,5 @@ import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectCompilationPlanning
+import AshesCompiler.Semantics.ModuleSemanticStitching
 Unit

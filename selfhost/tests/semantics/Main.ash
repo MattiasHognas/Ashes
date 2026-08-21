@@ -29,6 +29,7 @@ import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
 import ProjectCompilationPlanningTests
+import ModuleSemanticStitchingTests
 let declared result =
     match result with
         | DeclarationResult { context = context, symbol = Some(symbol), duplicate = None } -> (context, symbol)
@@ -181,6 +182,7 @@ let run unit =
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests
     |> ProjectCompilationPlanningTests.runProjectCompilationPlanningTests
+    |> ModuleSemanticStitchingTests.runModuleSemanticStitchingTests
     |> (given (_) -> Ashes.IO.print("all self-hosted semantics foundation tests passed"))
 
 run(Unit)
