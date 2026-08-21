@@ -8,19 +8,26 @@
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
+import AshesCompiler.Semantics.ProgramInference
 import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import Ashes.Collection.List.append as appendList
 export (
     type TraitConstrainedReferenceRewriting(..),
+    value selectedTraitMethodBindingName,
     value rewriteTraitConstrainedValue,
     value rewriteTraitConstrainedReference,
+    value rewriteSelectedTraitMethodImplementation,
 )
 
 type TraitMethodRewriteResolution =
     | TraitMethodRewriteMissing
     | TraitMethodRewriteUnique(Str)
     | TraitMethodRewriteAmbiguous
+
+type TraitMethodRewriteMode =
+    | TraitMethodRewriteActive(List(TraitDictionaryAbiShape))
+    | TraitMethodRewriteSelected(Str, Str)
 
 type TraitConstrainedReferenceRewriting =
     | expression: Maybe(Expr)
@@ -96,6 +103,27 @@ let recursive findTraitMethodInShapes shapes qualifier methodName =
             |> findTraitMethodInShapes(tail)(qualifier)
             |> combineTraitMethodResolution(findTraitMethodInShape(head)(qualifier)(methodName)("root"))
 
+let selectedTraitMethodBindingName traitName methodName = "__trait_selected_" + traitLeafName(traitName) + "_" + methodName
+
+let selectedTraitSelfBindingName traitName methodName = "__trait_impl_" + traitLeafName(traitName) + "_" + methodName
+
+let resolveTraitMethodRewrite mode qualifier methodName =
+    match mode with
+        | TraitMethodRewriteActive(shapes) -> findTraitMethodInShapes(shapes)(qualifier)(methodName)
+        | TraitMethodRewriteSelected(traitName, selectedMethodName) ->
+            if qualifier == traitName
+            then
+                if methodName == selectedMethodName
+                then
+                    methodName
+                    |> selectedTraitSelfBindingName(traitName)
+                    |> TraitMethodRewriteUnique
+                else
+                    methodName
+                    |> selectedTraitMethodBindingName(traitName)
+                    |> TraitMethodRewriteUnique
+            else TraitMethodRewriteMissing
+
 let recursive rewriteOptionalTraitMethodExpression shapes expression =
     match expression with
         | None -> None
@@ -126,7 +154,7 @@ and rewriteTraitMethodReferences shapes expression =
             |> rewriteTraitMethodReferences(shapes)
             |> ExprAt(span)
         | ExprQualifiedVar(qualifier, methodName) ->
-            match findTraitMethodInShapes(shapes)(qualifier)(methodName) with
+            match resolveTraitMethodRewrite(shapes)(qualifier)(methodName) with
                 | TraitMethodRewriteUnique(parameterName) -> ExprVar(parameterName)
                 | _ -> expression
         | ExprAdd(left, right) ->
@@ -322,8 +350,18 @@ let rewriteTraitConstrainedValue value constraints environment =
         | [] -> value
         | shapes ->
             value
-            |> rewriteTraitMethodReferences(shapes)
+            |> rewriteTraitMethodReferences(TraitMethodRewriteActive(shapes))
             |> prependTraitDictionaryParameters(shapes)
+
+let rewriteSelectedTraitMethodImplementation traitName methodName implementation =
+    (let rewritten =
+        rewriteTraitMethodReferences(TraitMethodRewriteSelected(traitName)(methodName))(implementation)
+    in
+        if expressionDependsOnTraitMethod(traitName)(methodName)(implementation)
+        then
+            let selfName = selectedTraitSelfBindingName(traitName)(methodName)
+            in ExprLetRecursive(selfName)(rewritten)(ExprVar(selfName))([])(None)([])
+        else rewritten)
 
 let recursive traitForwardedEvidenceNameFrom rootParameterIndex parentPath path =
     match path with

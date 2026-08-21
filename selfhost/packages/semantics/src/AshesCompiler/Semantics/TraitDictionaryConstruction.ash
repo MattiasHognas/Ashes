@@ -10,6 +10,8 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TraitResolution
 import AshesCompiler.Semantics.ProgramInference
+import AshesCompiler.Semantics.TraitEvidenceRewriting
+import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
@@ -19,7 +21,9 @@ export (
     type TraitDictionaryConstructionPlan(..),
     type TraitDictionaryConstructionError(..),
     type TraitDictionaryConstructionPlanning(..),
+    type TraitDictionaryValueRewriting(..),
     value planTraitDictionaryConstruction,
+    value rewriteTraitDictionaryValue,
 )
 
 type TraitDictionaryMethodSource =
@@ -36,7 +40,7 @@ type TraitDictionaryMethodField =
 type TraitDictionaryConstructionPlan =
     | constraint: TraitConstraint
     | methods: List(TraitDictionaryMethodField)
-    | methodConstructionOrder: List(Str)
+    | methodConstructionOrder: List(TraitDictionaryMethodField)
     | requirements: List(TraitEvidencePlan)
     | supertraits: List(TraitEvidencePlan)
 
@@ -51,13 +55,21 @@ type TraitDictionaryConstructionPlanning =
     | construction: Maybe(TraitDictionaryConstructionPlan)
     | error: Maybe(TraitDictionaryConstructionError)
 
+type TraitDictionaryValueRewriting =
+    | expression: Maybe(Expr)
+    | error: Maybe(TraitDictionaryConstructionError)
+
+type TraitDictionaryExpressionListRewriting =
+    | expressions: List(Expr)
+    | error: Maybe(TraitDictionaryConstructionError)
+
 type TraitDictionaryMethodFieldPlanning =
     | fields: List(TraitDictionaryMethodField)
     | error: Maybe(TraitDictionaryConstructionError)
 
 type TraitDictionaryMethodOrderBuild =
     | completed: List(Str)
-    | reversedOrder: List(Str)
+    | reversedOrder: List(TraitDictionaryMethodField)
     | error: Maybe(TraitDictionaryConstructionError)
 
 let recursive findSuppliedTraitMethod methodName methods =
@@ -108,7 +120,7 @@ let recursive visitTraitMethodDependencies constraint traitName implementation m
                 else visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(tail)(allFields)(active)(completed)(reversedOrder)
 and visitTraitMethodField constraint traitName field allFields active completed reversedOrder =
     match field with
-        | TraitDictionaryMethodField { methodIndex = _methodIndex, methodName = methodName, source = _source, implementation = implementation } ->
+        | TraitDictionaryMethodField { methodIndex = methodIndex, methodName = methodName, source = source, implementation = implementation } ->
             if traitConstructionNameExists(methodName)(completed)
             then TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = None)
             else
@@ -116,7 +128,7 @@ and visitTraitMethodField constraint traitName field allFields active completed 
                 then TraitDictionaryMethodOrderBuild(completed = completed, reversedOrder = reversedOrder, error = Some(TraitDictionaryConstructionMethodCycle(constraint)(methodName)))
                 else
                     match visitTraitMethodDependencies(constraint)(traitName)(implementation)(methodName)(allFields)(allFields)(methodName :: active)(completed)(reversedOrder) with
-                        | TraitDictionaryMethodOrderBuild { completed = dependencyCompleted, reversedOrder = dependencyOrder, error = None } -> TraitDictionaryMethodOrderBuild(completed = methodName :: dependencyCompleted, reversedOrder = methodName :: dependencyOrder, error = None)
+                        | TraitDictionaryMethodOrderBuild { completed = dependencyCompleted, reversedOrder = dependencyOrder, error = None } -> TraitDictionaryMethodOrderBuild(completed = methodName :: dependencyCompleted, reversedOrder = TraitDictionaryMethodField(methodIndex = methodIndex, methodName = methodName, source = source, implementation = implementation) :: dependencyOrder, error = None)
                         | failure -> failure
 
 let recursive planTraitMethodConstructionOrderFrom constraint traitName remaining allFields completed reversedOrder =
@@ -148,3 +160,41 @@ let planTraitDictionaryConstruction evidence environment =
     match evidence with
         | TraitEvidenceParameter(constraint) -> TraitDictionaryConstructionPlanning(construction = None, error = Some(TraitDictionaryConstructionRequiresParameter(constraint)))
         | TraitEvidenceInstance(constraint, implementation, requirements, supertraits) -> planTraitDictionaryInstance(constraint)(implementation)(requirements)(supertraits)(environment)
+
+let recursive traitDictionaryMethodExpressions traitName fields =
+    match fields with
+        | [] -> []
+        | TraitDictionaryMethodField { methodIndex = _methodIndex, methodName = methodName, source = _source, implementation = _implementation } :: tail -> ExprVar(selectedTraitMethodBindingName(traitName)(methodName)) :: traitDictionaryMethodExpressions(traitName)(tail)
+
+let packTraitDictionaryExpressions fields =
+    match fields with
+        | field :: [] -> field
+        | values -> ExprTuple(values)
+
+let recursive bindTraitDictionaryMethods traitName constructionOrder body =
+    match constructionOrder with
+        | [] -> body
+        | TraitDictionaryMethodField { methodIndex = _methodIndex, methodName = methodName, source = _source, implementation = implementation } :: tail -> ExprLet(selectedTraitMethodBindingName(traitName)(methodName))(rewriteSelectedTraitMethodImplementation(traitName)(methodName)(implementation))(bindTraitDictionaryMethods(traitName)(tail)(body))([])(None)([])
+
+let recursive rewriteTraitDictionarySupertraits evidence environment =
+    match evidence with
+        | [] -> TraitDictionaryExpressionListRewriting(expressions = [], error = None)
+        | head :: tail ->
+            match rewriteTraitDictionaryValue(head)(environment) with
+                | TraitDictionaryValueRewriting { expression = None, error = error } -> TraitDictionaryExpressionListRewriting(expressions = [], error = error)
+                | TraitDictionaryValueRewriting { expression = Some(headExpression), error = None } ->
+                    match rewriteTraitDictionarySupertraits(tail)(environment) with
+                        | TraitDictionaryExpressionListRewriting { expressions = _expressions, error = Some(error) } -> TraitDictionaryExpressionListRewriting(expressions = [], error = Some(error))
+                        | TraitDictionaryExpressionListRewriting { expressions = tailExpressions, error = None } -> TraitDictionaryExpressionListRewriting(expressions = headExpression :: tailExpressions, error = None)
+and rewriteTraitDictionaryConstruction construction environment =
+    match construction with
+        | TraitDictionaryConstructionPlan { constraint = TraitConstraint { traitName = traitName, typeArguments = _typeArguments }, methods = methods, methodConstructionOrder = constructionOrder, requirements = _requirements, supertraits = supertraits } ->
+            match rewriteTraitDictionarySupertraits(supertraits)(environment) with
+                | TraitDictionaryExpressionListRewriting { expressions = supertraitExpressions, error = None } ->
+                    let dictionary = packTraitDictionaryExpressions(appendList(traitDictionaryMethodExpressions(traitName)(methods))(supertraitExpressions))
+                    in TraitDictionaryValueRewriting(expression = Some(bindTraitDictionaryMethods(traitName)(constructionOrder)(dictionary)), error = None)
+                | TraitDictionaryExpressionListRewriting { expressions = _expressions, error = error } -> TraitDictionaryValueRewriting(expression = None, error = error)
+and rewriteTraitDictionaryValue evidence environment =
+    match planTraitDictionaryConstruction(evidence)(environment) with
+        | TraitDictionaryConstructionPlanning { construction = Some(construction), error = None } -> rewriteTraitDictionaryConstruction(construction)(environment)
+        | TraitDictionaryConstructionPlanning { construction = _construction, error = error } -> TraitDictionaryValueRewriting(expression = None, error = error)
