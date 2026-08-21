@@ -1,6 +1,6 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-20. This document contains both the capability audit of what Ashes-the-language,
+Status as of 2026-08-21. This document contains both the capability audit of what Ashes-the-language,
 its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
 and the implementation handoff for the active self-hosted toolchain migration. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap and the
@@ -20,7 +20,7 @@ Neither implementation may be removed or changed merely to make the self-hosted 
 | Frontend | Tokens, UTF-8 source spans, lexer, typed syntax model, leading import-header separation, expressions, patterns, types, and whole-program parsing for all current declaration forms | Implemented and covered by pure-Ashes tests; token streams also have shared stage-0/self-hosted parity fixtures |
 | Formatter | Canonical formatting for complete programs, declarations, expressions, patterns, and types, including precedence and idempotence coverage | Implemented and covered by pure-Ashes tests |
 | Semantics foundations | Stable symbols/scopes, semantic types, substitution, unordered open-row unification, constrained schemes, and source type resolution | Implemented and covered by pure-Ashes tests |
-| Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, and sequential top-level inference | Implemented for the listed surface |
+| Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, sequential top-level inference, and package-aware inference of dependency-ordered stitched modules | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads; and deterministic `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence, and syntax-level deriving expansion implemented; physical IR lowering, binding standard implementation references to stitched source, and semantic deriving rejection for resource/opaque/capability fields remain |
 | IR, optimizer, ownership, backend, linker | No self-hosted implementation yet | Not started |
@@ -267,15 +267,19 @@ same public behavior.
   parser, selected-manifest lock-path mapping, content-addressed cache-path mapping, consumption of
   restored locked packages as validated dependency source roots, and root-only local override
   substitution with exact locked namespace/version checks are also complete; dependency-declared
-  overrides are ignored. Registry resolution, cache materialization and hash verification, and the
-  program-global coherence work remain.
+  overrides are ignored. Registry resolution, cache materialization, and hash verification remain.
+  Stitched-project inference now accumulates providers and implementations in one program-global
+  environment.
 - [~] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins. Semantic definition plans now retain source spans,
   source paths, module names, package identities, qualified names, and compiler names; rewritten module
   syntax retains its `At` spans. Rewritten modules are now combined in dependency order, compile-time
   exports and non-entry bodies are removed, the single entry body is retained, and half-open module
   regions plus definition-to-item placements preserve deterministic source/package provenance.
-  Retaining source-function origins through the future IR remains.
+  The combined declarations are inferred in that same order while switching package ownership at every
+  module boundary; deriving expansion stays module-local, trait orphan checks retain package identity,
+  and implementation coherence is program-global. Retaining source-function origins through the future
+  IR remains.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules.
 - [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,

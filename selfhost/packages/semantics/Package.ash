@@ -28,4 +28,5 @@ import AshesCompiler.Semantics.ProjectCompilationPlanning
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ModuleReferenceRewriting
 import AshesCompiler.Semantics.ProjectSyntaxStitching
+import AshesCompiler.Semantics.ProjectInference
 Unit
