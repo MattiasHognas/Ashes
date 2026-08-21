@@ -247,8 +247,11 @@ same public behavior.
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
 - [~] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
-  compiler-private names across stitched modules. Dependency planning and cycle rejection are
-  implemented; stitched semantic scopes and private-name stability remain.
+  compiler-private names across stitched modules. Dependency planning, cycle rejection, and
+  dependency-ordered semantic scopes are implemented. The scope plan assigns deterministic definition
+  identities, records ordinary versus recursive visibility boundaries, realizes resolved selectors and
+  whole-module imports, validates full/short qualifiers and collisions, and assigns stable public and
+  compiler-private names; syntax-tree reference rewriting remains.
 - [x] Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
   defaults, source roots, includes, output settings, registry/path dependencies, dev dependencies,
   root-level local `overrides`, and forward-compatible unknown fields. Filesystem path resolution and
@@ -265,8 +268,10 @@ same public behavior.
   substitution with exact locked namespace/version checks are also complete; dependency-declared
   overrides are ignored. Registry resolution, cache materialization and hash verification, and the
   program-global coherence work remain.
-- [ ] Stitch the complete project while preserving original file/module spans, definition identities,
-  package provenance, and source-function origins.
+- [~] Stitch the complete project while preserving original file/module spans, definition identities,
+  package provenance, and source-function origins. Semantic definition plans now retain source spans,
+  source paths, module names, package identities, qualified names, and compiler names; combining the
+  rewritten module syntax and retaining expression-level spans and source-function origins remain.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules.
 - [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
