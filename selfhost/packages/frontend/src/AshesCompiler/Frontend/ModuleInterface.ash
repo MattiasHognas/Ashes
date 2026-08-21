@@ -48,31 +48,64 @@ let recursive containsExport exportToFind exports =
 let recursive constructorNames (constructors: List(TypeConstructor)) =
     match constructors with
         | [] -> []
-        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest -> deepCopy(name) :: constructorNames(rest)
+        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest ->
+            deepCopy(
+                name
+            ) :: constructorNames(
+                rest
+            )
 
 let recursive bindingNames (bindings: List(LetBindingSyntax)) =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest -> deepCopy(name) :: bindingNames(rest)
+        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest ->
+            deepCopy(
+                name
+            ) :: bindingNames(
+                rest
+            )
 
 let recursive valueExportsForBindings (bindings: List(LetBindingSyntax)) =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest -> ImportValueExport(deepCopy(name)) :: valueExportsForBindings(rest)
+        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest ->
+            ImportValueExport(
+                deepCopy(name)
+            ) :: valueExportsForBindings(rest)
 
 let recursive constructorExports (constructors: List(TypeConstructor)) =
     match constructors with
         | [] -> []
-        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest -> ImportConstructorExport(deepCopy(name)) :: constructorExports(rest)
+        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest ->
+            ImportConstructorExport(
+                deepCopy(name)
+            ) :: constructorExports(rest)
 
 let compatibilityExportsForItem item =
     match unspanTopLevel(item) with
-        | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements }, _recursive) -> [ImportValueExport(deepCopy(name))]
+        | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements }, _recursive) ->
+            [ImportValueExport(
+                deepCopy(name)
+            )]
         | TopLevelRecursiveGroup(bindings) -> valueExportsForBindings(bindings)
-        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) -> ImportTypeExport(deepCopy(name)) :: constructorExports(constructors)
-        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _typeParameters, target = _target }) -> [ImportTypeExport(deepCopy(name))]
-        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) -> [ImportTypeExport(deepCopy(name)), ImportConstructorExport(deepCopy(constructorName))]
-        | TopLevelTrait(TraitDecl { name = name, typeParameters = _typeParameters, supertraits = _supertraits, methods = _methods }) -> [ImportTypeExport(deepCopy(name))]
+        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) ->
+            ImportTypeExport(
+                deepCopy(name)
+            ) :: constructorExports(constructors)
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _typeParameters, target = _target }) ->
+            [ImportTypeExport(
+                deepCopy(name)
+            )]
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) ->
+            [ImportTypeExport(
+                deepCopy(name)
+            ), ImportConstructorExport(
+                deepCopy(constructorName)
+            )]
+        | TopLevelTrait(TraitDecl { name = name, typeParameters = _typeParameters, supertraits = _supertraits, methods = _methods }) ->
+            [ImportTypeExport(
+                deepCopy(name)
+            )]
         | _ -> []
 
 let recursive appendExports left right =
@@ -110,9 +143,18 @@ let recursive hasDeclaredValue name items =
 
 let declaredTypeForItem item =
     match unspanTopLevel(item) with
-        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) -> Some(DeclaredTypeInterface(name = deepCopy(name), constructors = constructorNames(constructors)))
-        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _typeParameters, target = _target }) -> Some(DeclaredTypeInterface(name = deepCopy(name), constructors = []))
-        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) -> Some(DeclaredTypeInterface(name = deepCopy(name), constructors = [deepCopy(constructorName)]))
+        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) ->
+            Some(
+                DeclaredTypeInterface(name = deepCopy(name), constructors = constructorNames(constructors))
+            )
+        | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _typeParameters, target = _target }) ->
+            Some(
+                DeclaredTypeInterface(name = deepCopy(name), constructors = [])
+            )
+        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) ->
+            Some(
+                DeclaredTypeInterface(name = deepCopy(name), constructors = [deepCopy(constructorName)])
+            )
         | _ -> None
 
 let recursive findDeclaredType name items =
@@ -190,7 +232,15 @@ let recursive buildExplicitExports moduleName directModules declarations remaini
             else
                 match addExplicitExport(moduleName)(directModules)(declarations)(item)(reversed) with
                     | Error(error) -> Error(error)
-                    | Ok(next) -> buildExplicitExports(moduleName)(directModules)(declarations)(rest)(exportKey(item) :: keys)(next)
+                    | Ok(next) ->
+                        buildExplicitExports(
+                            moduleName,
+                            directModules,
+                            declarations,
+                            rest,
+                            exportKey(item) :: keys,
+                            next
+                        )
 
 let buildFromItems moduleName directModules items =
     match items with
@@ -207,7 +257,10 @@ let buildFromItems moduleName directModules items =
                 | _ ->
                     if hasExportDeclaration(rest)
                     then Error(InvalidExportDeclaration(moduleName))
-                    else Ok(ModuleImportInterface(name = deepCopy(moduleName), exports = collectCompatibilityExports(items)))
+                    else
+                        Ok(
+                            ModuleImportInterface(name = deepCopy(moduleName), exports = collectCompatibilityExports(items))
+                        )
 
 let buildModuleInterface moduleName directModules program =
     match program with

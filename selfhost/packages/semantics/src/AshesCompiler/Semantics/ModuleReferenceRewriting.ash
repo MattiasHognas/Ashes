@@ -70,17 +70,44 @@ let rewriteTypeName project moduleName boundary typeParameters name =
     then deepCopy(name)
     else
         match parentAndLeaf(name) with
-            | Some((qualifier, leaf)) -> resolveQualifiedCompilerName(project)(moduleName)(qualifier)(StitchedType)(leaf)
+            | Some((qualifier, leaf)) ->
+                resolveQualifiedCompilerName(
+                    project,
+                    moduleName,
+                    qualifier,
+                    StitchedType,
+                    leaf
+                )
             | None -> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedType)(name)
 
 let recursive rewriteTypes project moduleName boundary typeParameters types =
     match types with
         | [] -> []
-        | head :: rest -> rewriteType(project)(moduleName)(boundary)(typeParameters)(head) :: rewriteTypes(project)(moduleName)(boundary)(typeParameters)(rest)
+        | head :: rest ->
+            rewriteType(project)(moduleName)(boundary)(typeParameters)(head) :: rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                rest
+            )
 and rewriteCapabilityTypes project moduleName boundary typeParameters capabilities =
     match capabilities with
         | [] -> []
-        | (name, arguments) :: rest -> (rewriteTypeName(project)(moduleName)(boundary)(typeParameters)(name), rewriteTypes(project)(moduleName)(boundary)(typeParameters)(arguments)) :: rewriteCapabilityTypes(project)(moduleName)(boundary)(typeParameters)(rest)
+        | (name, arguments) :: rest ->
+            (rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                name
+            ), rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                arguments
+            )) :: rewriteCapabilityTypes(project)(moduleName)(boundary)(typeParameters)(rest)
 and rewriteType project moduleName boundary typeParameters typeExpression =
     match typeExpression with
         | TypeAt(span, inner) ->
@@ -96,7 +123,12 @@ and rewriteType project moduleName boundary typeParameters typeExpression =
             |> rewriteTypes(project)(moduleName)(boundary)(typeParameters)
             |> TypeApplied(rewriteTypeName(project)(moduleName)(boundary)(typeParameters)(name))
         | TypeArrow(argument, result, capabilities, tail) ->
-            TypeArrow(rewriteType(project)(moduleName)(boundary)(typeParameters)(argument))(rewriteType(project)(moduleName)(boundary)(typeParameters)(result))(rewriteCapabilityTypes(project)(moduleName)(boundary)(typeParameters)(capabilities))(tail)
+            TypeArrow(
+                rewriteType(project)(moduleName)(boundary)(typeParameters)(argument),
+                rewriteType(project)(moduleName)(boundary)(typeParameters)(result),
+                rewriteCapabilityTypes(project)(moduleName)(boundary)(typeParameters)(capabilities),
+                tail
+            )
         | TypeTuple(elements) ->
             elements
             |> rewriteTypes(project)(moduleName)(boundary)(typeParameters)
@@ -114,15 +146,48 @@ let rewriteOptionalType project moduleName boundary typeParameters annotation =
 let recursive rewriteTraitConstraints project moduleName boundary typeParameters constraints =
     match constraints with
         | [] -> []
-        | TraitConstraintSyntax { traitName = traitName, typeArguments = arguments } :: rest -> TraitConstraintSyntax(traitName = rewriteTypeName(project)(moduleName)(boundary)(typeParameters)(traitName), typeArguments = rewriteTypes(project)(moduleName)(boundary)(typeParameters)(arguments)) :: rewriteTraitConstraints(project)(moduleName)(boundary)(typeParameters)(rest)
+        | TraitConstraintSyntax { traitName = traitName, typeArguments = arguments } :: rest ->
+            TraitConstraintSyntax(traitName = rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                traitName
+            ), typeArguments = rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                arguments
+            )) :: rewriteTraitConstraints(project)(moduleName)(boundary)(typeParameters)(rest)
 
 let recursive rewriteNeedsRow project moduleName boundary typeParameters row =
     match row with
-        | NeedsRowSyntax { capabilities = capabilities, tailVariable = tail } -> NeedsRowSyntax(capabilities = rewriteCapabilityRefs(project)(moduleName)(boundary)(typeParameters)(capabilities), tailVariable = tail)
+        | NeedsRowSyntax { capabilities = capabilities, tailVariable = tail } ->
+            NeedsRowSyntax(capabilities = rewriteCapabilityRefs(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                capabilities
+            ), tailVariable = tail)
 and rewriteCapabilityRefs project moduleName boundary typeParameters capabilities =
     match capabilities with
         | [] -> []
-        | CapabilityRefSyntax { name = name, args = arguments } :: rest -> CapabilityRefSyntax(name = rewriteTypeName(project)(moduleName)(boundary)(typeParameters)(name), args = rewriteTypes(project)(moduleName)(boundary)(typeParameters)(arguments)) :: rewriteCapabilityRefs(project)(moduleName)(boundary)(typeParameters)(rest)
+        | CapabilityRefSyntax { name = name, args = arguments } :: rest ->
+            CapabilityRefSyntax(name = rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                name
+            ), args = rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                arguments
+            )) :: rewriteCapabilityRefs(project)(moduleName)(boundary)(typeParameters)(rest)
 
 let recursive patternNames pattern =
     match pattern with
@@ -159,11 +224,23 @@ and patternFieldNames fields =
 let recursive rewritePatterns project moduleName boundary patterns =
     match patterns with
         | [] -> []
-        | head :: rest -> rewritePattern(project)(moduleName)(boundary)(head) :: rewritePatterns(project)(moduleName)(boundary)(rest)
+        | head :: rest ->
+            rewritePattern(project)(moduleName)(boundary)(head) :: rewritePatterns(
+                project,
+                moduleName,
+                boundary,
+                rest
+            )
 and rewritePatternFields project moduleName boundary fields =
     match fields with
         | [] -> []
-        | (name, pattern) :: rest -> (name, rewritePattern(project)(moduleName)(boundary)(pattern)) :: rewritePatternFields(project)(moduleName)(boundary)(rest)
+        | (name, pattern) :: rest ->
+            (name, rewritePattern(
+                project,
+                moduleName,
+                boundary,
+                pattern
+            )) :: rewritePatternFields(project)(moduleName)(boundary)(rest)
 and rewritePattern project moduleName boundary pattern =
     match pattern with
         | PatternAt(span, inner) ->
@@ -181,7 +258,9 @@ and rewritePattern project moduleName boundary pattern =
         | PatternConstructor(name, arguments) ->
             arguments
             |> rewritePatterns(project)(moduleName)(boundary)
-            |> PatternConstructor(resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name))
+            |> PatternConstructor(
+                resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name)
+            )
         | PatternRecord(name, fields) ->
             fields
             |> rewritePatternFields(project)(moduleName)(boundary)
@@ -236,18 +315,45 @@ let recursive rewriteOptionalExpression project moduleName boundary locals expre
 and rewriteExpressions project moduleName boundary locals expressions =
     match expressions with
         | [] -> []
-        | head :: rest -> rewriteExpression(project)(moduleName)(boundary)(locals)(head) :: rewriteExpressions(project)(moduleName)(boundary)(locals)(rest)
+        | head :: rest ->
+            rewriteExpression(project)(moduleName)(boundary)(locals)(head) :: rewriteExpressions(
+                project,
+                moduleName,
+                boundary,
+                locals,
+                rest
+            )
 and rewriteExpressionFields project moduleName boundary locals fields =
     match fields with
         | [] -> []
-        | (name, value) :: rest -> (name, rewriteExpression(project)(moduleName)(boundary)(locals)(value)) :: rewriteExpressionFields(project)(moduleName)(boundary)(locals)(rest)
+        | (name, value) :: rest ->
+            (name, rewriteExpression(
+                project,
+                moduleName,
+                boundary,
+                locals,
+                value
+            )) :: rewriteExpressionFields(project)(moduleName)(boundary)(locals)(rest)
 and rewriteMatchCases project moduleName boundary locals cases =
     match cases with
         | [] -> []
         | (pattern, body, guard) :: rest ->
             let caseLocals =
                 appendList(patternNames(pattern))(locals)
-            in (rewritePattern(project)(moduleName)(boundary)(pattern), rewriteExpression(project)(moduleName)(boundary)(caseLocals)(body), rewriteOptionalExpression(project)(moduleName)(boundary)(caseLocals)(guard)) :: rewriteMatchCases(project)(moduleName)(boundary)(locals)(rest)
+            in
+                (rewritePattern(project)(moduleName)(boundary)(pattern), rewriteExpression(
+                    project,
+                    moduleName,
+                    boundary,
+                    caseLocals,
+                    body
+                ), rewriteOptionalExpression(
+                    project,
+                    moduleName,
+                    boundary,
+                    caseLocals,
+                    guard
+                )) :: rewriteMatchCases(project)(moduleName)(boundary)(locals)(rest)
 and rewriteHandlerArms project moduleName boundary locals arms =
     match arms with
         | [] -> []
@@ -262,7 +368,19 @@ and rewriteHandlerArms project moduleName boundary locals arms =
                             name
                             |> rewriteTypeName(project)(moduleName)(boundary)([])
                             |> Some
-                in (rewrittenInstance, operation, rewritePatterns(project)(moduleName)(boundary)(patterns), rewriteExpression(project)(moduleName)(boundary)(armLocals)(body)) :: rewriteHandlerArms(project)(moduleName)(boundary)(locals)(rest)
+                in
+                    (rewrittenInstance, operation, rewritePatterns(
+                        project,
+                        moduleName,
+                        boundary,
+                        patterns
+                    ), rewriteExpression(
+                        project,
+                        moduleName,
+                        boundary,
+                        armLocals,
+                        body
+                    )) :: rewriteHandlerArms(project)(moduleName)(boundary)(locals)(rest)
 and rewriteExpression project moduleName boundary locals expression =
     match expression with
         | ExprAt(span, inner) ->
@@ -270,7 +388,14 @@ and rewriteExpression project moduleName boundary locals expression =
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
             |> ExprAt(span)
         | ExprVar(name) -> resolveExpressionVariable(project)(moduleName)(boundary)(locals)(name)
-        | ExprQualifiedVar(qualifier, name) -> rewriteQualifiedExpression(project)(moduleName)(boundary)(qualifier)(name)
+        | ExprQualifiedVar(qualifier, name) ->
+            rewriteQualifiedExpression(
+                project,
+                moduleName,
+                boundary,
+                qualifier,
+                name
+            )
         | ExprAdd(left, right) ->
             right
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
@@ -354,7 +479,13 @@ and rewriteExpression project moduleName boundary locals expression =
         | ExprLet(name, value, body, parameters, annotation, requirements) ->
             requirements
             |> rewriteTraitConstraints(project)(moduleName)(boundary)([])
-            |> ExprLet(name)(rewriteExpression(project)(moduleName)(boundary)(appendList(parameters)(locals))(value))(rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body))(parameters)(rewriteOptionalType(project)(moduleName)(boundary)([])(annotation))
+            |> ExprLet(
+                name,
+                rewriteExpression(project)(moduleName)(boundary)(appendList(parameters)(locals))(value),
+                rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body),
+                parameters,
+                rewriteOptionalType(project)(moduleName)(boundary)([])(annotation)
+            )
         | ExprLetResult(name, value, body) ->
             body
             |> rewriteExpression(project)(moduleName)(boundary)(name :: locals)
@@ -362,31 +493,49 @@ and rewriteExpression project moduleName boundary locals expression =
         | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
             requirements
             |> rewriteTraitConstraints(project)(moduleName)(boundary)([])
-            |> ExprLetRecursive(name)(rewriteExpression(project)(moduleName)(boundary)(name :: appendList(parameters)(locals))(value))(rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body))(parameters)(rewriteOptionalType(project)(moduleName)(boundary)([])(annotation))
+            |> ExprLetRecursive(
+                name,
+                rewriteExpression(project)(moduleName)(boundary)(name :: appendList(parameters)(locals))(value),
+                rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body),
+                parameters,
+                rewriteOptionalType(project)(moduleName)(boundary)([])(annotation)
+            )
         | ExprIf(condition, thenBranch, elseBranch) ->
             elseBranch
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
-            |> ExprIf(rewriteExpression(project)(moduleName)(boundary)(locals)(condition))(rewriteExpression(project)(moduleName)(boundary)(locals)(thenBranch))
+            |> ExprIf(
+                rewriteExpression(project)(moduleName)(boundary)(locals)(condition),
+                rewriteExpression(project)(moduleName)(boundary)(locals)(thenBranch)
+            )
         | ExprLambda(name, body, annotation) ->
             annotation
             |> rewriteOptionalType(project)(moduleName)(boundary)([])
             |> ExprLambda(name)(rewriteExpression(project)(moduleName)(boundary)(name :: locals)(body))
-        | ExprCall(function, argument, whitespace) ->
-            ExprCall(rewriteExpression(project)(moduleName)(boundary)(locals)(function))(rewriteExpression(project)(moduleName)(boundary)(locals)(argument))(whitespace)
+        | ExprCall(function, argument, whitespace, layout) ->
+            ExprCall(
+                rewriteExpression(project)(moduleName)(boundary)(locals)(function),
+                rewriteExpression(project)(moduleName)(boundary)(locals)(argument),
+                whitespace,
+                layout
+            )
         | ExprTuple(elements) ->
             elements
             |> rewriteExpressions(project)(moduleName)(boundary)(locals)
             |> ExprTuple
-        | ExprList(elements) ->
+        | ExprList(elements, isMultiline) ->
             elements
             |> rewriteExpressions(project)(moduleName)(boundary)(locals)
-            |> ExprList
+            |> (given (rewrittenElements) -> ExprList(rewrittenElements)(isMultiline))
         | ExprCons(head, tail) ->
             tail
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
             |> ExprCons(rewriteExpression(project)(moduleName)(boundary)(locals)(head))
         | ExprMatch(value, cases, offset) ->
-            ExprMatch(rewriteExpression(project)(moduleName)(boundary)(locals)(value))(rewriteMatchCases(project)(moduleName)(boundary)(locals)(cases))(offset)
+            ExprMatch(
+                rewriteExpression(project)(moduleName)(boundary)(locals)(value),
+                rewriteMatchCases(project)(moduleName)(boundary)(locals)(cases),
+                offset
+            )
         | ExprAwait(task) ->
             task
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
@@ -414,43 +563,126 @@ let recursive typeParameterNames parameters =
         | [] -> []
         | TypeParameter { name = name } :: rest -> name :: typeParameterNames(rest)
 
-let declarationCompilerName project moduleName boundary kind name = resolveUnqualifiedCompilerName(project)(moduleName)(boundary + 1)(kind)(name)
+let declarationCompilerName project moduleName boundary kind name =
+    resolveUnqualifiedCompilerName(
+        project,
+        moduleName,
+        boundary + 1,
+        kind,
+        name
+    )
 
 let rewriteTypeConstructor project moduleName boundary typeParameters constructor =
     match constructor with
-        | TypeConstructor { name = name, parameters = fields, fieldNames = fieldNames } -> TypeConstructor(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedConstructor)(name), parameters = rewriteTypes(project)(moduleName)(boundary)(typeParameters)(fields), fieldNames = fieldNames)
+        | TypeConstructor { name = name, parameters = fields, fieldNames = fieldNames } ->
+            TypeConstructor(name = declarationCompilerName(
+                project,
+                moduleName,
+                boundary,
+                StitchedConstructor,
+                name
+            ), parameters = rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                fields
+            ), fieldNames = fieldNames)
 
 let recursive rewriteTypeConstructors project moduleName boundary typeParameters constructors =
     match constructors with
         | [] -> []
-        | constructor :: rest -> rewriteTypeConstructor(project)(moduleName)(boundary)(typeParameters)(constructor) :: rewriteTypeConstructors(project)(moduleName)(boundary)(typeParameters)(rest)
+        | constructor :: rest ->
+            rewriteTypeConstructor(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                constructor
+            ) :: rewriteTypeConstructors(project)(moduleName)(boundary)(typeParameters)(rest)
 
 let recursive rewriteDerivingTraits project moduleName boundary traits =
     match traits with
         | [] -> []
-        | name :: rest -> rewriteTypeName(project)(moduleName)(boundary)([])(name) :: rewriteDerivingTraits(project)(moduleName)(boundary)(rest)
+        | name :: rest ->
+            rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                [],
+                name
+            ) :: rewriteDerivingTraits(project)(moduleName)(boundary)(rest)
 
 let rewriteTypeDeclaration project moduleName boundary declaration =
     match declaration with
         | TypeDecl { name = name, typeParameters = parameters, constructors = constructors, isRecord = isRecord, derivingTraits = derivingTraits } ->
             let parameterNames = typeParameterNames(parameters)
-            in TypeDecl(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedType)(name), typeParameters = parameters, constructors = rewriteTypeConstructors(project)(moduleName)(boundary)(parameterNames)(constructors), isRecord = isRecord, derivingTraits = rewriteDerivingTraits(project)(moduleName)(boundary)(derivingTraits))
+            in
+                TypeDecl(name = declarationCompilerName(
+                    project,
+                    moduleName,
+                    boundary,
+                    StitchedType,
+                    name
+                ), typeParameters = parameters, constructors = rewriteTypeConstructors(
+                    project,
+                    moduleName,
+                    boundary,
+                    parameterNames,
+                    constructors
+                ), isRecord = isRecord, derivingTraits = rewriteDerivingTraits(
+                    project,
+                    moduleName,
+                    boundary,
+                    derivingTraits
+                ))
 
 let rewriteTypeAliasDeclaration project moduleName boundary declaration =
     match declaration with
         | TypeAliasDecl { name = name, typeParameters = parameters, target = target } ->
-            TypeAliasDecl(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedType)(name), typeParameters = parameters, target = rewriteType(project)(moduleName)(boundary)(typeParameterNames(parameters))(target))
+            TypeAliasDecl(name = declarationCompilerName(
+                project,
+                moduleName,
+                boundary,
+                StitchedType,
+                name
+            ), typeParameters = parameters, target = rewriteType(
+                project,
+                moduleName,
+                boundary,
+                typeParameterNames(parameters),
+                target
+            ))
 
 let rewriteZeroCostDeclaration project moduleName boundary declaration =
     match declaration with
         | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = constructor, derivingTraits = derivingTraits } ->
             let parameterNames = typeParameterNames(parameters)
-            in ZeroCostTypeDecl(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedType)(name), typeParameters = parameters, constructor = rewriteTypeConstructor(project)(moduleName)(boundary)(parameterNames)(constructor), derivingTraits = rewriteDerivingTraits(project)(moduleName)(boundary)(derivingTraits))
+            in
+                ZeroCostTypeDecl(name = declarationCompilerName(
+                    project,
+                    moduleName,
+                    boundary,
+                    StitchedType,
+                    name
+                ), typeParameters = parameters, constructor = rewriteTypeConstructor(
+                    project,
+                    moduleName,
+                    boundary,
+                    parameterNames,
+                    constructor
+                ), derivingTraits = rewriteDerivingTraits(project)(moduleName)(boundary)(derivingTraits))
 
 let recursive rewriteParsedTypes project moduleName boundary types =
     match types with
         | [] -> []
-        | head :: rest -> rewriteParsedType(project)(moduleName)(boundary)(head) :: rewriteParsedTypes(project)(moduleName)(boundary)(rest)
+        | head :: rest ->
+            rewriteParsedType(project)(moduleName)(boundary)(head) :: rewriteParsedTypes(
+                project,
+                moduleName,
+                boundary,
+                rest
+            )
 and rewriteParsedType project moduleName boundary parsed =
     match parsed with
         | ParsedNamed(name) ->
@@ -486,73 +718,221 @@ let rewriteExternalDeclaration project moduleName boundary declaration =
         | ExternalFunction(name, parameters, result, symbol, ownership, row) ->
             row
             |> rewriteOptionalNeeds(project)(moduleName)(boundary)
-            |> ExternalFunction(declarationCompilerName(project)(moduleName)(boundary)(StitchedExternal)(name))(rewriteParsedTypes(project)(moduleName)(boundary)(parameters))(rewriteParsedType(project)(moduleName)(boundary)(result))(symbol)(ownership)
+            |> ExternalFunction(
+                declarationCompilerName(project)(moduleName)(boundary)(StitchedExternal)(name),
+                rewriteParsedTypes(project)(moduleName)(boundary)(parameters),
+                rewriteParsedType(project)(moduleName)(boundary)(result),
+                symbol,
+                ownership
+            )
 
 let rewriteCapabilityOperation project moduleName boundary typeParameters operation =
     match operation with
-        | CapabilityOperation { name = name, signature = signature } -> CapabilityOperation(name = name, signature = rewriteOptionalType(project)(moduleName)(boundary)(typeParameters)(signature))
+        | CapabilityOperation { name = name, signature = signature } ->
+            CapabilityOperation(name = name, signature = rewriteOptionalType(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                signature
+            ))
 
 let recursive rewriteCapabilityOperations project moduleName boundary typeParameters operations =
     match operations with
         | [] -> []
-        | operation :: rest -> rewriteCapabilityOperation(project)(moduleName)(boundary)(typeParameters)(operation) :: rewriteCapabilityOperations(project)(moduleName)(boundary)(typeParameters)(rest)
+        | operation :: rest ->
+            rewriteCapabilityOperation(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                operation
+            ) :: rewriteCapabilityOperations(project)(moduleName)(boundary)(typeParameters)(rest)
 
 let rewriteCapabilityDeclaration project moduleName boundary declaration =
     match declaration with
         | CapabilityDecl { name = name, typeParameters = parameters, operations = operations } ->
-            CapabilityDecl(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedCapability)(name), typeParameters = parameters, operations = rewriteCapabilityOperations(project)(moduleName)(boundary)(typeParameterNames(parameters))(operations))
+            CapabilityDecl(name = declarationCompilerName(
+                project,
+                moduleName,
+                boundary,
+                StitchedCapability,
+                name
+            ), typeParameters = parameters, operations = rewriteCapabilityOperations(
+                project,
+                moduleName,
+                boundary,
+                typeParameterNames(parameters),
+                operations
+            ))
 
 let rewriteProvideBinding project moduleName boundary binding =
     match binding with
-        | ProvideBinding { operationName = name, implementation = implementation } -> ProvideBinding(operationName = name, implementation = rewriteExpression(project)(moduleName)(boundary)([])(implementation))
+        | ProvideBinding { operationName = name, implementation = implementation } ->
+            ProvideBinding(operationName = name, implementation = rewriteExpression(
+                project,
+                moduleName,
+                boundary,
+                [],
+                implementation
+            ))
 
 let recursive rewriteProvideBindings project moduleName boundary bindings =
     match bindings with
         | [] -> []
-        | binding :: rest -> rewriteProvideBinding(project)(moduleName)(boundary)(binding) :: rewriteProvideBindings(project)(moduleName)(boundary)(rest)
+        | binding :: rest ->
+            rewriteProvideBinding(
+                project,
+                moduleName,
+                boundary,
+                binding
+            ) :: rewriteProvideBindings(project)(moduleName)(boundary)(rest)
 
 let rewriteProvideDeclaration project moduleName boundary declaration =
     match declaration with
-        | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } -> ProvideDecl(capabilityName = rewriteTypeName(project)(moduleName)(boundary)([])(name), typeArguments = rewriteTypes(project)(moduleName)(boundary)([])(arguments), bindings = rewriteProvideBindings(project)(moduleName)(boundary)(bindings))
+        | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } ->
+            ProvideDecl(capabilityName = rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                [],
+                name
+            ), typeArguments = rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                [],
+                arguments
+            ), bindings = rewriteProvideBindings(project)(moduleName)(boundary)(bindings))
 
 let rewriteTraitMethod project moduleName boundary typeParameters method =
     match method with
-        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = defaultImplementation } -> TraitMethodDecl(name = name, signature = rewriteType(project)(moduleName)(boundary)(typeParameters)(signature), defaultImplementation = rewriteOptionalExpression(project)(moduleName)(boundary)([])(defaultImplementation))
+        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = defaultImplementation } ->
+            TraitMethodDecl(name = name, signature = rewriteType(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                signature
+            ), defaultImplementation = rewriteOptionalExpression(
+                project,
+                moduleName,
+                boundary,
+                [],
+                defaultImplementation
+            ))
 
 let recursive rewriteTraitMethods project moduleName boundary typeParameters methods =
     match methods with
         | [] -> []
-        | method :: rest -> rewriteTraitMethod(project)(moduleName)(boundary)(typeParameters)(method) :: rewriteTraitMethods(project)(moduleName)(boundary)(typeParameters)(rest)
+        | method :: rest ->
+            rewriteTraitMethod(
+                project,
+                moduleName,
+                boundary,
+                typeParameters,
+                method
+            ) :: rewriteTraitMethods(project)(moduleName)(boundary)(typeParameters)(rest)
 
 let rewriteTraitDeclaration project moduleName boundary declaration =
     match declaration with
         | TraitDecl { name = name, typeParameters = parameters, supertraits = supertraits, methods = methods } ->
             let parameterNames = typeParameterNames(parameters)
-            in TraitDecl(name = declarationCompilerName(project)(moduleName)(boundary)(StitchedTrait)(name), typeParameters = parameters, supertraits = rewriteTraitConstraints(project)(moduleName)(boundary)(parameterNames)(supertraits), methods = rewriteTraitMethods(project)(moduleName)(boundary)(parameterNames)(methods))
+            in
+                TraitDecl(name = declarationCompilerName(
+                    project,
+                    moduleName,
+                    boundary,
+                    StitchedTrait,
+                    name
+                ), typeParameters = parameters, supertraits = rewriteTraitConstraints(
+                    project,
+                    moduleName,
+                    boundary,
+                    parameterNames,
+                    supertraits
+                ), methods = rewriteTraitMethods(project)(moduleName)(boundary)(parameterNames)(methods))
 
 let rewriteImplementationBinding project moduleName boundary binding =
     match binding with
-        | TraitImplementationMethodBinding { methodName = name, implementation = implementation } -> TraitImplementationMethodBinding(methodName = name, implementation = rewriteExpression(project)(moduleName)(boundary)([])(implementation))
+        | TraitImplementationMethodBinding { methodName = name, implementation = implementation } ->
+            TraitImplementationMethodBinding(methodName = name, implementation = rewriteExpression(
+                project,
+                moduleName,
+                boundary,
+                [],
+                implementation
+            ))
 
 let recursive rewriteImplementationBindings project moduleName boundary bindings =
     match bindings with
         | [] -> []
-        | binding :: rest -> rewriteImplementationBinding(project)(moduleName)(boundary)(binding) :: rewriteImplementationBindings(project)(moduleName)(boundary)(rest)
+        | binding :: rest ->
+            rewriteImplementationBinding(
+                project,
+                moduleName,
+                boundary,
+                binding
+            ) :: rewriteImplementationBindings(project)(moduleName)(boundary)(rest)
 
 let rewriteImplementationDeclaration project moduleName boundary declaration =
     match declaration with
-        | TraitImplementationDecl { traitName = traitName, typeArguments = arguments, requirements = requirements, bindings = bindings } -> TraitImplementationDecl(traitName = rewriteTypeName(project)(moduleName)(boundary)([])(traitName), typeArguments = rewriteTypes(project)(moduleName)(boundary)([])(arguments), requirements = rewriteTraitConstraints(project)(moduleName)(boundary)([])(requirements), bindings = rewriteImplementationBindings(project)(moduleName)(boundary)(bindings))
+        | TraitImplementationDecl { traitName = traitName, typeArguments = arguments, requirements = requirements, bindings = bindings } ->
+            TraitImplementationDecl(traitName = rewriteTypeName(
+                project,
+                moduleName,
+                boundary,
+                [],
+                traitName
+            ), typeArguments = rewriteTypes(
+                project,
+                moduleName,
+                boundary,
+                [],
+                arguments
+            ), requirements = rewriteTraitConstraints(
+                project,
+                moduleName,
+                boundary,
+                [],
+                requirements
+            ), bindings = rewriteImplementationBindings(project)(moduleName)(boundary)(bindings))
 
 let rewriteTopLevelBinding project moduleName boundary binding =
     match binding with
         | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } ->
             let compilerName = declarationCompilerName(project)(moduleName)(boundary)(StitchedValue)(name)
-            in LetBindingSyntax(name = compilerName, value = rewriteExpression(project)(moduleName)(boundary)(parameters)(value), sugarParameters = parameters, typeAnnotation = rewriteOptionalType(project)(moduleName)(boundary)([])(annotation), requirements = rewriteTraitConstraints(project)(moduleName)(boundary)([])(requirements))
+            in
+                LetBindingSyntax(name = compilerName, value = rewriteExpression(
+                    project,
+                    moduleName,
+                    boundary,
+                    parameters,
+                    value
+                ), sugarParameters = parameters, typeAnnotation = rewriteOptionalType(
+                    project,
+                    moduleName,
+                    boundary,
+                    [],
+                    annotation
+                ), requirements = rewriteTraitConstraints(
+                    project,
+                    moduleName,
+                    boundary,
+                    [],
+                    requirements
+                ))
 
 let recursive rewriteRecursiveBindings project moduleName boundary bindings =
     match bindings with
         | [] -> []
-        | binding :: rest -> rewriteTopLevelBinding(project)(moduleName)(boundary)(binding) :: rewriteRecursiveBindings(project)(moduleName)(boundary)(rest)
+        | binding :: rest ->
+            rewriteTopLevelBinding(
+                project,
+                moduleName,
+                boundary,
+                binding
+            ) :: rewriteRecursiveBindings(project)(moduleName)(boundary)(rest)
 
 let recursive rewriteTopLevelItem project moduleName boundary item =
     match item with
@@ -605,19 +985,41 @@ let recursive rewriteTopLevelItems project moduleName boundary items =
         | [] -> ([], boundary)
         | item :: rest ->
             match rewriteTopLevelItems(project)(moduleName)(boundary + 1)(rest) with
-                | (rewrittenRest, nextBoundary) -> (rewriteTopLevelItem(project)(moduleName)(boundary)(item) :: rewrittenRest, nextBoundary)
+                | (rewrittenRest, nextBoundary) ->
+                    (rewriteTopLevelItem(
+                        project,
+                        moduleName,
+                        boundary,
+                        item
+                    ) :: rewrittenRest, nextBoundary)
 
 let rewriteProgram project moduleName program =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             match rewriteTopLevelItems(project)(moduleName)(0)(items) with
-                | (rewrittenItems, bodyBoundary) -> ProgramSyntax(items = rewrittenItems, body = rewriteOptionalExpression(project)(moduleName)(bodyBoundary)([])(body))
+                | (rewrittenItems, bodyBoundary) ->
+                    ProgramSyntax(items = rewrittenItems, body = rewriteOptionalExpression(
+                        project,
+                        moduleName,
+                        bodyBoundary,
+                        [],
+                        body
+                    ))
 
 let rewriteStitchedModuleReferences project (unit: SemanticStitchUnit) =
     match unit with
-        | SemanticStitchUnit { name = name, packageId = packageId, sourcePath = sourcePath, imports = imports, interface = moduleInterface, program = program, isEntry = isEntry } -> SemanticStitchUnit(name = name, packageId = packageId, sourcePath = sourcePath, imports = imports, interface = moduleInterface, program = rewriteProgram(project)(name)(program), isEntry = isEntry)
+        | SemanticStitchUnit { name = name, packageId = packageId, sourcePath = sourcePath, imports = imports, interface = moduleInterface, program = program, isEntry = isEntry } ->
+            SemanticStitchUnit(name = name, packageId = packageId, sourcePath = sourcePath, imports = imports, interface = moduleInterface, program = rewriteProgram(
+                project,
+                name,
+                program
+            ), isEntry = isEntry)
 
 let recursive rewriteStitchedProjectReferences project units =
     match units with
         | [] -> []
-        | unit :: rest -> rewriteStitchedModuleReferences(project)(unit) :: rewriteStitchedProjectReferences(project)(rest)
+        | unit :: rest ->
+            rewriteStitchedModuleReferences(project)(unit) :: rewriteStitchedProjectReferences(
+                project,
+                rest
+            )

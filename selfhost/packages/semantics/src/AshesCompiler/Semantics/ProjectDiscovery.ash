@@ -81,7 +81,16 @@ let moduleName style entryPath =
             Ashes.Text.take(deepCopy(name))(Ashes.Text.length(name) - 4)
 
 let beginProjectLayout style file directory manifest entry sourceRoots includeRoots outDir entryPath =
-    BuildingProjectLayout(file)(directory)(entryPath)(moduleName(style)(entry))(sourceRoots)(includeRoots)(outDir)(manifest)
+    BuildingProjectLayout(
+        file,
+        directory,
+        entryPath,
+        moduleName(style)(entry),
+        sourceRoots,
+        includeRoots,
+        outDir,
+        manifest
+    )
 
 let resolveProjectSourceRoots style (builder: ProjectLayoutBuilder) =
     match builder with
@@ -104,7 +113,16 @@ let completeProjectLayout (builder: ProjectLayoutBuilder) =
 
 let finishProjectLayout style projectFilePath projectDirectory manifest entry sourceRoots includeRoots outDir entryPath =
     entryPath
-    |> beginProjectLayout(style)(projectFilePath)(projectDirectory)(manifest)(deepCopy(entry))(sourceRoots)(includeRoots)(outDir)
+    |> beginProjectLayout(
+        style,
+        projectFilePath,
+        projectDirectory,
+        manifest,
+        deepCopy(entry),
+        sourceRoots,
+        includeRoots,
+        outDir
+    )
     |> resolveProjectSourceRoots(style)
     |> resolveProjectIncludeRoots(style)
     |> resolveProjectOutput(style)
@@ -116,7 +134,16 @@ let projectLayout style projectFilePath projectDirectory (manifest: ProjectManif
             entry
             |> deepCopy
             |> join(style)(deepCopy(projectDirectory))
-            |> finishProjectLayout(style)(projectFilePath)(projectDirectory)(manifest)(deepCopy(entry))(sourceRoots)(includeRoots)(outDir)
+            |> finishProjectLayout(
+                style,
+                projectFilePath,
+                projectDirectory,
+                manifest,
+                deepCopy(entry),
+                sourceRoots,
+                includeRoots,
+                outDir
+            )
 
 let validateEntry style projectDirectory projectFilePath manifest =
     match projectLayout(style)(projectFilePath)(projectDirectory)(manifest) with

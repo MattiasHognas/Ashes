@@ -16,7 +16,11 @@ let checkConstrainedLet unit =
     match "let same : a -> a -> Bool requires {Ashes.Trait.Eq(a)} = value in same"
     |> ParserExpressionTests.expectClean
     |> ParserExpressionTests.unspan with
-        | ExprLet("same", _, _, [], Some(_annotation), requirement :: []) -> test.assertEqual("Ashes.Trait.Eq")(requirement.traitName)
+        | ExprLet("same", _, _, [], Some(_annotation), requirement :: []) ->
+            test.assertEqual(
+                "Ashes.Trait.Eq",
+                requirement.traitName
+            )
         | _ -> test.fail("expected constrained annotation")
 
 let checkAnnotatedSugar unit =

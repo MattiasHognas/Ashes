@@ -227,11 +227,19 @@ let recursive semanticTypeStableKey semanticType =
         | SemParameter(_symbolId, name) -> "'" + name
         | SemList(element) -> "List(" + semanticTypeStableKey(element) + ")"
         | SemTuple(elements) -> "Tuple(" + joinTypes(",")(semanticTypeStableKey)(elements) + ")"
-        | SemFunction(argument, result, _capabilityRow) -> "Fun(" + semanticTypeStableKey(argument) + "," + semanticTypeStableKey(result) + ")"
+        | SemFunction(argument, result, _capabilityRow) ->
+            "Fun(" + semanticTypeStableKey(
+                argument
+            ) + "," + semanticTypeStableKey(result) + ")"
         | SemNamed(_symbolId, name, arguments) -> name + "(" + joinTypes(",")(semanticTypeStableKey)(arguments) + ")"
         | SemPointer(pointee) -> "Ptr(" + semanticTypeStableKey(pointee) + ")"
         | SemOpaque(name) -> "Opaque(" + name + ")"
-        | SemCapability(name, arguments) -> "Capability(" + name + "," + joinTypes(",")(semanticTypeStableKey)(arguments) + ")"
+        | SemCapability(name, arguments) ->
+            "Capability(" + name + "," + joinTypes(
+                ",",
+                semanticTypeStableKey,
+                arguments
+            ) + ")"
         | SemRow(capabilities, tail) ->
             let tailKey =
                 match tail with
@@ -241,7 +249,12 @@ let recursive semanticTypeStableKey semanticType =
 
 let traitConstraintStableKey constraint =
     match constraint with
-        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } -> traitName + "(" + joinTypes(",")(semanticTypeStableKey)(typeArguments) + ")"
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } ->
+            traitName + "(" + joinTypes(
+                ",",
+                semanticTypeStableKey,
+                typeArguments
+            ) + ")"
 
 let recursive removeDuplicateTraitConstraints constraints =
     match constraints with

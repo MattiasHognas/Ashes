@@ -13,7 +13,11 @@ export (
 let binaryType argument result =
     SemFunction(argument)(SemFunction(argument)(result)(None))(None)
 
-let equalScheme = TypeScheme(quantified = [(9000, "a")], body = binaryType(SemVariable(9000))(SemBool), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(9000)])])
+let equalScheme =
+    TypeScheme(quantified = [(9000, "a")], body = binaryType(
+        SemVariable(9000),
+        SemBool
+    ), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(9000)])])
 
 let equalMethod = TraitMethodInferenceDefinition(name = "equal", scheme = equalScheme, defaultImplementation = None)
 
@@ -43,24 +47,71 @@ let sourceBindingEnvironment unit =
     |> emptyTypeEnvironmentForPackage
     |> addTraitBinding("Eq")(1)([SemVariable(9000)])([equalMethod])([])
     |> addTraitImplementation("Eq")([SemInt])([])([placeholderMethod("Eq")("equal")(SemInt)(intEqualType)])
-    |> addTraitImplementation("Eq")([listHead])([TraitConstraint(traitName = "Eq", typeArguments = [listParameter])])([placeholderMethod("Eq")("equal")(listHead)(listEqualType)])
-    |> addTraitImplementation("Eq")([resultHead])([TraitConstraint(traitName = "Eq", typeArguments = [resultProblem]), TraitConstraint(traitName = "Eq", typeArguments = [resultValue])])([placeholderMethod("Eq")("equal")(resultHead)(resultEqualType)])
+    |> addTraitImplementation(
+        "Eq",
+        [listHead],
+        [TraitConstraint(traitName = "Eq", typeArguments = [listParameter])],
+        [placeholderMethod("Eq")("equal")(listHead)(listEqualType)]
+    )
+    |> addTraitImplementation(
+        "Eq",
+        [resultHead],
+        [
+            TraitConstraint(traitName = "Eq", typeArguments = [resultProblem]),
+            TraitConstraint(traitName = "Eq", typeArguments = [resultValue])
+        ],
+        [placeholderMethod("Eq")("equal")(resultHead)(resultEqualType)]
+    )
 
 let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
 
 let equalDeclaration =
-    TraitDecl(name = "Eq", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(TypeNamed("a"))(TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None))([])(None), defaultImplementation = None)])
+    TraitDecl(name = "Eq", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "equal", signature = TypeArrow(
+        TypeNamed("a"),
+        TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([])(None),
+        [],
+        None
+    ), defaultImplementation = None)])
 
-let intImplementation = TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeNamed("Int")], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprVar("primitiveEqual"))])
+let intImplementation =
+    TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeNamed(
+        "Int"
+    )], requirements = [], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprVar(
+        "primitiveEqual"
+    ))])
 
-let listImplementation = TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeApplied("List")([TypeNamed("item")])], requirements = [TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed("item")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprQualifiedVar("Eq")("equal"))])
+let listImplementation =
+    TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeApplied(
+        "List",
+        [TypeNamed("item")]
+    )], requirements = [TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed(
+        "item"
+    )])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprQualifiedVar(
+        "Eq",
+        "equal"
+    ))])
 
-let resultImplementation = TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeApplied("Result")([TypeNamed("failure"), TypeNamed("success")])], requirements = [TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed("failure")]), TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed("success")])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprQualifiedVar("Eq")("equal"))])
+let resultImplementation =
+    TraitImplementationDecl(traitName = "Eq", typeArguments = [TypeApplied(
+        "Result",
+        [TypeNamed("failure"), TypeNamed("success")]
+    )], requirements = [TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed(
+        "failure"
+    )]), TraitConstraintSyntax(traitName = "Eq", typeArguments = [TypeNamed(
+        "success"
+    )])], bindings = [TraitImplementationMethodBinding(methodName = "equal", implementation = ExprQualifiedVar(
+        "Eq",
+        "equal"
+    ))])
 
 let traitUnit implementations =
-    SemanticStitchUnit(name = "Ashes.Trait", packageId = "ashes-core", sourcePath = "<std:Ashes.Trait>", imports = [], interface = ModuleImportInterface(name = "Ashes.Trait", exports = [ImportTypeExport("Eq")]), program = ProgramSyntax(items = TopLevelLet(None
+    SemanticStitchUnit(name = "Ashes.Trait", packageId = "ashes-core", sourcePath = "<std:Ashes.Trait>", imports = [], interface = ModuleImportInterface(name = "Ashes.Trait", exports = [ImportTypeExport(
+        "Eq"
+    )]), program = ProgramSyntax(items = TopLevelLet(None
     |> ExprLambda("left")(ExprLambda("right")(ExprBool(true))(None))
-    |> binding("primitiveEqual"))(false) :: TopLevelTrait(equalDeclaration) :: implementations, body = None), isEntry = false)
+    |> binding("primitiveEqual"))(false) :: TopLevelTrait(
+        equalDeclaration
+    ) :: implementations, body = None), isEntry = false)
 
 let entryUnit = SemanticStitchUnit(name = "Main", packageId = "app", sourcePath = "/app/Main.ash", imports = [], interface = ModuleImportInterface(name = "Main", exports = []), program = ProgramSyntax(items = [], body = None), isEntry = true)
 
@@ -87,7 +138,12 @@ let expectBindings bindings =
         | _ -> test.fail("source bindings should use alpha-normalized structural implementation heads")
 
 let expectSourceBinding unit =
-    (let units = [traitUnit([TopLevelImplementation(intImplementation), TopLevelImplementation(listImplementation), TopLevelImplementation(resultImplementation)]), entryUnit]
+    (let units =
+        [traitUnit(
+            [TopLevelImplementation(intImplementation), TopLevelImplementation(listImplementation), TopLevelImplementation(
+                resultImplementation
+            )]
+        ), entryUnit]
     in
         match Unit
         |> sourceBindingEnvironment
@@ -100,7 +156,10 @@ let expectSourceBinding unit =
                 |> (given (boundEnvironment) -> expectCompilerTraitAlias(boundEnvironment)))
 
 let expectMissingSourceRejection unit =
-    (let units = [traitUnit([TopLevelImplementation(intImplementation), TopLevelImplementation(resultImplementation)]), entryUnit]
+    (let units =
+        [traitUnit(
+            [TopLevelImplementation(intImplementation), TopLevelImplementation(resultImplementation)]
+        ), entryUnit]
     in
         match Unit
         |> sourceBindingEnvironment
@@ -110,7 +169,14 @@ let expectMissingSourceRejection unit =
             | Ok(_result) -> test.fail("every seeded standard implementation must bind to source"))
 
 let expectDuplicateSourceRejection unit =
-    (let units = [traitUnit([TopLevelImplementation(intImplementation), TopLevelImplementation(intImplementation), TopLevelImplementation(listImplementation), TopLevelImplementation(resultImplementation)]), entryUnit]
+    (let units =
+        [traitUnit(
+            [TopLevelImplementation(intImplementation), TopLevelImplementation(intImplementation), TopLevelImplementation(
+                listImplementation
+            ), TopLevelImplementation(
+                resultImplementation
+            )]
+        ), entryUnit]
     in
         match Unit
         |> sourceBindingEnvironment

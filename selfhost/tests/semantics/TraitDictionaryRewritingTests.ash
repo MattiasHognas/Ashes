@@ -8,7 +8,11 @@ import TraitDictionaryConstructionTests
 import TraitEvidenceArgumentTests
 let rewriteResolvedDictionary constraint environment =
     match resolveTraitEvidence(constraint)(environment) with
-        | TraitEvidenceResolution { plan = Some(evidence), error = None } -> rewriteTraitDictionaryValue(evidence)(environment)
+        | TraitEvidenceResolution { plan = Some(evidence), error = None } ->
+            rewriteTraitDictionaryValue(
+                evidence,
+                environment
+            )
         | _ -> test.fail("dictionary evidence should resolve before rewriting")
 
 let expectAbiOrderedMethodTuple unit =
@@ -26,13 +30,34 @@ let expectAbiOrderedMethodTuple unit =
                     ((given (_) ->
                         match rewriting with
                             | TraitDictionaryValueRewriting { expression = Some(ExprLet("__trait_selected_Display_render", _render, ExprLet("__trait_selected_Display_tag", _tag, ExprTuple(ExprVar("__trait_selected_Display_render") :: ExprVar("__trait_selected_Display_tag") :: []), [], None, []), [], None, [])), error = None } -> Unit
-                            | TraitDictionaryValueRewriting { expression = Some(ExprLet(name, _value, _body, _parameters, _annotation, _requirements)), error = None } -> test.fail("unexpected outer dictionary method binding: " + name)
-                            | TraitDictionaryValueRewriting { expression = Some(ExprLetRecursive(name, _value, _body, _parameters, _annotation, _requirements)), error = None } -> test.fail("unexpected recursive outer dictionary method binding: " + name)
-                            | TraitDictionaryValueRewriting { expression = Some(ExprTuple(_elements)), error = None } -> test.fail("dictionary rewrite omitted method bindings")
-                            | TraitDictionaryValueRewriting { expression = Some(ExprAt(_span, _inner)), error = None } -> test.fail("dictionary rewrite retained an unexpected source span")
-                            | TraitDictionaryValueRewriting { expression = Some(_expression), error = None } -> test.fail("dictionary rewrite produced an unexpected expression")
-                            | TraitDictionaryValueRewriting { expression = None, error = Some(_error) } -> test.fail("dictionary rewrite should succeed")
-                            | TraitDictionaryValueRewriting { expression = None, error = None } -> test.fail("dictionary rewrite should produce an expression")))(orderChecked))
+                            | TraitDictionaryValueRewriting { expression = Some(ExprLet(name, _value, _body, _parameters, _annotation, _requirements)), error = None } ->
+                                test.fail(
+                                    "unexpected outer dictionary method binding: " + name
+                                )
+                            | TraitDictionaryValueRewriting { expression = Some(ExprLetRecursive(name, _value, _body, _parameters, _annotation, _requirements)), error = None } ->
+                                test.fail(
+                                    "unexpected recursive outer dictionary method binding: " + name
+                                )
+                            | TraitDictionaryValueRewriting { expression = Some(ExprTuple(_elements)), error = None } ->
+                                test.fail(
+                                    "dictionary rewrite omitted method bindings"
+                                )
+                            | TraitDictionaryValueRewriting { expression = Some(ExprAt(_span, _inner)), error = None } ->
+                                test.fail(
+                                    "dictionary rewrite retained an unexpected source span"
+                                )
+                            | TraitDictionaryValueRewriting { expression = Some(_expression), error = None } ->
+                                test.fail(
+                                    "dictionary rewrite produced an unexpected expression"
+                                )
+                            | TraitDictionaryValueRewriting { expression = None, error = Some(_error) } ->
+                                test.fail(
+                                    "dictionary rewrite should succeed"
+                                )
+                            | TraitDictionaryValueRewriting { expression = None, error = None } ->
+                                test.fail(
+                                    "dictionary rewrite should produce an expression"
+                                )))(orderChecked))
 
 let expectNestedSupertraitDictionary unit =
     match Unit
@@ -44,7 +69,9 @@ let expectNestedSupertraitDictionary unit =
 let rejectAbstractDictionaryRewrite unit =
     match Unit
     |> TraitDictionaryConstructionTests.displayEnvironment
-    |> rewriteTraitDictionaryValue(TraitEvidenceParameter(TraitConstraint(traitName = "Display", typeArguments = [SemVariable(7)]))) with
+    |> rewriteTraitDictionaryValue(
+        TraitEvidenceParameter(TraitConstraint(traitName = "Display", typeArguments = [SemVariable(7)]))
+    ) with
         | TraitDictionaryValueRewriting { expression = None, error = Some(TraitDictionaryConstructionRequiresParameter(TraitConstraint { traitName = "Display", typeArguments = SemVariable(7) :: [] })) } -> Unit
         | _ -> test.fail("abstract dictionaries should be forwarded instead of constructed")
 

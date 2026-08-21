@@ -27,11 +27,18 @@ let binaryType argument result =
 
 let unaryType argument result = SemFunction(argument)(result)(None)
 
-let standardTraitMethodScheme traitName parameterId methodType = TypeScheme(quantified = [(parameterId, "a")], body = methodType, constraints = [TraitConstraint(traitName = traitName, typeArguments = [SemVariable(parameterId)])])
+let standardTraitMethodScheme traitName parameterId methodType =
+    TypeScheme(quantified = [(parameterId, "a")], body = methodType, constraints = [TraitConstraint(traitName = traitName, typeArguments = [SemVariable(
+        parameterId
+    )])])
 
 let notEqualDefault unit =
-    ExprLambda("left")(ExprLambda("right")(false
-    |> ExprCall(ExprCall(ExprQualifiedVar("Eq")("equal"))(ExprVar("left"))(false))(ExprVar("right"))
+    ExprLambda("left")(ExprLambda("right")(callArgumentsInline
+    |> ExprCall(
+        ExprCall(ExprQualifiedVar("Eq")("equal"))(ExprVar("left"))(false)(callArgumentsInline),
+        ExprVar("right"),
+        false
+    )
     |> ExprLogicalNot)(None))(None)
 
 let orderingCase name = (PatternConstructor(name)([]), ExprBool(true), None)
@@ -42,20 +49,50 @@ let ordPredicateDefault accepted =
             | [] -> [(PatternWildcard, ExprBool(false), None)]
             | name :: tail -> orderingCase(name) :: acceptedCases(tail)
     in
-        ExprLambda("left")(ExprLambda("right")(ExprMatch(ExprCall(ExprCall(ExprQualifiedVar("Ord")("compare"))(ExprVar("left"))(false))(ExprVar("right"))(false))(acceptedCases(accepted))(None))(None))(None))
+        ExprLambda(
+            "left",
+            ExprLambda(
+                "right",
+                ExprMatch(
+                    ExprCall(
+                        ExprCall(ExprQualifiedVar("Ord")("compare"))(ExprVar("left"))(false)(callArgumentsInline),
+                        ExprVar("right"),
+                        false,
+                        callArgumentsInline
+                    ),
+                    acceptedCases(accepted),
+                    None
+                ),
+                None
+            ),
+            None
+        ))
 
 let standardTraitMethods traitName parameterId =
     (let parameter = SemVariable(parameterId)
     in
-        let constrained methodName methodType defaultImplementation = TraitMethodInferenceDefinition(name = methodName, scheme = standardTraitMethodScheme(traitName)(parameterId)(methodType), defaultImplementation = defaultImplementation)
+        let constrained methodName methodType defaultImplementation =
+            TraitMethodInferenceDefinition(name = methodName, scheme = standardTraitMethodScheme(
+                traitName,
+                parameterId,
+                methodType
+            ), defaultImplementation = defaultImplementation)
         in
             match traitName with
                 | "Eq" ->
-                    [constrained("equal")(binaryType(parameter)(SemBool))(None), constrained("notEqual")(binaryType(parameter)(SemBool))(Unit
+                    [constrained(
+                        "equal",
+                        binaryType(parameter)(SemBool),
+                        None
+                    ), constrained("notEqual")(binaryType(parameter)(SemBool))(Unit
                     |> notEqualDefault
                     |> Some)]
                 | "Ord" ->
-                    [constrained("compare")(binaryType(parameter)(orderingType))(None), constrained("less")(binaryType(parameter)(SemBool))(["Less"]
+                    [constrained(
+                        "compare",
+                        binaryType(parameter)(orderingType),
+                        None
+                    ), constrained("less")(binaryType(parameter)(SemBool))(["Less"]
                     |> ordPredicateDefault
                     |> Some), constrained("lessOrEqual")(binaryType(parameter)(SemBool))(["Less", "Equal"]
                     |> ordPredicateDefault
@@ -178,7 +215,10 @@ let recursive standardTypeKey semanticType =
         | SemParameter(parameterId, _name) -> "parameter" + Ashes.Text.fromInt(parameterId)
         | _ -> "type"
 
-let standardTraitImplementationBindingName traitName methodName head = "__ashes_standard_trait_" + traitName + "_" + methodName + "_" + standardTypeKey(head)
+let standardTraitImplementationBindingName traitName methodName head =
+    "__ashes_standard_trait_" + traitName + "_" + methodName + "_" + standardTypeKey(
+        head
+    )
 
 let standardImplementationMethodType traitName head =
     match traitName with
@@ -202,7 +242,13 @@ let addStandardImplementation traitName head requirements environment =
                 |> standardTraitImplementationBindingName(traitName)(methodName)
                 |> ExprVar
             in
-                addTraitImplementation(traitName)([head])(canonicalizeTraitConstraints(requirements))([TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = methodType)])(environment))
+                addTraitImplementation(
+                    traitName,
+                    [head],
+                    canonicalizeTraitConstraints(requirements),
+                    [TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = methodType)],
+                    environment
+                ))
 
 let recursive addStandardImplementations traitName heads environment =
     match heads with
@@ -212,7 +258,10 @@ let recursive addStandardImplementations traitName heads environment =
             |> addStandardImplementation(traitName)(head)([])
             |> addStandardImplementations(traitName)(tail)
 
-let equalityTypes = [SemInt, SemFloat, SemBigInt, SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64), SemBool, SemString, SemRune]
+let equalityTypes =
+    [SemInt, SemFloat, SemBigInt, SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(
+        64
+    ), SemBool, SemString, SemRune]
 
 let orderedTypes = [SemInt, SemFloat, SemBigInt, SemUInt(8), SemUInt(16), SemUInt(32), SemUInt(64), SemString, SemRune]
 
@@ -258,7 +307,11 @@ let structuralHead shape parameters =
 let recursive structuralRequirements traitName parameters =
     match parameters with
         | [] -> []
-        | head :: tail -> TraitConstraint(traitName = traitName, typeArguments = [head]) :: structuralRequirements(traitName)(tail)
+        | head :: tail ->
+            TraitConstraint(traitName = traitName, typeArguments = [head]) :: structuralRequirements(
+                traitName,
+                tail
+            )
 
 let addStructuralImplementation traitName shape parameters requiresEvidence environment =
     (let head = structuralHead(shape)(parameters)

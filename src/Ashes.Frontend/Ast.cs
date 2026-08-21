@@ -1,5 +1,18 @@
 namespace Ashes.Frontend;
 
+/// <summary>Preserved source layout for one parenthesized function-argument group.</summary>
+public enum CallArgumentListLayout
+{
+    /// <summary>The argument was written on the same line as its surrounding parentheses.</summary>
+    Inline,
+
+    /// <summary>The argument starts a parenthesized group written across multiple lines.</summary>
+    MultilineStart,
+
+    /// <summary>The argument continues the same multiline parenthesized group.</summary>
+    MultilineContinuation,
+}
+
 /// <summary>
 /// Base of the expression AST. Every syntactic expression form is a nested sealed record; the parser
 /// builds a tree of these, and later phases pattern-match over the concrete cases.
@@ -185,13 +198,20 @@ public abstract record Expr
     {
         /// <summary>When true, the formatter prints <c>f x</c> instead of <c>f(x)</c>.</summary>
         public bool IsWhitespaceApplication { get; init; }
+
+        /// <summary>Preserves whether this argument belonged to a multiline parenthesized group.</summary>
+        public CallArgumentListLayout ArgumentListLayout { get; init; }
     }
     /// <summary>A tuple literal, <c>(a, b, ...)</c>.</summary>
     /// <param name="Elements">The tuple's element expressions in order.</param>
     public sealed record TupleLit(IReadOnlyList<Expr> Elements) : Expr;
     /// <summary>A list literal, <c>[a, b, ...]</c>.</summary>
     /// <param name="Elements">The list's element expressions in order.</param>
-    public sealed record ListLit(IReadOnlyList<Expr> Elements) : Expr;
+    public sealed record ListLit(IReadOnlyList<Expr> Elements) : Expr
+    {
+        /// <summary>Preserves whether the first written element began on a new line.</summary>
+        public bool IsMultiline { get; init; }
+    }
     /// <summary>A cons cell, <c>Head :: Tail</c>, prepending an element onto a list.</summary>
     /// <param name="Head">The element prepended.</param>
     /// <param name="Tail">The rest of the list.</param>

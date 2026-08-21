@@ -45,7 +45,11 @@ let lexerStartsAt (bytes: Bytes) (byteCount: Int) (position: Int) (expected: Str
 
 let lexerToken (kind: TokenKind) (text: Str) (intValue: Int) (floatValue: Float) (position: Int) (length: Int) = Token(kind = kind, text = text, intValue = intValue, floatValue = floatValue, position = position, length = length)
 
-let lexerDiagnostic (position: Int) (length: Int) (message: Str) = DiagnosticEntry(span = spanFromStartLength(position)(length), message = message, code = Some("ASH003"))
+let lexerDiagnostic (position: Int) (length: Int) (message: Str) =
+    DiagnosticEntry(span = spanFromStartLength(
+        position,
+        length
+    ), message = message, code = Some("ASH003"))
 
 let lexerIsAsciiLetter value =
     if value >= 65
@@ -237,37 +241,103 @@ let lexerKeywordKind (bytes: Bytes) (start: Int) (count: Int) =
                                                         if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("type")
                                                         then Type
                                                         else
-                                                            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("await")
+                                                            if lexerKeywordMatches(
+                                                                sourceCode,
+                                                                bytes,
+                                                                start,
+                                                                count,
+                                                                "await"
+                                                            )
                                                             then Await
                                                             else
-                                                                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("external")
+                                                                if lexerKeywordMatches(
+                                                                    sourceCode,
+                                                                    bytes,
+                                                                    start,
+                                                                    count,
+                                                                    "external"
+                                                                )
                                                                 then External
                                                                 else
-                                                                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("capability")
+                                                                    if lexerKeywordMatches(
+                                                                        sourceCode,
+                                                                        bytes,
+                                                                        start,
+                                                                        count,
+                                                                        "capability"
+                                                                    )
                                                                     then Capability
                                                                     else
-                                                                        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("needs")
+                                                                        if lexerKeywordMatches(
+                                                                            sourceCode,
+                                                                            bytes,
+                                                                            start,
+                                                                            count,
+                                                                            "needs"
+                                                                        )
                                                                         then Needs
                                                                         else
-                                                                            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("provide")
+                                                                            if lexerKeywordMatches(
+                                                                                sourceCode,
+                                                                                bytes,
+                                                                                start,
+                                                                                count,
+                                                                                "provide"
+                                                                            )
                                                                             then Provide
                                                                             else
-                                                                                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("perform")
+                                                                                if lexerKeywordMatches(
+                                                                                    sourceCode,
+                                                                                    bytes,
+                                                                                    start,
+                                                                                    count,
+                                                                                    "perform"
+                                                                                )
                                                                                 then Perform
                                                                                 else
-                                                                                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("handle")
+                                                                                    if lexerKeywordMatches(
+                                                                                        sourceCode,
+                                                                                        bytes,
+                                                                                        start,
+                                                                                        count,
+                                                                                        "handle"
+                                                                                    )
                                                                                     then Handle
                                                                                     else
-                                                                                        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("trait")
+                                                                                        if lexerKeywordMatches(
+                                                                                            sourceCode,
+                                                                                            bytes,
+                                                                                            start,
+                                                                                            count,
+                                                                                            "trait"
+                                                                                        )
                                                                                         then Trait
                                                                                         else
-                                                                                            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("implement")
+                                                                                            if lexerKeywordMatches(
+                                                                                                sourceCode,
+                                                                                                bytes,
+                                                                                                start,
+                                                                                                count,
+                                                                                                "implement"
+                                                                                            )
                                                                                             then Implement
                                                                                             else
-                                                                                                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("requires")
+                                                                                                if lexerKeywordMatches(
+                                                                                                    sourceCode,
+                                                                                                    bytes,
+                                                                                                    start,
+                                                                                                    count,
+                                                                                                    "requires"
+                                                                                                )
                                                                                                 then Requires
                                                                                                 else
-                                                                                                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("deriving")
+                                                                                                    if lexerKeywordMatches(
+                                                                                                        sourceCode,
+                                                                                                        bytes,
+                                                                                                        start,
+                                                                                                        count,
+                                                                                                        "deriving"
+                                                                                                    )
                                                                                                     then Deriving
                                                                                                     else Ident)
 
@@ -402,9 +472,23 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                         |> lexerSlice(bytes)(start)
                         |> Ashes.Text.parseFloat with
                             | Ok(value) ->
-                                (lexerToken(Float)(lexerSlice(bytes)(start)(tokenLength))(0)(value)(start)(tokenLength), None)
+                                (lexerToken(
+                                    Float,
+                                    lexerSlice(bytes)(start)(tokenLength),
+                                    0,
+                                    value,
+                                    start,
+                                    tokenLength
+                                ), None)
                             | Error(_) ->
-                                (lexerToken(Float)(lexerSlice(bytes)(start)(tokenLength))(0)(0.0)(start)(tokenLength), "Invalid float literal: " + lexerSlice(bytes)(start)(tokenLength) + "."
+                                (lexerToken(
+                                    Float,
+                                    lexerSlice(bytes)(start)(tokenLength),
+                                    0,
+                                    0.0,
+                                    start,
+                                    tokenLength
+                                ), "Invalid float literal: " + lexerSlice(bytes)(start)(tokenLength) + "."
                                 |> lexerDiagnostic(start)(tokenLength)
                                 |> Some)
             else
@@ -412,7 +496,14 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                 then
                     if lexerByteAt(bytes)(digitsEnd) == 78
                     then
-                        (lexerToken(BigInt)(lexerSlice(bytes)(start)(digitsEnd - start))(0)(0.0)(start)(digitsEnd + 1 - start), None)
+                        (lexerToken(
+                            BigInt,
+                            lexerSlice(bytes)(start)(digitsEnd - start),
+                            0,
+                            0.0,
+                            start,
+                            digitsEnd + 1 - start
+                        ), None)
                     else
                         match lexerUnsignedSuffix(bytes)(byteCount)(digitsEnd) with
                             | (bits, suffixLength) ->
@@ -434,7 +525,18 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                 |> lexerSlice(bytes)(start)
                                                 |> Ashes.Text.parseBigInt with
                                                     | Error(_) ->
-                                                        (lexerToken(Int)(lexerSlice(bytes)(start)(fullLength))(0)(0.0)(start)(fullLength), "Invalid unsigned integer literal: " + lexerSlice(bytes)(start)(fullLength) + "."
+                                                        (lexerToken(
+                                                            Int,
+                                                            lexerSlice(bytes)(start)(fullLength),
+                                                            0,
+                                                            0.0,
+                                                            start,
+                                                            fullLength
+                                                        ), "Invalid unsigned integer literal: " + lexerSlice(
+                                                            bytes,
+                                                            start,
+                                                            fullLength
+                                                        ) + "."
                                                         |> lexerDiagnostic(start)(fullLength)
                                                         |> Some)
                                                     | Ok(value) ->
@@ -442,11 +544,31 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                         in
                                                             if valueForRange > lexerUnsignedMaximum(bits)
                                                             then
-                                                                (lexerToken(Int)(lexerSlice(bytes)(start)(fullLength))(0)(0.0)(start)(fullLength), "Unsigned integer literal out of range for u" + Ashes.Text.fromInt(bits) + ": " + lexerSlice(bytes)(start)(fullLength) + "."
+                                                                (lexerToken(
+                                                                    Int,
+                                                                    lexerSlice(bytes)(start)(fullLength),
+                                                                    0,
+                                                                    0.0,
+                                                                    start,
+                                                                    fullLength
+                                                                ), "Unsigned integer literal out of range for u" + Ashes.Text.fromInt(
+                                                                    bits
+                                                                ) + ": " + lexerSlice(
+                                                                    bytes,
+                                                                    start,
+                                                                    fullLength
+                                                                ) + "."
                                                                 |> lexerDiagnostic(start)(fullLength)
                                                                 |> Some)
                                                             else
-                                                                (lexerToken(Int)(lexerSlice(bytes)(start)(fullLength))(lexerUnsignedToInt(value))(0.0)(start)(fullLength), None)
+                                                                (lexerToken(
+                                                                    Int,
+                                                                    lexerSlice(bytes)(start)(fullLength),
+                                                                    lexerUnsignedToInt(value),
+                                                                    0.0,
+                                                                    start,
+                                                                    fullLength
+                                                                ), None)
                                         else lexerReadInteger(bytes)(byteCount)(start)
                 else lexerReadInteger(bytes)(byteCount)(start))
 
@@ -600,7 +722,12 @@ let lexerReadRune (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                     in
                                                         if valid
                                                         then (value, closingPosition + 1, true)
-                                                        else (65533, lexerFindRuneEnd(bytes)(byteCount)(contentStart), false)
+                                                        else
+                                                            (65533, lexerFindRuneEnd(
+                                                                bytes,
+                                                                byteCount,
+                                                                contentStart
+                                                            ), false)
                                     else (65533, lexerFindRuneEnd(bytes)(byteCount)(contentStart), false)
                                 else (65533, lexerFindRuneEnd(bytes)(byteCount)(contentStart), false)
                             else
@@ -638,7 +765,14 @@ let lexerReadRune (bytes: Bytes) (byteCount: Int) (start: Int) =
             match parsed with
                 | (value, endPosition, valid) ->
                     let token =
-                        lexerToken(Rune)(lexerSlice(bytes)(start)(endPosition - start))(value)(0.0)(start)(endPosition - start)
+                        lexerToken(
+                            Rune,
+                            lexerSlice(bytes)(start)(endPosition - start),
+                            value,
+                            0.0,
+                            start,
+                            endPosition - start
+                        )
                     in
                         if valid
                         then (token, None)
@@ -834,7 +968,14 @@ let lexerReadNext (bytes: Bytes) (byteCount: Int) (position: Int) =
                                 in
                                     let text = lexerSlice(bytes)(position)(badWidth)
                                     in
-                                        (lexerToken(Bad)(text)(0)(0.0)(position)(badWidth), "Unexpected character: '" + text + "'."
+                                        (lexerToken(
+                                            Bad,
+                                            text,
+                                            0,
+                                            0.0,
+                                            position,
+                                            badWidth
+                                        ), "Unexpected character: '" + text + "'."
                                         |> lexerDiagnostic(position)(badWidth)
                                         |> Some)
 
@@ -842,7 +983,11 @@ let recursive lexerScan (bytes: Bytes) (byteCount: Int) (position: Int) (tokens:
     (let nextPosition = lexerSkipTrivia(bytes)(byteCount)(position)
     in
         if nextPosition >= byteCount
-        then LexerResult(tokens = reverseLexerValues(lexerToken(EOF)("")(0)(0.0)(nextPosition)(0) :: tokens)([]), diagnostics = reverseLexerValues(diagnostics)([]))
+        then
+            LexerResult(tokens = reverseLexerValues(
+                lexerToken(EOF)("")(0)(0.0)(nextPosition)(0) :: tokens,
+                []
+            ), diagnostics = reverseLexerValues(diagnostics)([]))
         else
             match lexerReadNext(bytes)(byteCount)(nextPosition) with
                 | (token, nextDiagnostic) ->

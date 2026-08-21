@@ -11,7 +11,12 @@ export (
 let binding name value = LetBindingSyntax(name = name, value = value, sugarParameters = [], typeAnnotation = None, requirements = [])
 
 let renderTrait =
-    TraitDecl(name = "Render", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "render", signature = TypeArrow(TypeNamed("a"))(TypeNamed("Str"))([])(None), defaultImplementation = "render"
+    TraitDecl(name = "Render", typeParameters = [TypeParameter(name = "a")], supertraits = [], methods = [TraitMethodDecl(name = "render", signature = TypeArrow(
+        TypeNamed("a"),
+        TypeNamed("Str"),
+        [],
+        None
+    ), defaultImplementation = "render"
     |> ExprQualifiedVar("Render")
     |> Some)])
 
@@ -21,9 +26,29 @@ let loggingCapability =
     |> Some)])
 
 let utilProgram =
-    ProgramSyntax(items = [TopLevelType(TypeDecl(name = "Tree", typeParameters = [], constructors = [TypeConstructor(name = "Node", parameters = [TypeApplied("Tree")([])], fieldNames = [])], isRecord = false, derivingTraits = [])), TopLevelTrait(renderTrait), TopLevelCapability(loggingCapability), TopLevelLet(binding("value")(ExprInt(42)))(false), TopLevelLet(binding("hidden")(ExprVar("value")))(false), TopLevelLet(binding("loop")(ExprVar("loop")))(true)], body = None)
+    ProgramSyntax(items = [TopLevelType(
+        TypeDecl(name = "Tree", typeParameters = [], constructors = [TypeConstructor(name = "Node", parameters = [TypeApplied(
+            "Tree",
+            []
+        )], fieldNames = [])], isRecord = false, derivingTraits = [])
+    ), TopLevelTrait(renderTrait), TopLevelCapability(loggingCapability), TopLevelLet(
+        binding("value")(ExprInt(42)),
+        false
+    ), TopLevelLet(
+        binding("hidden")(ExprVar("value")),
+        false
+    ), TopLevelLet(binding("loop")(ExprVar("loop")))(true)], body = None)
 
-let utilInterface = ModuleImportInterface(name = "Foo.Util", exports = [ImportTypeExport("Tree"), ImportConstructorExport("Node"), ImportTypeExport("Render"), ImportTypeExport("Logging"), ImportValueExport("value")])
+let utilInterface =
+    ModuleImportInterface(name = "Foo.Util", exports = [ImportTypeExport(
+        "Tree"
+    ), ImportConstructorExport(
+        "Node"
+    ), ImportTypeExport(
+        "Render"
+    ), ImportTypeExport(
+        "Logging"
+    ), ImportValueExport("value")])
 
 let utilUnit = SemanticStitchUnit(name = "Foo.Util", packageId = "dep", sourcePath = "/dep/Foo/Util.ash", imports = [], interface = utilInterface, program = utilProgram, isEntry = false)
 
@@ -38,13 +63,30 @@ let mainProgram =
     |> ExprMatch(ExprVar("Node"))([(PatternConstructor("Node")([]), ExprVar("value"), None)])
     |> binding("matched"))(false), TopLevelLet("render"
     |> ExprQualifiedVar("Util.Render")
-    |> binding("method"))(false), TopLevelLet([(Some("Util.Logging"), "write", [PatternVar("message")], ExprVar("message"))]
+    |> binding("method"))(false), TopLevelLet([(Some(
+        "Util.Logging"
+    ), "write", [PatternVar("message")], ExprVar("message"))]
     |> ExprHandle(ExprQualifiedVar("Util.Logging")("write"))
-    |> binding("handled"))(false), TopLevelTypeAlias(TypeAliasDecl(name = "Local", typeParameters = [], target = TypeNamed("Foo.Util.Tree")))], body = Some(ExprTuple([ExprVar("before"), ExprVar("later")])))
+    |> binding("handled"))(false), TopLevelTypeAlias(
+        TypeAliasDecl(name = "Local", typeParameters = [], target = TypeNamed("Foo.Util.Tree"))
+    )], body = Some(ExprTuple([ExprVar("before"), ExprVar("later")])))
 
-let mainInterface = ModuleImportInterface(name = "Main", exports = [ImportValueExport("before"), ImportValueExport("later"), ImportValueExport("shadow"), ImportValueExport("qualified"), ImportValueExport("matched"), ImportValueExport("method"), ImportValueExport("handled"), ImportTypeExport("Local")])
+let mainInterface =
+    ModuleImportInterface(name = "Main", exports = [ImportValueExport(
+        "before"
+    ), ImportValueExport("later"), ImportValueExport(
+        "shadow"
+    ), ImportValueExport(
+        "qualified"
+    ), ImportValueExport("matched"), ImportValueExport("method"), ImportValueExport("handled"), ImportTypeExport("Local")])
 
-let mainUnit = SemanticStitchUnit(name = "Main", packageId = "app", sourcePath = "/app/Main.ash", imports = [ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util")], interface = mainInterface, program = mainProgram, isEntry = true)
+let mainUnit =
+    SemanticStitchUnit(name = "Main", packageId = "app", sourcePath = "/app/Main.ash", imports = [ResolvedModuleImport(
+        "Foo.Util",
+        None,
+        1,
+        "import Foo.Util"
+    )], interface = mainInterface, program = mainProgram, isEntry = true)
 
 let requireProject result =
     match result with

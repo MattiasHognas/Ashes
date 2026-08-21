@@ -14,7 +14,10 @@ let expectTypeIn expected expression environment =
                 if actual == expected
                 then Unit
                 else test.fail("expected " + expected + " but inferred " + actual)
-        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(error) } -> test.fail("inference should succeed: " + Ashes.Trait.Show.show(error))
+        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, error = Some(error) } ->
+            test.fail(
+                "inference should succeed: " + Ashes.Trait.Show.show(error)
+            )
 
 let expectType expected expression =
     Unit
@@ -95,13 +98,21 @@ let expectCoreInference unit =
     in
         let reference = ExprVar("identity")
         in
-            let polymorphicBody = ExprTuple([ExprCall(reference)(ExprInt(1))(false), ExprCall(reference)(ExprString("text"))(false)])
+            let polymorphicBody =
+                ExprTuple(
+                    [ExprCall(reference)(ExprInt(1))(false)(callArgumentsInline), ExprCall(
+                        reference,
+                        ExprString("text"),
+                        false,
+                        callArgumentsInline
+                    )]
+                )
             in
                 unit
                 |> (given (_) -> expectPolymorphicIdentity(identity))
                 |> (given (_) ->
-                    false
-                    |> ExprCall(identity)(ExprInt(42))
+                    callArgumentsInline
+                    |> ExprCall(identity)(ExprInt(42))(false)
                     |> expectType("Int"))
                 |> (given (_) ->
                     []
@@ -111,14 +122,24 @@ let expectCoreInference unit =
                     ExprInt(2)
                     |> ExprIf(ExprBool(true))(ExprInt(1))
                     |> expectType("Int"))
-                |> (given (_) -> expectType("List(Int)")(ExprList([ExprInt(1), ExprInt(2)])))
                 |> (given (_) ->
-                    ExprList([])
+                    false
+                    |> ExprList([ExprInt(1), ExprInt(2)])
+                    |> expectType("List(Int)"))
+                |> (given (_) ->
+                    false
+                    |> ExprList([])
                     |> ExprCons(ExprString("head"))
                     |> expectType("List(Str)"))
                 |> (given (_) ->
                     []
-                    |> ExprLetRecursive("loop")(identity)(ExprCall(ExprVar("loop"))(ExprInt(1))(false))([])(None)
+                    |> ExprLetRecursive(
+                        "loop",
+                        identity,
+                        ExprCall(ExprVar("loop"))(ExprInt(1))(false)(callArgumentsInline),
+                        [],
+                        None
+                    )
                     |> expectType("Int")))
 
 let expectQualifiedAndConstrainedInference unit =
@@ -191,7 +212,12 @@ let expectResolvedLetConstraint unit =
     (let genericAdd = genericAddExpression(Unit)
     in
         let applied =
-            ExprCall(ExprCall(genericAdd)(ExprInt(1))(false))(ExprInt(2))(false)
+            ExprCall(
+                ExprCall(genericAdd)(ExprInt(1))(false)(callArgumentsInline),
+                ExprInt(2),
+                false,
+                callArgumentsInline
+            )
         in
             []
             |> ExprLet("sum")(applied)(ExprVar("sum"))([])(None)
@@ -199,7 +225,7 @@ let expectResolvedLetConstraint unit =
 
 let rejectSelfApplication unit =
     (let expression =
-        ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false))(None)
+        ExprLambda("value")(ExprCall(ExprVar("value"))(ExprVar("value"))(false)(callArgumentsInline))(None)
     in
         match Unit
         |> emptyTypeEnvironment

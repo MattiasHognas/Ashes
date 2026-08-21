@@ -17,7 +17,10 @@ let expectMatchType expected expression =
                 if actual == expected
                 then Unit
                 else test.fail("expected " + expected + " but inferred " + actual)
-        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(error) } -> test.fail("match inference should succeed: " + Ashes.Trait.Show.show(error))
+        | TypeInferenceResult { semanticType = _semanticType, substitution = _substitution, supply = _supply, constraints = _constraints, error = Some(error) } ->
+            test.fail(
+                "match inference should succeed: " + Ashes.Trait.Show.show(error)
+            )
 
 let expectBasicPatterns unit =
     unit
@@ -27,11 +30,17 @@ let expectBasicPatterns unit =
         |> expectMatchType("Int"))
     |> (given (_) ->
         None
-        |> ExprMatch(ExprList([ExprString("head")]))([(PatternCons(PatternVar("head"))(PatternWildcard), ExprVar("head"), None)])
+        |> ExprMatch(
+            ExprList([ExprString("head")])(false),
+            [(PatternCons(PatternVar("head"))(PatternWildcard), ExprVar("head"), None)]
+        )
         |> expectMatchType("Str"))
     |> (given (_) ->
         None
-        |> ExprMatch(ExprTuple([ExprInt(1), ExprString("value")]))([(PatternTuple([PatternWildcard, PatternVar("text")]), ExprVar("text"), None)])
+        |> ExprMatch(
+            ExprTuple([ExprInt(1), ExprString("value")]),
+            [(PatternTuple([PatternWildcard, PatternVar("text")]), ExprVar("text"), None)]
+        )
         |> expectMatchType("Str"))
     |> (given (_) ->
         None
@@ -42,7 +51,10 @@ let expectGuardedAndConstrainedPatterns unit =
     unit
     |> (given (_) ->
         None
-        |> ExprMatch(ExprInt(1))([(PatternInt(1), ExprString("one"), Some(ExprBool(true))), (PatternWildcard, ExprString("other"), None)])
+        |> ExprMatch(
+            ExprInt(1),
+            [(PatternInt(1), ExprString("one"), Some(ExprBool(true))), (PatternWildcard, ExprString("other"), None)]
+        )
         |> expectMatchType("Str"))
     |> (given (_) ->
         None
@@ -50,7 +62,12 @@ let expectGuardedAndConstrainedPatterns unit =
         |> TypeInferenceTests.expectConstraint("Add")("Int"))
 
 let rejectMismatchedPatternBranches unit =
-    (let expression = ExprMatch(ExprBool(true))([(PatternBool(true), ExprInt(1), None), (PatternBool(false), ExprString("wrong"), None)])(None)
+    (let expression =
+        ExprMatch(
+            ExprBool(true),
+            [(PatternBool(true), ExprInt(1), None), (PatternBool(false), ExprString("wrong"), None)],
+            None
+        )
     in
         match Unit
         |> emptyTypeEnvironment
@@ -68,7 +85,12 @@ let rejectInvalidPatternGuard unit =
             | _ -> test.fail("match guards should be Bool"))
 
 let rejectDuplicatePatternBinding unit =
-    (let expression = ExprMatch(ExprTuple([ExprInt(1), ExprInt(2)]))([(PatternTuple([PatternVar("value"), PatternVar("value")]), ExprInt(0), None)])(None)
+    (let expression =
+        ExprMatch(
+            ExprTuple([ExprInt(1), ExprInt(2)]),
+            [(PatternTuple([PatternVar("value"), PatternVar("value")]), ExprInt(0), None)],
+            None
+        )
     in
         match Unit
         |> emptyTypeEnvironment

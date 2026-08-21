@@ -48,4 +48,22 @@ let recursive assertCorpus cases =
             let sourceChecked = assertLexerInvariants(source)
             in assertCorpus(tail)
 
-let run unit = assertCorpus(["", "let recursive map f xs = match xs with | [] -> [] | x :: tail -> f(x) :: map(f)(tail)", "type Result(a, e) = | Ok: a | Error: e", "external puts(Str) -> Int = \"puts@c\"", "provide Clock = handle perform now(Unit)", "trait Eq(a) = { equals: a -> a -> Bool }", "1 1.0 1N 255u8 65535u16 4294967295u32 18446744073709551615u64", "\"escaped\\ntext\" 'x' '\\u{1F600}'", "naïve Ελληνικά переменная 变量", "// comment without newline", "@#$ 😀", "\"unterminated", "'ab' '\\u{D800}'", "|?>|!>->>=<===!=<<>>::|><>+-*/%~&^!=,|()[]{}.:"])
+let run unit =
+    assertCorpus(
+        [
+            "",
+            "let recursive map f xs = match xs with | [] -> [] | x :: tail -> f(x) :: map(f)(tail)",
+            "type Result(a, e) = | Ok: a | Error: e",
+            "external puts(Str) -> Int = \"puts@c\"",
+            "provide Clock = handle perform now(Unit)",
+            "trait Eq(a) = { equals: a -> a -> Bool }",
+            "1 1.0 1N 255u8 65535u16 4294967295u32 18446744073709551615u64",
+            "\"escaped\\ntext\" 'x' '\\u{1F600}'",
+            "naïve Ελληνικά переменная 变量",
+            "// comment without newline",
+            "@#$ 😀",
+            "\"unterminated",
+            "'ab' '\\u{D800}'",
+            "|?>|!>->>=<===!=<<>>::|><>+-*/%~&^!=,|()[]{}.:"
+        ]
+    )

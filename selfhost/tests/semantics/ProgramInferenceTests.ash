@@ -13,47 +13,112 @@ let expectProgramType expected program =
                 if actual == expected
                 then Unit
                 else test.fail("expected program type " + expected + " but inferred " + actual)
-        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } -> test.fail("program should infer: " + Ashes.Trait.Show.show(error))
+        | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(error) } ->
+            test.fail(
+                "program should infer: " + Ashes.Trait.Show.show(error)
+            )
 
-let pairAlias unit = TypeAliasDecl(name = "Pair", typeParameters = [TypeParameter(name = "a")], target = TypeTuple([TypeNamed("a"), TypeNamed("a")]))
+let pairAlias unit =
+    TypeAliasDecl(name = "Pair", typeParameters = [TypeParameter(name = "a")], target = TypeTuple(
+        [TypeNamed("a"), TypeNamed("a")]
+    ))
 
-let userIdType unit = ZeroCostTypeDecl(name = "UserId", typeParameters = [], constructor = TypeConstructor(name = "UserId", parameters = [TypeNamed("Int")], fieldNames = []), derivingTraits = [])
+let userIdType unit =
+    ZeroCostTypeDecl(name = "UserId", typeParameters = [], constructor = TypeConstructor(name = "UserId", parameters = [TypeNamed(
+        "Int"
+    )], fieldNames = []), derivingTraits = [])
 
-let optionType unit = TypeDecl(name = "Option", typeParameters = [TypeParameter(name = "a")], constructors = [TypeConstructor(name = "None", parameters = [], fieldNames = []), TypeConstructor(name = "Some", parameters = [TypeNamed("a")], fieldNames = [])], isRecord = false, derivingTraits = [])
+let optionType unit =
+    TypeDecl(name = "Option", typeParameters = [TypeParameter(name = "a")], constructors = [TypeConstructor(name = "None", parameters = [], fieldNames = []), TypeConstructor(name = "Some", parameters = [TypeNamed(
+        "a"
+    )], fieldNames = [])], isRecord = false, derivingTraits = [])
 
-let pointType unit = TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed("Str")], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
+let pointType unit =
+    TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed(
+        "Int"
+    ), TypeNamed(
+        "Str"
+    )], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
 
 let pointValue unit =
-    ExprCall(ExprCall(ExprVar("Point"))(ExprInt(1))(false))(ExprString("origin"))(false)
+    ExprCall(
+        ExprCall(ExprVar("Point"))(ExprInt(1))(false)(callArgumentsInline),
+        ExprString("origin"),
+        false,
+        callArgumentsInline
+    )
 
 let expectSequentialBindings unit =
-    (let identity = LetBindingSyntax(name = "identity", value = ExprLambda("value")(ExprVar("value"))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
+    (let identity =
+        LetBindingSyntax(name = "identity", value = ExprLambda(
+            "value",
+            ExprVar("value"),
+            None
+        ), sugarParameters = [], typeAnnotation = None, requirements = [])
     in
-        let answer = LetBindingSyntax(name = "answer", value = ExprCall(ExprVar("identity"))(ExprInt(42))(false), sugarParameters = [], typeAnnotation = None, requirements = [])
-        in expectProgramType("Int")(ProgramSyntax(items = [TopLevelLet(identity)(false), TopLevelLet(answer)(false)], body = Some(ExprVar("answer")))))
+        let answer =
+            LetBindingSyntax(name = "answer", value = ExprCall(
+                ExprVar("identity"),
+                ExprInt(42),
+                false,
+                callArgumentsInline
+            ), sugarParameters = [], typeAnnotation = None, requirements = [])
+        in
+            expectProgramType(
+                "Int",
+                ProgramSyntax(items = [TopLevelLet(identity)(false), TopLevelLet(answer)(false)], body = Some(
+                    ExprVar("answer")
+                ))
+            ))
 
 let expectRecursiveBinding unit =
     (let loop =
-        LetBindingSyntax(name = "loop", value = ExprLambda("value")(false
-        |> ExprCall(ExprVar("loop"))(ExprVar("value"))
-        |> ExprIf(ExprBool(true))(ExprVar("value")))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
+        LetBindingSyntax(name = "loop", value = ExprLambda("value")(callArgumentsInline
+        |> ExprCall(ExprVar("loop"))(ExprVar("value"))(false)
+        |> ExprIf(
+            ExprBool(true),
+            ExprVar("value")
+        ))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
     in
-        expectProgramType("Int")(ProgramSyntax(items = [TopLevelLet(loop)(true)], body = false
-        |> ExprCall(ExprVar("loop"))(ExprInt(1))
+        expectProgramType("Int")(ProgramSyntax(items = [TopLevelLet(loop)(true)], body = callArgumentsInline
+        |> ExprCall(ExprVar("loop"))(ExprInt(1))(false)
         |> Some)))
 
 let expectMutualBindings unit =
     (let first =
-        LetBindingSyntax(name = "first", value = ExprLambda("value")(ExprCall(ExprVar("second"))(ExprVar("value"))(false))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
+        LetBindingSyntax(name = "first", value = ExprLambda(
+            "value",
+            ExprCall(ExprVar("second"))(ExprVar("value"))(false)(callArgumentsInline),
+            None
+        ), sugarParameters = [], typeAnnotation = None, requirements = [])
     in
-        let second = LetBindingSyntax(name = "second", value = ExprLambda("value")(ExprVar("value"))(None), sugarParameters = [], typeAnnotation = None, requirements = [])
+        let second =
+            LetBindingSyntax(name = "second", value = ExprLambda(
+                "value",
+                ExprVar("value"),
+                None
+            ), sugarParameters = [], typeAnnotation = None, requirements = [])
         in
-            let uses = ExprTuple([ExprCall(ExprVar("first"))(ExprInt(1))(false), ExprCall(ExprVar("first"))(ExprString("value"))(false)])
-            in expectProgramType("(Int, Str)")(ProgramSyntax(items = [TopLevelRecursiveGroup([first, second])], body = Some(uses))))
+            let uses =
+                ExprTuple(
+                    [ExprCall(ExprVar("first"))(ExprInt(1))(false)(callArgumentsInline), ExprCall(
+                        ExprVar("first"),
+                        ExprString("value"),
+                        false,
+                        callArgumentsInline
+                    )]
+                )
+            in
+                expectProgramType(
+                    "(Int, Str)",
+                    ProgramSyntax(items = [TopLevelRecursiveGroup([first, second])], body = Some(uses))
+                ))
 
 let expectTypeAlias unit =
     (let pair =
-        LetBindingSyntax(name = "pair", value = ExprTuple([ExprInt(1), ExprInt(2)]), sugarParameters = [], typeAnnotation = [TypeNamed("Int")]
+        LetBindingSyntax(name = "pair", value = ExprTuple(
+            [ExprInt(1), ExprInt(2)]
+        ), sugarParameters = [], typeAnnotation = [TypeNamed("Int")]
         |> TypeApplied("Pair")
         |> Some, requirements = [])
     in
@@ -66,14 +131,17 @@ let expectZeroCostType unit =
     |> (given (_) ->
         expectProgramType("UserId")(ProgramSyntax(items = [Unit
         |> userIdType
-        |> TopLevelZeroCostType], body = false
-        |> ExprCall(ExprVar("UserId"))(ExprInt(7))
+        |> TopLevelZeroCostType], body = callArgumentsInline
+        |> ExprCall(ExprVar("UserId"))(ExprInt(7))(false)
         |> Some)))
     |> (given (_) ->
         expectProgramType("Int")(ProgramSyntax(items = [Unit
         |> userIdType
         |> TopLevelZeroCostType], body = None
-        |> ExprMatch(ExprCall(ExprVar("UserId"))(ExprInt(7))(false))([(PatternConstructor("UserId")([PatternVar("value")]), ExprVar("value"), None)])
+        |> ExprMatch(
+            ExprCall(ExprVar("UserId"))(ExprInt(7))(false)(callArgumentsInline),
+            [(PatternConstructor("UserId")([PatternVar("value")]), ExprVar("value"), None)]
+        )
         |> Some)))
 
 let rejectWrongAliasArity unit =
@@ -89,7 +157,19 @@ let rejectWrongAliasArity unit =
             | _ -> test.fail("type alias arity should be checked"))
 
 let rejectPolymorphicRecursion unit =
-    (let body = ExprLambda("value")(ExprTuple([ExprCall(ExprVar("bad"))(ExprInt(1))(false), ExprCall(ExprVar("bad"))(ExprString("value"))(false)]))(None)
+    (let body =
+        ExprLambda(
+            "value",
+            ExprTuple(
+                [ExprCall(ExprVar("bad"))(ExprInt(1))(false)(callArgumentsInline), ExprCall(
+                    ExprVar("bad"),
+                    ExprString("value"),
+                    false,
+                    callArgumentsInline
+                )]
+            ),
+            None
+        )
     in
         let binding = LetBindingSyntax(name = "bad", value = body, sugarParameters = [], typeAnnotation = None, requirements = [])
         in
@@ -102,19 +182,29 @@ let expectConstructors unit =
     |> (given (_) ->
         expectProgramType("Option(Str)")(ProgramSyntax(items = [Unit
         |> optionType
-        |> TopLevelType], body = false
-        |> ExprCall(ExprVar("Some"))(ExprString("value"))
+        |> TopLevelType], body = callArgumentsInline
+        |> ExprCall(ExprVar("Some"))(ExprString("value"))(false)
         |> Some)))
     |> (given (_) ->
         expectProgramType("Str")(ProgramSyntax(items = [Unit
         |> optionType
         |> TopLevelType], body = None
-        |> ExprMatch(ExprCall(ExprVar("Some"))(ExprString("value"))(false))([(PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None), (PatternConstructor("None")([]), ExprString("none"), None)])
+        |> ExprMatch(
+            ExprCall(ExprVar("Some"))(ExprString("value"))(false)(callArgumentsInline),
+            [(PatternConstructor(
+                "Some",
+                [PatternVar("value")]
+            ), ExprVar("value"), None), (PatternConstructor("None")([]), ExprString("none"), None)]
+        )
         |> Some)))
 
 let expectRecordPattern unit =
     (let body =
-        ExprMatch(pointValue(Unit))([(PatternRecord("Point")([("label", PatternVar("label"))]), ExprVar("label"), None)])(None)
+        ExprMatch(
+            pointValue(Unit),
+            [(PatternRecord("Point")([("label", PatternVar("label"))]), ExprVar("label"), None)],
+            None
+        )
     in
         expectProgramType("Str")(ProgramSyntax(items = [Unit
         |> pointType
@@ -129,7 +219,11 @@ let expectOrPattern unit =
 
 let rejectWrongConstructorPatternArity unit =
     (let body =
-        ExprMatch(ExprCall(ExprVar("Some"))(ExprInt(1))(false))([(PatternConstructor("Some")([]), ExprInt(0), None)])(None)
+        ExprMatch(
+            ExprCall(ExprVar("Some"))(ExprInt(1))(false)(callArgumentsInline),
+            [(PatternConstructor("Some")([]), ExprInt(0), None)],
+            None
+        )
     in
         match inferProgram(ProgramSyntax(items = [Unit
         |> optionType

@@ -594,6 +594,99 @@ public sealed class FormatterTests
     }
 
     [Test]
+    public void Format_should_preserve_multiline_parenthesized_argument_lists()
+    {
+        const string source = """
+            let result =
+                outer(
+                    "first",
+                    inner(
+                        1,
+                        2
+                    ),
+                    []
+                )
+            in result
+
+            """;
+        var diagnostics = new Ashes.Frontend.Diagnostics();
+        Expr expression = new Ashes.Frontend.Parser(source, diagnostics).ParseExpression();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        string formatted = Ashes.Formatter.Formatter.Format(expression);
+        formatted.ShouldBe(source);
+
+        var reparsedDiagnostics = new Ashes.Frontend.Diagnostics();
+        Expr reparsed = new Ashes.Frontend.Parser(formatted, reparsedDiagnostics).ParseExpression();
+        reparsedDiagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(reparsed).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_preserve_a_single_multiline_parenthesized_argument()
+    {
+        const string source = """
+            f(
+                value
+            )
+
+            """;
+        var diagnostics = new Ashes.Frontend.Diagnostics();
+        Expr expression = new Ashes.Frontend.Parser(source, diagnostics).ParseExpression();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(expression).ShouldBe(source);
+    }
+
+    [Test]
+    public void Format_should_preserve_multiline_list_literals()
+    {
+        const string source = """
+            let values =
+                [
+                    first,
+                    [
+                        second,
+                        third
+                    ],
+                    f(
+                        fourth,
+                        fifth
+                    )
+                ]
+            in values
+
+            """;
+        var diagnostics = new Ashes.Frontend.Diagnostics();
+        Expr expression = new Ashes.Frontend.Parser(source, diagnostics).ParseExpression();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        string formatted = Ashes.Formatter.Formatter.Format(expression);
+        formatted.ShouldBe(source);
+
+        var reparsedDiagnostics = new Ashes.Frontend.Diagnostics();
+        Expr reparsed = new Ashes.Frontend.Parser(formatted, reparsedDiagnostics).ParseExpression();
+        reparsedDiagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(reparsed).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_preserve_a_single_multiline_list_element()
+    {
+        const string source = """
+            [
+                value
+            ]
+
+            """;
+        var diagnostics = new Ashes.Frontend.Diagnostics();
+        Expr expression = new Ashes.Frontend.Parser(source, diagnostics).ParseExpression();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(expression).ShouldBe(source);
+    }
+
+    [Test]
     public void Format_whitespace_application_is_idempotent()
     {
         const string source = "print 42\n";

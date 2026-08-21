@@ -29,7 +29,11 @@ let checkAlgebraic item =
 
 let checkRecord item =
     match unspanTopLevel(item) with
-        | TopLevelType(TypeDecl { name = "Point", typeParameters = [], constructors = TypeConstructor { name = _name, parameters = _parameters, fieldNames = fieldNames } :: [], isRecord = true, derivingTraits = [] }) -> test.assertEqual(["x", "y"])(fieldNames)
+        | TopLevelType(TypeDecl { name = "Point", typeParameters = [], constructors = TypeConstructor { name = _name, parameters = _parameters, fieldNames = fieldNames } :: [], isRecord = true, derivingTraits = [] }) ->
+            test.assertEqual(
+                ["x", "y"],
+                fieldNames
+            )
         | _ -> test.fail("expected record type")
 
 let checkBinding item =
@@ -41,7 +45,7 @@ let checkBody body =
     match body with
         | Some(expression) ->
             match ParserExpressionTests.unspan(expression) with
-                | ExprCall(_, _, false) -> Unit
+                | ExprCall(_, _, false, _layout) -> Unit
                 | _ -> test.fail("expected trailing call")
         | None -> test.fail("expected trailing body")
 

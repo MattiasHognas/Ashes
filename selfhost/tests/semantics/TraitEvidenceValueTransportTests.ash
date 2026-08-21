@@ -10,7 +10,11 @@ let orderedVariable unit = TraitConstraint(traitName = "Ordered", typeArguments 
 let expectDirectFunctionTransport unit =
     match Unit
     |> TraitEvidenceArgumentTests.evidenceEnvironment
-    |> planTraitEvidenceValueTransport(TraitEvidenceFunctionParameter)([equalVariable(Unit)])([equalVariable(Unit)]) with
+    |> planTraitEvidenceValueTransport(
+        TraitEvidenceFunctionParameter,
+        [equalVariable(Unit)],
+        [equalVariable(Unit)]
+    ) with
         | TraitEvidenceValueTransportPlanning { transports = TraitEvidenceValueTransport { destination = TraitEvidenceFunctionParameter, shape = TraitDictionaryAbiShape { parameterIndex = 0, constraint = _constraint, methods = _methods, supertraits = _supertraits }, forwarding = TraitEvidenceForwarding { rootParameterIndex = 0, supertraitPath = [] } } :: [], error = None } -> Unit
         | _ -> test.fail("direct constrained calls should transport the exact active dictionary")
 
@@ -24,14 +28,22 @@ let expectInheritedClosureTransport unit =
 let expectAggregateTransportPath unit =
     match Unit
     |> TraitEvidenceArgumentTests.evidenceEnvironment
-    |> planTraitEvidenceValueTransport(TraitEvidenceAggregateCapture([1, 0]))([equalVariable(Unit)])([orderedVariable(Unit)]) with
+    |> planTraitEvidenceValueTransport(
+        TraitEvidenceAggregateCapture([1, 0]),
+        [equalVariable(Unit)],
+        [orderedVariable(Unit)]
+    ) with
         | TraitEvidenceValueTransportPlanning { transports = TraitEvidenceValueTransport { destination = TraitEvidenceAggregateCapture(1 :: 0 :: []), shape = _shape, forwarding = TraitEvidenceForwarding { rootParameterIndex = 0, supertraitPath = 0 :: [] } } :: [], error = None } -> Unit
         | _ -> test.fail("aggregate evidence should retain its nested value path")
 
 let expectAsyncFrameTransport unit =
     match Unit
     |> TraitEvidenceArgumentTests.evidenceEnvironment
-    |> planTraitEvidenceValueTransport(TraitEvidenceAsyncFrameCapture)([orderedVariable(Unit)])([equalVariable(Unit), orderedVariable(Unit)]) with
+    |> planTraitEvidenceValueTransport(
+        TraitEvidenceAsyncFrameCapture,
+        [orderedVariable(Unit)],
+        [equalVariable(Unit), orderedVariable(Unit)]
+    ) with
         | TraitEvidenceValueTransportPlanning { transports = TraitEvidenceValueTransport { destination = TraitEvidenceAsyncFrameCapture, shape = TraitDictionaryAbiShape { parameterIndex = 0, constraint = TraitConstraint { traitName = "Ordered", typeArguments = SemVariable(7) :: [] }, methods = _methods, supertraits = _supertraits }, forwarding = TraitEvidenceForwarding { rootParameterIndex = 1, supertraitPath = [] } } :: [], error = None } -> Unit
         | _ -> test.fail("async frames should retain the exact active dictionary ABI slot")
 

@@ -10,17 +10,34 @@ let assertNamed (name: Str) expected actual =
 
 let importModule (name: Str) line = ImportHeaderEntry(modulePath = name, selector = None, alias = None, sourceLine = line, written = "import " + name)
 
-let importValue (moduleName: Str) name line = ImportHeaderEntry(modulePath = moduleName, selector = Some(name), alias = None, sourceLine = line, written = "import " + moduleName + "." + name)
+let importValue (moduleName: Str) name line =
+    ImportHeaderEntry(modulePath = moduleName, selector = Some(
+        name
+    ), alias = None, sourceLine = line, written = "import " + moduleName + "." + name)
 
-let planUnit (name: Str) imports exports = ModulePlanUnit(name = name, source = ProjectModuleSource("/project/" + name + ".ash"), imports = imports, interface = ModuleImportInterface(name = name, exports = exports))
+let planUnit (name: Str) imports exports =
+    ModulePlanUnit(name = name, source = ProjectModuleSource(
+        "/project/" + name + ".ash"
+    ), imports = imports, interface = ModuleImportInterface(name = name, exports = exports))
 
 let recursive names (modules: List(PlannedModule)) =
     match modules with
         | [] -> []
-        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest -> name :: names(rest)
+        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest ->
+            name :: names(
+                rest
+            )
 
 let checkDependencyOrder unit =
-    [planUnit("App")([importValue("Util")("value")(1), importModule("Geometry")(2)])([]), planUnit("Geometry")([])([ImportTypeExport("Point")]), planUnit("Unused")([])([]), planUnit("Util")([])([ImportValueExport("value")])]
+    [planUnit(
+        "App",
+        [importValue("Util")("value")(1), importModule("Geometry")(2)],
+        []
+    ), planUnit(
+        "Geometry",
+        [],
+        [ImportTypeExport("Point")]
+    ), planUnit("Unused")([])([]), planUnit("Util")([])([ImportValueExport("value")])]
     |> buildModulePlan("App")
     |> (given (result) ->
         match result with
@@ -49,7 +66,9 @@ let checkDuplicateModule unit =
     |> assertNamed("duplicate module")(Error(DuplicatePlanModule("App")))
 
 let checkInterfaceName unit =
-    [ModulePlanUnit(name = "App", source = ProjectModuleSource("/project/App.ash"), imports = [], interface = ModuleImportInterface(name = "Wrong", exports = []))]
+    [ModulePlanUnit(name = "App", source = ProjectModuleSource(
+        "/project/App.ash"
+    ), imports = [], interface = ModuleImportInterface(name = "Wrong", exports = []))]
     |> buildModulePlan("App")
     |> assertNamed("interface name")("Wrong"
     |> ModuleInterfaceNameMismatch("App")

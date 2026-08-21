@@ -10,7 +10,10 @@ let expectResolved expected sourceType context =
                 if actual == expected
                 then Unit
                 else test.fail("expected " + expected + " but resolved " + actual)
-        | TypeResolutionResult { semanticType = _semanticType, error = Some(error) } -> test.fail("type should resolve: " + Ashes.Trait.Show.show(error))
+        | TypeResolutionResult { semanticType = _semanticType, error = Some(error) } ->
+            test.fail(
+                "type should resolve: " + Ashes.Trait.Show.show(error)
+            )
 
 let expectBasicTypeResolution unit =
     (let context = emptyTypeResolutionContext(Unit)
@@ -35,7 +38,16 @@ let expectParameterizedTypeResolution unit =
                 |> (given (_) ->
                     expectResolved("Box(a)")(TypeApplied("Box")([TypeNamed("a")]))(nominalContext))
                 |> (given (_) ->
-                    expectResolved("a -> Bool needs {Clock, State(a) | ?9}")(TypeArrow(TypeNamed("a"))(TypeNamed("Bool"))([("Clock", []), ("State", [TypeNamed("a")])])(Some("effects")))(rowContext)))
+                    expectResolved(
+                        "a -> Bool needs {Clock, State(a) | ?9}",
+                        TypeArrow(
+                            TypeNamed("a"),
+                            TypeNamed("Bool"),
+                            [("Clock", []), ("State", [TypeNamed("a")])],
+                            Some("effects")
+                        ),
+                        rowContext
+                    )))
 
 let rejectInvalidTypeResolution unit =
     (let nominalContext =

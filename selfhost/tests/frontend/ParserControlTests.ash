@@ -7,7 +7,11 @@ let checkConditional unit =
     |> ParserExpressionTests.expectClean
     |> ParserExpressionTests.unspan with
         | ExprIf(condition, thenBranch, elseBranch) ->
-            match (ParserExpressionTests.unspan(condition), ParserExpressionTests.unspan(thenBranch), ParserExpressionTests.unspan(elseBranch)) with
+            match (ParserExpressionTests.unspan(condition), ParserExpressionTests.unspan(
+                thenBranch
+            ), ParserExpressionTests.unspan(
+                elseBranch
+            )) with
                 | (ExprBool(true), ExprInt(1), ExprInt(2)) -> Unit
                 | _ -> test.fail("expected conditional branches")
         | _ -> test.fail("expected conditional")
@@ -65,7 +69,11 @@ let checkHandler unit =
 
 let checkMissingElse unit =
     match parseExpression("if true then 1") with
-        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } -> test.assertEqual("Expected Else but found EOF.")(diagnostic.message)
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
+            test.assertEqual(
+                "Expected Else but found EOF.",
+                diagnostic.message
+            )
         | _ -> test.fail("expected missing-else diagnostic")
 
 let run unit =

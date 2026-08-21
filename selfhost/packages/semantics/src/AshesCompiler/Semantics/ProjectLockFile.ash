@@ -66,7 +66,13 @@ let lockFilePath style projectFilePath =
     |> deepCopy
     |> extension(style) with
         | suffix ->
-            normalize(style)(Ashes.Text.take(deepCopy(projectFilePath))(Ashes.Text.length(projectFilePath) - Ashes.Text.length(suffix)) + ".lock")
+            normalize(
+                style,
+                Ashes.Text.take(
+                    deepCopy(projectFilePath),
+                    Ashes.Text.length(projectFilePath) - Ashes.Text.length(suffix)
+                ) + ".lock"
+            )
 
 let recursive findLockField (key: Str) (json: LockJson) =
     match json with
@@ -119,7 +125,10 @@ let lockedPackage json =
         | (_, _, Error(error), _, _) -> Error(error)
         | (_, _, _, Error(error), _) -> Error(error)
         | (_, _, _, _, Error(error)) -> Error(error)
-        | (Ok(namespace), Ok(version), Ok(source), Ok(hash), Ok(dependencies)) -> Ok(LockedPackage(namespace = namespace, version = version, source = source, hash = hash, dependencies = dependencies))
+        | (Ok(namespace), Ok(version), Ok(source), Ok(hash), Ok(dependencies)) ->
+            Ok(
+                LockedPackage(namespace = namespace, version = version, source = source, hash = hash, dependencies = dependencies)
+            )
 
 let prependLockedPackage packageResult packagesResult =
     match (packageResult, packagesResult) with

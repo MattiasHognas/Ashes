@@ -53,12 +53,12 @@ let checkIndentedTrailingExpression unit =
                 match ParserProgramTests.unspanTopLevel(item) with
                     | TopLevelLet(LetBindingSyntax { name = "a", value = value, sugarParameters = [], typeAnnotation = None, requirements = [] }, false) ->
                         match ParserExpressionTests.unspan(value) with
-                            | ExprCall(_, _, false) -> Unit
+                            | ExprCall(_, _, false, _layout) -> Unit
                             | _ -> test.fail("expected completed call binding")
                     | _ -> test.fail("expected flat binding")
             in
                 match ParserExpressionTests.unspan(body) with
-                    | ExprCall(_, _, false) -> Unit
+                    | ExprCall(_, _, false, _layout) -> Unit
                     | _ -> test.fail("expected trailing call")
         | _ -> test.fail("expected indented trailing expression")
 

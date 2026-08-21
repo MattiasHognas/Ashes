@@ -59,10 +59,21 @@ let derivedExternalTypeDefinition name resource =
 let recursive addDerivingItemToContext item context =
     match (item, context) with
         | (TopLevelAt(_span, inner), _) -> addDerivingItemToContext(inner)(context)
-        | (TopLevelExternal(ExternalOpaqueType(name, resource)), DerivingTypeContext { derivedDefinitions = definitions }) -> DerivingTypeContext(derivedDefinitions = derivedExternalTypeDefinition(name)(resource) :: definitions)
-        | (TopLevelCapability(CapabilityDecl { name = name }), DerivingTypeContext { derivedDefinitions = definitions }) -> DerivingTypeContext(derivedDefinitions = DerivedCapabilityType(name) :: definitions)
+        | (TopLevelExternal(ExternalOpaqueType(name, resource)), DerivingTypeContext { derivedDefinitions = definitions }) ->
+            DerivingTypeContext(derivedDefinitions = derivedExternalTypeDefinition(
+                name,
+                resource
+            ) :: definitions)
+        | (TopLevelCapability(CapabilityDecl { name = name }), DerivingTypeContext { derivedDefinitions = definitions }) ->
+            DerivingTypeContext(derivedDefinitions = DerivedCapabilityType(
+                name
+            ) :: definitions)
         | (TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = parameters, target = target }), DerivingTypeContext { derivedDefinitions = definitions }) ->
-            DerivingTypeContext(derivedDefinitions = DerivedTypeAlias(name)(derivedParameterNames(parameters))(target) :: definitions)
+            DerivingTypeContext(derivedDefinitions = DerivedTypeAlias(
+                name,
+                derivedParameterNames(parameters),
+                target
+            ) :: definitions)
         | _ -> context
 
 let recursive addDerivingItemsToContext items context =
@@ -164,7 +175,12 @@ let recursive substituteDerivedAliasType parameters arguments typeExpression =
             |> substituteDerivedAliasTypes(parameters)(arguments)
             |> TypeApplied(name)
         | TypeArrow(argument, result, capabilities, tail) ->
-            TypeArrow(substituteDerivedAliasType(parameters)(arguments)(argument))(substituteDerivedAliasType(parameters)(arguments)(result))(substituteDerivedAliasCapabilities(parameters)(arguments)(capabilities))(tail)
+            TypeArrow(
+                substituteDerivedAliasType(parameters)(arguments)(argument),
+                substituteDerivedAliasType(parameters)(arguments)(result),
+                substituteDerivedAliasCapabilities(parameters)(arguments)(capabilities),
+                tail
+            )
         | TypeTuple(elements) ->
             elements
             |> substituteDerivedAliasTypes(parameters)(arguments)
@@ -173,11 +189,21 @@ let recursive substituteDerivedAliasType parameters arguments typeExpression =
 and substituteDerivedAliasTypes parameters arguments types =
     match types with
         | [] -> []
-        | head :: tail -> substituteDerivedAliasType(parameters)(arguments)(head) :: substituteDerivedAliasTypes(parameters)(arguments)(tail)
+        | head :: tail ->
+            substituteDerivedAliasType(parameters)(arguments)(head) :: substituteDerivedAliasTypes(
+                parameters,
+                arguments,
+                tail
+            )
 and substituteDerivedAliasCapabilities parameters arguments capabilities =
     match capabilities with
         | [] -> []
-        | (name, typeArguments) :: tail -> (name, substituteDerivedAliasTypes(parameters)(arguments)(typeArguments)) :: substituteDerivedAliasCapabilities(parameters)(arguments)(tail)
+        | (name, typeArguments) :: tail ->
+            (name, substituteDerivedAliasTypes(
+                parameters,
+                arguments,
+                typeArguments
+            )) :: substituteDerivedAliasCapabilities(parameters)(arguments)(tail)
 
 let derivedBuiltinFieldIsUnsupported name =
     match name with
@@ -211,9 +237,23 @@ let derivedNamedVariableIsSupported name declaredParameters =
 
 let recursive derivedTypeIsSupported (declarationName: Str) (declaredParameters: List(Str)) (context: DerivingTypeContext) (visitedAliases: List(Str)) (typeExpression: TypeExpr) =
     match typeExpression with
-        | TypeAt(_span, inner) -> derivedTypeIsSupported(declarationName)(declaredParameters)(context)(visitedAliases)(inner)
+        | TypeAt(_span, inner) ->
+            derivedTypeIsSupported(
+                declarationName,
+                declaredParameters,
+                context,
+                visitedAliases,
+                inner
+            )
         | TypeArrow(_argument, _result, _capabilities, _tail) -> false
-        | TypeTuple(elements) -> derivedTypesAreSupported(declarationName)(declaredParameters)(context)(visitedAliases)(elements)
+        | TypeTuple(elements) ->
+            derivedTypesAreSupported(
+                declarationName,
+                declaredParameters,
+                context,
+                visitedAliases,
+                elements
+            )
         | TypeApplied(name, arguments) ->
             match (sameText(name)(declarationName), sameText(name)("Ptr"), derivedBuiltinFieldIsUnsupported(name)) with
                 | (true, _, _) -> exactTypeParameterArguments(declaredParameters)(arguments)
@@ -224,8 +264,25 @@ let recursive derivedTypeIsSupported (declarationName: Str) (declaredParameters:
                         | Some(DerivedOpaqueType(_name)) -> false
                         | Some(DerivedResourceType(_name)) -> false
                         | Some(DerivedCapabilityType(_name)) -> false
-                        | Some(DerivedTypeAlias(aliasName, parameters, target)) -> derivedAliasIsSupported(declarationName)(declaredParameters)(aliasName)(parameters)(arguments)(target)(context)(visitedAliases)
-                        | None -> derivedTypesAreSupported(declarationName)(declaredParameters)(context)(visitedAliases)(arguments)
+                        | Some(DerivedTypeAlias(aliasName, parameters, target)) ->
+                            derivedAliasIsSupported(
+                                declarationName,
+                                declaredParameters,
+                                aliasName,
+                                parameters,
+                                arguments,
+                                target,
+                                context,
+                                visitedAliases
+                            )
+                        | None ->
+                            derivedTypesAreSupported(
+                                declarationName,
+                                declaredParameters,
+                                context,
+                                visitedAliases,
+                                arguments
+                            )
         | TypeNamed(name) ->
             match (sameText(name)(declarationName), derivedBuiltinFieldIsUnsupported(name)) with
                 | (true, _) ->
@@ -238,7 +295,17 @@ let recursive derivedTypeIsSupported (declarationName: Str) (declaredParameters:
                         | Some(DerivedOpaqueType(_name)) -> false
                         | Some(DerivedResourceType(_name)) -> false
                         | Some(DerivedCapabilityType(_name)) -> false
-                        | Some(DerivedTypeAlias(aliasName, parameters, target)) -> derivedAliasIsSupported(declarationName)(declaredParameters)(aliasName)(parameters)([])(target)(context)(visitedAliases)
+                        | Some(DerivedTypeAlias(aliasName, parameters, target)) ->
+                            derivedAliasIsSupported(
+                                declarationName,
+                                declaredParameters,
+                                aliasName,
+                                parameters,
+                                [],
+                                target,
+                                context,
+                                visitedAliases
+                            )
                         | None -> derivedNamedVariableIsSupported(name)(declaredParameters)
         | TypeUnit -> true
 and derivedTypesAreSupported declarationName declaredParameters context visitedAliases types =
@@ -359,7 +426,7 @@ let recursive applyDerivedTraitCall expression arguments =
     match arguments with
         | [] -> expression
         | head :: tail ->
-            applyDerivedTraitCall(ExprCall(expression)(head)(false))(tail)
+            applyDerivedTraitCall(ExprCall(expression)(head)(false)(callArgumentsInline))(tail)
 
 let derivedTraitCall traitName methodName arguments =
     applyDerivedTraitCall(ExprQualifiedVar(traitName)(methodName))(arguments)
@@ -368,7 +435,11 @@ let recursive buildDerivedEquality fieldsLeft fieldsRight result =
     match (fieldsLeft, fieldsRight) with
         | ([], []) -> result
         | (left :: leftTail, right :: rightTail) ->
-            ExprIf(derivedTraitCall("Eq")("equal")([ExprVar(left), ExprVar(right)]))(buildDerivedEquality(leftTail)(rightTail)(result))(ExprBool(false))
+            ExprIf(
+                derivedTraitCall("Eq")("equal")([ExprVar(left), ExprVar(right)]),
+                buildDerivedEquality(leftTail)(rightTail)(result),
+                ExprBool(false)
+            )
         | _ -> ExprBool(false)
 
 let recursive derivedEqCases constructors index =
@@ -377,11 +448,34 @@ let recursive derivedEqCases constructors index =
         | constructor :: tail ->
             match derivedConstructorPattern(constructor)("__derived_left_" + Ashes.Text.fromInt(index))(true) with
                 | DerivedPattern { pattern = leftPattern, fields = leftFields } ->
-                    match derivedConstructorPattern(constructor)("__derived_right_" + Ashes.Text.fromInt(index))(true) with
-                        | DerivedPattern { pattern = rightPattern, fields = rightFields } -> (PatternTuple([leftPattern, rightPattern]), buildDerivedEquality(leftFields)(rightFields)(ExprBool(true)), None) :: derivedEqCases(tail)(index + 1)
+                    match derivedConstructorPattern(
+                        constructor,
+                        "__derived_right_" + Ashes.Text.fromInt(index),
+                        true
+                    ) with
+                        | DerivedPattern { pattern = rightPattern, fields = rightFields } ->
+                            (PatternTuple(
+                                [leftPattern, rightPattern]
+                            ), buildDerivedEquality(
+                                leftFields,
+                                rightFields,
+                                ExprBool(true)
+                            ), None) :: derivedEqCases(tail)(index + 1)
 
 let derivedEqBody constructors =
-    ExprLambda("__derived_left")(ExprLambda("__derived_right")(ExprMatch(ExprTuple([ExprVar("__derived_left"), ExprVar("__derived_right")]))(derivedEqCases(constructors)(0))(None))(None))(None)
+    ExprLambda(
+        "__derived_left",
+        ExprLambda(
+            "__derived_right",
+            ExprMatch(
+                ExprTuple([ExprVar("__derived_left"), ExprVar("__derived_right")]),
+                derivedEqCases(constructors)(0),
+                None
+            ),
+            None
+        ),
+        None
+    )
 
 let recursive buildDerivedOrdering fieldsLeft fieldsRight fieldIndex result =
     match (fieldsLeft, fieldsRight) with
@@ -389,13 +483,26 @@ let recursive buildDerivedOrdering fieldsLeft fieldsRight fieldIndex result =
         | (left :: leftTail, right :: rightTail) ->
             let orderingName = "__derived_ordering_" + Ashes.Text.fromInt(fieldIndex)
             in
-                ExprMatch(derivedTraitCall("Ord")("compare")([ExprVar(left), ExprVar(right)]))([(PatternConstructor("Equal")([]), buildDerivedOrdering(leftTail)(rightTail)(fieldIndex + 1)(result), None), (PatternVar(orderingName), ExprVar(orderingName), None)])(None)
+                ExprMatch(
+                    derivedTraitCall("Ord")("compare")([ExprVar(left), ExprVar(right)]),
+                    [(PatternConstructor("Equal")([]), buildDerivedOrdering(
+                        leftTail,
+                        rightTail,
+                        fieldIndex + 1,
+                        result
+                    ), None), (PatternVar(orderingName), ExprVar(orderingName), None)],
+                    None
+                )
         | _ -> result
 
 let derivedOrdPairCase leftConstructor leftIndex rightConstructor rightIndex same differentResult =
     match derivedConstructorPattern(leftConstructor)("__derived_left_" + Ashes.Text.fromInt(leftIndex))(same) with
         | DerivedPattern { pattern = leftPattern, fields = leftFields } ->
-            match derivedConstructorPattern(rightConstructor)("__derived_right_" + Ashes.Text.fromInt(rightIndex))(same) with
+            match derivedConstructorPattern(
+                rightConstructor,
+                "__derived_right_" + Ashes.Text.fromInt(rightIndex),
+                same
+            ) with
                 | DerivedPattern { pattern = rightPattern, fields = rightFields } ->
                     let result =
                         if same
@@ -406,7 +513,15 @@ let derivedOrdPairCase leftConstructor leftIndex rightConstructor rightIndex sam
 let recursive derivedOrdDifferentCases leftConstructor leftIndex rightConstructors rightIndex result =
     match rightConstructors with
         | [] -> []
-        | rightConstructor :: tail -> derivedOrdPairCase(leftConstructor)(leftIndex)(rightConstructor)(rightIndex)(false)(result) :: derivedOrdDifferentCases(leftConstructor)(leftIndex)(tail)(rightIndex + 1)(result)
+        | rightConstructor :: tail ->
+            derivedOrdPairCase(
+                leftConstructor,
+                leftIndex,
+                rightConstructor,
+                rightIndex,
+                false,
+                result
+            ) :: derivedOrdDifferentCases(leftConstructor)(leftIndex)(tail)(rightIndex + 1)(result)
 
 let recursive derivedOrdCases constructors beforeReversed leftIndex =
     match constructors with
@@ -415,9 +530,24 @@ let recursive derivedOrdCases constructors beforeReversed leftIndex =
             let earlier =
                 derivedOrdDifferentCases(leftConstructor)(leftIndex)(reverse(beforeReversed))(0)(ExprVar("Greater"))
             in
-                let same = [derivedOrdPairCase(leftConstructor)(leftIndex)(leftConstructor)(leftIndex)(true)(ExprVar("Equal"))]
+                let same =
+                    [derivedOrdPairCase(
+                        leftConstructor,
+                        leftIndex,
+                        leftConstructor,
+                        leftIndex,
+                        true,
+                        ExprVar("Equal")
+                    )]
                 in
-                    let later = derivedOrdDifferentCases(leftConstructor)(leftIndex)(tail)(leftIndex + 1)(ExprVar("Less"))
+                    let later =
+                        derivedOrdDifferentCases(
+                            leftConstructor,
+                            leftIndex,
+                            tail,
+                            leftIndex + 1,
+                            ExprVar("Less")
+                        )
                     in
                         leftIndex + 1
                         |> derivedOrdCases(tail)(leftConstructor :: beforeReversed)
@@ -425,7 +555,19 @@ let recursive derivedOrdCases constructors beforeReversed leftIndex =
                         |> appendList(appendList(earlier)(same))
 
 let derivedOrdBody constructors =
-    ExprLambda("__derived_left")(ExprLambda("__derived_right")(ExprMatch(ExprTuple([ExprVar("__derived_left"), ExprVar("__derived_right")]))(derivedOrdCases(constructors)([])(0))(None))(None))(None)
+    ExprLambda(
+        "__derived_left",
+        ExprLambda(
+            "__derived_right",
+            ExprMatch(
+                ExprTuple([ExprVar("__derived_left"), ExprVar("__derived_right")]),
+                derivedOrdCases(constructors)([])(0),
+                None
+            ),
+            None
+        ),
+        None
+    )
 
 let recursive appendDerivedShowFields fields fieldNames isRecord first result =
     match fields with
@@ -468,10 +610,19 @@ let derivedShowCase constructor isRecord index =
 let recursive derivedShowCases constructors isRecord index =
     match constructors with
         | [] -> []
-        | constructor :: tail -> derivedShowCase(constructor)(isRecord)(index) :: derivedShowCases(tail)(isRecord)(index + 1)
+        | constructor :: tail ->
+            derivedShowCase(
+                constructor,
+                isRecord,
+                index
+            ) :: derivedShowCases(tail)(isRecord)(index + 1)
 
 let derivedShowBody constructors isRecord =
-    ExprLambda("__derived_value")(ExprMatch(ExprVar("__derived_value"))(derivedShowCases(constructors)(isRecord)(0))(None))(None)
+    ExprLambda(
+        "__derived_value",
+        ExprMatch(ExprVar("__derived_value"))(derivedShowCases(constructors)(isRecord)(0))(None),
+        None
+    )
 
 let recursive foldDerivedHash fields result =
     match fields with
@@ -484,7 +635,11 @@ let recursive foldDerivedHash fields result =
 
 let derivedHashCase constructor index =
     match derivedConstructorPattern(constructor)("__derived_field_" + Ashes.Text.fromInt(index))(true) with
-        | DerivedPattern { pattern = pattern, fields = fields } -> (pattern, foldDerivedHash(fields)(ExprInt(index + 1)), None)
+        | DerivedPattern { pattern = pattern, fields = fields } ->
+            (pattern, foldDerivedHash(
+                fields,
+                ExprInt(index + 1)
+            ), None)
 
 let recursive derivedHashCases constructors index =
     match constructors with
@@ -526,8 +681,23 @@ let derivedMethodBody traitName constructors isRecord =
 let createDerivedImplementation declaration traitName =
     match declaration with
         | TypeDecl { name = name, typeParameters = parameters, constructors = constructors, isRecord = isRecord, derivingTraits = _derivingTraits } ->
-            let binding = TraitImplementationMethodBinding(methodName = derivedMethodName(traitName), implementation = derivedMethodBody(traitName)(constructors)(isRecord))
-            in TraitImplementationDecl(traitName = traitName, typeArguments = [derivedImplementationHead(name)(parameters)], requirements = derivedRequirements(traitName)(parameters)(constructors), bindings = [binding])
+            let binding =
+                TraitImplementationMethodBinding(methodName = derivedMethodName(
+                    traitName
+                ), implementation = derivedMethodBody(
+                    traitName,
+                    constructors,
+                    isRecord
+                ))
+            in
+                TraitImplementationDecl(traitName = traitName, typeArguments = [derivedImplementationHead(
+                    name,
+                    parameters
+                )], requirements = derivedRequirements(
+                    traitName,
+                    parameters,
+                    constructors
+                ), bindings = [binding])
 
 let recursive deriveTypeImplementations context declaration remaining seen reversed =
     match remaining with
@@ -537,7 +707,15 @@ let recursive deriveTypeImplementations context declaration remaining seen rever
             in
                 match declaration with
                     | TypeDecl { name = declarationName, typeParameters = parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } ->
-                        match (derivedTraitIsSupported(traitName), textExists(traitName)(seen), derivedConstructorsAreSupported(declarationName)(parameterNames(parameters))(context)(constructors)) with
+                        match (derivedTraitIsSupported(traitName), textExists(
+                            traitName,
+                            seen
+                        ), derivedConstructorsAreSupported(
+                            declarationName,
+                            parameterNames(parameters),
+                            context,
+                            constructors
+                        )) with
                             | (false, _, _) ->
                                 DerivingExpansionResult(items = [], error = writtenName
                                 |> UnsupportedDerivedTrait(declarationName)
@@ -551,7 +729,15 @@ let recursive deriveTypeImplementations context declaration remaining seen rever
                                 |> UnsupportedDerivedField(declarationName)
                                 |> Some)
                             | _ ->
-                                deriveTypeImplementations(context)(declaration)(tail)(traitName :: seen)(TopLevelImplementation(createDerivedImplementation(declaration)(traitName)) :: reversed)
+                                deriveTypeImplementations(
+                                    context,
+                                    declaration,
+                                    tail,
+                                    traitName :: seen,
+                                    TopLevelImplementation(
+                                        createDerivedImplementation(declaration)(traitName)
+                                    ) :: reversed
+                                )
 
 let ordinaryTypeWithoutDeriving declaration =
     match declaration with
@@ -571,16 +757,23 @@ let expandTypeItem context declaration =
         | TypeDecl { derivingTraits = derivingTraits } ->
             match deriveTypeImplementations(context)(declaration)(derivingTraits)([])([]) with
                 | DerivingExpansionResult { items = implementations, error = None } ->
-                    DerivingExpansionResult(items = TopLevelType(ordinaryTypeWithoutDeriving(declaration)) :: implementations, error = None)
+                    DerivingExpansionResult(items = TopLevelType(
+                        ordinaryTypeWithoutDeriving(declaration)
+                    ) :: implementations, error = None)
                 | failure -> failure
 
 let expandZeroCostTypeItem context declaration =
     match declaration with
-        | ZeroCostTypeDecl { derivingTraits = [] } -> DerivingExpansionResult(items = [TopLevelZeroCostType(declaration)], error = None)
+        | ZeroCostTypeDecl { derivingTraits = [] } ->
+            DerivingExpansionResult(items = [TopLevelZeroCostType(
+                declaration
+            )], error = None)
         | ZeroCostTypeDecl { derivingTraits = derivingTraits } ->
             match deriveTypeImplementations(context)(zeroCostAsOrdinary(declaration))(derivingTraits)([])([]) with
                 | DerivingExpansionResult { items = implementations, error = None } ->
-                    DerivingExpansionResult(items = TopLevelZeroCostType(zeroCostTypeWithoutDeriving(declaration)) :: implementations, error = None)
+                    DerivingExpansionResult(items = TopLevelZeroCostType(
+                        zeroCostTypeWithoutDeriving(declaration)
+                    ) :: implementations, error = None)
                 | failure -> failure
 
 let spanExpandedItems span items =
@@ -594,7 +787,11 @@ let recursive expandTopLevelItem context item =
     match item with
         | TopLevelAt(span, inner) ->
             match expandTopLevelItem(context)(inner) with
-                | DerivingExpansionResult { items = items, error = None } -> DerivingExpansionResult(items = spanExpandedItems(span)(items), error = None)
+                | DerivingExpansionResult { items = items, error = None } ->
+                    DerivingExpansionResult(items = spanExpandedItems(
+                        span,
+                        items
+                    ), error = None)
                 | failure -> failure
         | TopLevelType(declaration) -> expandTypeItem(context)(declaration)
         | TopLevelZeroCostType(declaration) -> expandZeroCostTypeItem(context)(declaration)
@@ -615,7 +812,10 @@ let expandDerivedImplementationsFrom context program =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             match expandTopLevelItems(context)(items)([]) with
-                | DerivingExpansionResult { items = expanded, error = None } -> Ok(ProgramSyntax(items = expanded, body = body))
+                | DerivingExpansionResult { items = expanded, error = None } ->
+                    Ok(
+                        ProgramSyntax(items = expanded, body = body)
+                    )
                 | DerivingExpansionResult { items = _items, error = Some(error) } -> Error(error)
 
 let expandDerivedImplementations program =

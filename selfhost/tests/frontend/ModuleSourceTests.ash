@@ -49,12 +49,28 @@ let checkShippedFallback unit =
 let checkMissingModule unit =
     []
     |> resolveModuleSource("Geometry.Missing")(roots(Some("/compiler/lib")))
-    |> assertNamed("missing source")(["/project/src/Geometry/Missing.ash", "/project/vendor/Geometry/Missing.ash", "/cache/geometry/src/Geometry/Missing.ash", "/compiler/lib/Geometry/Missing.ash"]
-    |> MissingModuleSource("Geometry.Missing")
-    |> Error)
+    |> assertNamed(
+        "missing source",
+        [
+            "/project/src/Geometry/Missing.ash",
+            "/project/vendor/Geometry/Missing.ash",
+            "/cache/geometry/src/Geometry/Missing.ash",
+            "/compiler/lib/Geometry/Missing.ash"
+        ]
+        |> MissingModuleSource("Geometry.Missing")
+        |> Error
+    )
 
 let checkReservedNamespace unit =
-    assertNamed("reserved namespace")((Error(ReservedModuleSource("Ashes")), Ok(ShippedModuleSource("/compiler/lib/Ashes/IO.ash"))))((resolveModuleSource("Ashes")(roots(Some("/compiler/lib")))(["/compiler/lib/Ashes.ash"]), resolveModuleSource("Ashes.IO")(roots(Some("/compiler/lib")))(["/project/src/Ashes/IO.ash", "/compiler/lib/Ashes/IO.ash"])))
+    assertNamed(
+        "reserved namespace",
+        (Error(ReservedModuleSource("Ashes")), Ok(ShippedModuleSource("/compiler/lib/Ashes/IO.ash"))),
+        (resolveModuleSource("Ashes")(roots(Some("/compiler/lib")))(["/compiler/lib/Ashes.ash"]), resolveModuleSource(
+            "Ashes.IO",
+            roots(Some("/compiler/lib")),
+            ["/project/src/Ashes/IO.ash", "/compiler/lib/Ashes/IO.ash"]
+        ))
+    )
 
 let run unit =
     unit

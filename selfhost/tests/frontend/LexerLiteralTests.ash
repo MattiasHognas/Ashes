@@ -35,14 +35,19 @@ let assertDiagnosticMessage source expected =
     |> test.assertEqual(expected)
 
 let expectLiteralTokens unit =
-    (let result = tokenize("12345 3.14 99N 255u8 65535u16 4294967295u32 18446744073709551615u64 \"a\\\\b\\\"c\\nd\\re\\tf\" '\\u{1F600}'")
+    (let result =
+        tokenize(
+            "12345 3.14 99N 255u8 65535u16 4294967295u32 18446744073709551615u64 \"a\\\\b\\\"c\\nd\\re\\tf\" '\\u{1F600}'"
+        )
     in
         result.diagnostics
         |> test.assertEqual([])
         |> (given (_) ->
             result.tokens
             |> LexerCoreTests.lexerTokenAt(0)
-            |> test.assertEqual(Token(kind = Int, text = "12345", intValue = 12345, floatValue = 0.0, position = 0, length = 5)))
+            |> test.assertEqual(
+                Token(kind = Int, text = "12345", intValue = 12345, floatValue = 0.0, position = 0, length = 5)
+            ))
         |> (given (_) ->
             result.tokens
             |> LexerCoreTests.lexerTokenAt(1)
@@ -51,7 +56,9 @@ let expectLiteralTokens unit =
         |> (given (_) ->
             result.tokens
             |> LexerCoreTests.lexerTokenAt(2)
-            |> test.assertEqual(Token(kind = BigInt, text = "99", intValue = 0, floatValue = 0.0, position = 11, length = 3)))
+            |> test.assertEqual(
+                Token(kind = BigInt, text = "99", intValue = 0, floatValue = 0.0, position = 11, length = 3)
+            ))
         |> (given (_) ->
             result.tokens
             |> LexerCoreTests.lexerTokenAt(3)
@@ -85,7 +92,11 @@ let expectLiteralTokens unit =
 
 let expectLiteralBoundaries unit =
     unit
-    |> (given (_) -> LexerCoreTests.assertLexerKinds(["Int", "Ident", "Int", "Ident", "Int", "Ident", "EOF"])("255u81 255u164 123u8abc"))
+    |> (given (_) ->
+        LexerCoreTests.assertLexerKinds(
+            ["Int", "Ident", "Int", "Ident", "Int", "Ident", "EOF"],
+            "255u81 255u164 123u8abc"
+        ))
     |> (given (_) -> LexerCoreTests.assertLexerKinds(["Int", "Dot", "Ident", "EOF"])("42.x"))
     |> (given (_) -> assertFirstText("\"\"")(""))
     |> (given (_) -> assertFirstText("\"\\a\"")("a"))
@@ -105,15 +116,43 @@ let rejectInvalidLiterals unit =
     unit
     |> (given (_) -> assertDiagnosticMessage("\"abc")("Unterminated string literal."))
     |> (given (_) -> assertDiagnosticMessage("\"abc\\")("Unterminated string literal."))
-    |> (given (_) -> assertDiagnosticMessage("999999999999999999999999999999999999999")("Invalid integer literal: 999999999999999999999999999999999999999."))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "999999999999999999999999999999999999999",
+            "Invalid integer literal: 999999999999999999999999999999999999999."
+        ))
     |> (given (_) -> assertDiagnosticMessage("256u8")("Unsigned integer literal out of range for u8: 256u8."))
     |> (given (_) -> assertDiagnosticMessage("65536u16")("Unsigned integer literal out of range for u16: 65536u16."))
-    |> (given (_) -> assertDiagnosticMessage("4294967296u32")("Unsigned integer literal out of range for u32: 4294967296u32."))
-    |> (given (_) -> assertDiagnosticMessage("18446744073709551616u64")("Unsigned integer literal out of range for u64: 18446744073709551616u64."))
-    |> (given (_) -> assertDiagnosticMessage("''")("A rune literal must contain exactly one valid Unicode scalar value."))
-    |> (given (_) -> assertDiagnosticMessage("'ab'")("A rune literal must contain exactly one valid Unicode scalar value."))
-    |> (given (_) -> assertDiagnosticMessage("'\\u{D800}'")("A rune literal must contain exactly one valid Unicode scalar value."))
-    |> (given (_) -> assertDiagnosticMessage("'\\u{110000}'")("A rune literal must contain exactly one valid Unicode scalar value."))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "4294967296u32",
+            "Unsigned integer literal out of range for u32: 4294967296u32."
+        ))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "18446744073709551616u64",
+            "Unsigned integer literal out of range for u64: 18446744073709551616u64."
+        ))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "''",
+            "A rune literal must contain exactly one valid Unicode scalar value."
+        ))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "'ab'",
+            "A rune literal must contain exactly one valid Unicode scalar value."
+        ))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "'\\u{D800}'",
+            "A rune literal must contain exactly one valid Unicode scalar value."
+        ))
+    |> (given (_) ->
+        assertDiagnosticMessage(
+            "'\\u{110000}'",
+            "A rune literal must contain exactly one valid Unicode scalar value."
+        ))
 
 let run unit =
     unit

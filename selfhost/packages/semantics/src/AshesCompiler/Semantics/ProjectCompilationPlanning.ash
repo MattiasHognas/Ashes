@@ -189,7 +189,12 @@ let finishLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSour
                             match imports
                             |> deepCopy
                             |> dependencyModuleNames(sources) with
-                                | dependencies -> Ok(LoadedProjectModule(unit = ModulePlanUnit(name = name, source = ProjectModuleSource(path), imports = imports, interface = moduleInterface), dependencies = dependencies))
+                                | dependencies ->
+                                    Ok(
+                                        LoadedProjectModule(unit = ModulePlanUnit(name = name, source = ProjectModuleSource(
+                                            path
+                                        ), imports = imports, interface = moduleInterface), dependencies = dependencies)
+                                    )
 
 let parseLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) (source: Str) =
     match parseImportHeader(source) with
@@ -239,7 +244,12 @@ let recursive loadReachableModules (pending: List(Str)) (loaded: List(Str)) (rev
                 match loadNamedModule(name)(sources) with
                     | Error(error) -> Error(error)
                     | Ok(loadedModule) ->
-                        loadReachableModules(appendList(loadedModule.dependencies)(rest))(name :: loaded)(loadedModule.unit :: reversedUnits)(sources)
+                        loadReachableModules(
+                            appendList(loadedModule.dependencies)(rest),
+                            name :: loaded,
+                            loadedModule.unit :: reversedUnits,
+                            sources
+                        )
 
 let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
     match loadReachableModules([projectEntryModuleName(layout)])([])([])(sources) with
@@ -256,7 +266,11 @@ let indexEnumeratedSources (style: Style) (layout: ProjectLayout) (roots: List(S
 
 let projectSourceRoots (layout: ProjectLayout) =
     match layout with
-        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = _outDir, manifest = _manifest } -> appendList(sourceRoots)(includeRoots)
+        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = _outDir, manifest = _manifest } ->
+            appendList(
+                sourceRoots,
+                includeRoots
+            )
 
 let recursive dependencySourceRoots dependencies =
     match dependencies with

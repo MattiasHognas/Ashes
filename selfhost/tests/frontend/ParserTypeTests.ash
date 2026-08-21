@@ -59,7 +59,11 @@ let checkBareEffectRow unit =
 
 let checkDetachedEffectRow unit =
     match parseTypeExpression("Int needs {Clock}") with
-        | TypeExpressionParseResult { typeExpression = _typeExpression, diagnostics = diagnostic :: [] } -> test.assertEqual("'needs' requires a function type to attach to.")(diagnostic.message)
+        | TypeExpressionParseResult { typeExpression = _typeExpression, diagnostics = diagnostic :: [] } ->
+            test.assertEqual(
+                "'needs' requires a function type to attach to.",
+                diagnostic.message
+            )
         | _ -> test.fail("expected detached-row diagnostic")
 
 let run unit =

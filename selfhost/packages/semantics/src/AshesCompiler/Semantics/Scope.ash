@@ -39,7 +39,10 @@ let enterScope context =
 
 let leaveScope context =
     match context with
-        | SemanticContext { scope = SemanticScope { frames = _current :: parent :: tail }, nextSymbolId = nextSymbolId } -> Some(SemanticContext(scope = SemanticScope(frames = parent :: tail), nextSymbolId = nextSymbolId))
+        | SemanticContext { scope = SemanticScope { frames = _current :: parent :: tail }, nextSymbolId = nextSymbolId } ->
+            Some(
+                SemanticContext(scope = SemanticScope(frames = parent :: tail), nextSymbolId = nextSymbolId)
+            )
         | _ -> None
 
 let recursive findByName name symbols =
@@ -68,7 +71,11 @@ let recursive resolveFrames name frames =
 
 let resolve name context =
     match context with
-        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } -> resolveFrames(name)(frames)
+        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } ->
+            resolveFrames(
+                name,
+                frames
+            )
 
 let recursive resolveQualifiedFrames qualifiedName frames =
     match frames with
@@ -80,7 +87,11 @@ let recursive resolveQualifiedFrames qualifiedName frames =
 
 let resolveQualified qualifiedName context =
     match context with
-        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } -> resolveQualifiedFrames(qualifiedName)(frames)
+        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } ->
+            resolveQualifiedFrames(
+                qualifiedName,
+                frames
+            )
 
 let declare name qualifiedName kind definitionSpan context =
     match context with
@@ -101,4 +112,7 @@ let recursive frameCount frames =
 
 let scopeDepth context =
     match context with
-        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } -> frameCount(frames) - 1
+        | SemanticContext { scope = SemanticScope { frames = frames }, nextSymbolId = _nextSymbolId } ->
+            frameCount(
+                frames
+            ) - 1

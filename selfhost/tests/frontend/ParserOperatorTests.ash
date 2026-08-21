@@ -24,7 +24,7 @@ let operatorRootName expression =
         | ExprNotEqual(_, _) -> "not-equal"
         | ExprResultPipe(_, _) -> "result-pipe"
         | ExprResultMapErrorPipe(_, _) -> "error-pipe"
-        | ExprCall(_, _, _) -> "call"
+        | ExprCall(_, _, _, _) -> "call"
         | ExprAwait(_) -> "await"
         | ExprPerform(_) -> "perform"
         | _ -> "other"
@@ -59,7 +59,31 @@ let checkNegativeInteger unit =
         | _ -> test.fail("expected integer subtraction desugaring")
 
 let run unit =
-    [("1 + 2", "add"), ("1 - 2", "subtract"), ("1 * 2", "multiply"), ("1 / 2", "divide"), ("1 % 2", "modulo"), ("1 & 2", "and"), ("1 | 2", "or"), ("1 ^ 2", "xor"), ("1 << 2", "shift-left"), ("1 >> 2", "shift-right"), ("~1", "not-bits"), ("!true", "not"), ("1 > 2", "greater"), ("1 < 2", "less"), ("1 >= 2", "greater-equal"), ("1 <= 2", "less-equal"), ("1 == 2", "equal"), ("1 != 2", "not-equal"), ("value |> f", "call"), ("value |?> f", "result-pipe"), ("value |!> f", "error-pipe"), ("await task", "await"), ("perform Clock.now(Unit)", "perform")]
+    [
+        ("1 + 2", "add"),
+        ("1 - 2", "subtract"),
+        ("1 * 2", "multiply"),
+        ("1 / 2", "divide"),
+        ("1 % 2", "modulo"),
+        ("1 & 2", "and"),
+        ("1 | 2", "or"),
+        ("1 ^ 2", "xor"),
+        ("1 << 2", "shift-left"),
+        ("1 >> 2", "shift-right"),
+        ("~1", "not-bits"),
+        ("!true", "not"),
+        ("1 > 2", "greater"),
+        ("1 < 2", "less"),
+        ("1 >= 2", "greater-equal"),
+        ("1 <= 2", "less-equal"),
+        ("1 == 2", "equal"),
+        ("1 != 2", "not-equal"),
+        ("value |> f", "call"),
+        ("value |?> f", "result-pipe"),
+        ("value |!> f", "error-pipe"),
+        ("await task", "await"),
+        ("perform Clock.now(Unit)", "perform")
+    ]
     |> assertOperatorCases
     |> checkNegativeFloat
     |> checkNegativeInteger

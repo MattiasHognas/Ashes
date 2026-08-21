@@ -3,7 +3,12 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.ProgramInference
-let pointType = TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed("Str")], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
+let pointType =
+    TypeDecl(name = "Point", typeParameters = [], constructors = [TypeConstructor(name = "Point", parameters = [TypeNamed(
+        "Int"
+    ), TypeNamed(
+        "Str"
+    )], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
 
 let pointValue = ExprRecord("Point")([("label", ExprString("origin")), ("x", ExprInt(1))])
 
@@ -15,7 +20,10 @@ let expectPoint expression =
             else test.fail("record expression should infer Point")
         | _ -> test.fail("record expression should infer")
 
-let inferPointExpression expression = inferProgram(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(expression)))
+let inferPointExpression expression =
+    inferProgram(
+        ProgramSyntax(items = [TopLevelType(pointType)], body = Some(expression))
+    )
 
 let expectValidRecords unit =
     unit

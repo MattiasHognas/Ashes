@@ -140,10 +140,19 @@ let requiredEntry (json: ManifestJson) =
 
 let dependencyFromValue (name: Str) (value: ManifestJson) =
     match value with
-        | JsonStr(constraint) -> Some(ProjectDependency(name = deepCopy(name), source = RegistryDependency(deepCopy(constraint))))
+        | JsonStr(constraint) ->
+            Some(
+                ProjectDependency(name = deepCopy(name), source = RegistryDependency(deepCopy(constraint)))
+            )
         | JsonObject(_key, _field, _rest) ->
             match optionalStringField("path")(value) with
-                | Some(path) -> Some(ProjectDependency(name = deepCopy(name), source = PathDependency(path)(optionalStringField("namespace")(value))))
+                | Some(path) ->
+                    Some(
+                        ProjectDependency(name = deepCopy(name), source = PathDependency(
+                            path,
+                            optionalStringField("namespace")(value)
+                        ))
+                    )
                 | None -> None
         | _ -> None
 
@@ -163,7 +172,11 @@ let dependenciesField (key: Str) (json: ManifestJson) =
 
 let overrideFromValue (name: Str) (value: ManifestJson) =
     match value with
-        | JsonObject(_key, _field, _rest) -> ProjectOverride(name = deepCopy(name), path = optionalStringField("path")(value))
+        | JsonObject(_key, _field, _rest) ->
+            ProjectOverride(name = deepCopy(name), path = optionalStringField(
+                "path",
+                value
+            ))
         | _ -> ProjectOverride(name = deepCopy(name), path = None)
 
 let recursive overridesFromObject (json: ManifestJson) =
@@ -177,9 +190,35 @@ let overridesField (json: ManifestJson) =
         | Some(value) -> overridesFromObject(value)
         | None -> []
 
-let finishManifest (json: ManifestJson) (entry: Str) (dependencies: List(ProjectDependency)) = Ok(ProjectManifest(entry = entry, name = optionalStringField("name")(deepCopy(json)), namespace = optionalStringField("namespace")(deepCopy(json)), version = optionalStringField("version")(deepCopy(json)), sourceRoots = sourceRootsField(deepCopy(json)), includeRoots = stringArrayField("include")(deepCopy(json)), outDir = outDirField(deepCopy(json)), target = optionalStringField("target")(deepCopy(json)), defaults = defaultsField(deepCopy(json)), dependencies = dependencies, devDependencies = dependenciesField("devDependencies")(deepCopy(json)), overrides = overridesField(json)))
+let finishManifest (json: ManifestJson) (entry: Str) (dependencies: List(ProjectDependency)) =
+    Ok(
+        ProjectManifest(entry = entry, name = optionalStringField(
+            "name",
+            deepCopy(json)
+        ), namespace = optionalStringField(
+            "namespace",
+            deepCopy(json)
+        ), version = optionalStringField(
+            "version",
+            deepCopy(json)
+        ), sourceRoots = sourceRootsField(deepCopy(json)), includeRoots = stringArrayField(
+            "include",
+            deepCopy(json)
+        ), outDir = outDirField(deepCopy(json)), target = optionalStringField(
+            "target",
+            deepCopy(json)
+        ), defaults = defaultsField(deepCopy(json)), dependencies = dependencies, devDependencies = dependenciesField(
+            "devDependencies",
+            deepCopy(json)
+        ), overrides = overridesField(json))
+    )
 
-let buildManifest (json: ManifestJson) (entry: Str) = finishManifest(json)(entry)(dependenciesField("dependencies")(deepCopy(json)))
+let buildManifest (json: ManifestJson) (entry: Str) =
+    finishManifest(
+        json,
+        entry,
+        dependenciesField("dependencies")(deepCopy(json))
+    )
 
 let parseManifestObject (json: ManifestJson) =
     match requiredEntry(deepCopy(json)) with

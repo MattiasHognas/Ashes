@@ -62,8 +62,8 @@ let expectLetResult unit =
             |> addTypeBinding("continueWith")(scheme(continuationType))
         in
             let expression =
-                false
-                |> ExprCall(ExprVar("continueWith"))(ExprVar("value"))
+                callArgumentsInline
+                |> ExprCall(ExprVar("continueWith"))(ExprVar("value"))(false)
                 |> ExprLetResult("value")(ExprVar("input"))
             in expectResultType("Result(Int, Bool)")(expression)(environment))
 

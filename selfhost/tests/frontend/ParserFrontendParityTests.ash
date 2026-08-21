@@ -17,14 +17,16 @@ let checkFlatParenthesizedBlock unit =
                     match ParserExpressionTests.unspan(inner) with
                         | ExprLet("n", _n, call, [], None, []) ->
                             match ParserExpressionTests.unspan(call) with
-                                | ExprCall(_, _, false) -> Unit
+                                | ExprCall(_, _, false, _layout) -> Unit
                                 | _ -> test.fail("expected flat-block trailing call")
                         | _ -> test.fail("expected inner flat binding")
                 | _ -> test.fail("expected outer flat binding")
         | _ -> test.fail("expected parenthesized expression body")
 
 let checkCapabilityBoundary unit =
-    match expectNoDiagnostics("capability Value(a) =\n    | get : Unit -> a\n\n(handle perform Value.get(Unit) with\n    | Value.get(_) -> resume(1)\n    | return(value) -> value)") with
+    match expectNoDiagnostics(
+        "capability Value(a) =\n    | get : Unit -> a\n\n(handle perform Value.get(Unit) with\n    | Value.get(_) -> resume(1)\n    | return(value) -> value)"
+    ) with
         | ProgramSyntax { items = _capability :: [], body = Some(body) } ->
             match ParserExpressionTests.unspan(body) with
                 | ExprHandle(_, _) -> Unit

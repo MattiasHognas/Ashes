@@ -15,7 +15,11 @@ let checkGuardedMatch unit =
             match (ParserExpressionTests.unspan(scrutinee), first, second) with
                 | (ExprVar("value"), (firstPattern, _, Some(_)), (secondPattern, _, None)) ->
                     match (unspanPattern(firstPattern), unspanPattern(secondPattern)) with
-                        | (PatternConstructor("Some", PatternAt(_, PatternVar("x")) :: []), PatternVar("None")) -> test.assertEqual(0)(position)
+                        | (PatternConstructor("Some", PatternAt(_, PatternVar("x")) :: []), PatternVar("None")) ->
+                            test.assertEqual(
+                                0,
+                                position
+                            )
                         | _ -> test.fail("expected constructor patterns")
                 | _ -> test.fail("expected guarded match cases")
         | _ -> test.fail("expected match")
@@ -42,7 +46,11 @@ let checkLetPattern unit =
 
 let checkRefutableLetPattern unit =
     match parseExpression("let (Some(value), other) = item in value") with
-        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } -> test.assertEqual("Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.")(diagnostic.message)
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
+            test.assertEqual(
+                "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns.",
+                diagnostic.message
+            )
         | _ -> test.fail("expected refutable let-pattern diagnostic")
 
 let run unit =

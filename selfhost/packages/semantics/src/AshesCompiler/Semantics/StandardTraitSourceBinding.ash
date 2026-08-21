@@ -122,7 +122,10 @@ let sourceParameterKey name state =
         | SourceTypeKeyState { parameters = parameters, nextOrdinal = nextOrdinal } ->
             match findSourceParameterOrdinal(name)(parameters) with
                 | Some(ordinal) -> ("parameter" + Ashes.Text.fromInt(ordinal), state)
-                | None -> ("parameter" + Ashes.Text.fromInt(nextOrdinal), SourceTypeKeyState(parameters = (name, nextOrdinal) :: parameters, nextOrdinal = nextOrdinal + 1))
+                | None ->
+                    ("parameter" + Ashes.Text.fromInt(
+                        nextOrdinal
+                    ), SourceTypeKeyState(parameters = (name, nextOrdinal) :: parameters, nextOrdinal = nextOrdinal + 1))
 
 let recursive standardSourceTypeKeys types state =
     match types with
@@ -183,7 +186,10 @@ let semanticParameterKey parameterId state =
         | SemanticTypeKeyState { parameters = parameters, nextOrdinal = nextOrdinal } ->
             match findSemanticParameterOrdinal(parameterId)(parameters) with
                 | Some(ordinal) -> ("parameter" + Ashes.Text.fromInt(ordinal), state)
-                | None -> ("parameter" + Ashes.Text.fromInt(nextOrdinal), SemanticTypeKeyState(parameters = (parameterId, nextOrdinal) :: parameters, nextOrdinal = nextOrdinal + 1))
+                | None ->
+                    ("parameter" + Ashes.Text.fromInt(
+                        nextOrdinal
+                    ), SemanticTypeKeyState(parameters = (parameterId, nextOrdinal) :: parameters, nextOrdinal = nextOrdinal + 1))
 
 let recursive standardSemanticTypeKeys types state =
     match types with
@@ -241,7 +247,13 @@ let findStandardTraitUnit units =
 let standardTraitUnitPair units project =
     match findStandardTraitUnit(units) with
         | None -> Error(MissingStandardTraitSourceModule)
-        | Some(original) -> Ok(StandardTraitUnitPair(original = original, rewritten = rewriteStitchedModuleReferences(project)(original)))
+        | Some(original) ->
+            Ok(
+                StandardTraitUnitPair(original = original, rewritten = rewriteStitchedModuleReferences(
+                    project,
+                    original
+                ))
+            )
 
 let findRewrittenMethod methodName bindings =
     (let recursive find remaining =
@@ -273,18 +285,30 @@ let sourceBindingIdentity traitName methodName headKey = traitName + "." + metho
 
 let addSourceMethodBinding (traitName: Str) (head: TypeExpr) (originalMethod: TraitImplementationMethodBinding) (rewrittenMethods: List(TraitImplementationMethodBinding)) (collection: StandardTraitBindingCollection) =
     match (originalMethod, normalizedSourceTypeKey(head), collection) with
-        | (_method, _key, StandardTraitBindingCollection { error = Some(error) }) -> StandardTraitBindingCollection(bindingsReversed = [], error = Some(error))
-        | (TraitImplementationMethodBinding { methodName = methodName }, None, StandardTraitBindingCollection { bindingsReversed = reversed, error = None }) -> StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(UnsupportedStandardTraitSourceHead(traitName)))
+        | (_method, _key, StandardTraitBindingCollection { error = Some(error) }) ->
+            StandardTraitBindingCollection(bindingsReversed = [], error = Some(
+                error
+            ))
+        | (TraitImplementationMethodBinding { methodName = methodName }, None, StandardTraitBindingCollection { bindingsReversed = reversed, error = None }) ->
+            StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(
+                UnsupportedStandardTraitSourceHead(traitName)
+            ))
         | (TraitImplementationMethodBinding { methodName = methodName }, Some(headKey), StandardTraitBindingCollection { bindingsReversed = reversed, error = None }) ->
             let canonicalTraitName = nameLeaf(traitName)
             in
                 let identity = sourceBindingIdentity(canonicalTraitName)(methodName)(headKey)
                 in
                     if bindingExists(canonicalTraitName)(methodName)(headKey)(reversed)
-                    then StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(DuplicateStandardTraitSourceBinding(identity)))
+                    then
+                        StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(
+                            DuplicateStandardTraitSourceBinding(identity)
+                        ))
                     else
                         match findRewrittenMethod(methodName)(rewrittenMethods) with
-                            | None -> StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(StandardTraitSourceShapeMismatch(0)))
+                            | None ->
+                                StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(
+                                    StandardTraitSourceShapeMismatch(0)
+                                ))
                             | Some(TraitImplementationMethodBinding { implementation = implementation }) -> StandardTraitBindingCollection(bindingsReversed = StandardTraitSourceBinding(traitName = canonicalTraitName, methodName = methodName, headKey = headKey, implementation = implementation) :: reversed, error = None)
 
 let recursive addSourceMethodBindings traitName head originalMethods rewrittenMethods (collection: StandardTraitBindingCollection) =
@@ -297,34 +321,70 @@ let recursive addSourceMethodBindings traitName head originalMethods rewrittenMe
 
 let addSourceImplementationBindings original rewritten (collection: StandardTraitBindingCollection) =
     match (original, rewritten) with
-        | (TraitImplementationDecl { traitName = traitName, typeArguments = head :: [], bindings = originalMethods }, TraitImplementationDecl { bindings = rewrittenMethods }) -> addSourceMethodBindings(traitName)(head)(originalMethods)(rewrittenMethods)(collection)
+        | (TraitImplementationDecl { traitName = traitName, typeArguments = head :: [], bindings = originalMethods }, TraitImplementationDecl { bindings = rewrittenMethods }) ->
+            addSourceMethodBindings(
+                traitName,
+                head,
+                originalMethods,
+                rewrittenMethods,
+                collection
+            )
         | (TraitImplementationDecl { traitName = traitName }, _rewritten) ->
             match collection with
-                | StandardTraitBindingCollection { bindingsReversed = reversed } -> StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(UnsupportedStandardTraitSourceHead(traitName)))
+                | StandardTraitBindingCollection { bindingsReversed = reversed } ->
+                    StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(
+                        UnsupportedStandardTraitSourceHead(traitName)
+                    ))
 
 let recursive addSourceItemBindings original rewritten index (collection: StandardTraitBindingCollection) =
     match (original, rewritten) with
-        | (TopLevelAt(_originalSpan, originalInner), TopLevelAt(_rewrittenSpan, rewrittenInner)) -> addSourceItemBindings(originalInner)(rewrittenInner)(index)(collection)
-        | (TopLevelImplementation(originalImplementation), TopLevelImplementation(rewrittenImplementation)) -> addSourceImplementationBindings(originalImplementation)(rewrittenImplementation)(collection)
+        | (TopLevelAt(_originalSpan, originalInner), TopLevelAt(_rewrittenSpan, rewrittenInner)) ->
+            addSourceItemBindings(
+                originalInner,
+                rewrittenInner,
+                index,
+                collection
+            )
+        | (TopLevelImplementation(originalImplementation), TopLevelImplementation(rewrittenImplementation)) ->
+            addSourceImplementationBindings(
+                originalImplementation,
+                rewrittenImplementation,
+                collection
+            )
         | (TopLevelImplementation(_originalImplementation), _other) ->
             match collection with
-                | StandardTraitBindingCollection { bindingsReversed = reversed } -> StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(StandardTraitSourceShapeMismatch(index)))
+                | StandardTraitBindingCollection { bindingsReversed = reversed } ->
+                    StandardTraitBindingCollection(bindingsReversed = reversed, error = Some(
+                        StandardTraitSourceShapeMismatch(index)
+                    ))
         | (_original, _rewritten) -> collection
 
 let recursive collectSourceBindings originalItems rewrittenItems index (collection: StandardTraitBindingCollection) =
     match (originalItems, rewrittenItems) with
         | ([], []) ->
             match collection with
-                | StandardTraitBindingCollection { bindingsReversed = reversed, error = error } -> StandardTraitBindingCollection(bindingsReversed = reverse(reversed), error = error)
+                | StandardTraitBindingCollection { bindingsReversed = reversed, error = error } ->
+                    StandardTraitBindingCollection(bindingsReversed = reverse(
+                        reversed
+                    ), error = error)
         | (original :: originalTail, rewritten :: rewrittenTail) ->
             collection
             |> addSourceItemBindings(original)(rewritten)(index)
             |> collectSourceBindings(originalTail)(rewrittenTail)(index + 1)
-        | _ -> StandardTraitBindingCollection(bindingsReversed = [], error = Some(StandardTraitSourceShapeMismatch(index)))
+        | _ ->
+            StandardTraitBindingCollection(bindingsReversed = [], error = Some(
+                StandardTraitSourceShapeMismatch(index)
+            ))
 
 let sourceBindings pair =
     match pair with
-        | StandardTraitUnitPair { original = SemanticStitchUnit { program = ProgramSyntax { items = originalItems } }, rewritten = SemanticStitchUnit { program = ProgramSyntax { items = rewrittenItems } } } -> collectSourceBindings(originalItems)(rewrittenItems)(0)(StandardTraitBindingCollection(bindingsReversed = [], error = None))
+        | StandardTraitUnitPair { original = SemanticStitchUnit { program = ProgramSyntax { items = originalItems } }, rewritten = SemanticStitchUnit { program = ProgramSyntax { items = rewrittenItems } } } ->
+            collectSourceBindings(
+                originalItems,
+                rewrittenItems,
+                0,
+                StandardTraitBindingCollection(bindingsReversed = [], error = None)
+            )
 
 let findSourceBinding traitName methodName headKey bindings =
     (let recursive find remaining =
@@ -349,7 +409,10 @@ let bindStandardMethod bindings traitName headKey method =
             then
                 match findSourceBinding(traitName)(methodName)(normalizedHead)(bindings) with
                     | None -> Error(MissingStandardTraitSourceBinding(bindingName))
-                    | Some(StandardTraitSourceBinding { implementation = implementation }) -> Ok(TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = semanticType))
+                    | Some(StandardTraitSourceBinding { implementation = implementation }) ->
+                        Ok(
+                            TraitImplementationMethodInferenceDefinition(name = methodName, implementation = implementation, semanticType = semanticType)
+                        )
             else Ok(method)
         | (None, TraitImplementationMethodInferenceDefinition { implementation = ExprVar(bindingName) }) ->
             if Ashes.Text.startsWith(bindingName)("__ashes_standard_trait_")
@@ -375,8 +438,16 @@ let recursive bindStandardImplementations bindings implementations reversedImple
                     | _ -> None
             in
                 match bindStandardMethods(bindings)(traitName)(headKey)(methods)([]) with
-                    | BoundStandardMethods { methods = _boundMethods, error = Some(error) } -> BoundStandardImplementations(implementations = [], error = Some(error))
-                    | BoundStandardMethods { methods = boundMethods, error = None } -> bindStandardImplementations(bindings)(tail)(TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = boundMethods) :: reversedImplementations)
+                    | BoundStandardMethods { methods = _boundMethods, error = Some(error) } ->
+                        BoundStandardImplementations(implementations = [], error = Some(
+                            error
+                        ))
+                    | BoundStandardMethods { methods = boundMethods, error = None } ->
+                        bindStandardImplementations(
+                            bindings,
+                            tail,
+                            TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = boundMethods) :: reversedImplementations
+                        )
 
 let withTraitImplementations implementations environment =
     match environment with
@@ -394,7 +465,10 @@ let addStandardTraitAlias definition environment =
     match definition with
         | StitchedDefinition { sourceName = sourceName, compilerName = compilerName, packageId = packageId, kind = StitchedTrait } ->
             match resolveTraitBinding(sourceName)(environment) with
-                | None -> StandardTraitAliasResult(environment = environment, error = Some(MissingSeededStandardTrait(sourceName)))
+                | None ->
+                    StandardTraitAliasResult(environment = environment, error = Some(
+                        MissingSeededStandardTrait(sourceName)
+                    ))
                 | Some(TraitInferenceDefinition { parameterCount = parameterCount, parameters = parameters, methods = methods, supertraits = supertraits }) ->
                     let originalPackageId = inferencePackageId(environment)
                     in
@@ -412,7 +486,10 @@ let recursive addStandardTraitAliases definitions environment =
         | [] -> StandardTraitAliasResult(environment = environment, error = None)
         | definition :: tail ->
             match addStandardTraitAlias(definition)(environment) with
-                | StandardTraitAliasResult { environment = _next, error = Some(error) } -> StandardTraitAliasResult(environment = environment, error = Some(error))
+                | StandardTraitAliasResult { environment = _next, error = Some(error) } ->
+                    StandardTraitAliasResult(environment = environment, error = Some(
+                        error
+                    ))
                 | StandardTraitAliasResult { environment = next, error = None } -> addStandardTraitAliases(tail)(next)
 
 let findStandardTraitDefinitions project =
@@ -437,8 +514,14 @@ let bindSourceEnvironment bindings project environment =
                             match environment
                             |> withTraitImplementations(bound)
                             |> addStandardTraitAliases(definitions) with
-                                | StandardTraitAliasResult { environment = _aliased, error = Some(error) } -> Error(error)
-                                | StandardTraitAliasResult { environment = aliased, error = None } -> Ok(StandardTraitSourceBindingResult(environment = aliased, bindings = bindings))
+                                | StandardTraitAliasResult { environment = _aliased, error = Some(error) } ->
+                                    Error(
+                                        error
+                                    )
+                                | StandardTraitAliasResult { environment = aliased, error = None } ->
+                                    Ok(
+                                        StandardTraitSourceBindingResult(environment = aliased, bindings = bindings)
+                                    )
 
 let bindStandardTraitImplementationSources units project environment =
     match standardTraitUnitPair(units)(project) with
@@ -446,4 +529,9 @@ let bindStandardTraitImplementationSources units project environment =
         | Ok(pair) ->
             match sourceBindings(pair) with
                 | StandardTraitBindingCollection { bindingsReversed = _bindings, error = Some(error) } -> Error(error)
-                | StandardTraitBindingCollection { bindingsReversed = bindings, error = None } -> bindSourceEnvironment(bindings)(project)(environment)
+                | StandardTraitBindingCollection { bindingsReversed = bindings, error = None } ->
+                    bindSourceEnvironment(
+                        bindings,
+                        project,
+                        environment
+                    )

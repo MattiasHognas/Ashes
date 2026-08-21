@@ -36,7 +36,10 @@ let recursive takeProjectItems count items reversedItems =
             | [] -> ProjectItemSplit(selected = reverse(reversedItems), remaining = [], complete = false)
             | head :: tail -> takeProjectItems(count - 1)(tail)(head :: reversedItems)
 
-let invalidProject body entryPackageId message = ProjectInferenceUnits(units = [], body = body, entryPackageId = entryPackageId, error = Some(InvalidStitchedProgram(message)))
+let invalidProject body entryPackageId message =
+    ProjectInferenceUnits(units = [], body = body, entryPackageId = entryPackageId, error = Some(
+        InvalidStitchedProgram(message)
+    ))
 
 let selectEntryPackage packageId isEntry current body =
     if isEntry
@@ -50,9 +53,17 @@ let recursive assembleInferenceUnits regions remainingItems expectedStart revers
     match regions with
         | [] ->
             match (remainingItems, entryPackageId) with
-                | ([], Some(packageId)) -> ProjectInferenceUnits(units = reverse(reversedUnits), body = body, entryPackageId = Some(packageId), error = None)
+                | ([], Some(packageId)) ->
+                    ProjectInferenceUnits(units = reverse(
+                        reversedUnits
+                    ), body = body, entryPackageId = Some(packageId), error = None)
                 | ([], None) -> invalidProject(body)(None)("missing entry module region")
-                | (_remaining, _) -> invalidProject(body)(entryPackageId)("module regions do not cover every stitched item")
+                | (_remaining, _) ->
+                    invalidProject(
+                        body,
+                        entryPackageId,
+                        "module regions do not cover every stitched item"
+                    )
         | StitchedModuleRegion { packageId = packageId, itemStart = itemStart, itemEnd = itemEnd, isEntry = isEntry } :: tail ->
             if itemStart != expectedStart
             then invalidProject(body)(entryPackageId)("module regions are not contiguous")
@@ -61,19 +72,52 @@ let recursive assembleInferenceUnits regions remainingItems expectedStart revers
                 then invalidProject(body)(entryPackageId)("module region has a negative length")
                 else
                     match takeProjectItems(itemEnd - itemStart)(remainingItems)([]) with
-                        | ProjectItemSplit { selected = _selected, remaining = _remaining, complete = false } -> invalidProject(body)(entryPackageId)("module region extends beyond the stitched program")
+                        | ProjectItemSplit { selected = _selected, remaining = _remaining, complete = false } ->
+                            invalidProject(
+                                body,
+                                entryPackageId,
+                                "module region extends beyond the stitched program"
+                            )
                         | ProjectItemSplit { selected = selected, remaining = remaining, complete = true } ->
                             match selectEntryPackage(packageId)(isEntry)(entryPackageId)(body) with
-                                | ProjectInferenceUnits { error = Some(error) } -> ProjectInferenceUnits(units = [], body = body, entryPackageId = entryPackageId, error = Some(error))
-                                | ProjectInferenceUnits { entryPackageId = nextEntryPackageId, error = None } -> assembleInferenceUnits(tail)(remaining)(itemEnd)(ProgramInferenceUnit(packageId = packageId, program = ProgramSyntax(items = selected, body = None)) :: reversedUnits)(nextEntryPackageId)(body)
+                                | ProjectInferenceUnits { error = Some(error) } ->
+                                    ProjectInferenceUnits(units = [], body = body, entryPackageId = entryPackageId, error = Some(
+                                        error
+                                    ))
+                                | ProjectInferenceUnits { entryPackageId = nextEntryPackageId, error = None } ->
+                                    assembleInferenceUnits(
+                                        tail,
+                                        remaining,
+                                        itemEnd,
+                                        ProgramInferenceUnit(packageId = packageId, program = ProgramSyntax(items = selected, body = None)) :: reversedUnits,
+                                        nextEntryPackageId,
+                                        body
+                                    )
 
-let projectInferenceError baseEnvironment error = ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = baseEnvironment, error = Some(error))
+let projectInferenceError baseEnvironment error =
+    ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = baseEnvironment, error = Some(
+        error
+    ))
 
 let inferProjectUnits baseEnvironment assembled =
     match assembled with
-        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = _entryPackageId, error = Some(error) } -> projectInferenceError(baseEnvironment)(error)
-        | ProjectInferenceUnits { units = units, body = body, entryPackageId = Some(entryPackageId), error = None } -> inferProgramUnitsFrom(baseEnvironment)(units)(body)(entryPackageId)
-        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = None, error = None } -> projectInferenceError(baseEnvironment)(InvalidStitchedProgram("missing entry package"))
+        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = _entryPackageId, error = Some(error) } ->
+            projectInferenceError(
+                baseEnvironment,
+                error
+            )
+        | ProjectInferenceUnits { units = units, body = body, entryPackageId = Some(entryPackageId), error = None } ->
+            inferProgramUnitsFrom(
+                baseEnvironment,
+                units,
+                body,
+                entryPackageId
+            )
+        | ProjectInferenceUnits { units = _units, body = _body, entryPackageId = None, error = None } ->
+            projectInferenceError(
+                baseEnvironment,
+                InvalidStitchedProgram("missing entry package")
+            )
 
 let inferStitchedProjectFrom baseEnvironment project =
     match project with

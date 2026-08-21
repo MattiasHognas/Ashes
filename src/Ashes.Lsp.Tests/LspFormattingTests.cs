@@ -25,6 +25,48 @@ public sealed class LspFormattingTests
     }
 
     [Test]
+    public async Task Formatting_should_preserve_multiline_parenthesized_arguments()
+    {
+        const string source = "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)";
+        const string expected = "outer(\n    \"first\",\n    inner(\n        1,\n        2\n    ),\n    []\n)\n";
+        var document = TempDocument.Create("MultilineArguments.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var edits = await harness.FormatAsync(document.Uri);
+
+                edits.ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Array);
+                edits.GetArrayLength().ShouldBe(1);
+                edits[0].GetProperty("newText").GetString().ShouldBe(expected);
+            }
+        }
+    }
+
+    [Test]
+    public async Task Formatting_should_preserve_multiline_list_literals()
+    {
+        const string source = "let values =\n[\nfirst,\n[\nsecond,\nthird\n]\n]\nin values";
+        const string expected = "let values =\n    [\n        first,\n        [\n            second,\n            third\n        ]\n    ]\nin values\n";
+        var document = TempDocument.Create("MultilineList.ash", source);
+        await using (document.ConfigureAwait(false))
+        {
+            var harness = await LspHarness.StartAsync().ConfigureAwait(false);
+            await using (harness.ConfigureAwait(false))
+            {
+                _ = await harness.DidOpenAsync(document.Uri, source);
+                var edits = await harness.FormatAsync(document.Uri);
+
+                edits.ValueKind.ShouldBe(System.Text.Json.JsonValueKind.Array);
+                edits.GetArrayLength().ShouldBe(1);
+                edits[0].GetProperty("newText").GetString().ShouldBe(expected);
+            }
+        }
+    }
+
+    [Test]
     public async Task Diagnostics_should_not_crash_for_empty_or_comment_only_documents()
     {
         var emptyDocument = TempDocument.Create("Empty.ash", string.Empty);

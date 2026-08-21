@@ -46,9 +46,20 @@ let requireProject : Result(ModuleSemanticStitchError, StitchedSemanticProject) 
 let utilProgram =
     ProgramSyntax(items = [false
     |> TopLevelLet(binding("first")(ExprInt(1)))
-    |> TopLevelAt(TextSpan(start = 10, end = 20)), TopLevelLet(binding("loop")(ExprVar("loop")))(true), TopLevelLet(binding("hidden")(ExprInt(2)))(false), TopLevelType(TypeDecl(name = "Box", typeParameters = [], constructors = [TypeConstructor(name = "Box", parameters = [TypeNamed("Int")], fieldNames = ["value"])], isRecord = true, derivingTraits = []))], body = None)
+    |> TopLevelAt(TextSpan(start = 10, end = 20)), TopLevelLet(
+        binding("loop")(ExprVar("loop")),
+        true
+    ), TopLevelLet(binding("hidden")(ExprInt(2)))(false), TopLevelType(
+        TypeDecl(name = "Box", typeParameters = [], constructors = [TypeConstructor(name = "Box", parameters = [TypeNamed(
+            "Int"
+        )], fieldNames = ["value"])], isRecord = true, derivingTraits = [])
+    )], body = None)
 
-let utilInterface = moduleInterface("Foo.Util")([ImportValueExport("first"), ImportValueExport("loop"), ImportTypeExport("Box")])
+let utilInterface =
+    moduleInterface(
+        "Foo.Util",
+        [ImportValueExport("first"), ImportValueExport("loop"), ImportTypeExport("Box")]
+    )
 
 let utilUnit = unit("Foo.Util")("dep@1.0.0")("/dep/Foo/Util.ash")([])(utilInterface)(utilProgram)(false)
 
@@ -58,7 +69,15 @@ let mainProgram =
 let mainImports = [ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util")]
 
 let mainUnit =
-    unit("Main")("app@1.0.0")("/app/Main.ash")(mainImports)(moduleInterface("Main")([ImportValueExport("entry")]))(mainProgram)(true)
+    unit(
+        "Main",
+        "app@1.0.0",
+        "/app/Main.ash",
+        mainImports,
+        moduleInterface("Main")([ImportValueExport("entry")]),
+        mainProgram,
+        true
+    )
 
 let expectSequentialVisibility (project: StitchedSemanticProject) =
     match resolveStitchedUnqualified("Foo.Util")(0)(StitchedValue)("first")(project) with
@@ -130,16 +149,42 @@ let checkPrimaryPlan unitValue =
         |> (given (_) -> expectDefinitionMetadata(project)))
 
 let collisionUnit name path =
-    unit(name)("pkg")("/" + path)([])(moduleInterface(name)([ImportValueExport("c")]))(ProgramSyntax(items = [TopLevelLet(binding("c")(ExprInt(0)))(false)], body = None))(false)
+    unit(
+        name,
+        "pkg",
+        "/" + path,
+        [],
+        moduleInterface(name)([ImportValueExport("c")]),
+        ProgramSyntax(items = [TopLevelLet(binding("c")(ExprInt(0)))(false)], body = None),
+        false
+    )
 
 let checkCompilerNameCollision unitValue =
-    match buildStitchedSemanticProject([collisionUnit("A.B")("A/B.ash"), unit("A")("pkg")("/A.ash")([])(moduleInterface("A")([ImportValueExport("B_c")]))(ProgramSyntax(items = [TopLevelLet(binding("B_c")(ExprInt(0)))(false)], body = None))(false)]) with
+    match buildStitchedSemanticProject(
+        [collisionUnit("A.B")("A/B.ash"), unit(
+            "A",
+            "pkg",
+            "/A.ash",
+            [],
+            moduleInterface("A")([ImportValueExport("B_c")]),
+            ProgramSyntax(items = [TopLevelLet(binding("B_c")(ExprInt(0)))(false)], body = None),
+            false
+        )]
+    ) with
         | Error(CompilerPrivateNameCollision("A_B_c", "A.B.c", "A.B_c")) -> Unit
         | Error(_error) -> test.fail("unexpected compiler-name collision")
         | Ok(_) -> test.fail("ambiguous compiler names should be rejected")
 
 let duplicateExportModule name path =
-    unit(name)("pkg")(path)([])(moduleInterface(name)([ImportValueExport("value")]))(ProgramSyntax(items = [TopLevelLet(binding("value")(ExprInt(0)))(false)], body = None))(false)
+    unit(
+        name,
+        "pkg",
+        path,
+        [],
+        moduleInterface(name)([ImportValueExport("value")]),
+        ProgramSyntax(items = [TopLevelLet(binding("value")(ExprInt(0)))(false)], body = None),
+        false
+    )
 
 let checkImportCollision unitValue =
     (let left = duplicateExportModule("Left")("/Left.ash")
@@ -147,7 +192,20 @@ let checkImportCollision unitValue =
         let right = duplicateExportModule("Right")("/Right.ash")
         in
             let entry =
-                unit("Main")("pkg")("/Main.ash")([ResolvedModuleImport("Left")(None)(1)("import Left"), ResolvedModuleImport("Right")(None)(2)("import Right")])(moduleInterface("Main")([]))(ProgramSyntax(items = [], body = None))(true)
+                unit(
+                    "Main",
+                    "pkg",
+                    "/Main.ash",
+                    [ResolvedModuleImport("Left")(None)(1)("import Left"), ResolvedModuleImport(
+                        "Right",
+                        None,
+                        2,
+                        "import Right"
+                    )],
+                    moduleInterface("Main")([]),
+                    ProgramSyntax(items = [], body = None),
+                    true
+                )
             in
                 match buildStitchedSemanticProject([left, right, entry]) with
                     | Error(ConflictingStitchedImport("Main", "value")) -> Unit
@@ -166,7 +224,20 @@ let checkShortQualifierCollision unitValue =
         let right = duplicateExportModule("Bar.Util")("/Bar/Util.ash")
         in
             let entry =
-                unit("Main")("pkg")("/Main.ash")([ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util"), ResolvedModuleImport("Bar.Util")(None)(2)("import Bar.Util")])(moduleInterface("Main")([]))(ProgramSyntax(items = [], body = None))(true)
+                unit(
+                    "Main",
+                    "pkg",
+                    "/Main.ash",
+                    [ResolvedModuleImport("Foo.Util")(None)(1)("import Foo.Util"), ResolvedModuleImport(
+                        "Bar.Util",
+                        None,
+                        2,
+                        "import Bar.Util"
+                    )],
+                    moduleInterface("Main")([]),
+                    ProgramSyntax(items = [], body = None),
+                    true
+                )
             in
                 match buildStitchedSemanticProject([left, right, entry]) with
                     | Error(ConflictingModuleQualifier("Main", "Util")) -> Unit
