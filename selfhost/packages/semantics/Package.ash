@@ -17,6 +17,7 @@ import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TraitEvidenceRewriting
 import AshesCompiler.Semantics.TraitDictionaryConstruction
+import AshesCompiler.Semantics.StandardTraits
 import AshesCompiler.Semantics.ProjectManifest
 import AshesCompiler.Semantics.ProjectLockFile
 import AshesCompiler.Semantics.ProjectDiscovery
