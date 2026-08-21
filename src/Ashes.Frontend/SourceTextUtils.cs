@@ -42,13 +42,7 @@ public sealed class SourceTextIndex
 
         while (utf16 < text.Length)
         {
-            OperationStatus status = Rune.DecodeFromUtf16(text.AsSpan(utf16), out Rune rune, out int consumed);
-            if (status != OperationStatus.Done)
-            {
-                throw new ArgumentException("Source text contains an unpaired UTF-16 surrogate.", nameof(text));
-            }
-
-            int produced = rune.Utf8SequenceLength;
+            int scalar = DecodeSourceScalar(text, utf16, out int consumed, out int produced);
             _utf16ToUtf8[utf16] = utf8;
             if (consumed == 2)
             {
@@ -65,19 +59,22 @@ public sealed class SourceTextIndex
             _utf16ToUtf8[utf16] = utf8;
             utf8ToUtf16.Add(utf16);
 
-            AddLineBreak(
-                rune,
-                text,
-                ref utf16,
-                ref utf8,
-                consumed,
-                produced,
-                _utf16ToUtf8,
-                utf8ToUtf16,
-                lineStartsUtf8,
-                lineStartsUtf16,
-                lineEndsUtf8,
-                lineEndsUtf16);
+            if (scalar is '\r' or '\n')
+            {
+                AddLineBreak(
+                    scalar,
+                    text,
+                    ref utf16,
+                    ref utf8,
+                    consumed,
+                    produced,
+                    _utf16ToUtf8,
+                    utf8ToUtf16,
+                    lineStartsUtf8,
+                    lineStartsUtf16,
+                    lineEndsUtf8,
+                    lineEndsUtf16);
+            }
         }
 
         _utf8ToUtf16 = [.. utf8ToUtf16];
@@ -89,8 +86,27 @@ public sealed class SourceTextIndex
         _lineEndsUtf16 = [.. lineEndsUtf16];
     }
 
+    private static int DecodeSourceScalar(string text, int utf16, out int consumed, out int produced)
+    {
+        if (text[utf16] <= '\u007f')
+        {
+            consumed = 1;
+            produced = 1;
+            return text[utf16];
+        }
+
+        OperationStatus status = Rune.DecodeFromUtf16(text.AsSpan(utf16), out Rune rune, out consumed);
+        if (status != OperationStatus.Done)
+        {
+            throw new ArgumentException("Source text contains an unpaired UTF-16 surrogate.", nameof(text));
+        }
+
+        produced = rune.Utf8SequenceLength;
+        return rune.Value;
+    }
+
     private static void AddLineBreak(
-        Rune rune,
+        int scalar,
         string text,
         ref int utf16,
         ref int utf8,
@@ -103,14 +119,9 @@ public sealed class SourceTextIndex
         List<int> lineEndsUtf8,
         List<int> lineEndsUtf16)
     {
-        if (rune.Value is not ('\r' or '\n'))
-        {
-            return;
-        }
-
         lineEndsUtf8.Add(utf8 - produced);
         lineEndsUtf16.Add(utf16 - consumed);
-        if (rune.Value == '\r' && utf16 < text.Length && text[utf16] == '\n')
+        if (scalar == '\r' && utf16 < text.Length && text[utf16] == '\n')
         {
             utf16ToUtf8[utf16] = utf8;
             utf16++;

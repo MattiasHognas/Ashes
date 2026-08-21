@@ -22,10 +22,15 @@ public sealed class Lexer
     /// lexical errors into <paramref name="diag"/>.
     /// </summary>
     public Lexer(string text, Diagnostics diag)
+        : this(text ?? "", diag, new SourceTextIndex(text ?? ""))
     {
-        _text = text ?? "";
+    }
+
+    internal Lexer(string text, Diagnostics diag, SourceTextIndex sourceIndex)
+    {
+        _text = text;
         _diag = diag;
-        _sourceIndex = new SourceTextIndex(_text);
+        _sourceIndex = sourceIndex;
     }
 
     /// <summary>Captures the current byte offset so it can later be handed back to

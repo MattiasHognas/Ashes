@@ -46,7 +46,7 @@ public sealed class Parser
         _diag = diag;
         _source = text;
         _sourceIndex = new SourceTextIndex(text);
-        _lexer = new Lexer(text, diag);
+        _lexer = new Lexer(text, diag, _sourceIndex);
         _previous = new Token(TokenKind.EOF, "", 0, 0, 0);
         _current = _lexer.Next();
     }
