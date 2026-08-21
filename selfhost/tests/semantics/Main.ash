@@ -24,6 +24,7 @@ import TraitEvidenceRewritingTests
 import TraitEvidenceCallRewritingTests
 import TraitDictionaryRewritingTests
 import StandardTraitsTests
+import StandardTraitSourceBindingTests
 import DerivingExpansionTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
@@ -180,6 +181,7 @@ let run unit =
     |> TraitEvidenceCallRewritingTests.runTraitEvidenceCallRewritingTests
     |> TraitDictionaryRewritingTests.runTraitDictionaryRewritingTests
     |> StandardTraitsTests.runStandardTraitsTests
+    |> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests
     |> DerivingExpansionTests.runDerivingExpansionTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
