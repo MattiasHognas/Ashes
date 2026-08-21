@@ -41,6 +41,29 @@ public sealed class ExplicitExportTests
     }
 
     [Test]
+    public void Private_value_renaming_does_not_rewrite_same_named_record_fields()
+    {
+        string directory = WriteProject(
+            ("Library", "export (value make, value read, type Packet(..))\n" +
+                "type Packet =\n" +
+                "    | item: Int\n" +
+                "let item = 40\n" +
+                "let make = Packet(item = item + 2)\n" +
+                "let read = given (packet) ->\n" +
+                "    match packet with\n" +
+                "        | Packet { item = value } -> packet with item = packet.item + value\n"),
+            ("Main", "import Library\nmatch Library.read(Library.make) with | Packet(value) -> value\n"));
+
+        CombinedCompilationLayout layout = BuildLayout(directory);
+        layout.Source.ShouldContain("| item: Int");
+        layout.Source.ShouldContain("Packet(item =");
+        layout.Source.ShouldContain("__ashes_private_value_Library_item");
+        layout.Source.ShouldContain("Packet { item = value }");
+        layout.Source.ShouldContain("with item = packet.item + value");
+        Lower(directory, layout);
+    }
+
+    [Test]
     public void Hidden_value_is_indistinguishable_from_an_unknown_qualified_member()
     {
         string directory = WriteProject(
