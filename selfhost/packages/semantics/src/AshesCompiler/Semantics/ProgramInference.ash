@@ -11,6 +11,7 @@ import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Unification
+import AshesCompiler.Semantics.DerivingExpansion
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
@@ -57,6 +58,7 @@ type ProgramInferenceError =
     | MissingTraitImplementationMethod(Str, Str)
     | OrphanTraitImplementation(Str)
     | OverlappingTraitImplementations(Str)
+    | ProgramDerivingExpansionError(DerivingExpansionError)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
 
@@ -1276,7 +1278,7 @@ let recursive inferTopLevelItems items state =
                             | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnsupportedTopLevelDeclaration("declaration kind")))
             in inferTopLevelItems(tail)(nextState)
 
-let inferProgramFromPackage packageId baseEnvironment program =
+let inferExpandedProgramFromPackage packageId baseEnvironment program =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let initialEnvironment = withInferencePackage(packageId)(baseEnvironment)
@@ -1299,6 +1301,11 @@ let inferProgramFromPackage packageId baseEnvironment program =
                                                 | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
                                                 | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(ProgramExpressionError(error)))
                                 | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } -> ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(error))
+
+let inferProgramFromPackage packageId baseEnvironment program =
+    match expandDerivedImplementations(program) with
+        | Error(error) -> ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = withInferencePackage(packageId)(baseEnvironment), error = Some(ProgramDerivingExpansionError(error)))
+        | Ok(expanded) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(expanded)
 
 let inferProgramInPackage packageId program = inferProgramFromPackage(packageId)(emptyTypeEnvironmentForPackage(packageId))(program)
 

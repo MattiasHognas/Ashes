@@ -16,6 +16,8 @@ export (
 
 let orderingType = SemNamed(0)("Ordering")([])
 
+let orderingConstructorScheme = TypeScheme(quantified = [], body = orderingType, constraints = [])
+
 let maybeTypeSymbolId = 1
 
 let resultTypeSymbolId = 2
@@ -300,6 +302,10 @@ let standardTraitEnvironment unit =
     "ashes-standard-library"
     |> emptyTypeEnvironmentForPackage
     |> addInferenceTypeDefinition(0)("Ordering")(0)
+    |> addConstructorBinding("Less")(orderingConstructorScheme)([])
+    |> addConstructorBinding("Equal")(orderingConstructorScheme)([])
+    |> addConstructorBinding("Greater")(orderingConstructorScheme)([])
+    |> addConstructorBinding("Unordered")(orderingConstructorScheme)([])
     |> addInferenceTypeDefinition(maybeTypeSymbolId)("Maybe")(1)
     |> addInferenceTypeDefinition(resultTypeSymbolId)("Result")(2)
     |> registerStandardTraits
