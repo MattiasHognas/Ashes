@@ -8877,7 +8877,7 @@ public sealed partial class Lowering
             }
             (int Temp, TypeRef Type) lowered = LowerExpr(argument, request).AsPair();
             lowered.Temp = DuplicatePerceusPatternOwnerForAggregate(argument, lowered.Temp);
-            lowered.Temp = DuplicateRuntimeManagedTcoOwnedArgument(argument, lowered.Temp, lowered.Type);
+            lowered.Temp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, lowered.Temp, lowered.Type);
             return lowered;
         }
         finally
@@ -11079,6 +11079,14 @@ public sealed partial class Lowering
             lowered = NormalizeRuntimeManagedBytesValue(lowered);
         }
         lowered = NormalizeRuntimeManagedListElement(lowered, listRequest);
+        if (runtimeManagedList)
+        {
+            int retainedTemp = DuplicateRuntimeManagedOwnedValueForTransfer(
+                element,
+                lowered.Temp,
+                lowered.Type);
+            lowered = CreateLoweredValue(retainedTemp, lowered.Type);
+        }
         return lowered;
     }
 
