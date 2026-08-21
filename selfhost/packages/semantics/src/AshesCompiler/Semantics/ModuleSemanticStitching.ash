@@ -168,11 +168,11 @@ let recursive addConstructors constructors span order collection =
 
 let addTypeDeclaration declaration span order collection =
     match declaration with
-        | TypeDecl { name = name, typeParameters = _parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } -> addConstructors(constructors)(span)(order)(addPending(name)(StitchedType)(span)(order)(false)(collection))
+        | TypeDecl { name = name, typeParameters = _parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } -> addConstructors(constructors)(span)(order)(addPending(name)(StitchedType)(span)(order)(true)(collection))
 
 let addZeroCostDeclaration declaration span order collection =
     match declaration with
-        | ZeroCostTypeDecl { name = name, typeParameters = _parameters, constructor = TypeConstructor { name = constructorName, parameters = _constructorParameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits } -> addPending(constructorName)(StitchedConstructor)(span)(order)(false)(addPending(name)(StitchedType)(span)(order)(false)(collection))
+        | ZeroCostTypeDecl { name = name, typeParameters = _parameters, constructor = TypeConstructor { name = constructorName, parameters = _constructorParameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits } -> addPending(constructorName)(StitchedConstructor)(span)(order)(false)(addPending(name)(StitchedType)(span)(order)(true)(collection))
 
 let recursive addBindings bindings span order recursiveVisible collection =
     match bindings with
@@ -193,8 +193,8 @@ let addUnspannedItem item span collection =
                     | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _parameters, target = _target }) -> addPending(name)(StitchedType)(span)(order)(false)(collection)
                     | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
                     | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
-                    | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) -> addPending(name)(StitchedCapability)(span)(order)(false)(collection)
-                    | TopLevelTrait(TraitDecl { name = name, typeParameters = _parameters, supertraits = _supertraits, methods = _methods }) -> addPending(name)(StitchedTrait)(span)(order)(false)(collection)
+                    | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) -> addPending(name)(StitchedCapability)(span)(order)(true)(collection)
+                    | TopLevelTrait(TraitDecl { name = name, typeParameters = _parameters, supertraits = _supertraits, methods = _methods }) -> addPending(name)(StitchedTrait)(span)(order)(true)(collection)
                     | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements }, isRecursive) -> addPending(name)(StitchedValue)(span)(order)(isRecursive)(collection)
                     | TopLevelRecursiveGroup(bindings) -> addBindings(bindings)(span)(order)(true)(collection)
                     | _ -> collection
