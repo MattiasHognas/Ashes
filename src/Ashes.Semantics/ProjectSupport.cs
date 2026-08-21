@@ -3316,11 +3316,13 @@ public static class ProjectSupport
         ModuleExportPolicy policy)
     {
         var renames = new List<KeyValuePair<string, string>>();
+        var privateValueNames = new HashSet<string>(StringComparer.Ordinal);
         var publicAbstractAliases = new List<string>();
         string sanitized = SanitizeModuleBindingName(moduleName);
         foreach (string value in declaredValues.Where(name => !policy.Values.Contains(name)))
         {
             renames.Add(new(value, $"__ashes_private_value_{sanitized}_{value}"));
+            privateValueNames.Add(value);
         }
 
         foreach ((string typeName, TypeDecl typeDecl) in declaredTypes)
@@ -3361,7 +3363,7 @@ public static class ProjectSupport
             }
         }
 
-        string renamed = RenameIdentifiers(source, renames);
+        string renamed = RenameIdentifiers(source, renames, privateValueNames);
         return publicAbstractAliases.Count == 0
             ? renamed
             : renamed.TrimEnd() + "\n" + string.Join("\n", publicAbstractAliases) + "\n";
@@ -3448,7 +3450,8 @@ public static class ProjectSupport
 
     private static string RenameIdentifiers(
         string source,
-        IReadOnlyList<KeyValuePair<string, string>> replacements)
+        IReadOnlyList<KeyValuePair<string, string>> replacements,
+        IReadOnlySet<string> privateValueNames)
     {
         if (replacements.Count == 0)
         {
@@ -3458,8 +3461,7 @@ public static class ProjectSupport
         var byName = replacements.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
         var diagnostics = new Diagnostics();
         var lexer = new StringOffsetLexer(source, diagnostics);
-        var builder = new StringBuilder();
-        int copied = 0;
+        var tokens = new List<Token>();
         while (true)
         {
             Token token = lexer.Next();
@@ -3468,7 +3470,17 @@ public static class ProjectSupport
                 break;
             }
 
-            if (token.Kind == TokenKind.Ident && byName.TryGetValue(token.Text, out string? replacement))
+            tokens.Add(token);
+        }
+
+        var builder = new StringBuilder();
+        int copied = 0;
+        for (int index = 0; index < tokens.Count; index++)
+        {
+            Token token = tokens[index];
+            if (token.Kind == TokenKind.Ident
+                && byName.TryGetValue(token.Text, out string? replacement)
+                && (!privateValueNames.Contains(token.Text) || !IsRecordFieldIdentifier(tokens, index)))
             {
                 builder.Append(source[copied..token.Position]).Append(replacement);
                 copied = token.End;
@@ -3477,6 +3489,31 @@ public static class ProjectSupport
 
         builder.Append(source[copied..]);
         return builder.ToString();
+    }
+
+    private static bool IsRecordFieldIdentifier(IReadOnlyList<Token> tokens, int index)
+    {
+        TokenKind previous = index > 0 ? tokens[index - 1].Kind : TokenKind.EOF;
+        TokenKind next = index + 1 < tokens.Count ? tokens[index + 1].Kind : TokenKind.EOF;
+
+        // Field access uses the same dot spelling as module qualification. A private top-level value
+        // is referenced bare inside its own module, so a name after a dot is always the field/member
+        // namespace rather than the value binding being hidden.
+        if (previous == TokenKind.Dot)
+        {
+            return true;
+        }
+
+        // Named construction, update, and record-pattern fields are followed by '='. Their first
+        // field follows '(', 'with', or '{'; later fields follow a comma.
+        if (next == TokenKind.Equals
+            && previous is TokenKind.LParen or TokenKind.Comma or TokenKind.With or TokenKind.LBrace)
+        {
+            return true;
+        }
+
+        // Record declarations spell each field as '| name: Type'.
+        return next == TokenKind.Colon && previous == TokenKind.Pipe;
     }
 
     /// <summary>
