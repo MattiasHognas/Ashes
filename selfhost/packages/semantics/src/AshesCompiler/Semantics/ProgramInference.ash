@@ -18,6 +18,8 @@ import Ashes.Text.compare as compareText
 export (
     type ProgramInferenceError(..),
     type ProgramInferenceResult(..),
+    type ProgramInferenceUnit(..),
+    value inferProgramUnitsFrom,
     value inferProgramFromPackage,
     value inferProgramInPackage,
     value inferProgram,
@@ -59,6 +61,7 @@ type ProgramInferenceError =
     | OrphanTraitImplementation(Str)
     | OverlappingTraitImplementations(Str)
     | ProgramDerivingExpansionError(DerivingExpansionError)
+    | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
 
@@ -73,6 +76,14 @@ type ProgramInferenceState =
     | substitution: List((Int, SemanticType))
     | supply: TypeVariableSupply
     | nextTypeSymbolId: Int
+    | error: Maybe(ProgramInferenceError)
+
+type ProgramInferenceUnit =
+    | packageId: Str
+    | program: ProgramSyntax
+
+type ProgramUnitExpansion =
+    | units: List(ProgramInferenceUnit)
     | error: Maybe(ProgramInferenceError)
 
 type TypeParameterRegistration =
@@ -1277,6 +1288,58 @@ let recursive inferTopLevelItems items state =
                         match state with
                             | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } -> ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(UnsupportedTopLevelDeclaration("declaration kind")))
             in inferTopLevelItems(tail)(nextState)
+
+let recursive appendProgramUnitItems left right =
+    match left with
+        | [] -> right
+        | head :: tail -> head :: appendProgramUnitItems(tail)(right)
+
+let recursive expandedProgramUnitItems units =
+    match units with
+        | [] -> []
+        | ProgramInferenceUnit { program = ProgramSyntax { items = items } } :: tail -> appendProgramUnitItems(items)(expandedProgramUnitItems(tail))
+
+let recursive expandProgramInferenceUnits units =
+    match units with
+        | [] -> ProgramUnitExpansion(units = [], error = None)
+        | ProgramInferenceUnit { packageId = packageId, program = program } :: tail ->
+            match expandDerivedImplementations(program) with
+                | Error(error) -> ProgramUnitExpansion(units = [], error = Some(ProgramDerivingExpansionError(error)))
+                | Ok(expanded) ->
+                    match expandProgramInferenceUnits(tail) with
+                        | ProgramUnitExpansion { units = expandedTail, error = None } -> ProgramUnitExpansion(units = ProgramInferenceUnit(packageId = packageId, program = expanded) :: expandedTail, error = None)
+                        | ProgramUnitExpansion { units = _expandedTail, error = Some(error) } -> ProgramUnitExpansion(units = [], error = Some(error))
+
+let stateWithInferencePackage packageId state =
+    match state with
+        | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error } -> ProgramInferenceState(environment = withInferencePackage(packageId)(environment), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
+
+let recursive inferExpandedProgramUnits units state =
+    match units with
+        | [] -> state
+        | ProgramInferenceUnit { packageId = packageId, program = ProgramSyntax { items = items } } :: tail -> inferExpandedProgramUnits(tail)(inferTopLevelItems(items)(stateWithInferencePackage(packageId)(state)))
+
+let inferProgramUnitBody body entryPackageId state =
+    match stateWithInferencePackage(entryPackageId)(state) with
+        | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
+            match body with
+                | None -> ProgramInferenceResult(semanticType = SemTuple([]), substitution = substitution, environment = environment, error = None)
+                | Some(expression) ->
+                    match inferExpressionFrom(expression)(environment)(substitution)(supply) with
+                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
+                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(ProgramExpressionError(error)))
+        | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } -> ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(error))
+
+let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion =
+    match expansion with
+        | ProgramUnitExpansion { units = _units, error = Some(error) } -> ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = baseEnvironment, error = Some(error))
+        | ProgramUnitExpansion { units = units, error = None } ->
+            let declarations = collectTraitDeclarations(expandedProgramUnitItems(units))([])
+            in
+                let initialState = ProgramInferenceState(environment = baseEnvironment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = nextTypeDefinitionSymbolId(inferenceTypeResolutionContext(baseEnvironment)), error = validateTraitDeclarations(declarations)(declarations)([]))
+                in inferProgramUnitBody(body)(entryPackageId)(validateTraitDefaults(declarations)(inferExpandedProgramUnits(units)(initialState)))
+
+let inferProgramUnitsFrom baseEnvironment units body entryPackageId = inferExpandedProgramUnitsFrom(baseEnvironment)(body)(entryPackageId)(expandProgramInferenceUnits(units))
 
 let inferExpandedProgramFromPackage packageId baseEnvironment program =
     match program with
