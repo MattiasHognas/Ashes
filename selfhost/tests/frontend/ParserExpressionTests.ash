@@ -29,9 +29,9 @@ let checkApplication unit =
     match "Module.map(f)([1, 2])"
     |> expectClean
     |> unspan with
-        | ExprCall(firstCall, listArgument, false) ->
+        | ExprCall(firstCall, listArgument, false, _layout) ->
             match (unspan(firstCall), unspan(listArgument)) with
-                | (ExprCall(qualified, functionArgument, false), ExprList(_elements)) ->
+                | (ExprCall(qualified, functionArgument, false, _innerLayout), ExprList(_elements, _isMultiline)) ->
                     match (unspan(qualified), unspan(functionArgument)) with
                         | (ExprQualifiedVar("Module", "map"), ExprVar("f")) -> Unit
                         | _ -> test.fail("expected qualified call")
@@ -50,12 +50,49 @@ let checkCons unit =
 
 let checkUnexpectedToken unit =
     match parseExpression("1 2 )") with
-        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } -> test.assertEqual("Unexpected token after end of expression: RParen.")(diagnostic.message)
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: _ } ->
+            test.assertEqual(
+                "Unexpected token after end of expression: RParen.",
+                diagnostic.message
+            )
         | _ -> test.fail("expected trailing-token diagnostic")
+
+let callLayout expression =
+    match unspan(expression) with
+        | ExprCall(_function, _argument, _whitespace, layout) -> layout
+        | _ -> test.fail("expected call expression")
+
+let callFunction expression =
+    match unspan(expression) with
+        | ExprCall(function, _argument, _whitespace, _layout) -> function
+        | _ -> test.fail("expected call expression")
+
+let checkMultilineApplicationLayout unit =
+    (let expression = expectClean("f(\n1,\n2\n)")
+    in
+        unit
+        |> (given (_) ->
+            expression
+            |> callLayout
+            |> test.assertEqual(callArgumentsMultilineContinuation))
+        |> (given (_) ->
+            expression
+            |> callFunction
+            |> callLayout
+            |> test.assertEqual(callArgumentsMultilineStart)))
+
+let checkMultilineListLayout unit =
+    match "[\n1,\n2\n]"
+    |> expectClean
+    |> unspan with
+        | ExprList(_elements, true) -> Unit
+        | _ -> test.fail("expected multiline list layout")
 
 let run unit =
     unit
     |> checkPrecedence
     |> checkApplication
+    |> checkMultilineApplicationLayout
+    |> checkMultilineListLayout
     |> checkCons
     |> checkUnexpectedToken

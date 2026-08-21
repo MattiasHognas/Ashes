@@ -28,7 +28,10 @@ let checkFixture root name =
                     in
                         if actual == expected
                         then Unit
-                        else test.fail("token parity mismatch for " + name + "\nexpected:\n" + expected + "actual:\n" + actual)))
+                        else
+                            test.fail(
+                                "token parity mismatch for " + name + "\nexpected:\n" + expected + "actual:\n" + actual
+                            )))
 
 match Ashes.IO.args with
     | root :: [] ->

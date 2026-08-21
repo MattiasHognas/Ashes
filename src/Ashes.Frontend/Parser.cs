@@ -2152,37 +2152,7 @@ public sealed class Parser
         {
             if (_current.Kind == TokenKind.LParen && !StartsNextTopLevelItem())
             {
-                var start = AstSpans.GetOrDefault(expr).Start;
-                Consume(TokenKind.LParen);
-
-                // Named-argument call syntax (`Name(field = value, ...)`) is record construction.
-                // It is recognised only when the first argument is `ident =` (a bare `=`, not `==`).
-                if (NamedArgumentFollows())
-                {
-                    expr = ParseRecordConstruction(expr, start);
-                    continue;
-                }
-
-                var args = new List<Expr>();
-                if (_current.Kind == TokenKind.RParen)
-                {
-                    args.Add(RegisterExpr(new Expr.Var("Unit"), start + 1, start + 1));
-                }
-                else
-                {
-                    args.Add(ParseExpressionCore());
-                    while (_current.Kind == TokenKind.Comma)
-                    {
-                        Consume(TokenKind.Comma);
-                        args.Add(ParseExpressionCore());
-                    }
-                }
-                Consume(TokenKind.RParen);
-                // Desugar multi-arg calls: f(a, b) => f(a)(b)
-                foreach (var a in args)
-                {
-                    expr = RegisterExpr(new Expr.Call(expr, a), start, LastConsumedEnd);
-                }
+                expr = ParseParenthesizedCall(expr);
                 continue;
             }
 
@@ -2201,6 +2171,63 @@ public sealed class Parser
         }
 
         return expr;
+    }
+
+    private Expr ParseParenthesizedCall(Expr function)
+    {
+        int start = AstSpans.GetOrDefault(function).Start;
+        Token leftParen = Consume(TokenKind.LParen);
+
+        // Named-argument call syntax (`Name(field = value, ...)`) is record construction.
+        // It is recognised only when the first argument is `ident =` (a bare `=`, not `==`).
+        if (NamedArgumentFollows())
+        {
+            return ParseRecordConstruction(function, start);
+        }
+
+        List<Expr> arguments = [];
+        bool hasWrittenArgument = _current.Kind != TokenKind.RParen;
+        if (_current.Kind == TokenKind.RParen)
+        {
+            arguments.Add(RegisterExpr(new Expr.Var("Unit"), start + 1, start + 1));
+        }
+        else
+        {
+            arguments.Add(ParseExpressionCore());
+            while (_current.Kind == TokenKind.Comma)
+            {
+                Consume(TokenKind.Comma);
+                arguments.Add(ParseExpressionCore());
+            }
+        }
+
+        Consume(TokenKind.RParen);
+        bool isMultiline = hasWrittenArgument
+            && ContainsLineBreak(leftParen.End, AstSpans.GetOrDefault(arguments[0]).Start);
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            CallArgumentListLayout layout = CallArgumentListLayout.Inline;
+            if (isMultiline)
+            {
+                layout = index == 0
+                    ? CallArgumentListLayout.MultilineStart
+                    : CallArgumentListLayout.MultilineContinuation;
+            }
+
+            function = RegisterExpr(new Expr.Call(function, arguments[index])
+            {
+                ArgumentListLayout = layout,
+            }, start, LastConsumedEnd);
+        }
+
+        return function;
+    }
+
+    private bool ContainsLineBreak(int start, int end)
+    {
+        int utf16Start = _sourceIndex.ToUtf16Offset(start);
+        int utf16End = _sourceIndex.ToUtf16Offset(end);
+        return _source.AsSpan(utf16Start, utf16End - utf16Start).IndexOfAny('\r', '\n') >= 0;
     }
 
     /// <summary>
@@ -2560,12 +2587,14 @@ public sealed class Parser
 
     private Expr ParseList()
     {
-        var start = _current.Position;
-        Consume(TokenKind.LBracket);
-        var elements = new List<Expr>();
+        int start = _current.Position;
+        Token leftBracket = Consume(TokenKind.LBracket);
+        List<Expr> elements = [];
+        bool isMultiline = false;
         if (_current.Kind != TokenKind.RBracket)
         {
             elements.Add(ParseExpressionCore());
+            isMultiline = ContainsLineBreak(leftBracket.End, AstSpans.GetOrDefault(elements[0]).Start);
             while (_current.Kind == TokenKind.Comma)
             {
                 Consume(TokenKind.Comma);
@@ -2573,7 +2602,10 @@ public sealed class Parser
             }
         }
         Consume(TokenKind.RBracket);
-        return RegisterExpr(new Expr.ListLit(elements), start, LastConsumedEnd);
+        return RegisterExpr(new Expr.ListLit(elements)
+        {
+            IsMultiline = isMultiline,
+        }, start, LastConsumedEnd);
     }
 
     private Pattern ParsePattern()

@@ -17,21 +17,33 @@ let run unit =
     in
         result.tokens
         |> unicodeTokenAt(0)
-        |> test.assertEqual(Token(kind = Ident, text = "naïve", intValue = 0, floatValue = 0.0, position = 0, length = 6))
+        |> test.assertEqual(
+            Token(kind = Ident, text = "naïve", intValue = 0, floatValue = 0.0, position = 0, length = 6)
+        )
         |> (given (_) ->
             result.tokens
             |> unicodeTokenAt(1)
-            |> test.assertEqual(Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 8, length = 3)))
+            |> test.assertEqual(
+                Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 8, length = 3)
+            ))
         |> (given (_) ->
             result.tokens
             |> unicodeTokenAt(2)
-            |> test.assertEqual(Token(kind = Bad, text = "😀", intValue = 0, floatValue = 0.0, position = 12, length = 4)))
+            |> test.assertEqual(
+                Token(kind = Bad, text = "😀", intValue = 0, floatValue = 0.0, position = 12, length = 4)
+            ))
         |> (given (_) ->
             result.tokens
             |> unicodeTokenAt(3)
             |> (given (token) -> token.position)
             |> test.assertEqual(16))
-        |> (given (_) -> test.assertEqual([DiagnosticEntry(span = TextSpan(start = 12, end = 16), message = "Unexpected character: '😀'.", code = Some("ASH003"))])(result.diagnostics))
+        |> (given (_) ->
+            test.assertEqual(
+                [DiagnosticEntry(span = TextSpan(start = 12, end = 16), message = "Unexpected character: '😀'.", code = Some(
+                    "ASH003"
+                ))],
+                result.diagnostics
+            ))
         |> (given (_) ->
             "1u8é"
             |> tokenize

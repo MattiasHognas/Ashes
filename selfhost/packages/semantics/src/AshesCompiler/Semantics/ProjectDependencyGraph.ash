@@ -320,11 +320,19 @@ let manifestDependencies (manifest: ProjectManifest) =
 
 let stateWithDependency dependency directory (state: ProjectDependencyGraphState) =
     match state with
-        | ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = visitedDirectories } -> ProjectDependencyGraphState(dependencies = appendList(dependencies)([dependency]), visitedDirectories = directory :: visitedDirectories)
+        | ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = visitedDirectories } ->
+            ProjectDependencyGraphState(dependencies = appendList(
+                dependencies,
+                [dependency]
+            ), visitedDirectories = directory :: visitedDirectories)
 
 let stateHasVisited directory (state: ProjectDependencyGraphState) =
     match state with
-        | ProjectDependencyGraphState { dependencies = _dependencies, visitedDirectories = visitedDirectories } -> containsText(directory)(visitedDirectories)
+        | ProjectDependencyGraphState { dependencies = _dependencies, visitedDirectories = visitedDirectories } ->
+            containsText(
+                directory,
+                visitedDirectories
+            )
 
 let dependencyManifestPath style directory = join(style)(directory)("ashes.json")
 
@@ -335,7 +343,15 @@ let layoutProjectFilePath (layout: ProjectLayout) =
 let recursive resolveDependencyList style dependencies manifestDirectory isDev chain state =
     match dependencies with
         | [] -> Ok(state)
-        | ProjectDependency { name = _name, source = RegistryDependency(_constraint) } :: rest -> resolveDependencyList(style)(rest)(manifestDirectory)(isDev)(chain)(state)
+        | ProjectDependency { name = _name, source = RegistryDependency(_constraint) } :: rest ->
+            resolveDependencyList(
+                style,
+                rest,
+                manifestDirectory,
+                isDev,
+                chain,
+                state
+            )
         | ProjectDependency { name = name, source = PathDependency(path, namespaceOverride) } :: rest ->
             path
             |> join(style)(deepCopy(manifestDirectory))
@@ -350,7 +366,18 @@ and continueLoadedDependency style name namespaceOverride remaining manifestDire
             error
             |> ProjectDependencyProjectError(name)
             |> Error
-        | Ok(layout) -> continueLoadedLayout(style)(name)(namespaceOverride)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)
+        | Ok(layout) ->
+            continueLoadedLayout(
+                style,
+                name,
+                namespaceOverride,
+                remaining,
+                manifestDirectory,
+                isDev,
+                chain,
+                state,
+                layout
+            )
 and classifyMissingDependency style name manifestPath =
     Ashes.Text.length(manifestPath) - Ashes.Text.length(separator(style) + "ashes.json")
     |> Ashes.Text.take(deepCopy(manifestPath))
@@ -371,7 +398,17 @@ and continueLoadedLayout style name namespaceOverride remaining manifestDirector
     layout
     |> layoutDirectory
     |> rejectDependencyCycle(name)(chain)
-    |> continueAcyclicDependency(style)(name)(namespaceOverride)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)
+    |> continueAcyclicDependency(
+        style,
+        name,
+        namespaceOverride,
+        remaining,
+        manifestDirectory,
+        isDev,
+        chain,
+        state,
+        layout
+    )
 and rejectDependencyCycle name chain dependencyDirectory =
     if containsText(dependencyDirectory)(chain)
     then
@@ -382,19 +419,53 @@ and rejectDependencyCycle name chain dependencyDirectory =
 and continueAcyclicDependency style name namespaceOverride remaining manifestDirectory isDev chain state layout directoryResult =
     match directoryResult with
         | Error(error) -> Error(error)
-        | Ok(dependencyDirectory) -> continueUnvisitedDependency(style)(name)(namespaceOverride)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)(dependencyDirectory)
+        | Ok(dependencyDirectory) ->
+            continueUnvisitedDependency(
+                style,
+                name,
+                namespaceOverride,
+                remaining,
+                manifestDirectory,
+                isDev,
+                chain,
+                state,
+                layout,
+                dependencyDirectory
+            )
 and continueUnvisitedDependency style name namespaceOverride remaining manifestDirectory isDev chain (state: ProjectDependencyGraphState) layout dependencyDirectory =
     match state with
         | ProjectDependencyGraphState { dependencies = _dependencies, visitedDirectories = visitedDirectories } ->
             if containsText(dependencyDirectory)(visitedDirectories)
             then resolveDependencyList(style)(remaining)(manifestDirectory)(isDev)(chain)(state)
-            else prepareResolvedDependency(style)(name)(namespaceOverride)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)(dependencyDirectory)
+            else
+                prepareResolvedDependency(
+                    style,
+                    name,
+                    namespaceOverride,
+                    remaining,
+                    manifestDirectory,
+                    isDev,
+                    chain,
+                    state,
+                    layout,
+                    dependencyDirectory
+                )
 and prepareResolvedDependency style name namespaceOverride remaining manifestDirectory isDev chain (state: ProjectDependencyGraphState) (layout: ProjectLayout) dependencyDirectory =
     layout
     |> layoutManifest
     |> dependencyNamespace(name)(namespaceOverride)
     |> checkDependencyNamespace(name)(state)
-    |> continueUniqueNamespace(style)(name)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)(dependencyDirectory)
+    |> continueUniqueNamespace(
+        style,
+        name,
+        remaining,
+        manifestDirectory,
+        isDev,
+        chain,
+        state,
+        layout,
+        dependencyDirectory
+    )
 and checkDependencyNamespace name (state: ProjectDependencyGraphState) namespace =
     match state with
         | ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = _visitedDirectories } ->
@@ -415,7 +486,18 @@ and continueUniqueNamespace style name remaining manifestDirectory isDev chain s
             layout
             |> layoutEntryPath
             |> validateDependencyNamespace(style)(name)(namespace)(layoutSourceRoots(layout))
-            |> continueValidDependency(style)(name)(namespace)(remaining)(manifestDirectory)(isDev)(chain)(state)(layout)(dependencyDirectory)
+            |> continueValidDependency(
+                style,
+                name,
+                namespace,
+                remaining,
+                manifestDirectory,
+                isDev,
+                chain,
+                state,
+                layout,
+                dependencyDirectory
+            )
 and continueValidDependency style name namespace remaining manifestDirectory isDev chain state layout dependencyDirectory validation =
     match validation with
         | Error(error) -> Error(error)
@@ -429,7 +511,15 @@ and resolveDependencyChildren style (layout: ProjectLayout) dependencyDirectory 
     |> manifestDependencies
     |> resolveDependencyListFrom(style)(dependencyDirectory)(isDev)(dependencyDirectory :: chain)(state)
     |> continueRemainingDependencies(style)(remaining)(manifestDirectory)(isDev)(chain)
-and resolveDependencyListFrom style manifestDirectory isDev chain state dependencies = resolveDependencyList(style)(dependencies)(manifestDirectory)(isDev)(chain)(state)
+and resolveDependencyListFrom style manifestDirectory isDev chain state dependencies =
+    resolveDependencyList(
+        style,
+        dependencies,
+        manifestDirectory,
+        isDev,
+        chain,
+        state
+    )
 and continueRemainingDependencies style remaining manifestDirectory isDev chain childrenResult =
     match childrenResult with
         | Error(error) -> Error(error)
@@ -482,7 +572,10 @@ let rootOverriddenNamespaces (resolution: ProjectRootOverrideResolution) =
 let finishRootOverrideChildren namespace overriddenNamespaces childrenResult =
     match childrenResult with
         | Error(error) -> Error(error)
-        | Ok(state) -> Ok(ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces))
+        | Ok(state) ->
+            Ok(
+                ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces)
+            )
 
 let continueValidRootOverride style name namespace directory layout resolution =
     (let state = rootOverrideState(resolution)
@@ -490,7 +583,10 @@ let continueValidRootOverride style name namespace directory layout resolution =
         let overriddenNamespaces = rootOverriddenNamespaces(resolution)
         in
             if stateHasVisited(directory)(state)
-            then Ok(ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces))
+            then
+                Ok(
+                    ProjectRootOverrideResolution(state = state, overriddenNamespaces = namespace :: overriddenNamespaces)
+                )
             else
                 let nextState =
                     stateWithDependency(dependencyRecord(name)(namespace)(false)(layout))(directory)(state)
@@ -532,7 +628,15 @@ let validateRootOverrideVersion style name expectedNamespace expectedVersion dir
                 match manifestVersion(manifest) with
                     | Some(actualVersion) ->
                         if actualVersion == expectedVersion
-                        then validateRootOverrideNamespace(style)(name)(expectedNamespace)(directory)(layout)(resolution)
+                        then
+                            validateRootOverrideNamespace(
+                                style,
+                                name,
+                                expectedNamespace,
+                                directory,
+                                layout,
+                                resolution
+                            )
                         else
                             Some(actualVersion)
                             |> ProjectOverrideVersionMismatch(name)(expectedVersion)
@@ -544,7 +648,10 @@ let validateRootOverrideVersion style name expectedNamespace expectedVersion dir
 
 let classifyMissingRootOverride style name manifestPath =
     (let dependencyDirectory =
-        Ashes.Text.take(deepCopy(manifestPath))(Ashes.Text.length(manifestPath) - Ashes.Text.length(separator(style) + "ashes.json"))
+        Ashes.Text.take(
+            deepCopy(manifestPath),
+            Ashes.Text.length(manifestPath) - Ashes.Text.length(separator(style) + "ashes.json")
+        )
     in
         match dependencyDirectory
         |> deepCopy
@@ -612,7 +719,14 @@ let resolveRootOverrides style packages (layout: ProjectLayout) =
                 |> layoutProjectFilePath
                 |> lockFilePath(style)
             in
-                resolveRootOverrideList(style)(projectDirectory)(lockPath)(packages)(manifestOverrides(manifest))(ProjectRootOverrideResolution(state = ProjectDependencyGraphState(dependencies = [], visitedDirectories = []), overriddenNamespaces = [])))
+                resolveRootOverrideList(
+                    style,
+                    projectDirectory,
+                    lockPath,
+                    packages,
+                    manifestOverrides(manifest),
+                    ProjectRootOverrideResolution(state = ProjectDependencyGraphState(dependencies = [], visitedDirectories = []), overriddenNamespaces = [])
+                ))
 
 let loadLockedPackage style cacheRoot state package =
     (let namespace =
@@ -655,11 +769,19 @@ let loadLockedPackage style cacheRoot state package =
                                         | Ok(_) ->
                                             match layout
                                             |> layoutEntryPath
-                                            |> validateDependencyNamespace(style)(deepCopy(namespace))(deepCopy(namespace))(layoutSourceRoots(layout)) with
+                                            |> validateDependencyNamespace(
+                                                style,
+                                                deepCopy(namespace),
+                                                deepCopy(namespace),
+                                                layoutSourceRoots(layout)
+                                            ) with
                                                 | Error(error) -> Error(error)
                                                 | Ok(Unit) ->
                                                     state
-                                                    |> stateWithDependency(dependencyRecord(deepCopy(namespace))(namespace)(false)(layout))(packageDirectory)
+                                                    |> stateWithDependency(
+                                                        dependencyRecord(deepCopy(namespace))(namespace)(false)(layout),
+                                                        packageDirectory
+                                                    )
                                                     |> Ok)
 
 let addLockedPackage style cacheRoot overriddenNamespaces result package =
@@ -704,7 +826,10 @@ let lockedPackagesForLayout style layout =
 let finishProjectDependencyGraph result =
     match result with
         | Error(error) -> Error(error)
-        | Ok(ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = _visitedDirectories }) -> Ok(ProjectDependencyGraph(dependencies = dependencies))
+        | Ok(ProjectDependencyGraphState { dependencies = dependencies, visitedDirectories = _visitedDirectories }) ->
+            Ok(
+                ProjectDependencyGraph(dependencies = dependencies)
+            )
 
 let finishResolvedRootDependencies style cacheRoot packages resolution rootResult =
     match rootResult with

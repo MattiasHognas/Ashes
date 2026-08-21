@@ -130,7 +130,10 @@ let generalize environment semanticType constraints =
         let candidateVariables = mergeVariables(freeTypeVariables(semanticType))(freeConstraintsVariables(constraints))
         in
             let generalizedVariables = removeEnvironmentVariables(environmentVariables)(candidateVariables)
-            in TypeScheme(quantified = quantifyVariables(generalizedVariables), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
+            in
+                TypeScheme(quantified = quantifyVariables(
+                    generalizedVariables
+                ), body = semanticType, constraints = canonicalizeTraitConstraints(constraints)))
 
 // Build the whole quantified-variable renaming from one supply before applying it to the body and
 // constraints, so separate instantiations cannot accidentally share inference variables.
@@ -139,7 +142,12 @@ let recursive instantiateQuantifiers quantified supply substitution =
         | [] -> (substitution, supply)
         | (variableId, _name) :: tail ->
             match freshTypeVariable(supply) with
-                | (freshVariable, nextSupply) -> instantiateQuantifiers(tail)(nextSupply)((variableId, freshVariable) :: substitution)
+                | (freshVariable, nextSupply) ->
+                    instantiateQuantifiers(
+                        tail,
+                        nextSupply,
+                        (variableId, freshVariable) :: substitution
+                    )
 
 let applyConstraintSubstitution substitution constraint =
     match constraint with
@@ -170,5 +178,8 @@ let instantiate scheme supply =
                 | (substitution, nextSupply) ->
                     let instantiatedBody = applySubstitution(substitution)(body)
                     in
-                        let instantiatedConstraints = canonicalizeTraitConstraints(applyConstraintSubstitutions(substitution)(constraints))
+                        let instantiatedConstraints =
+                            canonicalizeTraitConstraints(
+                                applyConstraintSubstitutions(substitution)(constraints)
+                            )
                         in InstantiationResult(semanticType = instantiatedBody, constraints = instantiatedConstraints, supply = nextSupply)

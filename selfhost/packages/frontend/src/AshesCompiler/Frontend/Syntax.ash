@@ -12,6 +12,10 @@ export (
     type CapabilityRefSyntax(..),
     type NeedsRowSyntax(..),
     type TraitConstraintSyntax(..),
+    type CallArgumentListLayout,
+    value callArgumentsInline,
+    value callArgumentsMultilineStart,
+    value callArgumentsMultilineContinuation,
     type Expr(..),
     type TypeParameter(..),
     type TypeConstructor(..),
@@ -79,6 +83,14 @@ type TraitConstraintSyntax =
     | typeArguments: List(TypeExpr)
     deriving {Eq, Show}
 
+type alias CallArgumentListLayout = Int
+
+let callArgumentsInline : CallArgumentListLayout = 0
+
+let callArgumentsMultilineStart : CallArgumentListLayout = 1
+
+let callArgumentsMultilineContinuation : CallArgumentListLayout = 2
+
 type Expr =
     | ExprAt(TextSpan, Expr)
     | ExprInt(Int)
@@ -115,9 +127,9 @@ type Expr =
     | ExprLetRecursive(Str, Expr, Expr, List(Str), Maybe(TypeExpr), List(TraitConstraintSyntax))
     | ExprIf(Expr, Expr, Expr)
     | ExprLambda(Str, Expr, Maybe(TypeExpr))
-    | ExprCall(Expr, Expr, Bool)
+    | ExprCall(Expr, Expr, Bool, CallArgumentListLayout)
     | ExprTuple(List(Expr))
-    | ExprList(List(Expr))
+    | ExprList(List(Expr), Bool)
     | ExprCons(Expr, Expr)
     | ExprMatch(Expr, List((Pattern, Expr, Maybe(Expr))), Maybe(Int))
     | ExprAwait(Expr)

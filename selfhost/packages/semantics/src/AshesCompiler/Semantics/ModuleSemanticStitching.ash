@@ -164,25 +164,60 @@ let addPending name kind span order recursiveVisible collection =
 let recursive addConstructors constructors span order collection =
     match constructors with
         | [] -> collection
-        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest -> addConstructors(rest)(span)(order)(addPending(name)(StitchedConstructor)(span)(order)(false)(collection))
+        | TypeConstructor { name = name, parameters = _parameters, fieldNames = _fieldNames } :: rest ->
+            addConstructors(
+                rest,
+                span,
+                order,
+                addPending(name)(StitchedConstructor)(span)(order)(false)(collection)
+            )
 
 let addTypeDeclaration declaration span order collection =
     match declaration with
-        | TypeDecl { name = name, typeParameters = _parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } -> addConstructors(constructors)(span)(order)(addPending(name)(StitchedType)(span)(order)(true)(collection))
+        | TypeDecl { name = name, typeParameters = _parameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits } ->
+            addConstructors(
+                constructors,
+                span,
+                order,
+                addPending(name)(StitchedType)(span)(order)(true)(collection)
+            )
 
 let addZeroCostDeclaration declaration span order collection =
     match declaration with
-        | ZeroCostTypeDecl { name = name, typeParameters = _parameters, constructor = TypeConstructor { name = constructorName, parameters = _constructorParameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits } -> addPending(constructorName)(StitchedConstructor)(span)(order)(false)(addPending(name)(StitchedType)(span)(order)(true)(collection))
+        | ZeroCostTypeDecl { name = name, typeParameters = _parameters, constructor = TypeConstructor { name = constructorName, parameters = _constructorParameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits } ->
+            addPending(
+                constructorName,
+                StitchedConstructor,
+                span,
+                order,
+                false,
+                addPending(name)(StitchedType)(span)(order)(true)(collection)
+            )
 
 let recursive addBindings bindings span order recursiveVisible collection =
     match bindings with
         | [] -> collection
-        | LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements } :: rest -> addBindings(rest)(span)(order)(recursiveVisible)(addPending(name)(StitchedValue)(span)(order)(recursiveVisible)(collection))
+        | LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements } :: rest ->
+            addBindings(
+                rest,
+                span,
+                order,
+                recursiveVisible,
+                addPending(name)(StitchedValue)(span)(order)(recursiveVisible)(collection)
+            )
 
 let addExternal declaration span order collection =
     match declaration with
         | ExternalOpaqueType(name, _resource) -> addPending(name)(StitchedType)(span)(order)(false)(collection)
-        | ExternalFunction(name, _parameters, _result, _symbol, _ownership, _needs) -> addPending(name)(StitchedExternal)(span)(order)(false)(collection)
+        | ExternalFunction(name, _parameters, _result, _symbol, _ownership, _needs) ->
+            addPending(
+                name,
+                StitchedExternal,
+                span,
+                order,
+                false,
+                collection
+            )
 
 let addUnspannedItem item span collection =
     match collection with
@@ -190,12 +225,44 @@ let addUnspannedItem item span collection =
             let next =
                 match item with
                     | TopLevelType(declaration) -> addTypeDeclaration(declaration)(span)(order)(collection)
-                    | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _parameters, target = _target }) -> addPending(name)(StitchedType)(span)(order)(false)(collection)
+                    | TopLevelTypeAlias(TypeAliasDecl { name = name, typeParameters = _parameters, target = _target }) ->
+                        addPending(
+                            name,
+                            StitchedType,
+                            span,
+                            order,
+                            false,
+                            collection
+                        )
                     | TopLevelZeroCostType(declaration) -> addZeroCostDeclaration(declaration)(span)(order)(collection)
                     | TopLevelExternal(declaration) -> addExternal(declaration)(span)(order)(collection)
-                    | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) -> addPending(name)(StitchedCapability)(span)(order)(true)(collection)
-                    | TopLevelTrait(TraitDecl { name = name, typeParameters = _parameters, supertraits = _supertraits, methods = _methods }) -> addPending(name)(StitchedTrait)(span)(order)(true)(collection)
-                    | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements }, isRecursive) -> addPending(name)(StitchedValue)(span)(order)(isRecursive)(collection)
+                    | TopLevelCapability(CapabilityDecl { name = name, typeParameters = _parameters, operations = _operations }) ->
+                        addPending(
+                            name,
+                            StitchedCapability,
+                            span,
+                            order,
+                            true,
+                            collection
+                        )
+                    | TopLevelTrait(TraitDecl { name = name, typeParameters = _parameters, supertraits = _supertraits, methods = _methods }) ->
+                        addPending(
+                            name,
+                            StitchedTrait,
+                            span,
+                            order,
+                            true,
+                            collection
+                        )
+                    | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _parameters, typeAnnotation = _annotation, requirements = _requirements }, isRecursive) ->
+                        addPending(
+                            name,
+                            StitchedValue,
+                            span,
+                            order,
+                            isRecursive,
+                            collection
+                        )
                     | TopLevelRecursiveGroup(bindings) -> addBindings(bindings)(span)(order)(true)(collection)
                     | _ -> collection
             in DefinitionCollection(reversed = next.reversed, nextOrder = order + 1)
@@ -269,7 +336,13 @@ let recursive materializeDefinitions pending (unit: SemanticStitchUnit) nextId r
                     let exported = interfaceExports(name)(kind)(exports)
                     in
                         let definition =
-                            StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = compilerName(moduleName)(name)(kind)(isEntry)(exported), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
+                            StitchedDefinition(id = nextId, sourceName = name, qualifiedName = moduleName + "." + name, compilerName = compilerName(
+                                moduleName,
+                                name,
+                                kind,
+                                isEntry,
+                                exported
+                            ), moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, kind = kind, definitionSpan = span, declarationOrder = order, visibleFrom = if recursiveVisible
                             then order
                             else order + 1, exported = exported)
                         in materializeDefinitions(rest)(unit)(nextId + 1)(definition :: reversed)
@@ -280,7 +353,11 @@ let recursive duplicateDefinition definitions seen =
         | PendingDefinition { name = name, kind = kind, span = _span, order = _order, recursiveVisible = _recursiveVisible } :: rest ->
             if hasPendingDefinition(name)(kind)(seen)
             then Some(name)
-            else duplicateDefinition(rest)(PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false) :: seen)
+            else
+                duplicateDefinition(
+                    rest,
+                    PendingDefinition(name = name, kind = kind, span = None, order = 0, recursiveVisible = false) :: seen
+                )
 
 let recursive compilerNameOwner name definitions =
     match definitions with
@@ -293,7 +370,11 @@ let recursive compilerNameOwner name definitions =
 let recursive allDefinitions modules =
     match modules with
         | [] -> []
-        | StitchedModuleScope { name = _name, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } :: rest -> appendList(definitions)(allDefinitions(rest))
+        | StitchedModuleScope { name = _name, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } :: rest ->
+            appendList(
+                definitions,
+                allDefinitions(rest)
+            )
 
 let recursive validateCompilerNames definitions existing =
     match definitions with
@@ -312,7 +393,13 @@ let resolvedModule resolved =
 let recursive exportedBindings qualifier definitions =
     match definitions with
         | [] -> []
-        | (StitchedDefinition { sourceName = sourceName, exported = true, id = _id, qualifiedName = _qualifiedName, compilerName = _compilerName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom } as definition) :: rest -> StitchedImportBinding(localName = sourceName, qualifier = qualifier, target = deepCopy(definition)) :: exportedBindings(qualifier)(rest)
+        | (StitchedDefinition { sourceName = sourceName, exported = true, id = _id, qualifiedName = _qualifiedName, compilerName = _compilerName, moduleName = _moduleName, packageId = _packageId, sourcePath = _sourcePath, kind = _kind, definitionSpan = _span, declarationOrder = _order, visibleFrom = _visibleFrom } as definition) :: rest ->
+            StitchedImportBinding(localName = sourceName, qualifier = qualifier, target = deepCopy(
+                definition
+            )) :: exportedBindings(
+                qualifier,
+                rest
+            )
         | _definition :: rest -> exportedBindings(qualifier)(rest)
 
 let moduleLeaf name =
@@ -340,7 +427,19 @@ let recursive unqualifiedConflict (binding: StitchedImportBinding) bindings =
             match bindings with
                 | [] -> false
                 | StitchedImportBinding { localName = existingName, qualifier = existingQualifier, target = StitchedDefinition { qualifiedName = existingTargetName, kind = existingTargetKind, id = _existingId, sourceName = _existingSourceName, compilerName = _existingCompilerName, moduleName = _existingModuleName, packageId = _existingPackageId, sourcePath = _existingSourcePath, definitionSpan = _existingSpan, declarationOrder = _existingOrder, visibleFrom = _existingVisibleFrom, exported = _existingExported } } :: rest ->
-                    if both(bindingQualifier == None)(both(existingQualifier == None)(both(bindingName == existingName)(both(bindingTargetName != existingTargetName)(sameNamespace(bindingTargetKind)(existingTargetKind)))))
+                    if both(
+                        bindingQualifier == None,
+                        both(
+                            existingQualifier == None,
+                            both(
+                                bindingName == existingName,
+                                both(
+                                    bindingTargetName != existingTargetName,
+                                    sameNamespace(bindingTargetKind)(existingTargetKind)
+                                )
+                            )
+                        )
+                    )
                     then true
                     else unqualifiedConflict(binding)(rest)
 
@@ -379,20 +478,35 @@ let addWholeModuleImport ownerModule (imported: StitchedModuleScope) alias bindi
                                             else appendList(qualified)(exportedBindings(Some(leaf))(definitions))
                         in
                             match alias with
-                                | Some(_name) -> addImportBindings(ownerModule)(appendList(exportedBindings(None)(definitions))(withShort))(bindings)
+                                | Some(_name) ->
+                                    addImportBindings(
+                                        ownerModule,
+                                        appendList(exportedBindings(None)(definitions))(withShort),
+                                        bindings
+                                    )
                                 | None ->
                                     let leaf = moduleLeaf(importedName)
                                     in
                                         if both(leaf != importedName)(qualifierConflicts(leaf)(importedName)(bindings))
                                         then Error(ConflictingModuleQualifier(ownerModule)(leaf))
-                                        else addImportBindings(ownerModule)(appendList(exportedBindings(None)(definitions))(withShort))(bindings)
+                                        else
+                                            addImportBindings(
+                                                ownerModule,
+                                                appendList(exportedBindings(None)(definitions))(withShort),
+                                                bindings
+                                            )
 
 let addSelectorImport ownerModule (imported: StitchedModuleScope) exportName localName kind bindings =
     match imported with
         | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
             match findExportedDefinition(exportName)(kind)(definitions) with
                 | None -> Error(MissingStitchedImportExport(ownerModule)(importedName)(exportName))
-                | Some(definition) -> addImportBindings(ownerModule)([StitchedImportBinding(localName = localName, qualifier = None, target = definition)])(bindings)
+                | Some(definition) ->
+                    addImportBindings(
+                        ownerModule,
+                        [StitchedImportBinding(localName = localName, qualifier = None, target = definition)],
+                        bindings
+                    )
 
 let recursive buildImportBindings ownerModule imports completed bindings =
     match imports with
@@ -403,9 +517,31 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                 | Some(imported) ->
                     let added =
                         match resolved with
-                            | ResolvedModuleImport(_moduleName, alias, _line, _written) -> addWholeModuleImport(ownerModule)(imported)(alias)(bindings)
-                            | ResolvedValueImport(_moduleName, exportName, localName, _line, _written) -> addSelectorImport(ownerModule)(imported)(exportName)(localName)(StitchedValue)(bindings)
-                            | ResolvedTypeImport(_moduleName, exportName, localName, _line, _written) -> addSelectorImport(ownerModule)(imported)(exportName)(localName)(StitchedType)(bindings)
+                            | ResolvedModuleImport(_moduleName, alias, _line, _written) ->
+                                addWholeModuleImport(
+                                    ownerModule,
+                                    imported,
+                                    alias,
+                                    bindings
+                                )
+                            | ResolvedValueImport(_moduleName, exportName, localName, _line, _written) ->
+                                addSelectorImport(
+                                    ownerModule,
+                                    imported,
+                                    exportName,
+                                    localName,
+                                    StitchedValue,
+                                    bindings
+                                )
+                            | ResolvedTypeImport(_moduleName, exportName, localName, _line, _written) ->
+                                addSelectorImport(
+                                    ownerModule,
+                                    imported,
+                                    exportName,
+                                    localName,
+                                    StitchedType,
+                                    bindings
+                                )
                     in
                         match added with
                             | Error(error) -> Error(error)
@@ -427,15 +563,26 @@ let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
                                     match validateCompilerNames(definitions)(allDefinitions(completedModules)) with
                                         | Some(error) -> Error(error)
                                         | None ->
-                                            match buildImportBindings(moduleName)(resolvedImports)(completedModules)([]) with
+                                            match buildImportBindings(
+                                                moduleName,
+                                                resolvedImports,
+                                                completedModules,
+                                                []
+                                            ) with
                                                 | Error(error) -> Error(error)
-                                                | Ok(imports) -> Ok(StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, definitions = definitions) :: completedModules, nextDefinitionId = nextId))
+                                                | Ok(imports) ->
+                                                    Ok(
+                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, definitions = definitions) :: completedModules, nextDefinitionId = nextId)
+                                                    )
 
 let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState) =
     match state with
         | StitchState { reversedModules = reversedModules, nextDefinitionId = nextDefinitionId } ->
             match units with
-                | [] -> Ok(StitchedSemanticProject(scopes = reverseList(reversedModules), nextDefinitionId = nextDefinitionId))
+                | [] ->
+                    Ok(
+                        StitchedSemanticProject(scopes = reverseList(reversedModules), nextDefinitionId = nextDefinitionId)
+                    )
                 | unit :: rest ->
                     match buildModule(unit)(state) with
                         | Error(error) -> Error(error)
@@ -450,7 +597,10 @@ let recursive resolveLocalAt name kind boundary definitions =
     match definitions with
         | [] -> None
         | definition :: rest ->
-            if both(definition.sourceName == name)(both(sameNamespace(kind)(definition.kind))(definitionVisibleAt(boundary)(definition)))
+            if both(
+                definition.sourceName == name,
+                both(sameNamespace(kind)(definition.kind))(definitionVisibleAt(boundary)(definition))
+            )
             then Some(deepCopy(definition))
             else resolveLocalAt(name)(kind)(boundary)(rest)
 

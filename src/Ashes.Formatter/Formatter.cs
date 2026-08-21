@@ -920,9 +920,13 @@ public static class Formatter
             Expr.ResultPipe pipe => (!preferPipelines || !TryCollectPipeline(pipe, out _, out _)) && IsSingleLine(pipe.Left, preferPipelines) && IsSingleLine(pipe.Right, preferPipelines),
             Expr.ResultMapErrorPipe pipe => (!preferPipelines || !TryCollectPipeline(pipe, out _, out _)) && IsSingleLine(pipe.Left, preferPipelines) && IsSingleLine(pipe.Right, preferPipelines),
             Expr.TupleLit tuple => tuple.Elements.All(x => IsSingleLine(x, preferPipelines)),
-            Expr.ListLit list => list.Elements.All(x => IsSingleLine(x, preferPipelines)),
+            Expr.ListLit list => (list.Elements.Count == 0 || !list.IsMultiline)
+                && list.Elements.All(x => IsSingleLine(x, preferPipelines)),
             Expr.Cons cons => IsSingleLine(cons.Head, preferPipelines) && IsSingleLine(cons.Tail, preferPipelines),
-            Expr.Call c => (!preferPipelines || !TryCollectPipeline(c, out _, out _)) && IsSingleLine(c.Func, preferPipelines) && IsSingleLine(c.Arg, preferPipelines),
+            Expr.Call c => c.ArgumentListLayout == CallArgumentListLayout.Inline
+                && (!preferPipelines || !TryCollectPipeline(c, out _, out _))
+                && IsSingleLine(c.Func, preferPipelines)
+                && IsSingleLine(c.Arg, preferPipelines),
             Expr.Await awaitExpr => IsSingleLine(awaitExpr.Task, preferPipelines),
             Expr.Perform perform => IsSingleLine(perform.Operation, preferPipelines),
             Expr.RecordLit rl => rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
@@ -1561,7 +1565,7 @@ public static class Formatter
                 return;
 
             case Expr.ListLit list:
-                WriteDelimitedElementsInline(sb, '[', list.Elements, ']', indent, preferPipelines, options);
+                WriteListLiteral(sb, list, indent, preferPipelines, options);
                 return;
 
             case Expr.Call c:
@@ -1770,6 +1774,12 @@ public static class Formatter
 
     private static void WriteCallInline(StringBuilder sb, Expr.Call c, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
     {
+        if (c.ArgumentListLayout != CallArgumentListLayout.Inline)
+        {
+            WriteMultilineCall(sb, c, indent, parentPrec, preferPipelines, options);
+            return;
+        }
+
         if (preferPipelines && parentPrec == 0 && TryWritePipeline(sb, c, indent, parentPrec, preferPipelines, options))
         {
             return;
@@ -1781,21 +1791,7 @@ public static class Formatter
             sb.Append('(');
         }
 
-        // Function position: if it's a lambda/let/if/add, parenthesize
-        var funcNeedsParens = c.Func is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
-            or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
-            or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-            or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
-        if (funcNeedsParens)
-        {
-            sb.Append('(');
-        }
-
-        WriteExprInline(sb, c.Func, indent, PrecCall, preferPipelines, options);
-        if (funcNeedsParens)
-        {
-            sb.Append(')');
-        }
+        WriteCallFunction(sb, c.Func, indent, preferPipelines, options);
 
         if (c.IsWhitespaceApplication)
         {
@@ -1816,6 +1812,70 @@ public static class Formatter
         }
     }
 
+    private static void WriteMultilineCall(StringBuilder sb, Expr.Call call, int indent, int parentPrec, bool preferPipelines, FormattingOptions options)
+    {
+        List<Expr> reversedArguments = [];
+        Expr.Call current = call;
+        while (true)
+        {
+            reversedArguments.Add(current.Arg);
+            if (current.ArgumentListLayout != CallArgumentListLayout.MultilineContinuation
+                || current.Func is not Expr.Call previous)
+            {
+                break;
+            }
+
+            current = previous;
+        }
+
+        reversedArguments.Reverse();
+        bool needsParens = parentPrec > PrecCall;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        WriteCallFunction(sb, current.Func, indent, preferPipelines, options);
+        sb.Append('(');
+        sb.Append(options.NewLine);
+        for (int index = 0; index < reversedArguments.Count; index++)
+        {
+            WriteIndent(sb, indent + options.IndentSize, options);
+            WriteExpr(sb, reversedArguments[index], indent + options.IndentSize, 0, preferPipelines, options);
+            if (index < reversedArguments.Count - 1)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append(options.NewLine);
+        }
+
+        WriteIndent(sb, indent, options);
+        sb.Append(')');
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
+    private static void WriteCallFunction(StringBuilder sb, Expr function, int indent, bool preferPipelines, FormattingOptions options)
+    {
+        bool needsParens = function is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
+            or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
+            or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
+            or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
+        if (needsParens)
+        {
+            sb.Append('(');
+        }
+
+        WriteExprInline(sb, function, indent, PrecCall, preferPipelines, options);
+        if (needsParens)
+        {
+            sb.Append(')');
+        }
+    }
+
     private static void WriteDelimitedElementsInline(StringBuilder sb, char open, IReadOnlyList<Expr> elements, char close, int indent, bool preferPipelines, FormattingOptions options)
     {
         sb.Append(open);
@@ -1829,6 +1889,32 @@ public static class Formatter
             WriteExprInline(sb, elements[i], indent, elementPrecedence, preferPipelines, options);
         }
         sb.Append(close);
+    }
+
+    private static void WriteListLiteral(StringBuilder sb, Expr.ListLit list, int indent, bool preferPipelines, FormattingOptions options)
+    {
+        if (list.Elements.Count == 0 || !list.IsMultiline)
+        {
+            WriteDelimitedElementsInline(sb, '[', list.Elements, ']', indent, preferPipelines, options);
+            return;
+        }
+
+        sb.Append('[');
+        sb.Append(options.NewLine);
+        for (int index = 0; index < list.Elements.Count; index++)
+        {
+            WriteIndent(sb, indent + options.IndentSize, options);
+            WriteExpr(sb, list.Elements[index], indent + options.IndentSize, 0, preferPipelines, options);
+            if (index < list.Elements.Count - 1)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append(options.NewLine);
+        }
+
+        WriteIndent(sb, indent, options);
+        sb.Append(']');
     }
 
     private static void WriteRecordLitInline(StringBuilder sb, Expr.RecordLit rl, int indent, bool preferPipelines, FormattingOptions options)

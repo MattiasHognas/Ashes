@@ -86,7 +86,15 @@ let recursive addDefinitionPlacements definitions items itemStart reversed =
         | [] -> reversed
         | definition :: rest ->
             let itemIndex = itemStart + combinedIndexForDeclaration(items)(definition.declarationOrder)(0)(0)
-            in addDefinitionPlacements(rest)(items)(itemStart)(StitchedDefinitionPlacement(definition = deepCopy(definition), combinedItemIndex = itemIndex) :: reversed)
+            in
+                addDefinitionPlacements(
+                    rest,
+                    items,
+                    itemStart,
+                    StitchedDefinitionPlacement(definition = deepCopy(
+                        definition
+                    ), combinedItemIndex = itemIndex) :: reversed
+                )
 
 let withEntry moduleName body state =
     match state with
@@ -94,7 +102,12 @@ let withEntry moduleName body state =
             moduleName
             |> MultipleProjectSyntaxEntries(existing)
             |> Error
-        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = nextItemIndex, entryModuleName = None, entryBody = _entryBody } -> Ok(ProjectSyntaxCombinationState(reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = nextItemIndex, entryModuleName = Some(moduleName), entryBody = body))
+        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = nextItemIndex, entryModuleName = None, entryBody = _entryBody } ->
+            Ok(
+                ProjectSyntaxCombinationState(reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = nextItemIndex, entryModuleName = Some(
+                    moduleName
+                ), entryBody = body)
+            )
 
 let addCombinedModule unit scope state =
     match (unit, scope, state) with
@@ -109,7 +122,13 @@ let addCombinedModule unit scope state =
                     | (reversedItems, itemEnd) ->
                         let region = StitchedModuleRegion(moduleName = moduleName, packageId = packageId, sourcePath = sourcePath, itemStart = itemStart, itemEnd = itemEnd, isEntry = isEntry)
                         in
-                            let next = ProjectSyntaxCombinationState(reversedItems = reversedItems, reversedRegions = region :: currentRegions, reversedPlacements = addDefinitionPlacements(definitions)(items)(itemStart)(currentPlacements), nextItemIndex = itemEnd, entryModuleName = entryModuleName, entryBody = entryBody)
+                            let next =
+                                ProjectSyntaxCombinationState(reversedItems = reversedItems, reversedRegions = region :: currentRegions, reversedPlacements = addDefinitionPlacements(
+                                    definitions,
+                                    items,
+                                    itemStart,
+                                    currentPlacements
+                                ), nextItemIndex = itemEnd, entryModuleName = entryModuleName, entryBody = entryBody)
                             in
                                 if isEntry
                                 then withEntry(moduleName)(body)(next)
@@ -117,8 +136,20 @@ let addCombinedModule unit scope state =
 
 let finishCombinedProject semanticProject state =
     match state with
-        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = _nextItemIndex, entryModuleName = None, entryBody = _entryBody } -> Error(MissingProjectSyntaxEntry)
-        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = _nextItemIndex, entryModuleName = Some(entryModuleName), entryBody = entryBody } -> Ok(StitchedSyntaxProject(semanticProject = semanticProject, program = ProgramSyntax(items = reverseList(reversedItems), body = entryBody), moduleRegions = reverseList(reversedRegions), definitionPlacements = reverseList(reversedPlacements), entryModuleName = entryModuleName))
+        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = _nextItemIndex, entryModuleName = None, entryBody = _entryBody } ->
+            Error(
+                MissingProjectSyntaxEntry
+            )
+        | ProjectSyntaxCombinationState { reversedItems = reversedItems, reversedRegions = reversedRegions, reversedPlacements = reversedPlacements, nextItemIndex = _nextItemIndex, entryModuleName = Some(entryModuleName), entryBody = entryBody } ->
+            Ok(
+                StitchedSyntaxProject(semanticProject = semanticProject, program = ProgramSyntax(items = reverseList(
+                    reversedItems
+                ), body = entryBody), moduleRegions = reverseList(
+                    reversedRegions
+                ), definitionPlacements = reverseList(
+                    reversedPlacements
+                ), entryModuleName = entryModuleName)
+            )
 
 let recursive combineRewrittenModules units scopes semanticProject state =
     match (units, scopes) with
@@ -139,7 +170,13 @@ let recursive combineRewrittenModules units scopes semanticProject state =
 let combineRewrittenProject units (semanticProject: StitchedSemanticProject) =
     units
     |> rewriteStitchedProjectReferences(semanticProject)
-    |> (given (rewritten) -> combineRewrittenModules(rewritten)(semanticProject.scopes)(semanticProject)(ProjectSyntaxCombinationState(reversedItems = [], reversedRegions = [], reversedPlacements = [], nextItemIndex = 0, entryModuleName = None, entryBody = None)))
+    |> (given (rewritten) ->
+        combineRewrittenModules(
+            rewritten,
+            semanticProject.scopes,
+            semanticProject,
+            ProjectSyntaxCombinationState(reversedItems = [], reversedRegions = [], reversedPlacements = [], nextItemIndex = 0, entryModuleName = None, entryBody = None)
+        ))
 
 let continueProjectSyntaxStitching units result =
     match result with

@@ -7,7 +7,9 @@ let importEntry modulePath selector alias sourceLine = ImportHeaderEntry(moduleP
 
 let checkLongestModuleMatch unit =
     [importEntry("Geom.Vec")(None)(Some("V"))(1)]
-    |> resolveImports([moduleInterface("Geom")([ImportTypeExport("Vec")]), moduleInterface("Geom.Vec")([ImportValueExport("make")])])
+    |> resolveImports(
+        [moduleInterface("Geom")([ImportTypeExport("Vec")]), moduleInterface("Geom.Vec")([ImportValueExport("make")])]
+    )
     |> test.assertEqual(Ok([ResolvedModuleImport("Geom.Vec")(Some("V"))(1)("import Geom.Vec")]))
 
 let checkTypeSelectorFallback unit =
@@ -36,7 +38,9 @@ let checkUnknownExport unit =
 
 let checkResolvedCollision unit =
     [importEntry("Geom")(Some("origin"))(Some("V"))(6), importEntry("Types.V")(None)(None)(7)]
-    |> resolveImports([moduleInterface("Geom")([ImportValueExport("origin")]), moduleInterface("Types")([ImportTypeExport("V")])])
+    |> resolveImports(
+        [moduleInterface("Geom")([ImportValueExport("origin")]), moduleInterface("Types")([ImportTypeExport("V")])]
+    )
     |> test.assertEqual("V"
     |> ConflictingResolvedImport(7)
     |> Error)

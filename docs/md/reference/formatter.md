@@ -101,8 +101,21 @@ else
 Lists and cons
 
 - Short list literals remain compact on one line.
+- When the first element of a non-empty list literal starts on a new line, the formatter preserves a
+  multiline list: every element appears on its own line, indented one level; commas follow every
+  element except the last; and the closing bracket aligns with the list expression's indentation.
 - Cons expressions use spaces around `::`.
 - Subexpressions are parenthesized when needed to preserve meaning.
+
+Example:
+
+```ash
+[
+    first,
+    second,
+    third
+]
+```
 
 `match`
 
@@ -182,7 +195,23 @@ Spacing
 - Binary operators use spaces around the operator.
 - Comparison operators use spaces around the operator.
 - Function calls keep their existing canonical form: `f(x)` for parenthesized calls and `f x` for whitespace application.
+- An inline parenthesized argument list remains inline. When the first written argument starts on a
+  new line, the formatter preserves a multiline parenthesized call: every argument appears on its own
+  line, indented one level; commas follow every argument except the last; and the closing parenthesis
+  aligns with the call expression's indentation. This applies recursively to nested calls and does not
+  change the language's curried application semantics.
 - No line ends in trailing whitespace.
+
+Example:
+
+```ash
+expectUnsupportedDerivedField(
+    "Callback",
+    "Eq",
+    fieldType,
+    []
+)
+```
 
 Comments
 

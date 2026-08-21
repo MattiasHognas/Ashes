@@ -12,19 +12,28 @@ let ordinaryType name parameters constructors derivingTraits = TypeDecl(name = n
 let recursive implementationTraitNames items =
     match items with
         | [] -> []
-        | TopLevelImplementation(TraitImplementationDecl { traitName = traitName }) :: tail -> traitName :: implementationTraitNames(tail)
+        | TopLevelImplementation(TraitImplementationDecl { traitName = traitName }) :: tail ->
+            traitName :: implementationTraitNames(
+                tail
+            )
         | _head :: tail -> implementationTraitNames(tail)
 
 let recursive implementationMethodNames items =
     match items with
         | [] -> []
-        | TopLevelImplementation(TraitImplementationDecl { bindings = TraitImplementationMethodBinding { methodName = methodName } :: [] }) :: tail -> methodName :: implementationMethodNames(tail)
+        | TopLevelImplementation(TraitImplementationDecl { bindings = TraitImplementationMethodBinding { methodName = methodName } :: [] }) :: tail ->
+            methodName :: implementationMethodNames(
+                tail
+            )
         | _head :: tail -> implementationMethodNames(tail)
 
 let recursive implementationBodies items =
     match items with
         | [] -> []
-        | TopLevelImplementation(TraitImplementationDecl { bindings = TraitImplementationMethodBinding { implementation = implementation } :: [] }) :: tail -> implementation :: implementationBodies(tail)
+        | TopLevelImplementation(TraitImplementationDecl { bindings = TraitImplementationMethodBinding { implementation = implementation } :: [] }) :: tail ->
+            implementation :: implementationBodies(
+                tail
+            )
         | _head :: tail -> implementationBodies(tail)
 
 let recursive appendTexts left right =
@@ -51,7 +60,10 @@ let equalityBodyIsDeterministic expression =
     match expression with
         | ExprLambda("__derived_left", inner, None) ->
             match inner with
-                | ExprLambda("__derived_right", ExprMatch(ExprTuple(_values), cases, None), None) -> equalityHasMismatchCase(cases)
+                | ExprLambda("__derived_right", ExprMatch(ExprTuple(_values), cases, None), None) ->
+                    equalityHasMismatchCase(
+                        cases
+                    )
                 | _ -> false
         | _ -> false
 
@@ -73,7 +85,10 @@ let recursive hashingSeeds cases =
     match cases with
         | [] -> []
         | (_pattern, ExprInt(seed), None) :: tail -> seed :: hashingSeeds(tail)
-        | (_pattern, ExprAdd(ExprMultiply(ExprInt(seed), ExprInt(16777619)), _fieldHash), None) :: tail -> seed :: hashingSeeds(tail)
+        | (_pattern, ExprAdd(ExprMultiply(ExprInt(seed), ExprInt(16777619)), _fieldHash), None) :: tail ->
+            seed :: hashingSeeds(
+                tail
+            )
         | _head :: tail -> -1 :: hashingSeeds(tail)
 
 let hashingBodySeeds expression =
@@ -82,12 +97,29 @@ let hashingBodySeeds expression =
         | _ -> []
 
 let expectOrdinaryExpansion unit =
-    (let declaration = ordinaryType("Choice")([])([constructor("First")([]), constructor("Second")([TypeNamed("Int")])])(["Eq", "Ord", "Show", "Hash"])
+    (let declaration =
+        ordinaryType(
+            "Choice",
+            [],
+            [constructor("First")([]), constructor("Second")([TypeNamed("Int")])],
+            ["Eq", "Ord", "Show", "Hash"]
+        )
     in
-        match expandDerivedImplementations(ProgramSyntax(items = [TopLevelType(declaration)], body = Some(ExprInt(7)))) with
-            | Error(UnsupportedDerivedTrait(typeName, traitName)) -> test.fail("unexpected unsupported derived trait " + typeName + ":" + traitName)
-            | Error(DuplicateDerivedTrait(typeName, traitName)) -> test.fail("unexpected duplicate derived trait " + typeName + ":" + traitName)
-            | Error(UnsupportedDerivedField(typeName, traitName)) -> test.fail("unexpected unsupported derived field " + typeName + ":" + traitName)
+        match expandDerivedImplementations(
+            ProgramSyntax(items = [TopLevelType(declaration)], body = Some(ExprInt(7)))
+        ) with
+            | Error(UnsupportedDerivedTrait(typeName, traitName)) ->
+                test.fail(
+                    "unexpected unsupported derived trait " + typeName + ":" + traitName
+                )
+            | Error(DuplicateDerivedTrait(typeName, traitName)) ->
+                test.fail(
+                    "unexpected duplicate derived trait " + typeName + ":" + traitName
+                )
+            | Error(UnsupportedDerivedField(typeName, traitName)) ->
+                test.fail(
+                    "unexpected unsupported derived field " + typeName + ":" + traitName
+                )
             | Ok(ProgramSyntax { items = items, body = body }) ->
                 let bodyChecked =
                     match body with
@@ -104,10 +136,19 @@ let expectOrdinaryExpansion unit =
                                     items
                                     |> implementationMethodNames
                                     |> test.assertEqual(["equal", "compare", "show", "hash"]))
-                            | _ -> test.fail("deriving should preserve the ordinary type without its clause")))(bodyChecked))
+                            | _ ->
+                                test.fail(
+                                    "deriving should preserve the ordinary type without its clause"
+                                )))(bodyChecked))
 
 let expectPayloadRequirements unit =
-    (let declaration = ordinaryType("PhantomBox")([TypeParameter(name = "a"), TypeParameter(name = "phantom")])([constructor("PhantomBox")([TypeNamed("a")])])(["Ashes.Trait.Eq"])
+    (let declaration =
+        ordinaryType(
+            "PhantomBox",
+            [TypeParameter(name = "a"), TypeParameter(name = "phantom")],
+            [constructor("PhantomBox")([TypeNamed("a")])],
+            ["Ashes.Trait.Eq"]
+        )
     in
         match expandDerivedImplementations(ProgramSyntax(items = [TopLevelType(declaration)], body = None)) with
             | Ok(ProgramSyntax { items = _typeItem :: TopLevelImplementation(implementation) :: [] }) ->
@@ -117,17 +158,30 @@ let expectPayloadRequirements unit =
             | _ -> test.fail("only payload-contributing parameters should require derived evidence"))
 
 let expectZeroCostExpansion unit =
-    (let declaration = ZeroCostTypeDecl(name = "UserId", typeParameters = [], constructor = constructor("UserId")([TypeNamed("Int")]), derivingTraits = ["Show"])
+    (let declaration =
+        ZeroCostTypeDecl(name = "UserId", typeParameters = [], constructor = constructor(
+            "UserId",
+            [TypeNamed("Int")]
+        ), derivingTraits = ["Show"])
     in
         match expandDerivedImplementations(ProgramSyntax(items = [TopLevelZeroCostType(declaration)], body = None)) with
             | Ok(ProgramSyntax { items = first :: second :: [] }) ->
                 match (first, second) with
                     | (TopLevelZeroCostType(ZeroCostTypeDecl { name = "UserId", derivingTraits = [] }), TopLevelImplementation(TraitImplementationDecl { traitName = "Show", typeArguments = TypeNamed("UserId") :: [] })) -> Unit
-                    | _ -> test.fail("zero-cost deriving should retain the declaration and emit an ordinary implementation")
+                    | _ ->
+                        test.fail(
+                            "zero-cost deriving should retain the declaration and emit an ordinary implementation"
+                        )
             | _ -> test.fail("zero-cost deriving should retain the declaration and emit an ordinary implementation"))
 
 let expectGeneratedMethodBodies unit =
-    (let declaration = ordinaryType("Choice")([])([constructor("First")([]), constructor("Second")([TypeNamed("Int")])])(["Eq", "Ord", "Hash"])
+    (let declaration =
+        ordinaryType(
+            "Choice",
+            [],
+            [constructor("First")([]), constructor("Second")([TypeNamed("Int")])],
+            ["Eq", "Ord", "Hash"]
+        )
     in
         match expandDerivedImplementations(ProgramSyntax(items = [TopLevelType(declaration)], body = None)) with
             | Ok(ProgramSyntax { items = items }) ->
@@ -148,7 +202,10 @@ let expectGeneratedMethodBodies unit =
             | _ -> test.fail("deriving should generate deterministic Eq, Ord, and Hash method bodies"))
 
 let expectRecordShowBody unit =
-    (let recordConstructor = TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed("Int")], fieldNames = ["x", "y"])
+    (let recordConstructor =
+        TypeConstructor(name = "Point", parameters = [TypeNamed("Int"), TypeNamed(
+            "Int"
+        )], fieldNames = ["x", "y"])
     in
         let declaration = TypeDecl(name = "Point", typeParameters = [], constructors = [recordConstructor], isRecord = true, derivingTraits = ["Show"])
         in
@@ -173,7 +230,11 @@ let rejectDuplicateTrait unit =
             | Error(DuplicateDerivedTrait("Token", "Eq")) -> Unit
             | _ -> test.fail("qualified and leaf spellings of the same derived trait should be duplicates"))
 
-let derivingProgram declaration items = ProgramSyntax(items = appendTexts(items)([TopLevelType(declaration)]), body = None)
+let derivingProgram declaration items =
+    ProgramSyntax(items = appendTexts(
+        items,
+        [TopLevelType(declaration)]
+    ), body = None)
 
 let expectUnsupportedDerivedDeclaration expectedName expectedTrait declaration items =
     match items
@@ -185,7 +246,13 @@ let expectUnsupportedDerivedDeclaration expectedName expectedTrait declaration i
             |> (given (_) -> test.assertEqual(expectedTrait)(traitName))
         | _ -> test.fail("expected unsupported derived field " + expectedName + ":" + expectedTrait)
 
-let derivedFieldDeclaration name traitName fieldType = ordinaryType(name)([])([constructor(name)([fieldType])])([traitName])
+let derivedFieldDeclaration name traitName fieldType =
+    ordinaryType(
+        name,
+        [],
+        [constructor(name)([fieldType])],
+        [traitName]
+    )
 
 let expectUnsupportedDerivedField expectedName expectedTrait fieldType items =
     fieldType
@@ -211,9 +278,15 @@ let resourceDatabaseItems unit =
     |> ExternalOpaqueType("Database")
     |> TopLevelExternal]
 
-let clockCapabilityItems unit = [TopLevelCapability(CapabilityDecl(name = "Clock", typeParameters = [], operations = []))]
+let clockCapabilityItems unit =
+    [TopLevelCapability(
+        CapabilityDecl(name = "Clock", typeParameters = [], operations = [])
+    )]
 
-let nativeHandleAlias unit = TopLevelTypeAlias(TypeAliasDecl(name = "NativeHandle", typeParameters = [], target = TypeNamed("Handle")))
+let nativeHandleAlias unit =
+    TopLevelTypeAlias(
+        TypeAliasDecl(name = "NativeHandle", typeParameters = [], target = TypeNamed("Handle"))
+    )
 
 let nativeHandleAliasItems unit =
     [None
@@ -223,7 +296,13 @@ let nativeHandleAliasItems unit =
 let rejectUnsupportedFields unit =
     Unit
     |> callbackField
-    |> (given (fieldType) -> expectUnsupportedDerivedField("Callback")("Eq")(fieldType)([]))
+    |> (given (fieldType) ->
+        expectUnsupportedDerivedField(
+            "Callback",
+            "Eq",
+            fieldType,
+            []
+        ))
     |> (given (_) ->
         Unit
         |> nonRegularTreeDeclaration
@@ -232,19 +311,35 @@ let rejectUnsupportedFields unit =
 let rejectSemanticallyUnsupportedFields unit =
     Unit
     |> opaqueHandleItems
-    |> expectUnsupportedDerivedField("OpaqueBox")("Show")(TypeNamed("Handle"))
+    |> expectUnsupportedDerivedField(
+        "OpaqueBox",
+        "Show",
+        TypeNamed("Handle")
+    )
     |> (given (_) ->
         Unit
         |> resourceDatabaseItems
-        |> expectUnsupportedDerivedField("ResourceBox")("Eq")(TypeApplied("List")([TypeNamed("Database")])))
+        |> expectUnsupportedDerivedField(
+            "ResourceBox",
+            "Eq",
+            TypeApplied("List")([TypeNamed("Database")])
+        ))
     |> (given (_) ->
         Unit
         |> clockCapabilityItems
-        |> expectUnsupportedDerivedField("CapabilityBox")("Hash")(TypeNamed("Clock")))
+        |> expectUnsupportedDerivedField(
+            "CapabilityBox",
+            "Hash",
+            TypeNamed("Clock")
+        ))
     |> (given (_) ->
         Unit
         |> nativeHandleAliasItems
-        |> expectUnsupportedDerivedField("AliasBox")("Ord")(TypeNamed("NativeHandle")))
+        |> expectUnsupportedDerivedField(
+            "AliasBox",
+            "Ord",
+            TypeNamed("NativeHandle")
+        ))
 
 let derivingInferenceUnit packageId items = ProgramInferenceUnit(packageId = packageId, program = ProgramSyntax(items = items, body = None))
 
@@ -273,14 +368,30 @@ let rejectUnsupportedFieldFromSeparateUnit unit =
             | _ -> test.fail("stitched units should share deriving eligibility context"))
 
 let expectExpansionBeforeCoherence unit =
-    (let declaration = ordinaryType("Color")([])([constructor("Red")([]), constructor("Blue")([TypeNamed("Int")])])(["Eq", "Ord", "Show", "Hash"])
+    (let declaration =
+        ordinaryType(
+            "Color",
+            [],
+            [constructor("Red")([]), constructor("Blue")([TypeNamed("Int")])],
+            ["Eq", "Ord", "Show", "Hash"]
+        )
     in
-        match inferProgramFromPackage("deriving-tests")(standardTraitEnvironment(Unit))(ProgramSyntax(items = [TopLevelType(declaration)], body = None)) with
+        match inferProgramFromPackage(
+            "deriving-tests",
+            standardTraitEnvironment(Unit),
+            ProgramSyntax(items = [TopLevelType(declaration)], body = None)
+        ) with
             | ProgramInferenceResult { environment = environment, error = None } ->
-                match resolveTraitEvidence(TraitConstraint(traitName = "Eq", typeArguments = [SemNamed(3)("Color")([])]))(environment) with
+                match resolveTraitEvidence(
+                    TraitConstraint(traitName = "Eq", typeArguments = [SemNamed(3)("Color")([])]),
+                    environment
+                ) with
                     | TraitEvidenceResolution { plan = Some(TraitEvidenceInstance(_constraint, _implementation, [], [])), error = None } -> Unit
                     | _ -> test.fail("derived implementations should participate in ordinary evidence resolution")
-            | ProgramInferenceResult { error = Some(error) } -> test.fail("derived implementation should infer before coherence: " + Ashes.Trait.Show.show(error)))
+            | ProgramInferenceResult { error = Some(error) } ->
+                test.fail(
+                    "derived implementation should infer before coherence: " + Ashes.Trait.Show.show(error)
+                ))
 
 let runDerivingExpansionTests unit =
     unit

@@ -69,7 +69,11 @@ and substituteEvidenceType substitutions semanticType =
                         |> substituteEvidenceType(substitutions)
                         |> Some
             in
-                SemFunction(substituteEvidenceType(substitutions)(argument))(substituteEvidenceType(substitutions)(result))(nextRow)
+                SemFunction(
+                    substituteEvidenceType(substitutions)(argument),
+                    substituteEvidenceType(substitutions)(result),
+                    nextRow
+                )
         | SemList(element) ->
             element
             |> substituteEvidenceType(substitutions)
@@ -104,12 +108,24 @@ and substituteEvidenceType substitutions semanticType =
 
 let substituteEvidenceConstraint substitutions constraint =
     match constraint with
-        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } -> TraitConstraint(traitName = traitName, typeArguments = substituteEvidenceTypes(substitutions)(typeArguments))
+        | TraitConstraint { traitName = traitName, typeArguments = typeArguments } ->
+            TraitConstraint(traitName = traitName, typeArguments = substituteEvidenceTypes(
+                substitutions,
+                typeArguments
+            ))
 
 let recursive buildEvidenceSubstitutions parameters arguments =
     match (parameters, arguments) with
-        | (SemParameter(parameterId, _name) :: parameterTail, argument :: argumentTail) -> (parameterId, argument) :: buildEvidenceSubstitutions(parameterTail)(argumentTail)
-        | (SemVariable(parameterId) :: parameterTail, argument :: argumentTail) -> (parameterId, argument) :: buildEvidenceSubstitutions(parameterTail)(argumentTail)
+        | (SemParameter(parameterId, _name) :: parameterTail, argument :: argumentTail) ->
+            (parameterId, argument) :: buildEvidenceSubstitutions(
+                parameterTail,
+                argumentTail
+            )
+        | (SemVariable(parameterId) :: parameterTail, argument :: argumentTail) ->
+            (parameterId, argument) :: buildEvidenceSubstitutions(
+                parameterTail,
+                argumentTail
+            )
         | _ -> []
 
 let traitMethodName method =
@@ -134,8 +150,19 @@ let recursive buildSupertraitShapes constraints environment parameterIndex inclu
             if containsTraitName(traitName)(includedTraits)
             then buildSupertraitShapes(tail)(environment)(parameterIndex)(includedTraits)
             else
-                match buildTraitDictionaryShape(constraint)(environment)(parameterIndex)(traitName :: includedTraits) with
-                    | TraitDictionaryShapeBuild { shape = None, includedTraits = nextIncluded } -> buildSupertraitShapes(tail)(environment)(parameterIndex)(nextIncluded)
+                match buildTraitDictionaryShape(
+                    constraint,
+                    environment,
+                    parameterIndex,
+                    traitName :: includedTraits
+                ) with
+                    | TraitDictionaryShapeBuild { shape = None, includedTraits = nextIncluded } ->
+                        buildSupertraitShapes(
+                            tail,
+                            environment,
+                            parameterIndex,
+                            nextIncluded
+                        )
                     | TraitDictionaryShapeBuild { shape = Some(shape), includedTraits = nextIncluded } ->
                         match buildSupertraitShapes(tail)(environment)(parameterIndex)(nextIncluded) with
                             | TraitDictionaryShapeListBuild { shapes = tailShapes, includedTraits = finalIncluded } -> TraitDictionaryShapeListBuild(shapes = shape :: tailShapes, includedTraits = finalIncluded)
@@ -152,16 +179,36 @@ and buildTraitDictionaryShape constraint environment parameterIndex includedTrai
                             |> map(substituteEvidenceConstraint(substitutions))
                             |> canonicalizeTraitConstraints
                         in
-                            match buildSupertraitShapes(specializedSupertraits)(environment)(parameterIndex)(includedTraits) with
-                                | TraitDictionaryShapeListBuild { shapes = shapes, includedTraits = finalIncluded } -> TraitDictionaryShapeBuild(shape = Some(TraitDictionaryAbiShape(parameterIndex = parameterIndex, constraint = constraint, methods = sortTraitMethodNames(methods), supertraits = shapes)), includedTraits = finalIncluded)
+                            match buildSupertraitShapes(
+                                specializedSupertraits,
+                                environment,
+                                parameterIndex,
+                                includedTraits
+                            ) with
+                                | TraitDictionaryShapeListBuild { shapes = shapes, includedTraits = finalIncluded } ->
+                                    TraitDictionaryShapeBuild(shape = Some(
+                                        TraitDictionaryAbiShape(parameterIndex = parameterIndex, constraint = constraint, methods = sortTraitMethodNames(
+                                            methods
+                                        ), supertraits = shapes)
+                                    ), includedTraits = finalIncluded)
 
 let recursive planTraitEvidenceAbiFrom constraints environment parameterIndex =
     match constraints with
         | [] -> []
         | (TraitConstraint { traitName = traitName, typeArguments = _typeArguments } as constraint) :: tail ->
             match buildTraitDictionaryShape(constraint)(environment)(parameterIndex)([traitName]) with
-                | TraitDictionaryShapeBuild { shape = None, includedTraits = _includedTraits } -> planTraitEvidenceAbiFrom(tail)(environment)(parameterIndex)
-                | TraitDictionaryShapeBuild { shape = Some(shape), includedTraits = _includedTraits } -> shape :: planTraitEvidenceAbiFrom(tail)(environment)(parameterIndex + 1)
+                | TraitDictionaryShapeBuild { shape = None, includedTraits = _includedTraits } ->
+                    planTraitEvidenceAbiFrom(
+                        tail,
+                        environment,
+                        parameterIndex
+                    )
+                | TraitDictionaryShapeBuild { shape = Some(shape), includedTraits = _includedTraits } ->
+                    shape :: planTraitEvidenceAbiFrom(
+                        tail,
+                        environment,
+                        parameterIndex + 1
+                    )
 
 let planTraitEvidenceAbi constraints environment =
     planTraitEvidenceAbiFrom(canonicalizeTraitConstraints(constraints))(environment)(0)

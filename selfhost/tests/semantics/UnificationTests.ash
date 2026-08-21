@@ -12,11 +12,18 @@ let expectUnified expected left right =
                 if actual == expected
                 then Unit
                 else test.fail("unexpected unified type: " + actual)
-        | UnificationResult { substitution = _substitution, error = Some(error) } -> test.fail("types should unify: " + Ashes.Trait.Show.show(error))
+        | UnificationResult { substitution = _substitution, error = Some(error) } ->
+            test.fail(
+                "types should unify: " + Ashes.Trait.Show.show(error)
+            )
 
 let expectInfinite variableId left right =
     match unify(left)(right) with
-        | UnificationResult { substitution = _substitution, error = Some(InfiniteType(actualId, _semanticType)) } -> test.assertEqual(variableId)(actualId)
+        | UnificationResult { substitution = _substitution, error = Some(InfiniteType(actualId, _semanticType)) } ->
+            test.assertEqual(
+                variableId,
+                actualId
+            )
         | _ -> test.fail("expected occurs-check failure")
 
 let expectMismatch left right =
@@ -32,7 +39,10 @@ let expectArity left right =
 let expectUnifies left right =
     match unify(left)(right) with
         | UnificationResult { substitution = _substitution, error = None } -> Unit
-        | UnificationResult { substitution = _substitution, error = Some(error) } -> test.fail("rows should unify: " + Ashes.Trait.Show.show(error))
+        | UnificationResult { substitution = _substitution, error = Some(error) } ->
+            test.fail(
+                "rows should unify: " + Ashes.Trait.Show.show(error)
+            )
 
 let expectOpenRowTail left right =
     match unify(left)(right) with

@@ -46,11 +46,23 @@ let traitLeafName name =
 
 let traitEvidenceParameterName parameterIndex = "__trait_evidence_" + Ashes.Text.fromInt(parameterIndex)
 
-let traitMethodParameterName parameterIndex path traitName methodName = "__trait_" + Ashes.Text.fromInt(parameterIndex) + "_" + path + "_" + traitLeafName(traitName) + "_" + methodName
+let traitMethodParameterName parameterIndex path traitName methodName =
+    "__trait_" + Ashes.Text.fromInt(
+        parameterIndex
+    ) + "_" + path + "_" + traitLeafName(traitName) + "_" + methodName
 
-let traitRawMethodParameterName parameterIndex path traitName methodName = traitMethodParameterName(parameterIndex)(path)(traitName)(methodName) + "_raw"
+let traitRawMethodParameterName parameterIndex path traitName methodName =
+    traitMethodParameterName(
+        parameterIndex,
+        path,
+        traitName,
+        methodName
+    ) + "_raw"
 
-let traitSuperDictionaryParameterName parameterIndex path ordinal = "__trait_" + Ashes.Text.fromInt(parameterIndex) + "_" + path + "_super_" + Ashes.Text.fromInt(ordinal)
+let traitSuperDictionaryParameterName parameterIndex path ordinal =
+    "__trait_" + Ashes.Text.fromInt(
+        parameterIndex
+    ) + "_" + path + "_super_" + Ashes.Text.fromInt(ordinal)
 
 let recursive containsMethodName target methods =
     match methods with
@@ -103,7 +115,10 @@ let recursive findTraitMethodInShapes shapes qualifier methodName =
             |> findTraitMethodInShapes(tail)(qualifier)
             |> combineTraitMethodResolution(findTraitMethodInShape(head)(qualifier)(methodName)("root"))
 
-let selectedTraitMethodBindingName traitName methodName = "__trait_selected_" + traitLeafName(traitName) + "_" + methodName
+let selectedTraitMethodBindingName traitName methodName =
+    "__trait_selected_" + traitLeafName(
+        traitName
+    ) + "_" + methodName
 
 let selectedTraitSelfBindingName traitName methodName = "__trait_impl_" + traitLeafName(traitName) + "_" + methodName
 
@@ -138,15 +153,33 @@ and rewriteTraitMethodExpressions shapes expressions =
 and rewriteTraitMethodFields shapes fields =
     match fields with
         | [] -> []
-        | (name, value) :: tail -> (name, rewriteTraitMethodReferences(shapes)(value)) :: rewriteTraitMethodFields(shapes)(tail)
+        | (name, value) :: tail ->
+            (name, rewriteTraitMethodReferences(
+                shapes,
+                value
+            )) :: rewriteTraitMethodFields(shapes)(tail)
 and rewriteTraitMethodCases shapes cases =
     match cases with
         | [] -> []
-        | (pattern, body, guard) :: tail -> (pattern, rewriteTraitMethodReferences(shapes)(body), rewriteOptionalTraitMethodExpression(shapes)(guard)) :: rewriteTraitMethodCases(shapes)(tail)
+        | (pattern, body, guard) :: tail ->
+            (pattern, rewriteTraitMethodReferences(
+                shapes,
+                body
+            ), rewriteOptionalTraitMethodExpression(
+                shapes,
+                guard
+            )) :: rewriteTraitMethodCases(shapes)(tail)
 and rewriteTraitMethodHandlerArms shapes arms =
     match arms with
         | [] -> []
-        | (instance, operation, patterns, body) :: tail -> (instance, operation, patterns, rewriteTraitMethodReferences(shapes)(body)) :: rewriteTraitMethodHandlerArms(shapes)(tail)
+        | (instance, operation, patterns, body) :: tail ->
+            (instance, operation, patterns, rewriteTraitMethodReferences(
+                shapes,
+                body
+            )) :: rewriteTraitMethodHandlerArms(
+                shapes,
+                tail
+            )
 and rewriteTraitMethodReferences shapes expression =
     match expression with
         | ExprAt(span, inner) ->
@@ -238,29 +271,48 @@ and rewriteTraitMethodReferences shapes expression =
             |> rewriteTraitMethodReferences(shapes)
             |> ExprResultMapErrorPipe(rewriteTraitMethodReferences(shapes)(left))
         | ExprLet(name, value, body, parameters, annotation, requirements) ->
-            ExprLet(name)(rewriteTraitMethodReferences(shapes)(value))(rewriteTraitMethodReferences(shapes)(body))(parameters)(annotation)(requirements)
+            ExprLet(
+                name,
+                rewriteTraitMethodReferences(shapes)(value),
+                rewriteTraitMethodReferences(shapes)(body),
+                parameters,
+                annotation,
+                requirements
+            )
         | ExprLetResult(name, value, body) ->
             body
             |> rewriteTraitMethodReferences(shapes)
             |> ExprLetResult(name)(rewriteTraitMethodReferences(shapes)(value))
         | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
-            ExprLetRecursive(name)(rewriteTraitMethodReferences(shapes)(value))(rewriteTraitMethodReferences(shapes)(body))(parameters)(annotation)(requirements)
+            ExprLetRecursive(
+                name,
+                rewriteTraitMethodReferences(shapes)(value),
+                rewriteTraitMethodReferences(shapes)(body),
+                parameters,
+                annotation,
+                requirements
+            )
         | ExprIf(condition, thenBranch, elseBranch) ->
             elseBranch
             |> rewriteTraitMethodReferences(shapes)
             |> ExprIf(rewriteTraitMethodReferences(shapes)(condition))(rewriteTraitMethodReferences(shapes)(thenBranch))
         | ExprLambda(name, body, annotation) ->
             ExprLambda(name)(rewriteTraitMethodReferences(shapes)(body))(annotation)
-        | ExprCall(function, argument, whitespace) ->
-            ExprCall(rewriteTraitMethodReferences(shapes)(function))(rewriteTraitMethodReferences(shapes)(argument))(whitespace)
+        | ExprCall(function, argument, whitespace, layout) ->
+            ExprCall(
+                rewriteTraitMethodReferences(shapes)(function),
+                rewriteTraitMethodReferences(shapes)(argument),
+                whitespace,
+                layout
+            )
         | ExprTuple(elements) ->
             elements
             |> rewriteTraitMethodExpressions(shapes)
             |> ExprTuple
-        | ExprList(elements) ->
+        | ExprList(elements, isMultiline) ->
             elements
             |> rewriteTraitMethodExpressions(shapes)
-            |> ExprList
+            |> (given (rewrittenElements) -> ExprList(rewrittenElements)(isMultiline))
         | ExprCons(head, tail) ->
             tail
             |> rewriteTraitMethodReferences(shapes)
@@ -293,13 +345,17 @@ let recursive traitMethodPatterns parameterIndex path traitName methods =
     match methods with
         | [] -> []
         | methodName :: tail ->
-            PatternVar(traitRawMethodParameterName(parameterIndex)(path)(traitName)(methodName)) :: traitMethodPatterns(parameterIndex)(path)(traitName)(tail)
+            PatternVar(
+                traitRawMethodParameterName(parameterIndex)(path)(traitName)(methodName)
+            ) :: traitMethodPatterns(parameterIndex)(path)(traitName)(tail)
 
 let recursive traitSupertraitPatterns parameterIndex path supertraits ordinal =
     match supertraits with
         | [] -> []
         | _head :: tail ->
-            PatternVar(traitSuperDictionaryParameterName(parameterIndex)(path)(ordinal)) :: traitSupertraitPatterns(parameterIndex)(path)(tail)(ordinal + 1)
+            PatternVar(
+                traitSuperDictionaryParameterName(parameterIndex)(path)(ordinal)
+            ) :: traitSupertraitPatterns(parameterIndex)(path)(tail)(ordinal + 1)
 
 let traitDictionaryPattern parameterIndex path traitName methods supertraits =
     match 0
@@ -333,7 +389,18 @@ and destructureTraitDictionary shape path dictionary body =
             let withSupertraits = destructureTraitSupertraits(parameterIndex)(path)(supertraits)(0)(body)
             in
                 let withMethods = bindTraitMethods(parameterIndex)(path)(traitName)(methods)(withSupertraits)
-                in ExprMatch(dictionary)([(traitDictionaryPattern(parameterIndex)(path)(traitName)(methods)(supertraits), withMethods, None)])(None)
+                in
+                    ExprMatch(
+                        dictionary,
+                        [(traitDictionaryPattern(
+                            parameterIndex,
+                            path,
+                            traitName,
+                            methods,
+                            supertraits
+                        ), withMethods, None)],
+                        None
+                    )
 
 let recursive prependTraitDictionaryParameters shapes body =
     match shapes with
@@ -369,11 +436,21 @@ let recursive traitForwardedEvidenceNameFrom rootParameterIndex parentPath path 
         | ordinal :: tail ->
             match tail with
                 | [] -> traitSuperDictionaryParameterName(rootParameterIndex)(parentPath)(ordinal)
-                | _ -> traitForwardedEvidenceNameFrom(rootParameterIndex)(parentPath + "_" + Ashes.Text.fromInt(ordinal))(tail)
+                | _ ->
+                    traitForwardedEvidenceNameFrom(
+                        rootParameterIndex,
+                        parentPath + "_" + Ashes.Text.fromInt(ordinal),
+                        tail
+                    )
 
 let traitForwardedEvidenceName forwarding =
     match forwarding with
-        | TraitEvidenceForwarding { rootParameterIndex = rootParameterIndex, supertraitPath = path } -> traitForwardedEvidenceNameFrom(rootParameterIndex)("root")(path)
+        | TraitEvidenceForwarding { rootParameterIndex = rootParameterIndex, supertraitPath = path } ->
+            traitForwardedEvidenceNameFrom(
+                rootParameterIndex,
+                "root",
+                path
+            )
 
 let recursive applyForwardedTraitEvidence expression arguments =
     match arguments with
@@ -381,7 +458,7 @@ let recursive applyForwardedTraitEvidence expression arguments =
         | TraitEvidenceForwardingArgument { shape = _shape, forwarding = forwarding } :: tail ->
             applyForwardedTraitEvidence(ExprCall(expression)(forwarding
             |> traitForwardedEvidenceName
-            |> ExprVar)(false))(tail)
+            |> ExprVar)(false)(callArgumentsInline))(tail)
 
 let rewriteTraitConstrainedReference reference requiredConstraints activeConstraints environment =
     match planTraitEvidenceForwarding(requiredConstraints)(activeConstraints)(environment) with
@@ -389,4 +466,7 @@ let rewriteTraitConstrainedReference reference requiredConstraints activeConstra
             TraitConstrainedReferenceRewriting(expression = arguments
             |> applyForwardedTraitEvidence(reference)
             |> Some, error = None)
-        | TraitEvidenceForwardingPlanning { arguments = _arguments, error = Some(error) } -> TraitConstrainedReferenceRewriting(expression = None, error = Some(error))
+        | TraitEvidenceForwardingPlanning { arguments = _arguments, error = Some(error) } ->
+            TraitConstrainedReferenceRewriting(expression = None, error = Some(
+                error
+            ))

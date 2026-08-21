@@ -12,7 +12,17 @@ let writtenImportSource = "// café\n\nimport Ashes.IO\nimport Ashes.Collection.
 
 let checkWrittenImportResult parsed =
     parsed.imports
-    |> test.assertEqual([ImportHeaderEntry(modulePath = "Ashes.IO", selector = None, alias = None, sourceLine = 3, written = "import Ashes.IO"), ImportHeaderEntry(modulePath = "Ashes.Collection.List", selector = None, alias = Some("Lists"), sourceLine = 4, written = "import Ashes.Collection.List as Lists"), ImportHeaderEntry(modulePath = "Ashes.IO", selector = Some("print"), alias = None, sourceLine = 5, written = "import Ashes.IO.print"), ImportHeaderEntry(modulePath = "Ashes.Collection.List", selector = Some("map"), alias = Some("listMap"), sourceLine = 6, written = "import Ashes.Collection.List.map as listMap")])
+    |> test.assertEqual(
+        [ImportHeaderEntry(modulePath = "Ashes.IO", selector = None, alias = None, sourceLine = 3, written = "import Ashes.IO"), ImportHeaderEntry(modulePath = "Ashes.Collection.List", selector = None, alias = Some(
+            "Lists"
+        ), sourceLine = 4, written = "import Ashes.Collection.List as Lists"), ImportHeaderEntry(modulePath = "Ashes.IO", selector = Some(
+            "print"
+        ), alias = None, sourceLine = 5, written = "import Ashes.IO.print"), ImportHeaderEntry(modulePath = "Ashes.Collection.List", selector = Some(
+            "map"
+        ), alias = Some(
+            "listMap"
+        ), sourceLine = 6, written = "import Ashes.Collection.List.map as listMap")]
+    )
     |> (given (_) -> test.assertEqual("// café\n\n\n\n\n\nlet value = 1\nvalue")(parsed.sourceWithoutImports))
     |> (given (_) -> test.assertEqual(130)(parsed.bodyStartByteOffset))
 
@@ -66,7 +76,11 @@ let checkCommentsEndWithBody unit =
         parsed.imports
         |> test.assertEqual([])
         |> (given (_) -> test.assertEqual(21)(parsed.bodyStartByteOffset))
-        |> (given (_) -> test.assertEqual("// import Ashes.Fake\nlet value = 1\nimport Ashes.IO")(parsed.sourceWithoutImports)))
+        |> (given (_) ->
+            test.assertEqual(
+                "// import Ashes.Fake\nlet value = 1\nimport Ashes.IO",
+                parsed.sourceWithoutImports
+            )))
 
 let run unit =
     unit

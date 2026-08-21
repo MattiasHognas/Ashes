@@ -40,7 +40,15 @@ let expectDeterministicSources root result =
     match result with
         | Error(_error) -> test.fail("source enumeration should succeed")
         | Ok(paths) ->
-            if paths == [join(Unix)(root)("src/Main.ash"), join(Unix)(root)("src/Nested/Alpha.ash"), join(Unix)(root)("src/Zeta.ash"), join(Unix)(root)("vendor/Vendor/Beta.ash")]
+            if paths == [join(Unix)(root)("src/Main.ash"), join(
+                Unix,
+                root,
+                "src/Nested/Alpha.ash"
+            ), join(Unix)(root)("src/Zeta.ash"), join(
+                Unix,
+                root,
+                "vendor/Vendor/Beta.ash"
+            )]
             then Unit
             else test.fail("unexpected deterministic sources: " + Ashes.Trait.Show.show(paths))
 
@@ -56,7 +64,15 @@ let checkOverlappingRoots root =
         match result with
             | Error(_error) -> test.fail("overlapping roots should succeed")
             | Ok(paths) ->
-                if paths == [join(Unix)(root)("src/Main.ash"), join(Unix)(root)("src/Nested/Alpha.ash"), join(Unix)(root)("src/Zeta.ash"), join(Unix)(root)("vendor/Vendor/Beta.ash")]
+                if paths == [join(Unix)(root)("src/Main.ash"), join(
+                    Unix,
+                    root,
+                    "src/Nested/Alpha.ash"
+                ), join(Unix)(root)("src/Zeta.ash"), join(
+                    Unix,
+                    root,
+                    "vendor/Vendor/Beta.ash"
+                )]
                 then Unit
                 else test.fail("unexpected overlapping-root sources: " + Ashes.Trait.Show.show(paths)))
 

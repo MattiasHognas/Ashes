@@ -552,11 +552,16 @@ public sealed partial class Lowering
             case Expr.Perform x: return new Expr.Perform(f(x.Operation));
             case CapabilityPostExpr x:
                 return new CapabilityPostExpr(f(x.Value), f(x.PostLambda), x.HandleResultType);
-            case Expr.Call x: return new Expr.Call(f(x.Func), f(x.Arg)) { IsWhitespaceApplication = x.IsWhitespaceApplication };
+            case Expr.Call x:
+                return new Expr.Call(f(x.Func), f(x.Arg))
+                {
+                    IsWhitespaceApplication = x.IsWhitespaceApplication,
+                    ArgumentListLayout = x.ArgumentListLayout,
+                };
             case Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive:
                 return MapBindingExpression(e, f);
             case Expr.TupleLit x: return new Expr.TupleLit(x.Elements.Select(f).ToList());
-            case Expr.ListLit x: return new Expr.ListLit(x.Elements.Select(f).ToList());
+            case Expr.ListLit x: return new Expr.ListLit(x.Elements.Select(f).ToList()) { IsMultiline = x.IsMultiline };
             case Expr.RecordLit x: return new Expr.RecordLit(x.TypeName, x.Fields.Select(fld => (fld.Name, f(fld.Value))).ToList());
             case Expr.RecordUpdate x: return new Expr.RecordUpdate(f(x.Target), x.Updates.Select(u => (u.Name, f(u.Value))).ToList());
             case Expr.Match x:

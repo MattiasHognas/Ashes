@@ -31,10 +31,83 @@ let run unit =
     |> (given (_) -> assertLexerKinds(["EOF"])(" \t\r\n"))
     |> (given (_) -> assertLexerKinds(["Let", "Ident", "Equals", "Int", "EOF"])("// heading\nlet // inline\nx = 1"))
     |> (given (_) -> assertLexerKinds(["EOF"])("// no newline"))
-    |> (given (_) -> assertLexerKinds(["Let", "LetQuestion", "LetBang", "Recursive", "In", "And", "If", "Then", "Else", "Match", "With", "When", "Given", "True", "False", "Type", "Await", "External", "Capability", "Needs", "Provide", "Perform", "Handle", "Trait", "Implement", "Requires", "Deriving", "Ident", "EOF"])("let let? let! recursive in and if then else match with when given true false type await external capability needs provide perform handle trait implement requires deriving async"))
+    |> (given (_) ->
+        assertLexerKinds(
+            [
+                "Let",
+                "LetQuestion",
+                "LetBang",
+                "Recursive",
+                "In",
+                "And",
+                "If",
+                "Then",
+                "Else",
+                "Match",
+                "With",
+                "When",
+                "Given",
+                "True",
+                "False",
+                "Type",
+                "Await",
+                "External",
+                "Capability",
+                "Needs",
+                "Provide",
+                "Perform",
+                "Handle",
+                "Trait",
+                "Implement",
+                "Requires",
+                "Deriving",
+                "Ident",
+                "EOF"
+            ],
+            "let let? let! recursive in and if then else match with when given true false type await external capability needs provide perform handle trait implement requires deriving async"
+        ))
     |> (given (_) -> assertLexerKinds(["Ident", "Ident", "Ident", "Ident", "EOF"])("android andFoo band asyncFoo"))
     |> (given (_) -> assertLexerKinds(["Ident", "Ident", "Ident", "Ident", "Ident", "EOF"])("_ _x my_var __test x123"))
-    |> (given (_) -> assertLexerKinds(["PipeQuestionGreater", "PipeBangGreater", "Arrow", "GreaterEquals", "LessEquals", "EqualsEquals", "BangEquals", "LessLess", "GreaterGreater", "ColonColon", "PipeGreater", "LessThan", "GreaterThan", "Plus", "Minus", "Star", "Slash", "Percent", "Tilde", "Ampersand", "Caret", "Bang", "Equals", "Comma", "Pipe", "LParen", "RParen", "LBracket", "RBracket", "Dot", "Colon", "LBrace", "RBrace", "EOF"])("|?> |!> -> >= <= == != << >> :: |> < > + - * / % ~ & ^ ! = , | ( ) [ ] . : { }"))
+    |> (given (_) ->
+        assertLexerKinds(
+            [
+                "PipeQuestionGreater",
+                "PipeBangGreater",
+                "Arrow",
+                "GreaterEquals",
+                "LessEquals",
+                "EqualsEquals",
+                "BangEquals",
+                "LessLess",
+                "GreaterGreater",
+                "ColonColon",
+                "PipeGreater",
+                "LessThan",
+                "GreaterThan",
+                "Plus",
+                "Minus",
+                "Star",
+                "Slash",
+                "Percent",
+                "Tilde",
+                "Ampersand",
+                "Caret",
+                "Bang",
+                "Equals",
+                "Comma",
+                "Pipe",
+                "LParen",
+                "RParen",
+                "LBracket",
+                "RBracket",
+                "Dot",
+                "Colon",
+                "LBrace",
+                "RBrace",
+                "EOF"
+            ],
+            "|?> |!> -> >= <= == != << >> :: |> < > + - * / % ~ & ^ ! = , | ( ) [ ] . : { }"
+        ))
     |> (given (_) ->
         let tokens =
             "let x = 42"
@@ -43,11 +116,15 @@ let run unit =
         in
             tokens
             |> lexerTokenAt(0)
-            |> test.assertEqual(Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 0, length = 3))
+            |> test.assertEqual(
+                Token(kind = Let, text = "let", intValue = 0, floatValue = 0.0, position = 0, length = 3)
+            )
             |> (given (_) ->
                 tokens
                 |> lexerTokenAt(1)
-                |> test.assertEqual(Token(kind = Ident, text = "x", intValue = 0, floatValue = 0.0, position = 4, length = 1)))
+                |> test.assertEqual(
+                    Token(kind = Ident, text = "x", intValue = 0, floatValue = 0.0, position = 4, length = 1)
+                ))
             |> (given (_) ->
                 tokens
                 |> lexerTokenAt(2)

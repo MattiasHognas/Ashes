@@ -1,7 +1,12 @@
 import Ashes.Test as test
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.TypeSchemes
-let identityScheme = TypeScheme(quantified = [(0, "a")], body = SemFunction(SemVariable(0))(SemVariable(0))(None), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(0)])])
+let identityScheme =
+    TypeScheme(quantified = [(0, "a")], body = SemFunction(
+        SemVariable(0),
+        SemVariable(0),
+        None
+    ), constraints = [TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(0)])])
 
 let instantiatesSchemeConstraints unit =
     match instantiate(identityScheme)(TypeVariableSupply(nextId = 10)) with
@@ -32,11 +37,23 @@ let generalizationExcludesEnvironmentVariables unit =
             | _ -> test.fail("generalization should exclude environment variables"))
 
 let canonicalizesGeneralizedConstraints unit =
-    (let constraints = [TraitConstraint(traitName = "Show", typeArguments = [SemVariable(2)]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(10)]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(2)]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(2)])]
+    (let constraints =
+        [TraitConstraint(traitName = "Show", typeArguments = [SemVariable(
+            2
+        )]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(
+            10
+        )]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(
+            2
+        )]), TraitConstraint(traitName = "Eq", typeArguments = [SemVariable(
+            2
+        )])]
     in
         match generalize([])(SemTuple([SemVariable(2), SemVariable(10)]))(constraints) with
             | TypeScheme { quantified = _quantified, body = _body, constraints = TraitConstraint { traitName = "Eq", typeArguments = SemVariable(2) :: [] } :: TraitConstraint { traitName = "Eq", typeArguments = SemVariable(10) :: [] } :: TraitConstraint { traitName = "Show", typeArguments = SemVariable(2) :: [] } :: [] } -> Unit
-            | _ -> test.fail("generalized constraints should be stably ordered, deduplicated, and retain distinct arguments"))
+            | _ ->
+                test.fail(
+                    "generalized constraints should be stably ordered, deduplicated, and retain distinct arguments"
+                ))
 
 let reportTypeSchemeSuccess unit = Ashes.IO.print("all self-hosted type scheme tests passed")
 

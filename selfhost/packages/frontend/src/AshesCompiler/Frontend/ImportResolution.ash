@@ -87,7 +87,16 @@ let selectorLocalName selectorName alias =
 
 let resolveValueSelector (entry: ImportHeaderEntry) exportName (interface: ModuleImportInterface) =
     if hasValueExport(exportName)(interface.exports)
-    then Ok(ResolvedValueImport(deepCopy(entry.modulePath))(deepCopy(exportName))(selectorLocalName(exportName)(entry.alias))(entry.sourceLine)(deepCopy(entry.written)))
+    then
+        Ok(
+            ResolvedValueImport(
+                deepCopy(entry.modulePath),
+                deepCopy(exportName),
+                selectorLocalName(exportName)(entry.alias),
+                entry.sourceLine,
+                deepCopy(entry.written)
+            )
+        )
     else Error(UnknownImportExport(entry.sourceLine)(deepCopy(entry.modulePath))(deepCopy(exportName)))
 
 let resolveSelector (entry: ImportHeaderEntry) exportName interfaces =
@@ -97,7 +106,16 @@ let resolveSelector (entry: ImportHeaderEntry) exportName interfaces =
 
 let resolveTypeSelector (entry: ImportHeaderEntry) parent leaf (interface: ModuleImportInterface) =
     if hasTypeExport(leaf)(interface.exports)
-    then Ok(ResolvedTypeImport(deepCopy(parent))(deepCopy(leaf))(selectorLocalName(leaf)(entry.alias))(entry.sourceLine)(deepCopy(entry.written)))
+    then
+        Ok(
+            ResolvedTypeImport(
+                deepCopy(parent),
+                deepCopy(leaf),
+                selectorLocalName(leaf)(entry.alias),
+                entry.sourceLine,
+                deepCopy(entry.written)
+            )
+        )
     else Error(UnknownImportExport(entry.sourceLine)(deepCopy(parent))(deepCopy(leaf)))
 
 let resolveUppercaseFallback (entry: ImportHeaderEntry) interfaces =
@@ -110,7 +128,15 @@ let resolveUppercaseFallback (entry: ImportHeaderEntry) interfaces =
 
 let resolveWholeOrType (entry: ImportHeaderEntry) interfaces =
     match findModule(entry.modulePath)(interfaces) with
-        | Some(_interface) -> Ok(ResolvedModuleImport(deepCopy(entry.modulePath))(deepCopy(entry.alias))(entry.sourceLine)(deepCopy(entry.written)))
+        | Some(_interface) ->
+            Ok(
+                ResolvedModuleImport(
+                    deepCopy(entry.modulePath),
+                    deepCopy(entry.alias),
+                    entry.sourceLine,
+                    deepCopy(entry.written)
+                )
+            )
         | None -> resolveUppercaseFallback(entry)(interfaces)
 
 let resolveImport (entry: ImportHeaderEntry) interfaces =
@@ -171,7 +197,13 @@ let recursive resolveImportsFrom remaining interfaces reversed =
                 | Error(error) -> Error(error)
                 | Ok(resolved) ->
                     if hasResolvedConflict(resolved)(reversed)
-                    then Error(ConflictingResolvedImport(resolvedSourceLine(resolved))(deepCopy(resolvedLocalName(resolved))))
+                    then
+                        Error(
+                            ConflictingResolvedImport(
+                                resolvedSourceLine(resolved),
+                                deepCopy(resolvedLocalName(resolved))
+                            )
+                        )
                     else resolveImportsFrom(rest)(interfaces)(resolved :: reversed)
 
 let resolveImports interfaces imports = resolveImportsFrom(imports)(interfaces)([])

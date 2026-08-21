@@ -68,22 +68,67 @@ let assertPattern expected pattern =
     in
         if expected == actual
         then Unit
-        else test.fail("expected pattern: " + expected + "\nactual pattern: " + actual + "\nactual syntax: " + Ashes.Trait.Show.show(pattern)))
+        else
+            test.fail(
+                "expected pattern: " + expected + "\nactual pattern: " + actual + "\nactual syntax: " + Ashes.Trait.Show.show(
+                    pattern
+                )
+            ))
 
 let run unit =
     unit
     |> (given (_) -> assertProgram("let a = 1\n\nlet b = 2\n")("let a=1\nlet b=2"))
-    |> (given (_) -> assertProgram("export (\n    value run,\n    type Result(..),\n    module Internal,\n)\n\ntype alias Identity(a) = a\n\ntype UserId = UserId(Int)\n    deriving {Eq}\n\ntype Result(e, a) =\n    | Ok(a)\n    | Error(e)\n\ntype Point =\n    | x: Int\n    | y: Int\n\nlet run value = value\n\nrun(42)\n")("export(value run,type Result(..),module Internal)\ntype alias Identity(a)=a\ntype UserId=UserId(Int) deriving {Eq}\ntype Result(e,a)=|Ok(a)|Error(e)\ntype Point=|x:Int|y:Int\nlet run value=value\nrun(42)"))
-    |> (given (_) -> assertProgram("external type Handle resource destructor closeHandle\nexternal read(borrow *UInt8, consume FfiBuffer(UInt8), out Int) -> FfiStr(nullable owned freeText) needs {Clock} = \"read_native\"\n\n0\n")("external type Handle resource destructor closeHandle\nexternal read(borrow *UInt8,consume FfiBuffer(UInt8),out Int)->FfiStr(nullable owned freeText) needs {Clock}=\"read_native\"\n0"))
-    |> (given (_) -> assertProgram("capability State(a) =\n    | get : Unit -> a\n    | put : a -> Unit\n\nprovide State(Int) =\n    | get = 0\n    | put =\n        given (value) -> Unit\n\ntrait Display(a) requires {Eq(a)} =\n    | display : a -> Str\n    | fallback : a -> Str =\n        given (value) -> \"?\"\n\nimplement Display(Int) =\n    | display =\n        given (value) -> \"int\"\n\n0\n")("capability State(a)=|get:Unit->a|put:a->Unit\nprovide State(Int)=|get=0|put=given value->Unit\ntrait Display(a) requires {Eq(a)}=|display:a->Str|fallback:a->Str=given value->\"?\"\nimplement Display(Int)=|display=given value->\"int\"\n0"))
-    |> (given (_) -> assertProgram("let recursive even n = odd n\nand odd n = even n\n")("let recursive even n=odd n\nand odd n=even n"))
-    |> (given (_) -> assertProgram("let compare : a -> a -> Bool requires {Eq(a), Show(a)} =\n    given (left) ->\n        given (right) -> true\n")("let compare : a->a->Bool requires {Show(a),Eq(a)}=given(left,right)->true"))
+    |> (given (_) ->
+        assertProgram(
+            "export (\n    value run,\n    type Result(..),\n    module Internal,\n)\n\ntype alias Identity(a) = a\n\ntype UserId = UserId(Int)\n    deriving {Eq}\n\ntype Result(e, a) =\n    | Ok(a)\n    | Error(e)\n\ntype Point =\n    | x: Int\n    | y: Int\n\nlet run value = value\n\nrun(42)\n",
+            "export(value run,type Result(..),module Internal)\ntype alias Identity(a)=a\ntype UserId=UserId(Int) deriving {Eq}\ntype Result(e,a)=|Ok(a)|Error(e)\ntype Point=|x:Int|y:Int\nlet run value=value\nrun(42)"
+        ))
+    |> (given (_) ->
+        assertProgram(
+            "external type Handle resource destructor closeHandle\nexternal read(borrow *UInt8, consume FfiBuffer(UInt8), out Int) -> FfiStr(nullable owned freeText) needs {Clock} = \"read_native\"\n\n0\n",
+            "external type Handle resource destructor closeHandle\nexternal read(borrow *UInt8,consume FfiBuffer(UInt8),out Int)->FfiStr(nullable owned freeText) needs {Clock}=\"read_native\"\n0"
+        ))
+    |> (given (_) ->
+        assertProgram(
+            "capability State(a) =\n    | get : Unit -> a\n    | put : a -> Unit\n\nprovide State(Int) =\n    | get = 0\n    | put =\n        given (value) -> Unit\n\ntrait Display(a) requires {Eq(a)} =\n    | display : a -> Str\n    | fallback : a -> Str =\n        given (value) -> \"?\"\n\nimplement Display(Int) =\n    | display =\n        given (value) -> \"int\"\n\n0\n",
+            "capability State(a)=|get:Unit->a|put:a->Unit\nprovide State(Int)=|get=0|put=given value->Unit\ntrait Display(a) requires {Eq(a)}=|display:a->Str|fallback:a->Str=given value->\"?\"\nimplement Display(Int)=|display=given value->\"int\"\n0"
+        ))
+    |> (given (_) ->
+        assertProgram(
+            "let recursive even n = odd n\nand odd n = even n\n",
+            "let recursive even n=odd n\nand odd n=even n"
+        ))
+    |> (given (_) ->
+        assertProgram(
+            "let compare : a -> a -> Bool requires {Eq(a), Show(a)} =\n    given (left) ->\n        given (right) -> true\n",
+            "let compare : a->a->Bool requires {Show(a),Eq(a)}=given(left,right)->true"
+        ))
     |> (given (_) -> assertExpression("1 + 2 * 3\n")("1+2*3"))
     |> (given (_) -> assertExpression("(1 + 2) * 3\n")("(1+2)*3"))
     |> (given (_) -> assertExpression("map transform values\n")("map transform values"))
-    |> (given (_) -> assertExpression("if ready\nthen run(Unit)\nelse stop(Unit)\n")("if ready then run(Unit) else stop(Unit)"))
-    |> (given (_) -> assertExpression("given (left) ->\n    given (right) -> left + right\n")("given (left, right)->left+right"))
+    |> (given (_) ->
+        assertExpression(
+            "if ready\nthen run(Unit)\nelse stop(Unit)\n",
+            "if ready then run(Unit) else stop(Unit)"
+        ))
+    |> (given (_) ->
+        assertExpression(
+            "given (left) ->\n    given (right) -> left + right\n",
+            "given (left, right)->left+right"
+        ))
     |> (given (_) -> assertExpression("let add x y = x + y\nin add(1)(2)\n")("let add x y=x+y in add(1)(2)"))
+    |> (given (_) ->
+        assertExpression(
+            "outer(\n    \"first\",\n    inner(\n        1,\n        2\n    ),\n    []\n)\n",
+            "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        ))
+    |> (given (_) -> assertExpression("f(\n    value\n)\n")("f(\nvalue\n)"))
+    |> (given (_) ->
+        assertExpression(
+            "[\n    first,\n    [\n        second,\n        third\n    ],\n    f(\n        fourth,\n        fifth\n    )\n]\n",
+            "[\nfirst,\n[\nsecond,\nthird\n],\nf(\nfourth,\nfifth\n)\n]"
+        ))
+    |> (given (_) -> assertExpression("[\n    value\n]\n")("[\nvalue\n]"))
     |> (given (_) -> assertExpression("18446744073709551615u64\n")("18446744073709551615u64"))
     |> (given (_) -> assertExpression("point with x = 5, y = 6\n")("point with x=5,y=6"))
     |> (given (_) ->

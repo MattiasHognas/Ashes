@@ -5,10 +5,18 @@ import AshesCompiler.Semantics.TraitEvidenceAbi
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import TraitEvidenceArgumentTests
 let equalIntFunctionScheme unit =
-    TypeScheme(quantified = [], body = SemFunction(SemInt)(SemFunction(SemInt)(SemBool)(None))(None), constraints = [TraitConstraint(traitName = "Equal", typeArguments = [SemInt])])
+    TypeScheme(quantified = [], body = SemFunction(
+        SemInt,
+        SemFunction(SemInt)(SemBool)(None),
+        None
+    ), constraints = [TraitConstraint(traitName = "Equal", typeArguments = [SemInt])])
 
 let equalGenericFunctionScheme unit =
-    TypeScheme(quantified = [], body = SemFunction(SemVariable(7))(SemFunction(SemVariable(7))(SemBool)(None))(None), constraints = [TraitConstraint(traitName = "Equal", typeArguments = [SemVariable(7)])])
+    TypeScheme(quantified = [], body = SemFunction(
+        SemVariable(7),
+        SemFunction(SemVariable(7))(SemBool)(None),
+        None
+    ), constraints = [TraitConstraint(traitName = "Equal", typeArguments = [SemVariable(7)])])
 
 let expectPartialTraitApplication unit =
     match Unit

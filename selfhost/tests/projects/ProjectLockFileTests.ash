@@ -12,8 +12,16 @@ let checkValidLock unit =
             | Ok(ProjectLockFile { version = version, packages = first :: second :: [] }) ->
                 version
                 |> test.assertEqual(1)
-                |> (given (_) -> test.assertEqual(LockedPackage(namespace = "Json", version = "1.2.3", source = "registry+https://pkg.example", hash = "ash1:abc", dependencies = ["Utf8"]))(first))
-                |> (given (_) -> test.assertEqual(LockedPackage(namespace = "Utf8", version = "0.4.3", source = "registry+https://pkg.example", hash = "ash1:def", dependencies = []))(second))
+                |> (given (_) ->
+                    test.assertEqual(
+                        LockedPackage(namespace = "Json", version = "1.2.3", source = "registry+https://pkg.example", hash = "ash1:abc", dependencies = ["Utf8"]),
+                        first
+                    ))
+                |> (given (_) ->
+                    test.assertEqual(
+                        LockedPackage(namespace = "Utf8", version = "0.4.3", source = "registry+https://pkg.example", hash = "ash1:def", dependencies = []),
+                        second
+                    ))
             | Ok(_) -> test.fail("valid lock should preserve both packages"))
 
 let checkDefaults unit =

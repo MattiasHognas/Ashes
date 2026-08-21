@@ -22,7 +22,10 @@ let writeFile root relativePath contents =
 let recursive plannedNames modules =
     match modules with
         | [] -> []
-        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest -> name :: plannedNames(rest)
+        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest ->
+            name :: plannedNames(
+                rest
+            )
 
 let recursive plannedMainImports modules =
     match modules with

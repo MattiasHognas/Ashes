@@ -326,7 +326,12 @@ let addSelectorImportWithAlias written sourceLine modulePath exportName alias im
 
 let addModuleImport written sourceLine modulePath alias imports =
     match alias with
-        | None -> Ok(ImportHeaderEntry(modulePath = deepCopy(modulePath), selector = None, alias = None, sourceLine = sourceLine, written = deepCopy(written)))
+        | None ->
+            Ok(
+                ImportHeaderEntry(modulePath = deepCopy(
+                    modulePath
+                ), selector = None, alias = None, sourceLine = sourceLine, written = deepCopy(written))
+            )
         | Some(name) ->
             match validateImportAlias(sourceLine)(name
             |> deepCopy
@@ -349,7 +354,15 @@ let addParsedImport written sourceLine path alias imports =
             written
             |> InvalidImportSyntax(sourceLine)
             |> Error
-        | Some((modulePath, Some(exportName))) -> addSelectorImportWithAlias(written)(sourceLine)(modulePath)(exportName)(alias)(imports)
+        | Some((modulePath, Some(exportName))) ->
+            addSelectorImportWithAlias(
+                written,
+                sourceLine,
+                modulePath,
+                exportName,
+                alias,
+                imports
+            )
         | Some((modulePath, None)) -> addModuleImport(written)(sourceLine)(modulePath)(alias)(imports)
 
 let parseImportLine written sourceLine imports =
@@ -384,10 +397,26 @@ let recursive parseHeaderLines source lines sourceLine byteOffset importsReverse
             |> Ok
         | line :: rest ->
             if Ashes.Text.trimStart(line) == ""
-            then parseHeaderLines(source)(rest)(sourceLine + 1)(byteOffset + Ashes.Text.byteLength(line) + 1)(importsReversed)(line :: outputReversed)
+            then
+                parseHeaderLines(
+                    source,
+                    rest,
+                    sourceLine + 1,
+                    byteOffset + Ashes.Text.byteLength(line) + 1,
+                    importsReversed,
+                    line :: outputReversed
+                )
             else
                 if Ashes.Text.startsWith(Ashes.Text.trimStart(line))("//")
-                then parseHeaderLines(source)(rest)(sourceLine + 1)(byteOffset + Ashes.Text.byteLength(line) + 1)(importsReversed)(line :: outputReversed)
+                then
+                    parseHeaderLines(
+                        source,
+                        rest,
+                        sourceLine + 1,
+                        byteOffset + Ashes.Text.byteLength(line) + 1,
+                        importsReversed,
+                        line :: outputReversed
+                    )
                 else
                     if line
                     |> Ashes.Text.trimStart
@@ -395,7 +424,15 @@ let recursive parseHeaderLines source lines sourceLine byteOffset importsReverse
                     then
                         match parseImportLine(line)(sourceLine)(importsReversed) with
                             | Error(error) -> Error(error)
-                            | Ok(entry) -> parseHeaderLines(source)(rest)(sourceLine + 1)(byteOffset + Ashes.Text.byteLength(line) + 1)(entry :: importsReversed)("" :: outputReversed)
+                            | Ok(entry) ->
+                                parseHeaderLines(
+                                    source,
+                                    rest,
+                                    sourceLine + 1,
+                                    byteOffset + Ashes.Text.byteLength(line) + 1,
+                                    entry :: importsReversed,
+                                    "" :: outputReversed
+                                )
                     else
                         line :: rest
                         |> finishHeader(importsReversed)(outputReversed)(byteOffset)

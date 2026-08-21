@@ -2,7 +2,7 @@
 //
 // Invariants:
 // - Source spans never affect rendered text.
-// - Parentheses preserve precedence and associativity, not the original layout.
+// - Parentheses preserve precedence and associativity; explicitly multiline call arguments retain that layout.
 // - Top-level declarations use canonical spacing and the result has one terminal newline.
 
 import AshesCompiler.Frontend.Syntax
@@ -170,7 +170,16 @@ let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Str =
         given (precedence) ->
             given (operator) ->
                 given (left) ->
-                    given (right) -> formatterWrap(parent)(precedence)(formatterExpr(left)(precedence)(0) + " " + operator + " " + formatterExpr(right)(precedence + 1)(0))
+                    given (right) ->
+                        formatterWrap(
+                            parent,
+                            precedence,
+                            formatterExpr(left)(precedence)(0) + " " + operator + " " + formatterExpr(
+                                right,
+                                precedence + 1,
+                                0
+                            )
+                        )
 and formatterExpr : Expr -> Int -> Int -> Str =
     given (expression) ->
         given (parent) ->
@@ -207,22 +216,61 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                     | ExprNotEqual(left, right) -> formatterBinary(parent)(4)("!=")(left)(right)
                     | ExprResultPipe(left, right) -> formatterBinary(parent)(3)("|?>")(left)(right)
                     | ExprResultMapErrorPipe(left, right) -> formatterBinary(parent)(3)("|!>")(left)(right)
-                    | ExprCons(head, tail) -> formatterWrap(parent)(8)(formatterExpr(head)(9)(indent) + " :: " + formatterExpr(tail)(8)(indent))
+                    | ExprCons(head, tail) ->
+                        formatterWrap(
+                            parent,
+                            8,
+                            formatterExpr(head)(9)(indent) + " :: " + formatterExpr(tail)(8)(indent)
+                        )
                     | ExprBitwiseNot(operand) -> formatterWrap(parent)(12)("~" + formatterExpr(operand)(12)(indent))
                     | ExprLogicalNot(operand) -> formatterWrap(parent)(12)("!" + formatterExpr(operand)(12)(indent))
-                    | ExprCall(function, argument, whitespace) ->
+                    | ExprCall(function, argument, whitespace, layout) ->
                         let rendered =
                             if whitespace
                             then formatterExpr(function)(13)(indent) + " " + formatterExpr(argument)(14)(indent)
-                            else formatterExpr(function)(13)(indent) + "(" + formatterExpr(argument)(0)(indent) + ")"
+                            else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)
                         in formatterWrap(parent)(13)(rendered)
                     | ExprTuple(elements) -> "(" + formatterJoin(", ")(formatterExpressionInline)(elements) + ")"
-                    | ExprList(elements) -> "[" + formatterJoin(", ")(formatterExpressionInline)(elements) + "]"
+                    | ExprList(elements, isMultiline) ->
+                        if isMultiline
+                        then formatterMultilineList(elements)(indent)
+                        else "[" + formatterJoin(", ")(formatterExpressionInline)(elements) + "]"
                     | ExprRecord(name, fields) -> name + "(" + formatterJoin(", ")(formatterExprField)(fields) + ")"
-                    | ExprRecordUpdate(target, fields) -> formatterWrap(parent)(2)(formatterExpr(target)(3)(indent) + " with " + formatterJoin(", ")(formatterExprField)(fields))
+                    | ExprRecordUpdate(target, fields) ->
+                        formatterWrap(
+                            parent,
+                            2,
+                            formatterExpr(
+                                target,
+                                3,
+                                indent
+                            ) + " with " + formatterJoin(", ")(formatterExprField)(fields)
+                        )
                     | ExprAwait(task) -> formatterWrap(parent)(12)("await " + formatterExpr(task)(12)(indent))
-                    | ExprPerform(operation) -> formatterWrap(parent)(12)("perform " + formatterExpr(operation)(12)(indent))
-                    | ExprIf(condition, thenBranch, elseBranch) -> formatterWrap(parent)(1)("if " + formatterExpr(condition)(0)(indent) + "\n" + formatterIndent(indent) + "then " + formatterExpr(thenBranch)(0)(indent) + "\n" + formatterIndent(indent) + "else " + formatterExpr(elseBranch)(0)(indent))
+                    | ExprPerform(operation) ->
+                        formatterWrap(
+                            parent,
+                            12,
+                            "perform " + formatterExpr(operation)(12)(indent)
+                        )
+                    | ExprIf(condition, thenBranch, elseBranch) ->
+                        formatterWrap(
+                            parent,
+                            1,
+                            "if " + formatterExpr(
+                                condition,
+                                0,
+                                indent
+                            ) + "\n" + formatterIndent(indent) + "then " + formatterExpr(
+                                thenBranch,
+                                0,
+                                indent
+                            ) + "\n" + formatterIndent(indent) + "else " + formatterExpr(
+                                elseBranch,
+                                0,
+                                indent
+                            )
+                        )
                     | ExprLambda(name, body, annotation) ->
                         let parameter =
                             match annotation with
@@ -230,20 +278,120 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                                 | Some(typeExpression) -> name + ": " + formatterType(typeExpression)
                         in
                             if formatterExpressionIsMultiline(body)
-                            then formatterWrap(parent)(1)("given (" + parameter + ") ->\n" + formatterIndent(indent + 4) + formatterExpr(body)(0)(indent + 4))
-                            else formatterWrap(parent)(1)("given (" + parameter + ") -> " + formatterExpr(body)(0)(indent))
-                    | ExprLet(name, value, body, parameters, annotation, requirements) -> formatterLet(parent)(indent)("let ")(name)(value)(body)(parameters)(annotation)(requirements)
-                    | ExprLetRecursive(name, value, body, parameters, annotation, requirements) -> formatterLet(parent)(indent)("let recursive ")(name)(value)(body)(parameters)(annotation)(requirements)
-                    | ExprLetResult(name, value, body) -> formatterWrap(parent)(1)("let? " + name + " = " + formatterExpr(value)(0)(indent) + "\nin " + formatterExpr(body)(0)(indent))
-                    | ExprMatch(value, cases, _position) -> formatterWrap(parent)(1)("match " + formatterExpr(value)(0)(indent) + " with\n" + formatterCases(cases)(indent + 4))
-                    | ExprHandle(body, arms) -> formatterWrap(parent)(1)("handle " + formatterExpr(body)(0)(indent) + " with\n" + formatterArms(arms)(indent + 4))
+                            then
+                                formatterWrap(
+                                    parent,
+                                    1,
+                                    "given (" + parameter + ") ->\n" + formatterIndent(indent + 4) + formatterExpr(
+                                        body,
+                                        0,
+                                        indent + 4
+                                    )
+                                )
+                            else
+                                formatterWrap(
+                                    parent,
+                                    1,
+                                    "given (" + parameter + ") -> " + formatterExpr(body)(0)(indent)
+                                )
+                    | ExprLet(name, value, body, parameters, annotation, requirements) ->
+                        formatterLet(
+                            parent,
+                            indent,
+                            "let ",
+                            name,
+                            value,
+                            body,
+                            parameters,
+                            annotation,
+                            requirements
+                        )
+                    | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
+                        formatterLet(
+                            parent,
+                            indent,
+                            "let recursive ",
+                            name,
+                            value,
+                            body,
+                            parameters,
+                            annotation,
+                            requirements
+                        )
+                    | ExprLetResult(name, value, body) ->
+                        formatterWrap(
+                            parent,
+                            1,
+                            "let? " + name + " = " + formatterExpr(
+                                value,
+                                0,
+                                indent
+                            ) + "\nin " + formatterExpr(body)(0)(indent)
+                        )
+                    | ExprMatch(value, cases, _position) ->
+                        formatterWrap(
+                            parent,
+                            1,
+                            "match " + formatterExpr(value)(0)(indent) + " with\n" + formatterCases(cases)(indent + 4)
+                        )
+                    | ExprHandle(body, arms) ->
+                        formatterWrap(
+                            parent,
+                            1,
+                            "handle " + formatterExpr(body)(0)(indent) + " with\n" + formatterArms(arms)(indent + 4)
+                        )
                     | ExprAt(_span, inner) -> formatterExpr(inner)(parent)(indent)
 and formatterExpressionInline : Expr -> Str =
     given (expression) -> formatterExpr(expression)(0)(0)
+and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout -> Int -> Str =
+    given (expression) ->
+        given (function) ->
+            given (argument) ->
+                given (layout) ->
+                    given (indent) ->
+                        if layout == callArgumentsInline
+                        then formatterExpr(function)(13)(indent) + "(" + formatterExpr(argument)(0)(indent) + ")"
+                        else formatterMultilineCall(expression)(indent)
 and formatterExprField : (Str, Expr) -> Str =
     given (field) ->
         match field with
             | (name, value) -> name + " = " + formatterExpressionInline(value)
+and formatterMultilineCall : Expr -> Int -> Str =
+    given (expression) ->
+        given (indent) ->
+            match formatterCollectMultilineCall(expression)([]) with
+                | (function, arguments) ->
+                    formatterExpr(function)(13)(indent) + "(\n" + formatterMultilineExpressions(
+                        arguments,
+                        indent + 4
+                    ) + "\n" + formatterIndent(indent) + ")"
+and formatterCollectMultilineCall : Expr -> List(Expr) -> (Expr, List(Expr)) =
+    given (expression) ->
+        given (laterArguments) ->
+            match formatterUnspanExpr(expression) with
+                | ExprCall(function, argument, _whitespace, layout) ->
+                    match (layout == callArgumentsMultilineContinuation, layout == callArgumentsMultilineStart) with
+                        | (true, _) -> formatterCollectMultilineCall(function)(argument :: laterArguments)
+                        | (false, true) -> (function, argument :: laterArguments)
+                        | _ -> (expression, laterArguments)
+                | _ -> (expression, laterArguments)
+and formatterMultilineList : List(Expr) -> Int -> Str =
+    given (elements) ->
+        given (indent) ->
+            let renderedElements = formatterMultilineExpressions(elements)(indent + 4)
+            in "[\n" + renderedElements + "\n" + formatterIndent(indent) + "]"
+and formatterMultilineExpressions : List(Expr) -> Int -> Str =
+    given (expressions) ->
+        given (indent) ->
+            match expressions with
+                | [] -> ""
+                | expression :: [] -> formatterIndent(indent) + formatterExpr(expression)(0)(indent)
+                | expression :: tail ->
+                    formatterIndent(indent) + formatterExpr(
+                        expression,
+                        0,
+                        indent
+                    ) + ",\n" + formatterMultilineExpressions(tail)(indent)
 and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Maybe(TypeExpr) -> List(TraitConstraintSyntax) -> Str =
     given (parent) ->
         given (indent) ->
@@ -257,10 +405,22 @@ and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Mayb
                                         let annotationText =
                                             match annotation with
                                                 | None -> ""
-                                                | Some(typeExpression) -> " : " + formatterType(typeExpression) + formatterRequirements(requirements)
+                                                | Some(typeExpression) ->
+                                                    " : " + formatterType(
+                                                        typeExpression
+                                                    ) + formatterRequirements(requirements)
                                         in
                                             match formatterSugarParameters(parameters)(value)("") with
-                                                | (parameterText, formattedValue) -> formatterWrap(parent)(1)(prefix + name + parameterText + annotationText + " = " + formatterExpr(formattedValue)(0)(indent) + "\nin " + formatterExpr(body)(0)(indent))
+                                                | (parameterText, formattedValue) ->
+                                                    formatterWrap(
+                                                        parent,
+                                                        1,
+                                                        prefix + name + parameterText + annotationText + " = " + formatterExpr(
+                                                            formattedValue,
+                                                            0,
+                                                            indent
+                                                        ) + "\nin " + formatterExpr(body)(0)(indent)
+                                                    )
 and formatterSugarParameters : List(Str) -> Expr -> Str -> (Str, Expr) =
     given (parameters) ->
         given (value) ->
@@ -269,7 +429,12 @@ and formatterSugarParameters : List(Str) -> Expr -> Str -> (Str, Expr) =
                     | [] -> (rendered, value)
                     | parameter :: tail ->
                         match formatterUnspanExpr(value) with
-                            | ExprLambda(_name, lambdaBody, _annotation) -> formatterSugarParameters(tail)(lambdaBody)(rendered + " " + parameter)
+                            | ExprLambda(_name, lambdaBody, _annotation) ->
+                                formatterSugarParameters(
+                                    tail,
+                                    lambdaBody,
+                                    rendered + " " + parameter
+                                )
                             | _ -> (rendered, value)
 and formatterRequirements : List(TraitConstraintSyntax) -> Str =
     given (requirements) ->
@@ -283,7 +448,12 @@ and formatterRequirements : List(TraitConstraintSyntax) -> Str =
 and formatterRequirement : TraitConstraintSyntax -> Str =
     given (requirement) ->
         match requirement with
-            | TraitConstraintSyntax { traitName = name, typeArguments = arguments } -> name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
+            | TraitConstraintSyntax { traitName = name, typeArguments = arguments } ->
+                name + "(" + formatterJoin(
+                    ", ",
+                    formatterType,
+                    arguments
+                ) + ")"
 and formatterCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
     given (cases) ->
         given (indent) ->
@@ -294,7 +464,15 @@ and formatterCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
                         match guard with
                             | None -> ""
                             | Some(condition) -> " when " + formatterExpressionInline(condition)
-                    in formatterIndent(indent) + "| " + formatterPatternAt(pattern)(0) + guardText + " -> " + formatterExpr(body)(0)(indent) + formatterFollowingCases(tail)(indent)
+                    in
+                        formatterIndent(indent) + "| " + formatterPatternAt(
+                            pattern,
+                            0
+                        ) + guardText + " -> " + formatterExpr(
+                            body,
+                            0,
+                            indent
+                        ) + formatterFollowingCases(tail)(indent)
 and formatterFollowingCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
     given (cases) ->
         given (indent) ->
@@ -312,7 +490,11 @@ and formatterArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Str =
                             | None -> operationName
                             | Some(moduleValue) -> moduleValue + "." + operationName
                     in
-                        formatterIndent(indent) + "| " + prefix + "(" + formatterJoin(", ")(given (item) -> formatterPatternAt(item)(0))(parameters) + ") -> " + formatterExpr(body)(0)(indent) + formatterFollowingArms(tail)(indent)
+                        formatterIndent(indent) + "| " + prefix + "(" + formatterJoin(
+                            ", ",
+                            given (item) -> formatterPatternAt(item)(0),
+                            parameters
+                        ) + ") -> " + formatterExpr(body)(0)(indent) + formatterFollowingArms(tail)(indent)
 and formatterFollowingArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Str =
     given (arms) ->
         given (indent) ->
@@ -329,6 +511,8 @@ and formatterExpressionIsMultiline : Expr -> Bool =
             | ExprIf(_, _, _) -> true
             | ExprMatch(_, _, _) -> true
             | ExprHandle(_, _) -> true
+            | ExprCall(_, _, _, layout) -> layout != callArgumentsInline
+            | ExprList(_, isMultiline) -> isMultiline
             | _ -> false
 
 let formatExpression expression = formatterExpr(expression)(0)(0) + "\n"
@@ -355,7 +539,12 @@ let formatterDeriving traits =
 let formatterConstructor constructor =
     match constructor with
         | TypeConstructor { name = name, parameters = [], fieldNames = _fields } -> "    | " + name + "\n"
-        | TypeConstructor { name = name, parameters = parameters, fieldNames = _fields } -> "    | " + name + "(" + formatterJoin(", ")(formatterType)(parameters) + ")\n"
+        | TypeConstructor { name = name, parameters = parameters, fieldNames = _fields } ->
+            "    | " + name + "(" + formatterJoin(
+                ", ",
+                formatterType,
+                parameters
+            ) + ")\n"
 
 let recursive formatterConstructors constructors =
     match constructors with
@@ -364,7 +553,13 @@ let recursive formatterConstructors constructors =
 
 let recursive formatterRecordFields names parameters =
     match (names, parameters) with
-        | (name :: nameTail, parameter :: parameterTail) -> "    | " + name + ": " + formatterType(parameter) + "\n" + formatterRecordFields(nameTail)(parameterTail)
+        | (name :: nameTail, parameter :: parameterTail) ->
+            "    | " + name + ": " + formatterType(
+                parameter
+            ) + "\n" + formatterRecordFields(
+                nameTail,
+                parameterTail
+            )
         | _ -> ""
 
 let formatterTypeDeclaration declaration =
@@ -374,19 +569,36 @@ let formatterTypeDeclaration declaration =
                 if isRecord
                 then
                     match constructors with
-                        | TypeConstructor { name = _constructorName, parameters = fieldTypes, fieldNames = fieldNames } :: _ -> formatterRecordFields(fieldNames)(fieldTypes)
+                        | TypeConstructor { name = _constructorName, parameters = fieldTypes, fieldNames = fieldNames } :: _ ->
+                            formatterRecordFields(
+                                fieldNames,
+                                fieldTypes
+                            )
                         | [] -> ""
                 else formatterConstructors(constructors)
             in "type " + name + formatterTypeParameters(parameters) + " =\n" + body + formatterDeriving(derivingTraits)
 
 let formatterTypeAliasDeclaration declaration =
     match declaration with
-        | TypeAliasDecl { name = name, typeParameters = parameters, target = target } -> "type alias " + name + formatterTypeParameters(parameters) + " = " + formatterType(target) + "\n"
+        | TypeAliasDecl { name = name, typeParameters = parameters, target = target } ->
+            "type alias " + name + formatterTypeParameters(
+                parameters
+            ) + " = " + formatterType(target) + "\n"
 
 let formatterZeroCostTypeDeclaration declaration =
     match declaration with
-        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = constructorType :: _tail, fieldNames = _fields }, derivingTraits = derivingTraits } -> "type " + name + formatterTypeParameters(parameters) + " = " + constructorName + "(" + formatterType(constructorType) + ")\n" + formatterDeriving(derivingTraits)
-        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = [], fieldNames = _fields }, derivingTraits = derivingTraits } -> "type " + name + formatterTypeParameters(parameters) + " = " + constructorName + "()\n" + formatterDeriving(derivingTraits)
+        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = constructorType :: _tail, fieldNames = _fields }, derivingTraits = derivingTraits } ->
+            "type " + name + formatterTypeParameters(
+                parameters
+            ) + " = " + constructorName + "(" + formatterType(
+                constructorType
+            ) + ")\n" + formatterDeriving(derivingTraits)
+        | ZeroCostTypeDecl { name = name, typeParameters = parameters, constructor = TypeConstructor { name = constructorName, parameters = [], fieldNames = _fields }, derivingTraits = derivingTraits } ->
+            "type " + name + formatterTypeParameters(
+                parameters
+            ) + " = " + constructorName + "()\n" + formatterDeriving(
+                derivingTraits
+            )
 
 let formatterExportConstructors constructors =
     match constructors with
@@ -458,7 +670,12 @@ let recursive formatterExternalParameters parameterTypes ownerships =
 let formatterCapabilityRef capabilityReference =
     match capabilityReference with
         | CapabilityRefSyntax { name = name, args = [] } -> name
-        | CapabilityRefSyntax { name = name, args = arguments } -> name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
+        | CapabilityRefSyntax { name = name, args = arguments } ->
+            name + "(" + formatterJoin(
+                ", ",
+                formatterType,
+                arguments
+            ) + ")"
 
 let formatterNeedsRow row =
     match row with
@@ -484,12 +701,19 @@ let formatterExternalDeclaration declaration =
                     match symbol with
                         | None -> ""
                         | Some(value) -> " = \"" + formatterEscape(value) + "\""
-                in "external " + name + "(" + formatterExternalParameters(parameterTypes)(ownerships) + ") -> " + formatterParsedType(returnType) + needsText + symbolText + "\n"
+                in
+                    "external " + name + "(" + formatterExternalParameters(
+                        parameterTypes,
+                        ownerships
+                    ) + ") -> " + formatterParsedType(returnType) + needsText + symbolText + "\n"
 
 let formatterCapabilityOperation operation =
     match operation with
         | CapabilityOperation { name = name, signature = None } -> "    | " + name + "\n"
-        | CapabilityOperation { name = name, signature = Some(signature) } -> "    | " + name + " : " + formatterType(signature) + "\n"
+        | CapabilityOperation { name = name, signature = Some(signature) } ->
+            "    | " + name + " : " + formatterType(
+                signature
+            ) + "\n"
 
 let recursive formatterCapabilityOperations operations =
     match operations with
@@ -498,7 +722,12 @@ let recursive formatterCapabilityOperations operations =
 
 let formatterCapabilityDeclaration declaration =
     match declaration with
-        | CapabilityDecl { name = name, typeParameters = parameters, operations = operations } -> "capability " + name + formatterTypeParameters(parameters) + " =\n" + formatterCapabilityOperations(operations)
+        | CapabilityDecl { name = name, typeParameters = parameters, operations = operations } ->
+            "capability " + name + formatterTypeParameters(
+                parameters
+            ) + " =\n" + formatterCapabilityOperations(
+                operations
+            )
 
 let formatterIsMultiline expression = formatterExpressionIsMultiline(expression)
 
@@ -509,7 +738,11 @@ let formatterDeclarationValue expression indent =
 
 let formatterProvideBinding binding =
     match binding with
-        | ProvideBinding { operationName = name, implementation = implementation } -> "    | " + name + " =" + formatterDeclarationValue(implementation)(8)
+        | ProvideBinding { operationName = name, implementation = implementation } ->
+            "    | " + name + " =" + formatterDeclarationValue(
+                implementation,
+                8
+            )
 
 let recursive formatterProvideBindings bindings =
     match bindings with
@@ -527,8 +760,17 @@ let formatterProvideDeclaration declaration =
 
 let formatterTraitMethod method =
     match method with
-        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = None } -> "    | " + name + " : " + formatterType(signature) + "\n"
-        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = Some(implementation) } -> "    | " + name + " : " + formatterType(signature) + " =" + formatterDeclarationValue(implementation)(8)
+        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = None } ->
+            "    | " + name + " : " + formatterType(
+                signature
+            ) + "\n"
+        | TraitMethodDecl { name = name, signature = signature, defaultImplementation = Some(implementation) } ->
+            "    | " + name + " : " + formatterType(
+                signature
+            ) + " =" + formatterDeclarationValue(
+                implementation,
+                8
+            )
 
 let recursive formatterTraitMethods methods =
     match methods with
@@ -537,11 +779,20 @@ let recursive formatterTraitMethods methods =
 
 let formatterTraitDeclaration declaration =
     match declaration with
-        | TraitDecl { name = name, typeParameters = parameters, supertraits = supertraits, methods = methods } -> "trait " + name + formatterTypeParameters(parameters) + formatterRequirements(supertraits) + " =\n" + formatterTraitMethods(methods)
+        | TraitDecl { name = name, typeParameters = parameters, supertraits = supertraits, methods = methods } ->
+            "trait " + name + formatterTypeParameters(
+                parameters
+            ) + formatterRequirements(
+                supertraits
+            ) + " =\n" + formatterTraitMethods(methods)
 
 let formatterImplementationBinding binding =
     match binding with
-        | TraitImplementationMethodBinding { methodName = name, implementation = implementation } -> "    | " + name + " =" + formatterDeclarationValue(implementation)(8)
+        | TraitImplementationMethodBinding { methodName = name, implementation = implementation } ->
+            "    | " + name + " =" + formatterDeclarationValue(
+                implementation,
+                8
+            )
 
 let recursive formatterImplementationBindings bindings =
     match bindings with
@@ -550,7 +801,12 @@ let recursive formatterImplementationBindings bindings =
 
 let formatterImplementationDeclaration declaration =
     match declaration with
-        | TraitImplementationDecl { traitName = name, typeArguments = arguments, requirements = requirements, bindings = bindings } -> "implement " + name + "(" + formatterJoin(", ")(formatterType)(arguments) + ")" + formatterRequirements(requirements) + " =\n" + formatterImplementationBindings(bindings)
+        | TraitImplementationDecl { traitName = name, typeArguments = arguments, requirements = requirements, bindings = bindings } ->
+            "implement " + name + "(" + formatterJoin(
+                ", ",
+                formatterType,
+                arguments
+            ) + ")" + formatterRequirements(requirements) + " =\n" + formatterImplementationBindings(bindings)
 
 let formatterLetBinding prefix binding =
     match binding with
@@ -558,10 +814,17 @@ let formatterLetBinding prefix binding =
             let annotationText =
                 match annotation with
                     | None -> ""
-                    | Some(typeExpression) -> " : " + formatterType(typeExpression) + formatterRequirements(requirements)
+                    | Some(typeExpression) ->
+                        " : " + formatterType(
+                            typeExpression
+                        ) + formatterRequirements(requirements)
             in
                 match formatterSugarParameters(parameters)(value)("") with
-                    | (parameterText, formattedValue) -> prefix + name + parameterText + annotationText + " =" + formatterDeclarationValue(formattedValue)(4)
+                    | (parameterText, formattedValue) ->
+                        prefix + name + parameterText + annotationText + " =" + formatterDeclarationValue(
+                            formattedValue,
+                            4
+                        )
 
 let recursive formatterRecursiveBindings bindings first =
     match bindings with

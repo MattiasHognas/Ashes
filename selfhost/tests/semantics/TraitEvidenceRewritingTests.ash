@@ -17,7 +17,10 @@ let expectSingleDictionaryRewrite unit =
 let expectSupertraitDictionaryRewrite unit =
     match Unit
     |> TraitEvidenceArgumentTests.evidenceEnvironment
-    |> rewriteTraitConstrainedValue(ExprTuple([ExprQualifiedVar("Ordered")("compare"), ExprQualifiedVar("Equal")("equal")]))([orderedVariable(Unit)]) with
+    |> rewriteTraitConstrainedValue(
+        ExprTuple([ExprQualifiedVar("Ordered")("compare"), ExprQualifiedVar("Equal")("equal")]),
+        [orderedVariable(Unit)]
+    ) with
         | ExprLambda("__trait_evidence_0", ExprMatch(ExprVar("__trait_evidence_0"), (PatternTuple(PatternVar("__trait_0_root_Ordered_compare_raw") :: PatternVar("__trait_0_root_super_0") :: []), ExprLet("__trait_0_root_Ordered_compare", ExprVar("__trait_0_root_Ordered_compare_raw"), ExprMatch(ExprVar("__trait_0_root_super_0"), (PatternVar("__trait_0_root_0_Equal_equal_raw"), ExprLet("__trait_0_root_0_Equal_equal", ExprVar("__trait_0_root_0_Equal_equal_raw"), ExprTuple(ExprVar("__trait_0_root_Ordered_compare") :: ExprVar("__trait_0_root_0_Equal_equal") :: []), [], None, []), None) :: [], None), [], None, []), None) :: [], None), None) -> Unit
         | _ -> test.fail("supertrait dictionaries should destructure before rewritten method use")
 
@@ -45,7 +48,13 @@ and containsQualifiedEqualCases cases =
 let preserveAmbiguousSameTraitReference unit =
     match Unit
     |> TraitEvidenceArgumentTests.evidenceEnvironment
-    |> rewriteTraitConstrainedValue(ExprQualifiedVar("Equal")("equal"))([TraitConstraint(traitName = "Equal", typeArguments = [SemInt]), TraitConstraint(traitName = "Equal", typeArguments = [SemString])])
+    |> rewriteTraitConstrainedValue(
+        ExprQualifiedVar("Equal")("equal"),
+        [
+            TraitConstraint(traitName = "Equal", typeArguments = [SemInt]),
+            TraitConstraint(traitName = "Equal", typeArguments = [SemString])
+        ]
+    )
     |> containsQualifiedEqual with
         | true -> Unit
         | false -> test.fail("same-trait evidence should remain for typed lowering to disambiguate")

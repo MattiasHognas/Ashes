@@ -36,7 +36,10 @@ let recursive dependencySummary (dependencies: List(ResolvedProjectDependency)) 
 let recursive plannedNames modules =
     match modules with
         | [] -> []
-        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest -> name :: plannedNames(rest)
+        | PlannedModule { name = name, source = _source, imports = _imports, interface = _interface } :: rest ->
+            name :: plannedNames(
+                rest
+            )
 
 let typedGraphResult (result: Result(ProjectDependencyGraphError, ProjectDependencyGraph)) = result
 
@@ -66,17 +69,42 @@ let prepareResolvedGraph root =
     |> (given (_) -> createDirectory(root)("mid/src/Mid"))
     |> (given (_) -> createDirectory(root)("base/src/Base"))
     |> (given (_) -> createDirectory(root)("helper/src/Testing"))
-    |> (given (_) -> writeFile(root)("app/src/Main.ash")("import Mid.Library\nimport Base.Library\nimport Testing.Library\n0"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/src/Main.ash",
+            "import Mid.Library\nimport Base.Library\nimport Testing.Library\n0"
+        ))
     |> (given (_) -> writeFile(root)("mid/src/Mid.ash")("0"))
     |> (given (_) -> writeFile(root)("mid/src/Mid/Library.ash")("let value = 1"))
     |> (given (_) -> writeFile(root)("base/src/Base.ash")("0"))
     |> (given (_) -> writeFile(root)("base/src/Base/Library.ash")("let value = 2"))
     |> (given (_) -> writeFile(root)("helper/src/Testing.ash")("0"))
     |> (given (_) -> writeFile(root)("helper/src/Testing/Library.ash")("let value = 3"))
-    |> (given (_) -> writeFile(root)("base/ashes.json")("{\"name\":\"base\",\"entry\":\"src/Base.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("mid/ashes.json")("{\"name\":\"mid\",\"entry\":\"src/Mid.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"base\":{\"path\":\"../base\"}}}"))
-    |> (given (_) -> writeFile(root)("helper/ashes.json")("{\"name\":\"helper\",\"namespace\":\"Testing\",\"entry\":\"src/Testing.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"middle-package\":{\"path\":\"../mid\",\"namespace\":\"Mid\"}},\"devDependencies\":{\"helper\":{\"path\":\"../helper\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "base/ashes.json",
+            "{\"name\":\"base\",\"entry\":\"src/Base.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "mid/ashes.json",
+            "{\"name\":\"mid\",\"entry\":\"src/Mid.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"base\":{\"path\":\"../base\"}}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "helper/ashes.json",
+            "{\"name\":\"helper\",\"namespace\":\"Testing\",\"entry\":\"src/Testing.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"middle-package\":{\"path\":\"../mid\",\"namespace\":\"Mid\"}},\"devDependencies\":{\"helper\":{\"path\":\"../helper\"}}}"
+        ))
 
 let checkResolvedGraph root =
     "app/ashes.json"
@@ -116,11 +144,21 @@ let prepareDottedDependencyNamespace root =
     |> requireUnit("remove stale dotted dependency namespace")
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> createDirectory(root)("dep/src/AshesCompiler/Frontend"))
-    |> (given (_) -> writeFile(root)("app/src/Main.ash")("import AshesCompiler.Frontend.Value\nAshesCompiler.Frontend.Value.value"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/src/Main.ash",
+            "import AshesCompiler.Frontend.Value\nAshesCompiler.Frontend.Value.value"
+        ))
     |> (given (_) -> writeFile(root)("dep/Package.ash")("Unit"))
     |> (given (_) -> writeFile(root)("dep/src/AshesCompiler/Frontend/Value.ash")("let value = 42"))
     |> (given (_) -> writeFile(root)("dep/ashes.json")("{\"entry\":\"Package.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"ashes-compiler.frontend\":{\"path\":\"../dep\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"ashes-compiler.frontend\":{\"path\":\"../dep\"}}}"
+        ))
 
 let checkDottedDependencyNamespace root =
     "app/ashes.json"
@@ -140,7 +178,12 @@ let prepareMissingPath root =
     |> requireUnit("remove stale missing path")
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"ghost\":{\"path\":\"../ghost\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"ghost\":{\"path\":\"../ghost\"}}}"
+        ))
 
 let checkMissingPath root =
     "app/ashes.json"
@@ -159,7 +202,12 @@ let prepareMissingManifest root =
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> createDirectory(root)("empty"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"empty\":{\"path\":\"../empty\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"empty\":{\"path\":\"../empty\"}}}"
+        ))
 
 let checkMissingManifest root =
     "app/ashes.json"
@@ -184,9 +232,24 @@ let prepareDiamond root =
     |> (given (_) -> writeFile(root)("right/src/Right.ash")("0"))
     |> (given (_) -> writeFile(root)("shared/src/Shared.ash")("0"))
     |> (given (_) -> writeFile(root)("shared/ashes.json")("{\"entry\":\"src/Shared.ash\"}"))
-    |> (given (_) -> writeFile(root)("left/ashes.json")("{\"entry\":\"src/Left.ash\",\"dependencies\":{\"shared\":{\"path\":\"../shared\"}}}"))
-    |> (given (_) -> writeFile(root)("right/ashes.json")("{\"entry\":\"src/Right.ash\",\"dependencies\":{\"shared\":{\"path\":\"../shared\"}}}"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"left\":{\"path\":\"../left\"},\"right\":{\"path\":\"../right\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "left/ashes.json",
+            "{\"entry\":\"src/Left.ash\",\"dependencies\":{\"shared\":{\"path\":\"../shared\"}}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "right/ashes.json",
+            "{\"entry\":\"src/Right.ash\",\"dependencies\":{\"shared\":{\"path\":\"../shared\"}}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"left\":{\"path\":\"../left\"},\"right\":{\"path\":\"../right\"}}}"
+        ))
 
 let checkDiamond root =
     "app/ashes.json"
@@ -208,8 +271,18 @@ let prepareCycle root =
     |> (given (_) -> createDirectory(root)("b/src"))
     |> (given (_) -> writeFile(root)("a/src/A.ash")("0"))
     |> (given (_) -> writeFile(root)("b/src/B.ash")("0"))
-    |> (given (_) -> writeFile(root)("a/ashes.json")("{\"entry\":\"src/A.ash\",\"dependencies\":{\"b\":{\"path\":\"../b\"}}}"))
-    |> (given (_) -> writeFile(root)("b/ashes.json")("{\"entry\":\"src/B.ash\",\"dependencies\":{\"a\":{\"path\":\"../a\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "a/ashes.json",
+            "{\"entry\":\"src/A.ash\",\"dependencies\":{\"b\":{\"path\":\"../b\"}}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "b/ashes.json",
+            "{\"entry\":\"src/B.ash\",\"dependencies\":{\"a\":{\"path\":\"../a\"}}}"
+        ))
 
 let checkCycle root =
     "a/ashes.json"
@@ -233,9 +306,24 @@ let prepareNamespaceConflict root =
     |> (given (_) -> writeFile(root)("one/src/Shared/One.ash")("0"))
     |> (given (_) -> writeFile(root)("two/src/Two.ash")("0"))
     |> (given (_) -> writeFile(root)("two/src/Shared/Two.ash")("0"))
-    |> (given (_) -> writeFile(root)("one/ashes.json")("{\"namespace\":\"Shared\",\"entry\":\"src/One.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("two/ashes.json")("{\"namespace\":\"Shared\",\"entry\":\"src/Two.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"one\":{\"path\":\"../one\"},\"two\":{\"path\":\"../two\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "one/ashes.json",
+            "{\"namespace\":\"Shared\",\"entry\":\"src/One.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "two/ashes.json",
+            "{\"namespace\":\"Shared\",\"entry\":\"src/Two.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"one\":{\"path\":\"../one\"},\"two\":{\"path\":\"../two\"}}}"
+        ))
 
 let checkNamespaceConflict root =
     "app/ashes.json"
@@ -256,8 +344,18 @@ let prepareOutsideNamespace root =
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
     |> (given (_) -> writeFile(root)("dep/src/Greet.ash")("0"))
     |> (given (_) -> writeFile(root)("dep/src/Stray.ash")("let value = 1"))
-    |> (given (_) -> writeFile(root)("dep/ashes.json")("{\"name\":\"greet\",\"entry\":\"src/Greet.ash\",\"sourceRoots\":[\"src\"]}"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"greet\":{\"path\":\"../dep\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "dep/ashes.json",
+            "{\"name\":\"greet\",\"entry\":\"src/Greet.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"greet\":{\"path\":\"../dep\"}}}"
+        ))
 
 let checkOutsideNamespace root =
     "app/ashes.json"
@@ -276,9 +374,24 @@ let prepareLockedPackage root =
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> createDirectory(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("import Json.Codec\nJson.Codec.value"))
-    |> (given (_) -> writeFile(root)("app/ashes-test.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"json\":\"^1.2.0\"}}"))
-    |> (given (_) -> writeFile(root)("app/ashes-test.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Json\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:deadbeef\",\"dependencies\":[]}]}"))
-    |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/ashes.json")("{\"name\":\"ignored-manifest-name\",\"entry\":\"src/Json.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes-test.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"json\":\"^1.2.0\"}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes-test.lock",
+            "{\"version\":1,\"package\":[{\"namespace\":\"Json\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:deadbeef\",\"dependencies\":[]}]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "cache/pkg/Json/1.2.3/deadbeef/ashes.json",
+            "{\"name\":\"ignored-manifest-name\",\"entry\":\"src/Json.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
     |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json.ash")("0"))
     |> (given (_) -> writeFile(root)("cache/pkg/Json/1.2.3/deadbeef/src/Json/Codec.ash")("let value = 42"))
 
@@ -291,7 +404,19 @@ let checkLockedPackage root =
             | Error(error) -> test.fail("locked package should resolve: " + graphErrorText(error))
             | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
                 let packageDirectory = join(Unix)(root)("cache/pkg/Json/1.2.3/deadbeef")
-                in test.assertEqual([ResolvedProjectDependency(name = "Json", namespace = "Json", sourceRoots = [join(Unix)(packageDirectory)("src")], projectDirectory = packageDirectory, entryPath = join(Unix)(packageDirectory)("src/Json.ash"), isDev = false)])(dependencies))
+                in
+                    test.assertEqual(
+                        [ResolvedProjectDependency(name = "Json", namespace = "Json", sourceRoots = [join(
+                            Unix,
+                            packageDirectory,
+                            "src"
+                        )], projectDirectory = packageDirectory, entryPath = join(
+                            Unix,
+                            packageDirectory,
+                            "src/Json.ash"
+                        ), isDev = false)],
+                        dependencies
+                    ))
 
 let prepareMissingLockedPackage root =
     root
@@ -300,7 +425,12 @@ let prepareMissingLockedPackage root =
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
     |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\"}"))
-    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Missing\",\"version\":\"2.0.0\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.lock",
+            "{\"version\":1,\"package\":[{\"namespace\":\"Missing\",\"version\":\"2.0.0\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"
+        ))
 
 let checkMissingLockedPackage root =
     "app/ashes.json"
@@ -338,9 +468,24 @@ let prepareRootOverride root =
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> createDirectory(root)("local/src/B"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("import B.Value\nB.Value.value"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":{\"path\":\"../local\"}}}"))
-    |> (given (_) -> writeFile(root)("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"B\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"))
-    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":{\"path\":\"../local\"}}}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.lock",
+            "{\"version\":1,\"package\":[{\"namespace\":\"B\",\"version\":\"1.2.3\",\"source\":\"registry+https://pkg.example\",\"hash\":\"ash1:absent\",\"dependencies\":[]}]}"
+        ))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "local/ashes.json",
+            "{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
     |> (given (_) -> writeFile(root)("local/src/B.ash")("0"))
     |> (given (_) -> writeFile(root)("local/src/B/Value.ash")("let value = 42"))
 
@@ -350,15 +495,35 @@ let checkRootOverride root =
     |> loadGraphFromCache(join(Unix)(root)("cache"))
     |> (given (result) ->
         match result with
-            | Error(error) -> test.fail("root override should replace the absent cached package: " + graphErrorText(error))
+            | Error(error) ->
+                test.fail(
+                    "root override should replace the absent cached package: " + graphErrorText(error)
+                )
             | Ok(ProjectDependencyGraph { dependencies = dependencies }) ->
                 let localDirectory = join(Unix)(root)("local")
-                in test.assertEqual([ResolvedProjectDependency(name = "B", namespace = "B", sourceRoots = [join(Unix)(localDirectory)("src")], projectDirectory = localDirectory, entryPath = join(Unix)(localDirectory)("src/B.ash"), isDev = false)])(dependencies))
+                in
+                    test.assertEqual(
+                        [ResolvedProjectDependency(name = "B", namespace = "B", sourceRoots = [join(
+                            Unix,
+                            localDirectory,
+                            "src"
+                        )], projectDirectory = localDirectory, entryPath = join(
+                            Unix,
+                            localDirectory,
+                            "src/B.ash"
+                        ), isDev = false)],
+                        dependencies
+                    ))
 
 let prepareMismatchedOverrideVersion root =
     root
     |> prepareRootOverride
-    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.4\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "local/ashes.json",
+            "{\"name\":\"B\",\"namespace\":\"B\",\"version\":\"1.2.4\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
 
 let checkMismatchedOverrideVersion root =
     "app/ashes.json"
@@ -373,7 +538,12 @@ let checkMismatchedOverrideVersion root =
 let prepareMismatchedOverrideNamespace root =
     root
     |> prepareRootOverride
-    |> (given (_) -> writeFile(root)("local/ashes.json")("{\"name\":\"B\",\"namespace\":\"Other\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "local/ashes.json",
+            "{\"name\":\"B\",\"namespace\":\"Other\",\"version\":\"1.2.3\",\"entry\":\"src/B.ash\",\"sourceRoots\":[\"src\"]}"
+        ))
 
 let checkMismatchedOverrideNamespace root =
     "app/ashes.json"
@@ -388,7 +558,12 @@ let checkMismatchedOverrideNamespace root =
 let prepareInvalidOverride root =
     root
     |> prepareRootOverride
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":\"../local\"}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"B\":\"^1.2.0\"},\"overrides\":{\"B\":\"../local\"}}"
+        ))
 
 let checkInvalidOverride root =
     "app/ashes.json"
@@ -422,9 +597,19 @@ let prepareDependencyOverride root =
     |> (given (_) -> createDirectory(root)("app/src"))
     |> (given (_) -> createDirectory(root)("dep/src"))
     |> (given (_) -> writeFile(root)("app/src/Main.ash")("0"))
-    |> (given (_) -> writeFile(root)("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"dependencies\":{\"dep\":{\"path\":\"../dep\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "app/ashes.json",
+            "{\"entry\":\"src/Main.ash\",\"dependencies\":{\"dep\":{\"path\":\"../dep\"}}}"
+        ))
     |> (given (_) -> writeFile(root)("dep/src/Dep.ash")("0"))
-    |> (given (_) -> writeFile(root)("dep/ashes.json")("{\"entry\":\"src/Dep.ash\",\"overrides\":{\"Missing\":{\"path\":\"../missing\"}}}"))
+    |> (given (_) ->
+        writeFile(
+            root,
+            "dep/ashes.json",
+            "{\"entry\":\"src/Dep.ash\",\"overrides\":{\"Missing\":{\"path\":\"../missing\"}}}"
+        ))
 
 let checkDependencyOverrideIgnored root =
     "app/ashes.json"

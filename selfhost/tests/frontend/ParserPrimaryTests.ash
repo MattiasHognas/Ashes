@@ -93,9 +93,9 @@ let checkWhitespaceCall unit =
     match "map transform values"
     |> ParserExpressionTests.expectClean
     |> ParserExpressionTests.unspan with
-        | ExprCall(first, values, true) ->
+        | ExprCall(first, values, true, _layout) ->
             match (ParserExpressionTests.unspan(first), ParserExpressionTests.unspan(values)) with
-                | (ExprCall(_, _, true), ExprVar("values")) -> Unit
+                | (ExprCall(_, _, true, _innerLayout), ExprVar("values")) -> Unit
                 | _ -> test.fail("expected curried whitespace application")
         | _ -> test.fail("expected whitespace call")
 
@@ -110,7 +110,11 @@ let checkRecordAndSpan unit =
 
 let checkNamedArgumentDiagnostic unit =
     match parseExpression("point(x = 1)") with
-        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: [] } -> test.assertEqual("Named arguments are only allowed in record construction.")(diagnostic.message)
+        | ExpressionParseResult { expression = _expression, diagnostics = diagnostic :: [] } ->
+            test.assertEqual(
+                "Named arguments are only allowed in record construction.",
+                diagnostic.message
+            )
         | _ -> test.fail("expected named-argument diagnostic")
 
 let run unit =

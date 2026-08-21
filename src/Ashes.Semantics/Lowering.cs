@@ -12079,9 +12079,14 @@ public sealed partial class Lowering
             case Expr.NotEqual b: return new Expr.NotEqual(S(b.Left), S(b.Right));
             case Expr.ResultPipe b: return new Expr.ResultPipe(S(b.Left), S(b.Right));
             case Expr.ResultMapErrorPipe b: return new Expr.ResultMapErrorPipe(S(b.Left), S(b.Right));
-            case Expr.Call c: return new Expr.Call(S(c.Func), S(c.Arg));
+            case Expr.Call c:
+                return new Expr.Call(S(c.Func), S(c.Arg))
+                {
+                    IsWhitespaceApplication = c.IsWhitespaceApplication,
+                    ArgumentListLayout = c.ArgumentListLayout,
+                };
             case Expr.TupleLit t: return new Expr.TupleLit(t.Elements.Select(S).ToList());
-            case Expr.ListLit l: return new Expr.ListLit(l.Elements.Select(S).ToList());
+            case Expr.ListLit l: return new Expr.ListLit(l.Elements.Select(S).ToList()) { IsMultiline = l.IsMultiline };
             case Expr.Cons c: return new Expr.Cons(S(c.Head), S(c.Tail));
             case Expr.If i: return new Expr.If(S(i.Cond), S(i.Then), S(i.Else));
             case Expr.Await a: return new Expr.Await(S(a.Task));
