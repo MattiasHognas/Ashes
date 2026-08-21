@@ -257,6 +257,16 @@ public sealed partial class Lowering
             _maValueRhs.Remove(name);
         }
 
+        // Inferred-trait discovery consumes only generalized binding schemes and type hints. It
+        // still needs the registered function identities for recursive-group lowering and source
+        // origins, but every result below this point controls ownership placement or emitted IR,
+        // both of which this pass discards.
+        if (_collectInferredTraitElaboration)
+        {
+            _maAnalyzed = true;
+            return;
+        }
+
         CollectCallsAndEscapes(desugaredBody, null, new Dictionary<string, FuncKey>(StringComparer.Ordinal));
         ComputeLiveHandlerEffects();
         ComputeResultReach();

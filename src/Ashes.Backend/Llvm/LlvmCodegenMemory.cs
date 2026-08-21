@@ -534,6 +534,83 @@ internal static partial class LlvmCodegen
         LlvmValueHandle rightRef,
         bool runtimeManaged = false)
     {
+        LlvmValueHandle helper = GetOrEmitStringConcatHelper(state, runtimeManaged);
+        LlvmTypeHandle helperType = StringConcatHelperType(state, runtimeManaged);
+        LlvmValueHandle[] arguments = runtimeManaged
+            ? [leftRef, rightRef, state.RcFreeListSlot, state.RcArenaCursorSlot, state.RcArenaEndSlot]
+            : [leftRef, rightRef, state.HeapCursorSlot, state.HeapEndSlot];
+        return LlvmApi.BuildCall2(
+            state.Target.Builder,
+            helperType,
+            helper,
+            arguments,
+            runtimeManaged ? "rc_str_cat_result" : "str_cat_result");
+    }
+
+    private const string ArenaStringConcatHelperName = "__ashes_string_concat_arena";
+    private const string RuntimeRcStringConcatHelperName = "__ashes_string_concat_rc";
+
+    private static LlvmTypeHandle StringConcatHelperType(LlvmCodegenState state, bool runtimeManaged) =>
+        runtimeManaged
+            ? LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64Ptr, state.I64Ptr, state.I64Ptr])
+            : LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64Ptr, state.I64Ptr]);
+
+    private static LlvmValueHandle GetOrEmitStringConcatHelper(LlvmCodegenState state, bool runtimeManaged)
+    {
+        // Concatenation is common in compiler-shaped programs, and its allocation/view-aware copy
+        // path is large. Keep one module-level body per allocation policy instead of making LLVM
+        // lower thousands of identical copies. The allocator slots are explicit parameters because
+        // lifted functions and parallel workers can use different thread-local arenas.
+        string helperName = runtimeManaged ? RuntimeRcStringConcatHelperName : ArenaStringConcatHelperName;
+        LlvmValueHandle existing = LlvmApi.GetNamedFunction(state.Target.Module, helperName);
+        if (existing.Ptr != 0)
+        {
+            return existing;
+        }
+
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        LlvmValueHandle fn = LlvmApi.AddFunction(state.Target.Module, helperName, StringConcatHelperType(state, runtimeManaged));
+        LlvmApi.SetLinkage(fn, LlvmLinkage.Internal);
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("noinline"), 0));
+        LlvmApi.AddAttributeAtIndex(fn, LlvmApi.AttributeIndexFunction,
+            LlvmApi.CreateEnumAttribute(state.Target.Context, LlvmApi.GetEnumAttributeKindForName("nounwind"), 0));
+
+        LlvmBasicBlockHandle entryBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "entry");
+        LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+
+        LlvmCodegenState helperState = state with
+        {
+            Function = fn,
+            TempSlots = [],
+            LocalSlots = [],
+            LabelBlocks = new Dictionary<string, LlvmBasicBlockHandle>(StringComparer.Ordinal),
+            FallthroughBlocks = [],
+            HeapCursorSlot = runtimeManaged ? state.HeapCursorSlot : LlvmApi.GetParam(fn, 2),
+            HeapEndSlot = runtimeManaged ? state.HeapEndSlot : LlvmApi.GetParam(fn, 3),
+            RcFreeListSlot = runtimeManaged ? LlvmApi.GetParam(fn, 2) : state.RcFreeListSlot,
+            RcArenaCursorSlot = runtimeManaged ? LlvmApi.GetParam(fn, 3) : state.RcArenaCursorSlot,
+            RcArenaEndSlot = runtimeManaged ? LlvmApi.GetParam(fn, 4) : state.RcArenaEndSlot,
+            IsEntry = false,
+        };
+        LlvmValueHandle result = EmitStringConcatBody(
+            helperState,
+            LlvmApi.GetParam(fn, 0),
+            LlvmApi.GetParam(fn, 1),
+            runtimeManaged);
+        LlvmApi.BuildRet(builder, result);
+
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return fn;
+    }
+
+    private static LlvmValueHandle EmitStringConcatBody(
+        LlvmCodegenState state,
+        LlvmValueHandle leftRef,
+        LlvmValueHandle rightRef,
+        bool runtimeManaged)
+    {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "str_cat_left_len");
         LlvmValueHandle rightLen = LoadStringLength(state, rightRef, "str_cat_right_len");
