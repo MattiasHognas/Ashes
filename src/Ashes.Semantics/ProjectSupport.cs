@@ -3076,43 +3076,15 @@ public static class ProjectSupport
             return trimmed;
         }
 
-        var renames = new Dictionary<string, string>(StringComparer.Ordinal);
+        var valueNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var alias in aliases)
         {
-            renames[alias.Key] = alias.Value;
+            valueNames.Add(alias.Key);
         }
 
-        var diag = new Diagnostics();
-        var lexer = new StringOffsetLexer(trimmed, diag);
-        var builder = new StringBuilder();
-        var copiedUpTo = 0;
-        var previousKind = TokenKind.EOF;
-
-        while (true)
-        {
-            var token = lexer.Next();
-            if (token.Kind == TokenKind.EOF)
-            {
-                break;
-            }
-
-            // Only rewrite a bare unqualified occurrence of the alias. An identifier that follows a
-            // `.` is a qualified-member suffix (e.g. the `print` in an already-realized
-            // `Ashes.IO.print`), never the imported binding, so leaving it untouched keeps the rewrite
-            // idempotent when it is applied more than once over the same source.
-            if (token.Kind == TokenKind.Ident
-                && previousKind != TokenKind.Dot
-                && renames.TryGetValue(token.Text, out var replacement))
-            {
-                builder.Append(trimmed[copiedUpTo..token.Position]).Append(replacement);
-                copiedUpTo = token.Position + token.Length;
-            }
-
-            previousKind = token.Kind;
-        }
-
-        builder.Append(trimmed[copiedUpTo..]);
-        return builder.ToString();
+        // Alias keys inhabit the value/type namespace. Preserve same-spelled record-field tokens;
+        // those labels are not references to the binding being qualified.
+        return RenameIdentifiers(trimmed, aliases, valueNames);
     }
 
     private static IReadOnlyList<string> GetExportNames(ModuleSourceShape shape)
