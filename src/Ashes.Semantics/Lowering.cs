@@ -34,8 +34,10 @@ public sealed partial class Lowering
     private readonly bool _enableInferredTraitElaboration;
     private readonly bool _collectInferredTraitElaboration;
     private readonly bool _enableTraitValidationPass;
+    private readonly bool _includeTraitValidationBindings;
     private readonly bool _emitTraitDictionaries;
     private readonly bool _isTraitValidationSubpass;
+    private bool _traitValidationCompletedDuringElaboration;
     private int _nextTempSlot;
     private int _nextLocalSlot;
     private int _nextTypeVar;
@@ -686,6 +688,7 @@ public sealed partial class Lowering
             enableInferredTraitElaboration: true,
             collectInferredTraitElaboration: false,
             enableTraitValidationPass: true,
+            includeTraitValidationBindings: false,
             emitTraitDictionaries: true,
             isTraitValidationSubpass: false)
     {
@@ -700,6 +703,7 @@ public sealed partial class Lowering
         bool enableInferredTraitElaboration,
         bool collectInferredTraitElaboration,
         bool enableTraitValidationPass,
+        bool includeTraitValidationBindings,
         bool emitTraitDictionaries,
         bool isTraitValidationSubpass)
     {
@@ -711,6 +715,7 @@ public sealed partial class Lowering
         _enableInferredTraitElaboration = enableInferredTraitElaboration;
         _collectInferredTraitElaboration = collectInferredTraitElaboration;
         _enableTraitValidationPass = enableTraitValidationPass;
+        _includeTraitValidationBindings = includeTraitValidationBindings;
         _emitTraitDictionaries = emitTraitDictionaries;
         _isTraitValidationSubpass = isTraitValidationSubpass;
         _hasAshesIO = _importedStdModules.Contains("Ashes.IO");
@@ -761,6 +766,10 @@ public sealed partial class Lowering
         RegisterProviderDeclarations(program.Items);
         program = ExpandDerivedImplementations(program);
         RegisterTraitAndImplementationDeclarations(program.Items);
+        if (_includeTraitValidationBindings)
+        {
+            program = AddTraitValidationBindings(program, preserveTrailingBody: true);
+        }
         if (RunTraitValidationPass(program) is { } failedValidation)
         {
             return failedValidation;
@@ -981,7 +990,11 @@ public sealed partial class Lowering
             TraitEvidence = BuildTraitEvidenceAnnotations(),
         };
 
-        return PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
+        // Inference discovery consumes only the collected trait elaborations; its IR is discarded.
+        // Running lifetime placement over that IR cannot affect those elaborations.
+        return _collectInferredTraitElaboration
+            ? loweredProgram
+            : PerceusLifetimePlacement.Place(loweredProgram, _borrowedArgumentCalls);
     }
 
     private void FinishEntryInference(TypeRef resultType)
@@ -6840,14 +6853,20 @@ public sealed partial class Lowering
     // intrinsics, externals, and prelude values still resolve inside helper functions.
     private static void LowerLambdaCoreReseedScopeIndependentBindings(Dictionary<string, Binding> scope, Dictionary<string, Binding>[] enclosingScopes)
     {
-        foreach (var enclosingScope in enclosingScopes.Reverse())
+        // Every pushed scope is a complete copy of its parent plus the new bindings, so the topmost
+        // snapshot already contains the final visible binding for every name. Walking the entire
+        // stack rescans progressively larger copies for every lambda and becomes cubic across a
+        // large top-level let chain.
+        if (enclosingScopes.Length == 0)
         {
-            foreach (var (bindingName, binding) in enclosingScope)
+            return;
+        }
+
+        foreach (var (bindingName, binding) in enclosingScopes[0])
+        {
+            if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
             {
-                if (binding is Binding.Intrinsic or Binding.ExternalFunction or Binding.PreludeValue)
-                {
-                    scope[bindingName] = binding;
-                }
+                scope[bindingName] = binding;
             }
         }
     }

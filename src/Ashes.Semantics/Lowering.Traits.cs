@@ -814,7 +814,9 @@ public sealed partial class Lowering
         }
     }
 
-    private Program AddTraitValidationBindings(Program program)
+    private Program AddTraitValidationBindings(
+        Program program,
+        bool preserveTrailingBody = false)
     {
         List<TopLevelItem.LetDecl> validations = [];
         int ordinal = 0;
@@ -837,20 +839,25 @@ public sealed partial class Lowering
         {
             return program;
         }
+        Expr terminal = preserveTrailingBody
+            ? program.Body ?? new Expr.Var("Unit")
+            : new Expr.IntLit(0);
         return program with
         {
-            // Validate implementations after the source declarations are in scope, but do not lower
-            // the user's trailing expression in this discarded compiler-only pass. The real pass
-            // owns its diagnostics and tooling records; evaluating it here could stop that pass
-            // before it records hover/definition data for an otherwise recoverable editor buffer.
+            // Validate implementations after the source declarations are in scope. The combined
+            // inference/validation discovery pass retains the trailing body because local inferred
+            // trait bindings live there; the fallback validation-only pass substitutes a constant so
+            // the real pass remains the sole owner of trailing-body diagnostics and tooling records.
             Body = validations.AsEnumerable().Reverse()
-                .Aggregate((Expr)new Expr.IntLit(0), CreateTraitValidationLet),
+                .Aggregate(terminal, CreateTraitValidationLet),
         };
     }
 
     private IrProgram? RunTraitValidationPass(Program program)
     {
-        if (!_enableTraitValidationPass || _diag.StructuredErrors.Count > 0)
+        if (!_enableTraitValidationPass
+            || _traitValidationCompletedDuringElaboration
+            || _diag.StructuredErrors.Count > 0)
         {
             return null;
         }
@@ -870,6 +877,7 @@ public sealed partial class Lowering
             enableInferredTraitElaboration: false,
             collectInferredTraitElaboration: false,
             enableTraitValidationPass: false,
+            includeTraitValidationBindings: false,
             emitTraitDictionaries: false,
             isTraitValidationSubpass: true);
         CopySourceContextTo(validation);
