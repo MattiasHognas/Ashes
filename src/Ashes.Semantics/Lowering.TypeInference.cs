@@ -5,6 +5,9 @@ namespace Ashes.Semantics;
 
 public sealed partial class Lowering
 {
+    private readonly Dictionary<TypeScheme, IReadOnlySet<int>> _schemeFreeVariables =
+        new(ReferenceEqualityComparer.Instance);
+
     // ---------------- Type vars + unification ----------------
 
     private TypeRef NewTypeVar()
@@ -86,7 +89,7 @@ public sealed partial class Lowering
         {
             if (binding is Binding.Scheme s)
             {
-                result.UnionWith(TraitTypeOperations.FreeVariables(s.S));
+                AddSchemeFtv(s.S, result);
             }
             else if (binding is Binding.EnvScheme es)
             {
@@ -109,7 +112,13 @@ public sealed partial class Lowering
 
     private void AddSchemeFtv(TypeScheme scheme, HashSet<int> result)
     {
-        result.UnionWith(TraitTypeOperations.FreeVariables(scheme));
+        if (!_schemeFreeVariables.TryGetValue(scheme, out IReadOnlySet<int>? variables))
+        {
+            variables = TraitTypeOperations.FreeVariables(scheme);
+            _schemeFreeVariables.Add(scheme, variables);
+        }
+
+        result.UnionWith(variables);
     }
 
     // Generalize t over free type variables not fixed by the current environment.

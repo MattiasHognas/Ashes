@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Ashes.Backend.Backends;
 using Ashes.Semantics;
@@ -8,6 +9,8 @@ namespace Ashes.Backend.Llvm;
 
 internal static partial class LlvmCodegen
 {
+    private static readonly ConditionalWeakTable<IrProgram, HashSet<Type>> InstructionTypesByProgram = new();
+
     private const int HeapChunkBytes = 1024 * 1024 * 4;
     private const int InputBufSize = 64 * 1024;
     private const int StdinReadBufSize = 64 * 1024;
@@ -1218,8 +1221,32 @@ internal static partial class LlvmCodegen
     private static bool ProgramUsesInstruction<TInstruction>(IrProgram program)
         where TInstruction : IrInst
     {
-        return program.EntryFunction.Instructions.Any(static instruction => instruction is TInstruction)
-            || program.Functions.Any(static function => function.Instructions.Any(static instruction => instruction is TInstruction));
+        HashSet<Type> instructionTypes = InstructionTypesByProgram.GetValue(
+            program,
+            static value => CollectInstructionTypes(value));
+        return instructionTypes.Contains(typeof(TInstruction));
+    }
+
+    private static HashSet<Type> CollectInstructionTypes(IrProgram program)
+    {
+        HashSet<Type> instructionTypes = [];
+        AddInstructionTypes(program.EntryFunction, instructionTypes);
+        foreach (IrFunction function in program.Functions)
+        {
+            AddInstructionTypes(function, instructionTypes);
+        }
+
+        return instructionTypes;
+    }
+
+    private static void AddInstructionTypes(
+        IrFunction function,
+        HashSet<Type> instructionTypes)
+    {
+        foreach (IrInst instruction in function.Instructions)
+        {
+            instructionTypes.Add(instruction.GetType());
+        }
     }
 
     private static bool ProgramUsesTlsRuntimeAbi(IrProgram program)

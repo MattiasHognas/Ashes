@@ -52,6 +52,10 @@ public sealed partial class Lowering
 
     private readonly Dictionary<string, List<ActiveTraitDictionaryParameter>> _activeTraitDictionaryParameters =
         new(StringComparer.Ordinal);
+    private readonly Dictionary<Expr, Dictionary<TraitSymbol, string[]>>
+        _selectedTraitMethodDependencies = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<TraitInstanceSymbol, IReadOnlyList<TraitMethodSymbol>>
+        _traitMethodConstructionOrders = new(ReferenceEqualityComparer.Instance);
     private int _suppressActiveTraitDictionaryReferenceDepth;
 
     private sealed record ActiveTraitImplementationMethod(
@@ -2138,8 +2142,16 @@ public sealed partial class Lowering
         TraitEvidencePlan.Instance plan,
         TextSpan span)
     {
+        if (_traitMethodConstructionOrders.TryGetValue(
+                plan.SelectedInstance,
+                out IReadOnlyList<TraitMethodSymbol>? cached))
+        {
+            return cached;
+        }
+
         List<TraitMethodSymbol> ordered = [];
         Dictionary<string, int> states = new(StringComparer.Ordinal);
+        bool hasCycle = false;
         void Visit(TraitMethodSymbol method, List<string> trace)
         {
             int state = states.GetValueOrDefault(method.Name);
@@ -2149,6 +2161,7 @@ public sealed partial class Lowering
             }
             if (state == 1)
             {
+                hasCycle = true;
                 ReportDiagnostic(
                     span,
                     $"Trait method dependency cycle while constructing '{plan.Goal.Trait.Name}': {string.Join(" -> ", trace.Append(method.Name))}.",
@@ -2185,7 +2198,22 @@ public sealed partial class Lowering
         {
             Visit(method, []);
         }
-        return ordered.DistinctBy(method => method.Name, StringComparer.Ordinal).ToArray();
+        return CacheTraitMethodConstructionOrder(plan.SelectedInstance, ordered, hasCycle);
+    }
+
+    private IReadOnlyList<TraitMethodSymbol> CacheTraitMethodConstructionOrder(
+        TraitInstanceSymbol instance,
+        IEnumerable<TraitMethodSymbol> ordered,
+        bool hasCycle)
+    {
+        IReadOnlyList<TraitMethodSymbol> result = ordered
+            .DistinctBy(method => method.Name, StringComparer.Ordinal)
+            .ToArray();
+        if (!hasCycle)
+        {
+            _traitMethodConstructionOrders[instance] = result;
+        }
+        return result;
     }
 
     private IEnumerable<string> CollectSelectedTraitMethodDependencies(Expr? expression, TraitSymbol trait)
@@ -2194,6 +2222,14 @@ public sealed partial class Lowering
         {
             return [];
         }
+        if (_selectedTraitMethodDependencies.TryGetValue(
+                expression,
+                out Dictionary<TraitSymbol, string[]>? byTrait)
+            && byTrait.TryGetValue(trait, out string[]? cached))
+        {
+            return cached;
+        }
+
         HashSet<string> dependencies = new(StringComparer.Ordinal);
         void Visit(Expr current)
         {
@@ -2210,7 +2246,12 @@ public sealed partial class Lowering
             });
         }
         Visit(expression);
-        return dependencies;
+        string[] result = [.. dependencies];
+        byTrait ??= new Dictionary<TraitSymbol, string[]>(
+            ReferenceEqualityComparer.Instance);
+        byTrait[trait] = result;
+        _selectedTraitMethodDependencies[expression] = byTrait;
+        return result;
     }
 
     private static string TraitImplementationMethodBindingName(TraitSymbol trait, string method) =>
@@ -2424,6 +2465,16 @@ public sealed partial class Lowering
     }
 
     private IEnumerable<string> CollectActiveTraitDictionaryOperatorCaptures(Expr expression)
+    {
+        if (_activeTraitDictionaryParameters.Count == 0)
+        {
+            return [];
+        }
+
+        return CollectActiveTraitDictionaryOperatorCapturesCore(expression);
+    }
+
+    private IEnumerable<string> CollectActiveTraitDictionaryOperatorCapturesCore(Expr expression)
     {
         HashSet<string> captures = new(StringComparer.Ordinal);
         void Visit(Expr current)
