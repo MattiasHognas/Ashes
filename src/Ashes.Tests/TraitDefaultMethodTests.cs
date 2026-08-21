@@ -131,6 +131,26 @@ public sealed class TraitDefaultMethodTests
             .ShouldContain(message => message.Contains("not permitted", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void TraitValidationAndInferredEvidenceShareDiscoveryWithoutLosingDiagnostics()
+    {
+        const string source = """
+            trait Eq(a) =
+                | equal : a -> a -> Bool
+            trait Broken(a) =
+                | broken : a -> Bool = given (value) -> 1
+
+            let same = given (value) -> Eq.equal(value)(value)
+            same
+            """;
+
+        _ = Lower(source, out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.Select(error => error.Message)
+            .Where(message => message.Contains("Bool", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+    }
+
     private static IrProgram Lower(string source, out Diagnostics diagnostics)
     {
         diagnostics = new Diagnostics();

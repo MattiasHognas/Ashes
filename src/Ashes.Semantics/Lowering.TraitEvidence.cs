@@ -268,6 +268,7 @@ public sealed partial class Lowering
             enableInferredTraitElaboration: false,
             collectInferredTraitElaboration: true,
             enableTraitValidationPass: false,
+            includeTraitValidationBindings: true,
             emitTraitDictionaries: false,
             isTraitValidationSubpass: false);
         CopySourceContextTo(discovery);
@@ -277,6 +278,7 @@ public sealed partial class Lowering
             return program;
         }
 
+        _traitValidationCompletedDuringElaboration = true;
         _sourceTraitConstraintBoundariesValidated = true;
 
         if (discovery._inferredTraitBindingElaborations.Count == 0
