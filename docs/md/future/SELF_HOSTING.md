@@ -246,12 +246,13 @@ same public behavior.
 - [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
-- [~] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
+- [x] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
   compiler-private names across stitched modules. Dependency planning, cycle rejection, and
-  dependency-ordered semantic scopes are implemented. The scope plan assigns deterministic definition
-  identities, records ordinary versus recursive visibility boundaries, realizes resolved selectors and
-  whole-module imports, validates full/short qualifiers and collisions, and assigns stable public and
-  compiler-private names; syntax-tree reference rewriting remains.
+  dependency-ordered semantic scopes assign deterministic definition identities, record ordinary
+  versus recursive visibility boundaries, realize resolved selectors and whole-module imports, validate
+  full/short qualifiers and collisions, and assign stable public and compiler-private names. Syntax-tree
+  rewriting preserves lexical shadows and source spans while replacing declaration, value, constructor,
+  type, trait, and capability references with those compiler names.
 - [x] Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
   defaults, source roots, includes, output settings, registry/path dependencies, dev dependencies,
   root-level local `overrides`, and forward-compatible unknown fields. Filesystem path resolution and
@@ -270,8 +271,9 @@ same public behavior.
   program-global coherence work remain.
 - [~] Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins. Semantic definition plans now retain source spans,
-  source paths, module names, package identities, qualified names, and compiler names; combining the
-  rewritten module syntax and retaining expression-level spans and source-function origins remain.
+  source paths, module names, package identities, qualified names, and compiler names; rewritten module
+  syntax retains its `At` spans. Combining the rewritten modules into one program and retaining
+  source-function origins remain.
 - [ ] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules.
 - [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
