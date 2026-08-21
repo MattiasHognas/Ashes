@@ -97,6 +97,28 @@ public sealed class FlatModuleExportTests
         stdout.TrimEnd().ShouldBe("1");
     }
 
+    [Test]
+    public async Task Flat_module_aliasing_does_not_rewrite_same_named_record_fields()
+    {
+        var dir = WriteModules(
+            ("B",
+                "type Descriptor =\n" +
+                "    | constructor: Int\n" +
+                "let constructor = 40\n" +
+                "let make = Descriptor(constructor = constructor + 2)\n" +
+                "let transform = given (descriptor) ->\n" +
+                "    match descriptor with\n" +
+                "        | Descriptor { constructor = value } -> descriptor with constructor = descriptor.constructor + value\n"),
+            ("Main",
+                "import B\n" +
+                "match B.transform(B.make) with\n" +
+                "    | Descriptor { constructor = value } -> Ashes.IO.print(value)\n"));
+
+        var stdout = await BuildAndRunAsync(dir, "Main").ConfigureAwait(false);
+
+        stdout.TrimEnd().ShouldBe("84");
+    }
+
     private static string BuildProjectSource(string dir, string entryModule)
     {
         var plan = ProjectSupport.BuildCompilationPlan(BuildProject(dir, entryModule));
