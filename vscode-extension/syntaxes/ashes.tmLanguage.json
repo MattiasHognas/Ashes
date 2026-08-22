@@ -5,6 +5,7 @@
   "patterns": [
     { "include": "#comments" },
     { "include": "#imports" },
+    { "include": "#exports" },
     { "include": "#traits" },
     { "include": "#ffi" },
     { "include": "#keywords" },
@@ -27,13 +28,25 @@
     "imports": {
       "patterns": [
         {
-          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_]*(?:\\.[A-Z][A-Za-z0-9_]*)*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
+          "match": "^\\s*(import)\\s+([A-Z][A-Za-z0-9_]*(?:\\.[A-Za-z0-9_]+)*)(?:\\s+(as)\\s+([A-Za-z][A-Za-z0-9_]*))?\\s*$",
           "captures": {
             "1": { "name": "keyword.control.import.ashes" },
             "2": { "name": "entity.name.namespace.ashes" },
             "3": { "name": "keyword.control.as.ashes" },
             "4": { "name": "entity.name.namespace.alias.ashes" }
           }
+        }
+      ]
+    },
+    "exports": {
+      "patterns": [
+        {
+          "match": "\\b(export)\\b",
+          "name": "keyword.control.export.ashes"
+        },
+        {
+          "match": "\\b(value)\\b",
+          "name": "keyword.declaration.value.ashes"
         }
       ]
     },
@@ -45,7 +58,7 @@
         },
         {
           "name": "keyword.control.ashes",
-          "match": "\\b(let|recursive|in|if|then|else|match|with|when|given|type|alias|module|await|external|capability|provide|needs|perform|handle)\\b"
+          "match": "\\b(let|recursive|in|and|if|then|else|match|with|when|given|type|alias|module|await|external|capability|provide|needs|perform|handle|export|value)\\b"
         }
       ]
     },

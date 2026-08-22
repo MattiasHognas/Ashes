@@ -161,6 +161,36 @@ public sealed class LspDiagnosticsTests
         }
     }
 
+    [Test]
+    public void Selfhost_frontend_files_analyze_cleanly_in_lsp()
+    {
+        var repoRoot = FindRepoRoot();
+        var tokenPath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/Token.ash");
+        var tokenSource = File.ReadAllText(tokenPath);
+        var tokenDiags = DocumentService.Analyze(tokenSource, tokenPath);
+        tokenDiags.ShouldBeEmpty();
+
+        var importPath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/ImportResolution.ash");
+        var importSource = File.ReadAllText(importPath);
+        var importDiags = DocumentService.Analyze(importSource, importPath);
+        importDiags.ShouldBeEmpty();
+
+        var moduleSourcePath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/ModuleSource.ash");
+        var moduleSourceText = File.ReadAllText(moduleSourcePath);
+        var moduleSourceDiags = DocumentService.Analyze(moduleSourceText, moduleSourcePath);
+        moduleSourceDiags.ShouldBeEmpty();
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "Ashes.slnx")))
+        {
+            dir = Path.GetDirectoryName(dir);
+        }
+        return dir ?? Directory.GetCurrentDirectory();
+    }
+
     private static string ReadFixture(string name)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "fixtures", name);
