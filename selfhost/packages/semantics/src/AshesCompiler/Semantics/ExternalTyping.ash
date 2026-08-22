@@ -18,6 +18,7 @@ export (
     type ExternalParameterTyping(..),
     type ExternalFunctionTyping(..),
     type ExternalFunctionTypingResult(..),
+    value splitExternalSymbol,
     value typeExternalFunction,
 )
 
@@ -130,6 +131,20 @@ let externalValueTypeFailure name =
         UnsupportedExternalType(name)
     ))
 
+let externalRuntimeRepresentationSupported semanticType context =
+    match semanticRuntimeRepresentation(semanticType)(context) with
+        | SemInt -> true
+        | SemUInt(8) -> true
+        | SemUInt(16) -> true
+        | SemUInt(32) -> true
+        | SemUInt(64) -> true
+        | SemFloat -> true
+        | SemBool -> true
+        | SemString -> true
+        | SemOpaque(_) -> true
+        | SemPointer(_) -> true
+        | _ -> false
+
 let resolvedExternalValueType name context =
     match name with
         | "f32" -> externalValueTypeSuccess(SemFloat)
@@ -140,17 +155,9 @@ let resolvedExternalValueType name context =
         | _ ->
             match resolveSemanticTypeApplication(name)([])(context) with
                 | TypeResolutionResult { semanticType = semanticType, error = None } ->
-                    match semanticType with
-                        | SemInt -> externalValueTypeSuccess(semanticType)
-                        | SemUInt(8) -> externalValueTypeSuccess(semanticType)
-                        | SemUInt(16) -> externalValueTypeSuccess(semanticType)
-                        | SemUInt(32) -> externalValueTypeSuccess(semanticType)
-                        | SemUInt(64) -> externalValueTypeSuccess(semanticType)
-                        | SemFloat -> externalValueTypeSuccess(semanticType)
-                        | SemBool -> externalValueTypeSuccess(semanticType)
-                        | SemString -> externalValueTypeSuccess(semanticType)
-                        | SemOpaque(_) -> externalValueTypeSuccess(semanticType)
-                        | _ -> externalValueTypeFailure(name)
+                    if externalRuntimeRepresentationSupported(semanticType)(context)
+                    then externalValueTypeSuccess(semanticType)
+                    else externalValueTypeFailure(name)
                 | TypeResolutionResult { error = Some(_error) } -> externalValueTypeFailure(name)
 
 let recursive resolveExternalValueType parsedType context =

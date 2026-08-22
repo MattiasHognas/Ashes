@@ -95,9 +95,13 @@ let recursive assembleInferenceUnits regions remainingItems expectedStart revers
                                     )
 
 let projectInferenceError baseEnvironment error =
-    ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = baseEnvironment, error = Some(
-        error
-    ))
+    ProgramInferenceResult(
+        semanticType = SemNever,
+        substitution = [],
+        environment = baseEnvironment,
+        externalAbi = None,
+        error = Some(error)
+    )
 
 let inferProjectUnits baseEnvironment assembled =
     match assembled with

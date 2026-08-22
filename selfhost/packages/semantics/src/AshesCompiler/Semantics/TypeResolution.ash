@@ -20,6 +20,7 @@ export (
     value addTypeParameter,
     value addTypeDefinition,
     value addTypeDefinitionWithProvenance,
+    value addZeroCostTypeDefinitionWithProvenance,
     value addExternalTypeDefinition,
     value addTypeAliasDefinition,
     value nominalTypeProvenance,
@@ -27,6 +28,7 @@ export (
     value prepareTypeResolutionContext,
     value resolveSemanticTypeApplication,
     value resolveTypeExpression,
+    value semanticRuntimeRepresentation,
 )
 
 type DeclarationProvenance =
@@ -35,6 +37,7 @@ type DeclarationProvenance =
 
 type TypeDefinition =
     | NominalTypeDefinition(Int, Str, Int, DeclarationProvenance)
+    | ZeroCostTypeDefinition(Int, Str, List(Int), SemanticType, DeclarationProvenance)
     | AliasTypeDefinition(Str, List(Int), SemanticType)
     | ExternalTypeDefinition(Str, Maybe(Str))
 
@@ -85,6 +88,17 @@ let addTypeDefinition symbolId name arity context =
         context
     )
 
+let addZeroCostTypeDefinitionWithProvenance symbolId name parameterIds representation provenance context =
+    match context with
+        | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
+            TypeResolutionContext(parameters = parameters, definitions = ZeroCostTypeDefinition(
+                symbolId,
+                name,
+                parameterIds,
+                representation,
+                provenance
+            ) :: definitions)
+
 let addTypeAliasDefinition name parameterIds target context =
     match context with
         | TypeResolutionContext { parameters = parameters, definitions = definitions } ->
@@ -120,6 +134,10 @@ let recursive findTypeDefinition name definitions =
                     if name == candidateName
                     then Some(definition)
                     else findTypeDefinition(name)(tail)
+                | ZeroCostTypeDefinition(_symbolId, candidateName, _parameterIds, _representation, _provenance) ->
+                    if name == candidateName
+                    then Some(definition)
+                    else findTypeDefinition(name)(tail)
                 | AliasTypeDefinition(candidateName, _parameterIds, _target) ->
                     if name == candidateName
                     then Some(definition)
@@ -133,6 +151,10 @@ let recursive findNominalTypeProvenance symbolId definitions =
     match definitions with
         | [] -> None
         | NominalTypeDefinition(candidateId, _name, _arity, provenance) :: tail ->
+            if symbolId == candidateId
+            then Some(provenance)
+            else findNominalTypeProvenance(symbolId)(tail)
+        | ZeroCostTypeDefinition(candidateId, _name, _parameterIds, _representation, provenance) :: tail ->
             if symbolId == candidateId
             then Some(provenance)
             else findNominalTypeProvenance(symbolId)(tail)
@@ -151,6 +173,10 @@ let recursive maximumTypeDefinitionSymbolId definitions maximum =
     match definitions with
         | [] -> maximum
         | NominalTypeDefinition(symbolId, _name, _arity, _provenance) :: tail ->
+            if symbolId > maximum
+            then maximumTypeDefinitionSymbolId(tail)(symbolId)
+            else maximumTypeDefinitionSymbolId(tail)(maximum)
+        | ZeroCostTypeDefinition(symbolId, _name, _parameterIds, _representation, _provenance) :: tail ->
             if symbolId > maximum
             then maximumTypeDefinitionSymbolId(tail)(symbolId)
             else maximumTypeDefinitionSymbolId(tail)(maximum)
@@ -278,6 +304,18 @@ and resolveTypeDefinition name arguments definitions =
                     TypeResolutionResult(semanticType = SemNever, error = Some(
                         TypeNameArityMismatch(name)(arity)(actualArity)
                     ))
+        | Some(ZeroCostTypeDefinition(symbolId, definitionName, parameterIds, _representation, _provenance)) ->
+            if typeListLength(arguments) == typeListLength(parameterIds)
+            then
+                TypeResolutionResult(
+                    semanticType = SemNamed(symbolId)(definitionName)(arguments),
+                    error = None
+                )
+            else
+                TypeResolutionResult(
+                    semanticType = SemNever,
+                    error = Some(TypeNameArityMismatch(name)(typeListLength(parameterIds))(typeListLength(arguments)))
+                )
         | Some(AliasTypeDefinition(_definitionName, parameterIds, target)) ->
             let expectedArity = typeListLength(parameterIds)
             in
@@ -303,6 +341,27 @@ and resolveTypeDefinition name arguments definitions =
                 ))
 
 let resolveSemanticTypeApplication name arguments context = resolveNamed(name)(arguments)(context)
+
+let recursive semanticRuntimeRepresentation semanticType context =
+    match (semanticType, context) with
+        | (SemNamed(symbolId, _name, arguments), TypeResolutionContext { definitions = definitions }) ->
+            match findZeroCostTypeDefinition(symbolId)(definitions) with
+                | Some(ZeroCostTypeDefinition(_definitionId, _definitionName, parameterIds, representation, _provenance)) ->
+                    semanticRuntimeRepresentation(
+                        substituteAliasType(parameterIds)(arguments)(representation)
+                    )(context)
+                | Some(_ordinaryDefinition) -> semanticType
+                | None -> semanticType
+        | (SemPointer(pointee), _) -> SemPointer(semanticRuntimeRepresentation(pointee)(context))
+        | _ -> semanticType
+and findZeroCostTypeDefinition symbolId definitions =
+    match definitions with
+        | [] -> None
+        | (ZeroCostTypeDefinition(candidateId, _name, _parameterIds, _representation, _provenance) as definition) :: tail ->
+            if symbolId == candidateId
+            then Some(definition)
+            else findZeroCostTypeDefinition(symbolId)(tail)
+        | _head :: tail -> findZeroCostTypeDefinition(symbolId)(tail)
 
 let recursive resolveTypeExpressions expressions context reversed =
     match expressions with

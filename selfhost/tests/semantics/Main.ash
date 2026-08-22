@@ -27,6 +27,7 @@ import StandardTraitsTests
 import StandardTraitSourceBindingTests
 import DerivingExpansionTests
 import ExternalTypingTests
+import ExternalAbiTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -185,6 +186,7 @@ let run unit =
     |> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests
     |> DerivingExpansionTests.runDerivingExpansionTests
     |> ExternalTypingTests.runExternalTypingTests
+    |> ExternalAbiTests.runExternalAbiTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

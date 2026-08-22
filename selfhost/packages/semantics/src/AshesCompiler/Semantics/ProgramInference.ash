@@ -13,6 +13,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
 import AshesCompiler.Semantics.ExternalTyping
+import AshesCompiler.Semantics.ExternalAbi
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
@@ -63,6 +64,7 @@ type ProgramInferenceError =
     | OverlappingTraitImplementations(Str)
     | ProgramDerivingExpansionError(DerivingExpansionError)
     | ProgramExternalTypingError(ExternalTypingError)
+    | ProgramExternalAbiError(ExternalAbiError)
     | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
@@ -71,6 +73,7 @@ type ProgramInferenceResult =
     | semanticType: SemanticType
     | substitution: List((Int, SemanticType))
     | environment: TypeEnvironment
+    | externalAbi: Maybe(ExternalProgramAbi)
     | error: Maybe(ProgramInferenceError)
 
 type ProgramInferenceState =
@@ -930,11 +933,46 @@ let registerTypeAlias declaration state =
                             ))
         | (_declaration, failedState) -> failedState
 
+let recursive quantifiedTypeIds quantified =
+    match quantified with
+        | [] -> []
+        | (variableId, _name) :: tail -> variableId :: quantifiedTypeIds(tail)
+
+let registerResolvedZeroCostRepresentation name symbolId registered resolved =
+    match (resolved, registered) with
+        | (Some(ConstructorInferenceDefinition { scheme = TypeScheme { quantified = quantified, body = SemFunction(representation, _result, _row) } }), ProgramInferenceState { environment = environment, error = None }) ->
+            registered with environment = addInferenceZeroCostTypeDefinition(
+                symbolId,
+                name,
+                quantifiedTypeIds(quantified),
+                representation,
+                environment
+            )
+        | _ -> registered
+
+let registerZeroCostRepresentation name symbolId registered =
+    match registered with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            environment
+            |> resolveConstructorBinding(name)
+            |> registerResolvedZeroCostRepresentation(name)(symbolId)(registered)
+        | failed -> failed
+
 let registerZeroCostType declaration state =
-    match declaration with
-        | ZeroCostTypeDecl { name = name, typeParameters = typeParameters, constructor = constructor, derivingTraits = derivingTraits } ->
-            let nominal = TypeDecl(name = name, typeParameters = typeParameters, constructors = [constructor], isRecord = false, derivingTraits = derivingTraits)
-            in registerTypeDeclaration(nominal)(state)
+    match (declaration, state) with
+        | (ZeroCostTypeDecl { name = name, typeParameters = typeParameters, constructor = constructor, derivingTraits = derivingTraits }, ProgramInferenceState { nextTypeSymbolId = symbolId, error = None }) ->
+            state
+            |> registerTypeDeclaration(TypeDecl(
+                name = name,
+                typeParameters = typeParameters,
+                constructors = [
+                    constructor
+                ],
+                isRecord = false,
+                derivingTraits = derivingTraits
+            ))
+            |> registerZeroCostRepresentation(name)(symbolId)
+        | (_declaration, failedState) -> failedState
 
 let registerCapabilityProvider declaration state =
     match (declaration, state) with
@@ -2170,32 +2208,73 @@ let inferProgramUnitBody body entryPackageId state =
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
             match body with
                 | None ->
-                    ProgramInferenceResult(semanticType = SemTuple(
-                        []
-                    ), substitution = substitution, environment = environment, error = None)
+                    ProgramInferenceResult(
+                        semanticType = SemTuple([]),
+                        substitution = substitution,
+                        environment = environment,
+                        externalAbi = None,
+                        error = None
+                    )
                 | Some(expression) ->
                     match inferExpressionFrom(expression)(environment)(substitution)(supply) with
-                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
+                        | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } ->
+                            ProgramInferenceResult(
+                                semanticType = semanticType,
+                                substitution = bodySubstitution,
+                                environment = environment,
+                                externalAbi = None,
+                                error = None
+                            )
                         | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } ->
-                            ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(
-                                ProgramExpressionError(error)
-                            ))
+                            ProgramInferenceResult(
+                                semanticType = semanticType,
+                                substitution = bodySubstitution,
+                                environment = environment,
+                                externalAbi = None,
+                                error = Some(ProgramExpressionError(error))
+                            )
         | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } ->
-            ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(
-                error
-            ))
+            ProgramInferenceResult(
+                semanticType = SemNever,
+                substitution = substitution,
+                environment = environment,
+                externalAbi = None,
+                error = Some(error)
+            )
 
 let initialProgramInferenceState error environment =
     ProgramInferenceState(environment = environment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = environment
     |> inferenceTypeResolutionContext
     |> nextTypeDefinitionSymbolId, error = error)
 
+let withExternalAbi metadata (result: ProgramInferenceResult) = result with externalAbi = Some(metadata)
+
+let withExternalAbiError error (result: ProgramInferenceResult) =
+    result with error = Some(
+        ProgramExternalAbiError(error)
+    )
+
+let attachExternalAbi declarations (result: ProgramInferenceResult) =
+    match result with
+        | ProgramInferenceResult { error = Some(_error) } -> result
+        | ProgramInferenceResult { environment = environment, error = None } ->
+            match validateExternalProgramAbi(
+                declarations,
+                inferenceTypeResolutionContext(environment)
+            ) with
+                | ExternalAbiValidation { metadata = Some(metadata), error = None } -> withExternalAbi(metadata)(result)
+                | ExternalAbiValidation { error = Some(error) } -> withExternalAbiError(error)(result)
+
 let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion =
     match expansion with
         | ProgramUnitExpansion { units = _units, error = Some(error) } ->
-            ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = baseEnvironment, error = Some(
-                error
-            ))
+            ProgramInferenceResult(
+                semanticType = SemNever,
+                substitution = [],
+                environment = baseEnvironment,
+                externalAbi = None,
+                error = Some(error)
+            )
         | ProgramUnitExpansion { units = units, error = None } ->
             let items = expandedProgramUnitItems(units)
             in
@@ -2211,6 +2290,7 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                         |> inferExpandedProgramUnits(units)(externalDeclarations)
                         |> validateTraitDefaults(declarations)
                         |> inferProgramUnitBody(body)(entryPackageId)
+                        |> attachExternalAbi(externalDeclarations)
 
 let inferProgramUnitsFrom baseEnvironment units body entryPackageId =
     units
@@ -2234,16 +2314,21 @@ let inferExpandedProgramFromPackage packageId baseEnvironment program =
                         |> inferTopLevelItems(items)(externalDeclarations)
                         |> validateTraitDefaults(declarations)
                         |> inferProgramUnitBody(body)(packageId)
+                        |> attachExternalAbi(externalDeclarations)
 
 let inferProgramFromPackage packageId baseEnvironment program =
     match expandDerivedImplementations(program) with
         | Error(error) ->
-            ProgramInferenceResult(semanticType = SemNever, substitution = [], environment = withInferencePackage(
-                packageId,
-                baseEnvironment
-            ), error = Some(
-                ProgramDerivingExpansionError(error)
-            ))
+            ProgramInferenceResult(
+                semanticType = SemNever,
+                substitution = [],
+                environment = withInferencePackage(
+                    packageId,
+                    baseEnvironment
+                ),
+                externalAbi = None,
+                error = Some(ProgramDerivingExpansionError(error))
+            )
         | Ok(expanded) -> inferExpandedProgramFromPackage(packageId)(baseEnvironment)(expanded)
 
 let inferProgramInPackage packageId program =

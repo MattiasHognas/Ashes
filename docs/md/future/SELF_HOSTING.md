@@ -294,8 +294,11 @@ same public behavior.
   types are registered before function typing; source-call shapes omit compiler-owned out parameters,
   append their values to results, retain ABI syntax for validation, and keep direct-only contracts out
   of first-class bindings.
-- [ ] Validate external ABI combinations and produce the metadata required by lowering, code generation,
-  linking, LSP, and package capability auditing.
+- [x] Validate external ABI combinations and produce the metadata required by lowering, code generation,
+  linking, LSP, and package capability auditing. Pure-Ashes validation resolves transparent aliases and
+  zero-cost representations, preserves ordered parameter/source shapes and native ownership, verifies
+  resource and owned-string destructors, and publishes canonical function, resource, symbol/library,
+  direct-call, and sorted runtime-authority metadata with the inferred program.
 - [ ] Match the current compiler's entry-expression rules, project diagnostics, and deterministic
   diagnostic ordering across files.
 
