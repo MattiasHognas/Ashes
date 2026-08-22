@@ -29,6 +29,8 @@ import DerivingExpansionTests
 import ExternalTypingTests
 import ExternalAbiTests
 import IrTests
+import IrFunctionSelectionTests
+import IrTextTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -190,6 +192,8 @@ let run unit =
     |> ExternalTypingTests.runExternalTypingTests
     |> ExternalAbiTests.runExternalAbiTests
     |> IrTests.runIrTests
+    |> IrFunctionSelectionTests.runIrFunctionSelectionTests
+    |> IrTextTests.runIrTextTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

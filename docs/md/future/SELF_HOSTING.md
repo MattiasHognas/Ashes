@@ -310,8 +310,10 @@ same public behavior.
   ownership instructions, and stable function-origin lineage. The pure model covers all 229 current
   instruction variants, source locations, task-frame ABI constants, external/trait metadata, and
   typed source/generated ownership without depending on emitted-label parsing.
-- [ ] Implement the canonical lowered/final IR text format and deterministic function selection used by
-  `--emit-ir` and compiler reports.
+- [x] Implement the canonical lowered/final IR text format and deterministic function selection used by
+  `--emit-ir` and compiler reports. Pure Ashes now preserves stage-0 function order, source/generated
+  selector behavior, trait-evidence annotations, source locations, operand omission and collection-count
+  rules, label alignment, and the complete 229-instruction textual vocabulary.
 - [ ] Lower constants, locals, strict left-to-right evaluation, calls, closures, captures, partial
   applications, and lifted functions.
 - [ ] Lower control flow, conditions, matches, guards, recursion, mutual recursion, and tail calls.
