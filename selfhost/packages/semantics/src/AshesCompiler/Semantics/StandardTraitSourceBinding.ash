@@ -449,9 +449,7 @@ let recursive bindStandardImplementations bindings implementations reversedImple
                             TraitImplementationInferenceDefinition(traitName = traitName, typeArguments = typeArguments, requirements = requirements, methods = boundMethods) :: reversedImplementations
                         )
 
-let withTraitImplementations implementations environment =
-    match environment with
-        | TypeEnvironment { packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext } -> TypeEnvironment(packageId = packageId, bindings = bindings, constructors = constructors, capabilities = capabilities, traits = traits, traitImplementations = implementations, providers = providers, handledCapabilities = handledCapabilities, typeResolutionContext = typeResolutionContext)
+let withTraitImplementations implementations (environment: TypeEnvironment) = environment with traitImplementations = implementations
 
 let recursive addAliasMethodBindings compilerName methods environment =
     match methods with

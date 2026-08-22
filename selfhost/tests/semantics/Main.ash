@@ -26,6 +26,7 @@ import TraitDictionaryRewritingTests
 import StandardTraitsTests
 import StandardTraitSourceBindingTests
 import DerivingExpansionTests
+import ExternalTypingTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -183,6 +184,7 @@ let run unit =
     |> StandardTraitsTests.runStandardTraitsTests
     |> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests
     |> DerivingExpansionTests.runDerivingExpansionTests
+    |> ExternalTypingTests.runExternalTypingTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

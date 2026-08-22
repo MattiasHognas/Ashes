@@ -289,8 +289,11 @@ same public behavior.
   Reachable compilation planning now publishes synthetic sources with stable provenance, orders nested
   children before parents, rejects reachable file/inline collisions, honors compatibility and explicit
   parent exports, and resolves cross-file whole-module, alias, value-selector, and uppercase type imports.
-- [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
-  pointers, buffers, out parameters, symbols, libraries, and capability requirements.
+- [x] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
+  pointers, buffers, out parameters, symbols, libraries, and capability requirements. External opaque
+  types are registered before function typing; source-call shapes omit compiler-owned out parameters,
+  append their values to results, retain ABI syntax for validation, and keep direct-only contracts out
+  of first-class bindings.
 - [ ] Validate external ABI combinations and produce the metadata required by lowering, code generation,
   linking, LSP, and package capability auditing.
 - [ ] Match the current compiler's entry-expression rules, project diagnostics, and deterministic
