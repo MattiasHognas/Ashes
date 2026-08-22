@@ -34,6 +34,7 @@ import IrTextTests
 import CoreLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
+import CoreCapabilityLoweringTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -200,6 +201,7 @@ let run unit =
     |> CoreLoweringTests.runCoreLoweringTests
     |> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests
     |> CoreExternalLoweringTests.runCoreExternalLoweringTests
+    |> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

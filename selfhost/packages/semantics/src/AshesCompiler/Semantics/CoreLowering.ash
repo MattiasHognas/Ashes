@@ -14,6 +14,7 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Semantics.CoreBuiltinLowering
+import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
@@ -30,6 +31,7 @@ export (
     value lowerCoreExpressionWithLayouts,
     value lowerCoreExpressionWithContext,
     value lowerCoreExpressionWithFullContext,
+    value lowerCoreExpressionWithCompleteContext,
     value lowerCoreRecursiveGroup,
 )
 
@@ -43,6 +45,8 @@ type CoreLoweringError =
     | UnsupportedCoreBuiltinLowering(Str)
     | CoreExternalDirectOnlyViolation(Str)
     | UnsupportedCoreExternalLowering(Str)
+    | CoreUnhandledCapabilityOperation(Str, Str)
+    | CoreAmbiguousCapabilitySatisfaction(Str)
     | UnknownCoreRecordField(Str, Str)
     | CoreRecordUpdateRequiresRecord(SemanticType)
     | UnsupportedCoreLoweringPattern(Str)
@@ -82,6 +86,9 @@ type CoreLoweringState =
     | externalLayouts: List(CoreExternalFunctionLayout)
     | externalFunctions: List(ExternalFunctionAbi)
     | externalOpaqueTypes: List(Str)
+    | capabilityLayouts: List(CoreCapabilityLayout)
+    | staticProviders: List(CoreStaticProviderLayout)
+    | capabilityGlobalCount: Int
     | nextTemp: Int
     | nextLocal: Int
     | nextLambdaId: Int
@@ -252,7 +259,7 @@ let emptyScheme semanticType =
         constraints = []
     )
 
-let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit =
+let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount unit =
     CoreLoweringState(
         reversedInstructions = [],
         functions = [],
@@ -262,6 +269,9 @@ let initialStateWithFullContext constructorLayouts builtinLayouts externalLayout
         externalLayouts = externalLayouts,
         externalFunctions = externalFunctions,
         externalOpaqueTypes = externalOpaqueTypes,
+        capabilityLayouts = capabilityLayouts,
+        staticProviders = staticProviders,
+        capabilityGlobalCount = capabilityGlobalCount,
         nextTemp = 0,
         nextLocal = 0,
         nextLambdaId = 0,
@@ -271,6 +281,8 @@ let initialStateWithFullContext constructorLayouts builtinLayouts externalLayout
         typeSupply = initialTypeVariableSupply(Unit),
         substitution = []
     )
+
+let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
 
 let initialStateWithContext constructorLayouts builtinLayouts unit = initialStateWithFullContext(constructorLayouts)(builtinLayouts)([])([])([])(unit)
 
@@ -3239,6 +3251,156 @@ let lowerCoreQualifiedVariable moduleName memberName lower state =
 
 let lowerQualified moduleName memberName lower state = lowerCoreQualifiedVariable(moduleName)(memberName)(lower)(state)
 
+let recursive emitSnapshotGlobals currentK globalCount frameTemp state =
+    if currentK >= globalCount
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = nextState, temp = snapTemp } ->
+                nextState
+                |> emit(LoadCapabilityHandler(snapTemp)(currentK))
+                |> emit(StoreMemOffset(frameTemp)(currentK * 8)(snapTemp))
+                |> emitSnapshotGlobals(currentK + 1)(globalCount)(frameTemp)
+
+let lowerPerform operation lower state =
+    match collectCallSpine(operation) with
+        | CoreCallSpine { root = ExprQualifiedVar(capName, opName), arguments = arguments } ->
+            if capName == "Stop"
+            then
+                if opName == "stop"
+                then
+                    match arguments with
+                        | arg :: [] ->
+                            match lower(arg)(state) with
+                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                | LoweredCoreValue { state = argState, temp = argTemp, error = None } ->
+                                    argState
+                                    |> emit(RequestServerStop(argTemp))
+                                    |> success(argTemp)(SemNamed(0)("Unit")([]))
+                        | _ ->
+                            arguments
+                            |> coreListLength
+                            |> CoreBuiltinArityMismatch("Stop")("stop")(1)
+                            |> failure(state)
+                else failure(state)(UnknownLoweringBinding("Stop." + opName))
+            else
+                match state with
+                    | CoreLoweringState { capabilityLayouts = capLayouts, staticProviders = providers, capabilityGlobalCount = globalCount } ->
+                        match findStaticProvider(capName)(providers) with
+                            | Some(provider) ->
+                                match findProviderOperation(opName)(provider.operations) with
+                                    | Some(implExpr) ->
+                                        match lower(implExpr)(state) with
+                                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                            | LoweredCoreValue { state = implState, temp = implTemp, error = None } ->
+                                                match lowerCoreValues(arguments)(lower)(implState) with
+                                                    | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
+                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, error = None } ->
+                                                        match valuesState with
+                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
+                                                                match []
+                                                                |> SemNamed(0)("Unit")
+                                                                |> emitStaticProviderCall(provider)(opName)(implTemp)(startTemp)(startLocal)(argTemps) with
+                                                                    | CoreCapabilityPerformEmission { instructions = callInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resType, error = None } ->
+                                                                        let emittedState =
+                                                                            valuesState
+                                                                            |> emitInstructions(callInstrs)
+                                                                            |> withNextTemp(endTemp)
+                                                                            |> withNextLocal(endLocal)
+                                                                        in success(resTemp)(resType)(emittedState)
+                                                                    | _ ->
+                                                                        opName
+                                                                        |> CoreUnhandledCapabilityOperation(capName)
+                                                                        |> failure(valuesState)
+                                    | None ->
+                                        opName
+                                        |> CoreUnhandledCapabilityOperation(capName)
+                                        |> failure(state)
+                            | None ->
+                                match findCapabilityLayout(capName)(capLayouts) with
+                                    | Some(layout) ->
+                                        match findCapabilityOperationIndex(opName)(layout.operations) with
+                                            | Some(opIndex) ->
+                                                match lowerCoreValues(arguments)(lower)(state) with
+                                                    | LoweredCoreValues { state = argFailedState, error = Some(error) } -> failure(argFailedState)(error)
+                                                    | LoweredCoreValues { state = valuesState, temps = argTemps, error = None } ->
+                                                        match valuesState with
+                                                            | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
+                                                                let resType = SemNamed(0)("Unit")([])
+                                                                in
+                                                                    match emitDynamicPerform(capName)(opName)(layout.index)(opIndex)(globalCount)(startTemp)(startLocal)(argTemps)(resType) with
+                                                                        | CoreCapabilityPerformEmission { instructions = performInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, semanticType = resultSemType, error = None } ->
+                                                                            let emittedState =
+                                                                                valuesState
+                                                                                |> emitInstructions(performInstrs)
+                                                                                |> withNextTemp(endTemp)
+                                                                                |> withNextLocal(endLocal)
+                                                                            in success(resTemp)(resultSemType)(emittedState)
+                                                                        | _ ->
+                                                                            opName
+                                                                            |> CoreUnhandledCapabilityOperation(capName)
+                                                                            |> failure(valuesState)
+                                            | None ->
+                                                opName
+                                                |> CoreUnhandledCapabilityOperation(capName)
+                                                |> failure(state)
+                                    | None ->
+                                        opName
+                                        |> CoreUnhandledCapabilityOperation(capName)
+                                        |> failure(state)
+        | _ -> lower(operation)(state)
+
+let lowerHandle body arms lower state =
+    match splitHandlerArms(arms) with
+        | ParsedHandlerArms { opArms = opArms, returnArm = returnArm } ->
+            match state with
+                | CoreLoweringState { capabilityLayouts = capLayouts, capabilityGlobalCount = globalCount } ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = stackState, temp = postsHeadPtrTemp } ->
+                            let initPostsState =
+                                emit(AllocStack(postsHeadPtrTemp)(8))(stackState)
+                            in
+                                match freshTemp(initPostsState) with
+                                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                                        let prepState =
+                                            zeroState
+                                            |> emit(LoadConstInt(zeroTemp)(0))
+                                            |> emit(StoreMemOffset(postsHeadPtrTemp)(0)(zeroTemp))
+                                        in
+                                            match opArms with
+                                                | [] -> lower(body)(prepState)
+                                                | (capName, _opName, _pats, _armBody) :: _ ->
+                                                    match findCapabilityLayout(capName)(capLayouts) with
+                                                        | None -> lower(body)(prepState)
+                                                        | Some(CoreCapabilityLayout { index = capIdx, operations = ops }) ->
+                                                            let opCount = coreListLength(ops)
+                                                            in
+                                                                match freshTemp(prepState) with
+                                                                    | FreshTemp { state = frameAllocState, temp = frameTemp } ->
+                                                                        let frameSize = (globalCount + 1 + opCount) * 8
+                                                                        in
+                                                                            let frameInitState =
+                                                                                frameAllocState
+                                                                                |> emit(AllocStack(frameTemp)(frameSize))
+                                                                                |> emitSnapshotGlobals(0)(globalCount)(frameTemp)
+                                                                                |> emit(StoreMemOffset(frameTemp)(globalCount * 8)(postsHeadPtrTemp))
+                                                                                |> emit(StoreCapabilityHandler(capIdx)(frameTemp))
+                                                                            in
+                                                                                match lower(body)(frameInitState) with
+                                                                                    | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
+                                                                                        let uninstallState =
+                                                                                            match freshTemp(bodyState) with
+                                                                                                | FreshTemp { state = unState, temp = prevTemp } ->
+                                                                                                    unState
+                                                                                                    |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
+                                                                                                    |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
+                                                                                        in
+                                                                                            match returnArm with
+                                                                                                | None -> success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                | Some((returnPat, returnExpr)) ->
+                                                                                                    lower(ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))(uninstallState)
+                                                                                    | failed -> failed
+
 let expressionName expression =
     match expression with
         | ExprBigInt(_) -> "BigInt"
@@ -3314,6 +3476,8 @@ let recursive lowerCore expression state =
         | ExprRecord(name, fields, _isMultiline) -> lowerRecord(name)(fields)(lowerCore)(state)
         | ExprRecordUpdate(target, fields) -> lowerRecordUpdate(target)(fields)(lowerCore)(state)
         | ExprMatch(value, cases, _position) -> lowerMatch(value)(cases)(lowerCore)(state)
+        | ExprPerform(operation) -> lowerPerform(operation)(lowerCore)(state)
+        | ExprHandle(body, arms) -> lowerHandle(body)(arms)(lowerCore)(state)
         | unsupported ->
             failure(state)(unsupported
             |> expressionName
@@ -3454,6 +3618,12 @@ let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression 
 let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes expression =
     Unit
     |> initialStateWithFullContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)
+    |> lowerCore(expression)
+    |> buildProgram
+
+let lowerCoreExpressionWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount expression =
+    Unit
+    |> initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)(capabilityLayouts)(staticProviders)(capabilityGlobalCount)
     |> lowerCore(expression)
     |> buildProgram
 
