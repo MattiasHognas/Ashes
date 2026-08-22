@@ -35,11 +35,13 @@ export (
     value inferencePackageId,
     value addTypeBinding,
     value addInferenceTypeDefinition,
+    value addInferenceZeroCostTypeDefinition,
     value addInferenceTypeAlias,
     value addInferenceExternalType,
     value addExternalFunctionBinding,
     value resolveExternalFunctionBinding,
     value addConstructorBinding,
+    value resolveConstructorBinding,
     value addCapabilityBinding,
     value resolveCapabilityBinding,
     value resolveCapabilityOperation,
@@ -276,6 +278,18 @@ let addInferenceTypeDefinition symbolId name arity (environment: TypeEnvironment
                 symbolId,
                 name,
                 arity,
+                DeclarationProvenance(packageId = packageId),
+                typeResolutionContext
+            )
+
+let addInferenceZeroCostTypeDefinition symbolId name parameterIds representation (environment: TypeEnvironment) =
+    match environment with
+        | TypeEnvironment { packageId = packageId, typeResolutionContext = typeResolutionContext } ->
+            environment with typeResolutionContext = addZeroCostTypeDefinitionWithProvenance(
+                symbolId,
+                name,
+                parameterIds,
+                representation,
                 DeclarationProvenance(packageId = packageId),
                 typeResolutionContext
             )
