@@ -13,6 +13,7 @@ import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
+import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -25,6 +26,7 @@ export (
     type CoreConstructorLayout(..),
     value lowerCoreExpression,
     value lowerCoreExpressionWithLayouts,
+    value lowerCoreExpressionWithContext,
     value lowerCoreRecursiveGroup,
 )
 
@@ -32,7 +34,10 @@ type CoreLoweringError =
     | UnknownLoweringBinding(Str)
     | CoreCallRequiresFunction(SemanticType)
     | CoreCallTypeMismatch(UnificationError)
+    | CoreOperatorTypeMismatch(Str, SemanticType, SemanticType)
     | CoreConstructorArityMismatch(Str, Int, Int)
+    | CoreBuiltinArityMismatch(Str, Str, Int, Int)
+    | UnsupportedCoreBuiltinLowering(Str)
     | UnknownCoreRecordField(Str, Str)
     | CoreRecordUpdateRequiresRecord(SemanticType)
     | UnsupportedCoreLoweringPattern(Str)
@@ -68,6 +73,7 @@ type CoreLoweringState =
     | functions: List(IrFunction)
     | bindings: List(CoreBinding)
     | constructorLayouts: List(CoreConstructorLayout)
+    | builtinLayouts: List(CoreBuiltinLayout)
     | nextTemp: Int
     | nextLocal: Int
     | nextLambdaId: Int
@@ -173,9 +179,45 @@ type LoweredCoreValues =
     | semanticTypes: List(SemanticType)
     | error: Maybe(CoreLoweringError)
 
+type LoweredCoreBinary =
+    | state: CoreLoweringState
+    | leftTemp: Int
+    | leftType: SemanticType
+    | rightTemp: Int
+    | rightType: SemanticType
+    | error: Maybe(CoreLoweringError)
+
+type CoreBinaryOperator =
+    | CoreAddOperator
+    | CoreSubtractOperator
+    | CoreMultiplyOperator
+    | CoreDivideOperator
+    | CoreModuloOperator
+    | CoreBitwiseAndOperator
+    | CoreBitwiseOrOperator
+    | CoreBitwiseXorOperator
+    | CoreShiftLeftOperator
+    | CoreShiftRightOperator
+    | CoreGreaterOperator
+    | CoreGreaterOrEqualOperator
+    | CoreLessOperator
+    | CoreLessOrEqualOperator
+    | CoreEqualOperator
+    | CoreNotEqualOperator
+
+type ReservedCoreTemps =
+    | state: CoreLoweringState
+    | first: Int
+
 type CoreConstructorShape =
     | state: CoreLoweringState
     | layout: CoreConstructorLayout
+    | parameterTypes: List(SemanticType)
+    | resultType: SemanticType
+
+type CoreBuiltinShape =
+    | state: CoreLoweringState
+    | layout: CoreBuiltinLayout
     | parameterTypes: List(SemanticType)
     | resultType: SemanticType
 
@@ -202,12 +244,13 @@ let emptyScheme semanticType =
         constraints = []
     )
 
-let initialStateWithLayouts layouts unit =
+let initialStateWithContext constructorLayouts builtinLayouts unit =
     CoreLoweringState(
         reversedInstructions = [],
         functions = [],
         bindings = [],
-        constructorLayouts = layouts,
+        constructorLayouts = constructorLayouts,
+        builtinLayouts = builtinLayouts,
         nextTemp = 0,
         nextLocal = 0,
         nextLambdaId = 0,
@@ -218,7 +261,9 @@ let initialStateWithLayouts layouts unit =
         substitution = []
     )
 
-let initialState unit = initialStateWithLayouts([])(unit)
+let initialStateWithLayouts layouts unit = initialStateWithContext(layouts)([])(unit)
+
+let initialState unit = initialStateWithContext([])([])(unit)
 
 let withNextTemp nextTemp (state: CoreLoweringState) = state with nextTemp = nextTemp
 
@@ -353,6 +398,21 @@ let constructorLayout name state =
     match state with
         | CoreLoweringState { constructorLayouts = layouts } -> findConstructorLayout(name)(layouts)
 
+let recursive findBuiltinLayout moduleName memberName layouts =
+    match layouts with
+        | [] -> None
+        | (CoreBuiltinLayout { moduleName = candidateModule, memberName = candidateMember } as layout) :: rest ->
+            if moduleName == candidateModule
+            then
+                if memberName == candidateMember
+                then Some(layout)
+                else findBuiltinLayout(moduleName)(memberName)(rest)
+            else findBuiltinLayout(moduleName)(memberName)(rest)
+
+let builtinLayout moduleName memberName state =
+    match state with
+        | CoreLoweringState { builtinLayouts = layouts } -> findBuiltinLayout(moduleName)(memberName)(layouts)
+
 let recursive splitConstructorType semanticType reversed =
     match semanticType with
         | SemFunction(parameterType, resultType, _row) -> splitConstructorType(resultType)(parameterType :: reversed)
@@ -366,6 +426,20 @@ let instantiateConstructor layout state =
                     match splitConstructorType(semanticType)([]) with
                         | (parameterTypes, resultType) ->
                             CoreConstructorShape(
+                                state = withTypeSupply(nextSupply)(state),
+                                layout = layout,
+                                parameterTypes = parameterTypes,
+                                resultType = resultType
+                            )
+
+let instantiateBuiltin layout state =
+    match (layout, state) with
+        | (CoreBuiltinLayout { scheme = scheme }, CoreLoweringState { typeSupply = supply }) ->
+            match instantiate(scheme)(supply) with
+                | InstantiationResult { semanticType = semanticType, supply = nextSupply } ->
+                    match splitConstructorType(semanticType)([]) with
+                        | (parameterTypes, resultType) ->
+                            CoreBuiltinShape(
                                 state = withTypeSupply(nextSupply)(state),
                                 layout = layout,
                                 parameterTypes = parameterTypes,
@@ -387,6 +461,12 @@ let constructorResultName layout =
 let constructorArity layout =
     match layout with
         | CoreConstructorLayout { scheme = TypeScheme { body = body } } ->
+            match splitConstructorType(body)([]) with
+                | (parameterTypes, _resultType) -> coreListLength(parameterTypes)
+
+let builtinArity layout =
+    match layout with
+        | CoreBuiltinLayout { scheme = TypeScheme { body = body } } ->
             match splitConstructorType(body)([]) with
                 | (parameterTypes, _resultType) -> coreListLength(parameterTypes)
 
@@ -629,6 +709,25 @@ let recursive collectFree expression bound free =
     match expression with
         | ExprAt(_span, inner) -> collectFree(inner)(bound)(free)
         | ExprVar(name) -> addFreeName(name)(bound)(free)
+        | ExprAdd(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprSubtract(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprMultiply(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprDivide(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprModulo(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprBitwiseAnd(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprBitwiseOr(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprBitwiseXor(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprShiftLeft(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprShiftRight(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprGreaterThan(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprGreaterOrEqual(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprLessThan(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprLessOrEqual(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprEqual(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprNotEqual(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprCons(left, right) -> collectFreeBinary(left)(right)(bound)(free)
+        | ExprBitwiseNot(operand) -> collectFree(operand)(bound)(free)
+        | ExprLogicalNot(operand) -> collectFree(operand)(bound)(free)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
             let valueFree = collectFree(value)(bound)(free)
             in collectFree(body)(name :: bound)(valueFree)
@@ -646,11 +745,36 @@ let recursive collectFree expression bound free =
         | ExprCall(function, argument, _whitespace, _layout) ->
             let functionFree = collectFree(function)(bound)(free)
             in collectFree(argument)(bound)(functionFree)
+        | ExprTuple(elements) -> collectFreeExpressions(elements)(bound)(free)
+        | ExprList(elements, _isMultiline) -> collectFreeExpressions(elements)(bound)(free)
+        | ExprRecord(_name, fields, _isMultiline) -> collectFreeFields(fields)(bound)(free)
+        | ExprRecordUpdate(target, fields) ->
+            free
+            |> collectFree(target)(bound)
+            |> collectFreeFields(fields)(bound)
         | ExprMatch(value, cases, _position) ->
             free
             |> collectFree(value)(bound)
             |> collectMatchCasesFree(cases)(bound)
         | _ -> free
+and collectFreeBinary left right bound free =
+    free
+    |> collectFree(left)(bound)
+    |> collectFree(right)(bound)
+and collectFreeExpressions expressions bound free =
+    match expressions with
+        | [] -> free
+        | expression :: rest ->
+            free
+            |> collectFree(expression)(bound)
+            |> collectFreeExpressions(rest)(bound)
+and collectFreeFields fields bound free =
+    match fields with
+        | [] -> free
+        | (_name, expression) :: rest ->
+            free
+            |> collectFree(expression)(bound)
+            |> collectFreeFields(rest)(bound)
 and collectMatchCaseFree bound free case =
     match case with
         | (pattern, body, guard) ->
@@ -2034,6 +2158,101 @@ let lowerConstructor layout arguments lower state =
     |> instantiateConstructor(layout)
     |> finishConstructorArguments(arguments)(lower)
 
+let recursive resolveCoreTypes state semanticTypes =
+    match semanticTypes with
+        | [] -> []
+        | semanticType :: rest -> resolveType(state)(semanticType) :: resolveCoreTypes(state)(rest)
+
+let recursive emitCoreInstructions instructions state =
+    match instructions with
+        | [] -> state
+        | instruction :: rest ->
+            state
+            |> emit(instruction)
+            |> emitCoreInstructions(rest)
+
+let finishBuiltinUnit resultType lower state =
+    match constructorLayout("Unit")(state) with
+        | None -> failure(state)(UnknownLoweringBinding("Unit"))
+        | Some(layout) ->
+            match lowerConstructor(layout)([])(lower)(state) with
+                | LoweredCoreValue { state = unitState, temp = temp, error = None } ->
+                    success(temp)(resolveType(unitState)(resultType))(unitState)
+                | failed -> failed
+
+let finishBuiltinResult resultType lower result emittedState =
+    match result with
+        | CoreBuiltinTemp(temp) ->
+            success(temp)(resolveType(emittedState)(resultType))(emittedState)
+        | CoreBuiltinNever(temp) -> success(temp)(SemNever)(emittedState)
+        | CoreBuiltinUnit -> finishBuiltinUnit(resultType)(lower)(emittedState)
+
+let finishBuiltinEmission resultType lower state emission =
+    match emission with
+        | CoreBuiltinEmission { error = Some(error) } -> failure(state)(UnsupportedCoreBuiltinLowering(error))
+        | CoreBuiltinEmission { instructions = instructions, nextTemp = nextTemp, result = result, error = None } ->
+            state
+            |> withNextTemp(nextTemp)
+            |> emitCoreInstructions(instructions)
+            |> finishBuiltinResult(resultType)(lower)(result)
+
+let emitBuiltin layout resultType lower lowered =
+    match (layout, lowered) with
+        | (_, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
+        | (CoreBuiltinLayout { kind = kind }, LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None }) ->
+            match state with
+                | CoreLoweringState { nextTemp = nextTemp } ->
+                    semanticTypes
+                    |> resolveCoreTypes(state)
+                    |> emitCoreBuiltin(kind)(nextTemp)(temps)
+                    |> finishBuiltinEmission(resultType)(lower)(state)
+
+let emitTypedBuiltin layout resultType lower (lowered: LoweredCoreValues) typedState =
+    emitBuiltin(
+        layout,
+        resultType,
+        lower,
+        lowered with state = typedState
+    )
+
+let finishBuiltinArity arguments lower shape expectedArity actualArity =
+    match shape with
+        | CoreBuiltinShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType } ->
+            if actualArity != expectedArity
+            then
+                match layout with
+                    | CoreBuiltinLayout { moduleName = moduleName, memberName = memberName } ->
+                        actualArity
+                        |> CoreBuiltinArityMismatch(
+                            moduleName,
+                            memberName,
+                            expectedArity
+                        )
+                        |> failure(state)
+            else
+                match lowerCoreValues(arguments)(lower)(state) with
+                    | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                    | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
+                        match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
+                            | (failedState, Some(error)) -> failure(failedState)(error)
+                            | (typedState, None) -> emitTypedBuiltin(layout)(resultType)(lower)(lowered)(typedState)
+
+let finishBuiltinArguments arguments lower shape =
+    match shape with
+        | CoreBuiltinShape { parameterTypes = parameterTypes } ->
+            finishBuiltinArity(
+                arguments,
+                lower,
+                shape,
+                coreListLength(parameterTypes),
+                coreListLength(arguments)
+            )
+
+let lowerBuiltin layout arguments lower state =
+    state
+    |> instantiateBuiltin(layout)
+    |> finishBuiltinArguments(arguments)(lower)
+
 let recursive collectCallSpine expression =
     match expression with
         | ExprAt(_span, inner) -> collectCallSpine(inner)
@@ -2090,6 +2309,16 @@ let constructorLambda layout =
                 |> applyConstructorParameters(ExprVar(name))
                 |> wrapConstructorParameters(parameters)
 
+let builtinLambda layout =
+    match layout with
+        | CoreBuiltinLayout { moduleName = moduleName, memberName = memberName } ->
+            0
+            |> constructorParameterNames("builtin_" + memberName)(builtinArity(layout))
+            |> (given (parameters) ->
+                parameters
+                |> applyConstructorParameters(ExprQualifiedVar(moduleName)(memberName))
+                |> wrapConstructorParameters(parameters))
+
 let tryLowerConstructorCall expression lower state =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
@@ -2100,6 +2329,20 @@ let tryLowerConstructorCall expression lower state =
                     then
                         state
                         |> lowerConstructor(layout)(arguments)(lower)
+                        |> Some
+                    else None
+        | _ -> None
+
+let tryLowerBuiltinCall expression lower state =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprQualifiedVar(moduleName, memberName), arguments = arguments } ->
+            match builtinLayout(moduleName)(memberName)(state) with
+                | None -> None
+                | Some(layout) ->
+                    if coreListLength(arguments) == builtinArity(layout)
+                    then
+                        state
+                        |> lowerBuiltin(layout)(arguments)(lower)
                         |> Some
                     else None
         | _ -> None
@@ -2297,11 +2540,531 @@ let lowerRecordUpdate target fields lower state =
     |> lower(target)
     |> finishRecordUpdate(fields)(lower)
 
+let failedCoreBinary state error =
+    LoweredCoreBinary(
+        state = state,
+        leftTemp = -1,
+        leftType = SemNever,
+        rightTemp = -1,
+        rightType = SemNever,
+        error = Some(error)
+    )
+
+let finishCoreBinary leftTemp leftType loweredRight =
+    match loweredRight with
+        | LoweredCoreValue { state = state, error = Some(error) } -> failedCoreBinary(state)(error)
+        | LoweredCoreValue { state = state, temp = rightTemp, semanticType = rightType, error = None } ->
+            LoweredCoreBinary(
+                state = state,
+                leftTemp = leftTemp,
+                leftType = leftType,
+                rightTemp = rightTemp,
+                rightType = rightType,
+                error = None
+            )
+
+let lowerCoreBinaryRight right lower loweredLeft =
+    match loweredLeft with
+        | LoweredCoreValue { state = state, error = Some(error) } -> failedCoreBinary(state)(error)
+        | LoweredCoreValue { state = state, temp = leftTemp, semanticType = leftType, error = None } ->
+            state
+            |> lower(right)
+            |> finishCoreBinary(leftTemp)(leftType)
+
+let lowerCoreBinaryOperands left right lower state =
+    state
+    |> lower(left)
+    |> lowerCoreBinaryRight(right)(lower)
+
+let numericDefault semanticType =
+    match semanticType with
+        | SemFloat -> SemFloat
+        | SemRune -> SemRune
+        | SemBigInt -> SemBigInt
+        | SemUInt(bits) -> SemUInt(bits)
+        | _ -> SemInt
+
+let finishCoreBinaryBinding (binary: LoweredCoreBinary) result =
+    match result with
+        | (failedState, Some(error)) -> failedCoreBinary(failedState)(error)
+        | (typedState, None) -> binary with state = typedState
+
+let bindCoreBinaryLeftType resolvedRight binary resolvedLeft =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType } ->
+            match resolvedLeft with
+                | SemVariable(_id) ->
+                    state
+                    |> bindType(leftType)(numericDefault(resolvedRight))
+                    |> finishCoreBinaryBinding(binary)
+                | _ -> binary
+
+let bindCoreBinaryLeft resolvedRight binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, error = None } ->
+            leftType
+            |> resolveType(state)
+            |> bindCoreBinaryLeftType(resolvedRight)(binary)
+        | failed -> failed
+
+let bindCoreBinaryRightType binary resolvedRight =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType, error = None } ->
+            match resolvedRight with
+                | SemVariable(_id) ->
+                    state
+                    |> bindType(rightType)(leftType
+                    |> resolveType(state)
+                    |> numericDefault)
+                    |> finishCoreBinaryBinding(binary)
+                | _ -> binary
+        | failed -> failed
+
+let finishCoreBinaryLeftBinding leftBound =
+    match leftBound with
+        | LoweredCoreBinary { state = state, rightType = rightType, error = None } ->
+            rightType
+            |> resolveType(state)
+            |> bindCoreBinaryRightType(leftBound)
+        | failed -> failed
+
+let bindCoreBinaryRight binary =
+    match binary with
+        | LoweredCoreBinary { state = state, rightType = rightType, error = None } ->
+            binary
+            |> bindCoreBinaryLeft(resolveType(state)(rightType))
+            |> finishCoreBinaryLeftBinding
+        | failed -> failed
+
+let withCoreBinaryLeftType leftType (typed: LoweredCoreBinary) = typed with leftType = leftType
+
+let withCoreBinaryRightType rightType (typed: LoweredCoreBinary) = typed with rightType = rightType
+
+let resolveCoreBinaryTypes state (typed: LoweredCoreBinary) =
+    match typed with
+        | LoweredCoreBinary { leftType = leftType, rightType = rightType } ->
+            typed
+            |> withCoreBinaryLeftType(resolveType(state)(leftType))
+            |> withCoreBinaryRightType(resolveType(state)(rightType))
+
+let resolvedCoreBinary binary =
+    match bindCoreBinaryRight(binary) with
+        | LoweredCoreBinary { state = state, error = None } as typed -> resolveCoreBinaryTypes(state)(typed)
+        | failed -> failed
+
+let operatorMismatch name binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = leftType, rightType = rightType } ->
+            rightType
+            |> CoreOperatorTypeMismatch(name)(leftType)
+            |> failure(state)
+
+let emitCoreBinaryTarget kind semanticType binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = targetState, temp = target } ->
+                    targetState
+                    |> emit(kind(target)(left)(right))
+                    |> success(target)(semanticType)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitCoreFloatBinary kind binary = emitCoreBinaryTarget(kind)(SemFloat)(binary)
+
+let emitCoreBoolBinary kind binary = emitCoreBinaryTarget(kind)(SemBool)(binary)
+
+let reserveCoreTemps count state =
+    match state with
+        | CoreLoweringState { nextTemp = first } ->
+            ReservedCoreTemps(
+                state = withNextTemp(first + count)(state),
+                first = first
+            )
+
+let maskCoreUInt bits lowered =
+    match lowered with
+        | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
+        | LoweredCoreValue { state = state, temp = raw, error = None } ->
+            if bits == 64
+            then success(raw)(SemUInt(bits))(state)
+            else
+                match reserveCoreTemps(2)(state) with
+                    | ReservedCoreTemps { state = resultState, first = maskTemp } ->
+                        resultState
+                        |> emit(LoadConstInt(maskTemp)((1 << bits) - 1))
+                        |> emit(AndInt(maskTemp + 1)(raw)(maskTemp))
+                        |> success(maskTemp + 1)(SemUInt(bits))
+
+let emitCoreUIntTarget kind bits binary =
+    binary
+    |> emitCoreBinaryTarget(kind)(SemUInt(bits))
+    |> maskCoreUInt(bits)
+
+let emitCoreUInt kind bits binary = emitCoreUIntTarget(kind)(bits)(binary)
+
+let emitCoreDivision isUnsigned quotient left right state =
+    if isUnsigned
+    then
+        emit(DivUInt(quotient)(left)(right))(state)
+    else
+        emit(DivInt(quotient)(left)(right))(state)
+
+let emitCoreRemainder isUnsigned resultType binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
+            match reserveCoreTemps(3)(state) with
+                | ReservedCoreTemps { state = remainderState, first = quotient } ->
+                    remainderState
+                    |> emitCoreDivision(isUnsigned)(quotient)(left)(right)
+                    |> emit(MulInt(quotient + 1)(quotient)(right))
+                    |> emit(SubInt(quotient + 2)(left)(quotient + 1))
+                    |> success(quotient + 2)(resultType)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitCoreBigIntComparison kind binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
+            match reserveCoreTemps(3)(state) with
+                | ReservedCoreTemps { state = targetState, first = comparison } ->
+                    targetState
+                    |> emit(BigIntCompare(comparison)(left)(right))
+                    |> emit(LoadConstInt(comparison + 1)(0))
+                    |> emit(kind(comparison + 2)(comparison)(comparison + 1))
+                    |> success(comparison + 2)(SemBool)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
+
+let emitCoreBigIntBinary operation binary =
+    emitCoreBinaryTarget(
+        given (target) ->
+            given (left) ->
+                given (right) -> BigIntBinary(target)(left)(right)(operation)(false)
+    )(SemBigInt)(binary)
+
+let emitCoreConcat binary =
+    emitCoreBinaryTarget(
+        given (target) ->
+            given (left) ->
+                given (right) -> ConcatStr(target)(left)(right)(false)
+    )(SemString)(binary)
+
+let emitResolvedCoreAdd binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(AddInt)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(AddInt)(leftBits)(binary)
+            else operatorMismatch("+")(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreFloatBinary(AddFloat)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntBinary("add")(binary)
+        | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreConcat(binary)
+        | _ -> operatorMismatch("+")(binary)
+
+let emitResolvedCoreSubtract binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(SubInt)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(SubInt)(leftBits)(binary)
+            else operatorMismatch("-")(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreFloatBinary(SubFloat)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntBinary("sub")(binary)
+        | _ -> operatorMismatch("-")(binary)
+
+let emitResolvedCoreMultiply binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(MulInt)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(MulInt)(leftBits)(binary)
+            else operatorMismatch("*")(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreFloatBinary(MulFloat)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntBinary("mul")(binary)
+        | _ -> operatorMismatch("*")(binary)
+
+let emitResolvedCoreDivide binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(DivInt)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(DivUInt)(leftBits)(binary)
+            else operatorMismatch("/")(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreFloatBinary(DivFloat)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntBinary("div")(binary)
+        | _ -> operatorMismatch("/")(binary)
+
+let emitResolvedCoreModulo binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreRemainder(false)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then
+                binary
+                |> emitCoreRemainder(true)(SemUInt(leftBits))
+                |> maskCoreUInt(leftBits)
+            else operatorMismatch("%")(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntBinary("mod")(binary)
+        | _ -> operatorMismatch("%")(binary)
+
+let emitResolvedCoreBitwise name intKind binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(intKind)(leftBits)(binary)
+            else operatorMismatch(name)(binary)
+        | _ -> operatorMismatch(name)(binary)
+
+let emitResolvedCoreShift name intKind binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemInt)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreUInt(intKind)(leftBits)(binary)
+            else operatorMismatch(name)(binary)
+        | _ -> operatorMismatch(name)(binary)
+
+let emitResolvedCoreOrdered name intKind uintKind floatKind binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
+        | LoweredCoreBinary { leftType = SemRune, rightType = SemRune } -> emitCoreBoolBinary(intKind)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreBoolBinary(uintKind)(binary)
+            else operatorMismatch(name)(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
+        | _ -> operatorMismatch(name)(binary)
+
+let emitResolvedCoreEquality name intKind floatKind stringKind binary =
+    match binary with
+        | LoweredCoreBinary { leftType = SemInt, rightType = SemInt } -> emitCoreBinaryTarget(intKind)(SemBool)(binary)
+        | LoweredCoreBinary { leftType = SemRune, rightType = SemRune } -> emitCoreBoolBinary(intKind)(binary)
+        | LoweredCoreBinary { leftType = SemBool, rightType = SemBool } -> emitCoreBoolBinary(intKind)(binary)
+        | LoweredCoreBinary { leftType = SemUInt(leftBits), rightType = SemUInt(rightBits) } ->
+            if leftBits == rightBits
+            then emitCoreBoolBinary(intKind)(binary)
+            else operatorMismatch(name)(binary)
+        | LoweredCoreBinary { leftType = SemFloat, rightType = SemFloat } -> emitCoreBoolBinary(floatKind)(binary)
+        | LoweredCoreBinary { leftType = SemBigInt, rightType = SemBigInt } -> emitCoreBigIntComparison(intKind)(binary)
+        | LoweredCoreBinary { leftType = SemString, rightType = SemString } -> emitCoreBoolBinary(stringKind)(binary)
+        | _ -> operatorMismatch(name)(binary)
+
+let emitResolvedCoreBinary operator binary =
+    match operator with
+        | CoreAddOperator -> emitResolvedCoreAdd(binary)
+        | CoreSubtractOperator -> emitResolvedCoreSubtract(binary)
+        | CoreMultiplyOperator -> emitResolvedCoreMultiply(binary)
+        | CoreDivideOperator -> emitResolvedCoreDivide(binary)
+        | CoreModuloOperator -> emitResolvedCoreModulo(binary)
+        | CoreBitwiseAndOperator -> emitResolvedCoreBitwise("&")(AndInt)(binary)
+        | CoreBitwiseOrOperator -> emitResolvedCoreBitwise("|")(OrInt)(binary)
+        | CoreBitwiseXorOperator -> emitResolvedCoreBitwise("^")(XorInt)(binary)
+        | CoreShiftLeftOperator -> emitResolvedCoreShift("<<")(ShlInt)(binary)
+        | CoreShiftRightOperator -> emitResolvedCoreShift(">>")(ShrInt)(binary)
+        | CoreGreaterOperator -> emitResolvedCoreOrdered(">")(CmpIntGt)(CmpUIntGt)(CmpFloatGt)(binary)
+        | CoreGreaterOrEqualOperator -> emitResolvedCoreOrdered(">=")(CmpIntGe)(CmpUIntGe)(CmpFloatGe)(binary)
+        | CoreLessOperator -> emitResolvedCoreOrdered("<")(CmpIntLt)(CmpUIntLt)(CmpFloatLt)(binary)
+        | CoreLessOrEqualOperator -> emitResolvedCoreOrdered("<=")(CmpIntLe)(CmpUIntLe)(CmpFloatLe)(binary)
+        | CoreEqualOperator -> emitResolvedCoreEquality("==")(CmpIntEq)(CmpFloatEq)(CmpStrEq)(binary)
+        | CoreNotEqualOperator -> emitResolvedCoreEquality("!=")(CmpIntNe)(CmpFloatNe)(CmpStrNe)(binary)
+
+let setBinaryLeft temp semanticType (binary: LoweredCoreBinary) state = binary with state = state, leftTemp = temp, leftType = semanticType
+
+let coerceCoreFloatZero binary state =
+    match freshTemp(state) with
+        | FreshTemp { state = zeroState, temp = zero } ->
+            zeroState
+            |> emit(LoadConstFloat(zero)(0.0))
+            |> setBinaryLeft(zero)(SemFloat)(binary)
+
+let coerceCoreUIntZero bits binary state =
+    match freshTemp(state) with
+        | FreshTemp { state = zeroState, temp = zero } ->
+            zeroState
+            |> emit(LoadConstInt(zero)(0))
+            |> setBinaryLeft(zero)(SemUInt(bits))(binary)
+
+let coerceCoreBigIntZero binary state =
+    match reserveCoreTemps(2)(state) with
+        | ReservedCoreTemps { state = zeroState, first = zero } ->
+            zeroState
+            |> emit(LoadConstInt(zero)(0))
+            |> emit(BigIntFromInt(zero + 1)(zero)(false))
+            |> setBinaryLeft(zero + 1)(SemBigInt)(binary)
+
+let coerceCoreNegationZero binary =
+    match binary with
+        | LoweredCoreBinary { state = state, leftType = SemInt, rightType = rightType, error = None } ->
+            match resolveType(state)(rightType) with
+                | SemFloat -> coerceCoreFloatZero(binary)(state)
+                | SemBigInt -> coerceCoreBigIntZero(binary)(state)
+                | SemUInt(bits) -> coerceCoreUIntZero(bits)(binary)(state)
+                | _ -> binary
+        | _ -> binary
+
+let recursive isCoreZeroExpression expression =
+    match expression with
+        | ExprAt(_span, inner) -> isCoreZeroExpression(inner)
+        | ExprInt(0) -> true
+        | _ -> false
+
+let prepareCoreBinary operator left binary =
+    match operator with
+        | CoreSubtractOperator ->
+            if isCoreZeroExpression(left)
+            then coerceCoreNegationZero(binary)
+            else binary
+        | _ -> binary
+
+let lowerCoreBinary operator left right lower state =
+    state
+    |> lowerCoreBinaryOperands(left)(right)(lower)
+    |> prepareCoreBinary(operator)(left)
+    |> resolvedCoreBinary
+    |> emitResolvedCoreBinary(operator)
+
+let finishCoreLogicalNot lowered =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = operand, semanticType = semanticType, error = None } ->
+            match resolveType(state)(semanticType) with
+                | SemBool ->
+                    match reserveCoreTemps(2)(state) with
+                        | ReservedCoreTemps { state = targetState, first = falseTemp } ->
+                            targetState
+                            |> emit(LoadConstBool(falseTemp)(false))
+                            |> emit(CmpIntEq(falseTemp + 1)(operand)(falseTemp))
+                            |> success(falseTemp + 1)(SemBool)
+                | other ->
+                    other
+                    |> CoreOperatorTypeMismatch("not")(other)
+                    |> failure(state)
+        | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
+
+let finishCoreBitwiseNot lowered =
+    match lowered with
+        | LoweredCoreValue { state = state, temp = operand, semanticType = semanticType, error = None } ->
+            match resolveType(state)(semanticType) with
+                | SemInt ->
+                    match reserveCoreTemps(2)(state) with
+                        | ReservedCoreTemps { state = targetState, first = maskTemp } ->
+                            targetState
+                            |> emit(LoadConstInt(maskTemp)(-1))
+                            |> emit(XorInt(maskTemp + 1)(operand)(maskTemp))
+                            |> success(maskTemp + 1)(SemInt)
+                | SemUInt(bits) ->
+                    match reserveCoreTemps(2)(state) with
+                        | ReservedCoreTemps { state = targetState, first = maskTemp } ->
+                            targetState
+                            |> emit(LoadConstInt(maskTemp)(if bits == 64
+                            then -1
+                            else (1 << bits) - 1))
+                            |> emit(XorInt(maskTemp + 1)(operand)(maskTemp))
+                            |> success(maskTemp + 1)(SemUInt(bits))
+                | other ->
+                    other
+                    |> CoreOperatorTypeMismatch("~")(other)
+                    |> failure(state)
+        | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
+
+let lowerCoreLogicalNot operand lower state =
+    state
+    |> lower(operand)
+    |> finishCoreLogicalNot
+
+let lowerCoreBitwiseNot operand lower state =
+    state
+    |> lower(operand)
+    |> finishCoreBitwiseNot
+
+let recursive parseDecimalDigits remaining value =
+    match Ashes.Text.unconsText(remaining) with
+        | None -> value
+        | Some((digit, rest)) -> parseDecimalDigits(rest)(value * 10 + Ashes.Text.firstByteOf(digit) - 48)
+
+let bigIntFitsLength digits length =
+    if length < 19
+    then true
+    else
+        if length == 19
+        then Ashes.Text.compare(digits)("9223372036854775807") <= 0
+        else false
+
+let bigIntFitsInt digits =
+    digits
+    |> Ashes.Text.length
+    |> bigIntFitsLength(digits)
+
+let emitCoreBigIntConstant value state =
+    match reserveCoreTemps(2)(state) with
+        | ReservedCoreTemps { state = targetState, first = constantTemp } ->
+            targetState
+            |> emit(LoadConstInt(constantTemp)(value))
+            |> emit(BigIntFromInt(constantTemp + 1)(constantTemp)(false))
+            |> success(constantTemp + 1)(SemBigInt)
+
+let decimalChunk digits =
+    (parseDecimalDigits(Ashes.Text.take(digits)(18))(0), Ashes.Text.drop(digits)(18))
+
+let recursive emitCoreBigIntChunks remaining accumulator state =
+    match remaining with
+        | "" -> success(accumulator)(SemBigInt)(state)
+        | _ ->
+            match (decimalChunk(remaining), reserveCoreTemps(6)(state)) with
+                | ((chunk, rest), ReservedCoreTemps { state = targetState, first = baseInt }) ->
+                    targetState
+                    |> emit(LoadConstInt(baseInt)(1000000000000000000))
+                    |> emit(BigIntFromInt(baseInt + 1)(baseInt)(false))
+                    |> emit(BigIntBinary(baseInt + 2)(accumulator)(baseInt + 1)("mul")(false))
+                    |> emit(LoadConstInt(baseInt + 3)(chunk))
+                    |> emit(BigIntFromInt(baseInt + 4)(baseInt + 3)(false))
+                    |> emit(BigIntBinary(baseInt + 5)(baseInt + 2)(baseInt + 4)("add")(false))
+                    |> emitCoreBigIntChunks(rest)(baseInt + 5)
+
+let finishCoreBigIntHead rest lowered =
+    match lowered with
+        | LoweredCoreValue { error = None } as value ->
+            match value with
+                | LoweredCoreValue { state = state, temp = accumulator } ->
+                    emitCoreBigIntChunks(
+                        rest,
+                        accumulator,
+                        state
+                    )
+        | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
+
+let bigIntFirstLength length =
+    match length % 18 with
+        | 0 -> 18
+        | remainder -> remainder
+
+let lowerCoreLargeBigIntFromFirst digits state firstLength =
+    state
+    |> emitCoreBigIntConstant(parseDecimalDigits(Ashes.Text.take(digits)(firstLength))(0))
+    |> finishCoreBigIntHead(Ashes.Text.drop(digits)(firstLength))
+
+let lowerCoreLargeBigInt digits state =
+    digits
+    |> Ashes.Text.length
+    |> bigIntFirstLength
+    |> lowerCoreLargeBigIntFromFirst(digits)(state)
+
+let lowerCoreBigInt digits state =
+    if bigIntFitsInt(digits)
+    then
+        emitCoreBigIntConstant(parseDecimalDigits(digits)(0))(state)
+    else lowerCoreLargeBigInt(digits)(state)
+
 let finishCoreConstructorReference layout lower state =
     if constructorArity(layout) == 0
     then lowerConstructor(layout)([])(lower)(state)
     else
         lower(constructorLambda(layout))(state)
+
+let finishCoreBuiltinReference layout lower state =
+    if builtinArity(layout) == 0
+    then lowerBuiltin(layout)([])(lower)(state)
+    else
+        lower(builtinLambda(layout))(state)
 
 let lowerCoreVariable name lower state =
     match state with
@@ -2312,6 +3075,13 @@ let lowerCoreVariable name lower state =
                     match constructorLayout(name)(state) with
                         | Some(layout) -> finishCoreConstructorReference(layout)(lower)(state)
                         | None -> failure(state)(UnknownLoweringBinding(name))
+
+let lowerCoreQualifiedVariable moduleName memberName lower state =
+    match builtinLayout(moduleName)(memberName)(state) with
+        | Some(layout) -> finishCoreBuiltinReference(layout)(lower)(state)
+        | None -> lowerRecordFieldAccess(moduleName)(memberName)(state)
+
+let lowerQualified moduleName memberName lower state = lowerCoreQualifiedVariable(moduleName)(memberName)(lower)(state)
 
 let expressionName expression =
     match expression with
@@ -2324,6 +3094,7 @@ let recursive lowerCore expression state =
         | ExprAt(_span, inner) -> lowerCore(inner)(state)
         | ExprInt(value) ->
             lowerConstant(given (target) -> LoadConstInt(target)(value))(SemInt)(state)
+        | ExprBigInt(digits) -> lowerCoreBigInt(digits)(state)
         | ExprUInt(value, bits, _raw) ->
             lowerConstant(given (target) -> LoadConstInt(target)(value))(SemUInt(bits))(state)
         | ExprFloat(value, _raw) ->
@@ -2333,8 +3104,26 @@ let recursive lowerCore expression state =
             lowerConstant(given (target) -> LoadConstInt(target)(value))(SemRune)(state)
         | ExprBool(value) ->
             lowerConstant(given (target) -> LoadConstBool(target)(value))(SemBool)(state)
+        | ExprAdd(left, right) -> lowerCoreBinary(CoreAddOperator)(left)(right)(lowerCore)(state)
+        | ExprSubtract(left, right) -> lowerCoreBinary(CoreSubtractOperator)(left)(right)(lowerCore)(state)
+        | ExprMultiply(left, right) -> lowerCoreBinary(CoreMultiplyOperator)(left)(right)(lowerCore)(state)
+        | ExprDivide(left, right) -> lowerCoreBinary(CoreDivideOperator)(left)(right)(lowerCore)(state)
+        | ExprModulo(left, right) -> lowerCoreBinary(CoreModuloOperator)(left)(right)(lowerCore)(state)
+        | ExprBitwiseAnd(left, right) -> lowerCoreBinary(CoreBitwiseAndOperator)(left)(right)(lowerCore)(state)
+        | ExprBitwiseOr(left, right) -> lowerCoreBinary(CoreBitwiseOrOperator)(left)(right)(lowerCore)(state)
+        | ExprBitwiseXor(left, right) -> lowerCoreBinary(CoreBitwiseXorOperator)(left)(right)(lowerCore)(state)
+        | ExprShiftLeft(left, right) -> lowerCoreBinary(CoreShiftLeftOperator)(left)(right)(lowerCore)(state)
+        | ExprShiftRight(left, right) -> lowerCoreBinary(CoreShiftRightOperator)(left)(right)(lowerCore)(state)
+        | ExprBitwiseNot(operand) -> lowerCoreBitwiseNot(operand)(lowerCore)(state)
+        | ExprLogicalNot(operand) -> lowerCoreLogicalNot(operand)(lowerCore)(state)
+        | ExprGreaterThan(left, right) -> lowerCoreBinary(CoreGreaterOperator)(left)(right)(lowerCore)(state)
+        | ExprGreaterOrEqual(left, right) -> lowerCoreBinary(CoreGreaterOrEqualOperator)(left)(right)(lowerCore)(state)
+        | ExprLessThan(left, right) -> lowerCoreBinary(CoreLessOperator)(left)(right)(lowerCore)(state)
+        | ExprLessOrEqual(left, right) -> lowerCoreBinary(CoreLessOrEqualOperator)(left)(right)(lowerCore)(state)
+        | ExprEqual(left, right) -> lowerCoreBinary(CoreEqualOperator)(left)(right)(lowerCore)(state)
+        | ExprNotEqual(left, right) -> lowerCoreBinary(CoreNotEqualOperator)(left)(right)(lowerCore)(state)
         | ExprVar(name) -> lowerCoreVariable(name)(lowerCore)(state)
-        | ExprQualifiedVar(receiverName, fieldName) -> lowerRecordFieldAccess(receiverName)(fieldName)(state)
+        | ExprQualifiedVar(receiverName, fieldName) -> lowerQualified(receiverName)(fieldName)(lowerCore)(state)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
             lowerLet(
                 name,
@@ -2356,7 +3145,10 @@ let recursive lowerCore expression state =
         | ExprCall(function, argument, _whitespace, _layout) ->
             match tryLowerConstructorCall(expression)(lowerCore)(state) with
                 | Some(lowered) -> lowered
-                | None -> lowerCall(function)(argument)(lowerCore)(state)
+                | None ->
+                    match tryLowerBuiltinCall(expression)(lowerCore)(state) with
+                        | Some(lowered) -> lowered
+                        | None -> lowerCall(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) -> lowerCons(head)(tail)(lowerCore)(state)
@@ -2397,6 +3189,45 @@ let failedCoreLowering error =
         error = Some(error)
     )
 
+type CoreProgramUses =
+    | printInt: Bool
+    | printStr: Bool
+    | printBool: Bool
+    | concatStr: Bool
+
+let emptyCoreProgramUses =
+    CoreProgramUses(
+        printInt = false,
+        printStr = false,
+        printBool = false,
+        concatStr = false
+    )
+
+let includeCoreInstruction operation (uses: CoreProgramUses) =
+    match operation with
+        | PrintInt(_) -> uses with printInt = true
+        | PrintStr(_) -> uses with printStr = true
+        | PrintBool(_) -> uses with printBool = true
+        | ConcatStr(_, _, _, _) -> uses with concatStr = true
+        | ConcatStrTip(_, _, _, _, _, _) -> uses with concatStr = true
+        | _ -> uses
+
+let recursive collectCoreInstructionUses instructions uses =
+    match instructions with
+        | [] -> uses
+        | IrInstruction { instruction = operation } :: rest ->
+            uses
+            |> includeCoreInstruction(operation)
+            |> collectCoreInstructionUses(rest)
+
+let recursive collectCoreFunctionUses functions uses =
+    match functions with
+        | [] -> uses
+        | IrFunction { instructions = instructions } :: rest ->
+            uses
+            |> collectCoreInstructionUses(instructions)
+            |> collectCoreFunctionUses(rest)
+
 let buildProgram lowered =
     match lowered with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
@@ -2417,28 +3248,31 @@ let buildProgram lowered =
                             lifetimesPlaced = false
                         )
                     in
-                        let program =
-                            IrProgram(
-                                entryFunction = entry,
-                                functions = functions,
-                                stringLiterals = stringLiterals,
-                                externalFunctions = [],
-                                externalOpaqueTypes = [],
-                                usesPrintInt = false,
-                                usesPrintStr = false,
-                                usesPrintBool = false,
-                                usesConcatStr = false,
-                                usesClosures = hasFunctions(functions),
-                                usesAsync = false,
-                                capabilityHandlerGlobals = 0,
-                                traitEvidence = emptyTraitEvidenceAnnotations
-                            )
-                        in
-                            CoreLoweringResult(
-                                program = Some(program),
-                                semanticType = resolveType(state)(semanticType),
-                                error = None
-                            )
+                        match collectCoreFunctionUses(
+                            functions
+                        )(
+                            collectCoreInstructionUses(instructions)(emptyCoreProgramUses)
+                        ) with
+                            | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
+                                CoreLoweringResult(
+                                    program = Some(IrProgram(
+                                        entryFunction = entry,
+                                        functions = functions,
+                                        stringLiterals = stringLiterals,
+                                        externalFunctions = [],
+                                        externalOpaqueTypes = [],
+                                        usesPrintInt = usesPrintInt,
+                                        usesPrintStr = usesPrintStr,
+                                        usesPrintBool = usesPrintBool,
+                                        usesConcatStr = usesConcatStr,
+                                        usesClosures = hasFunctions(functions),
+                                        usesAsync = false,
+                                        capabilityHandlerGlobals = 0,
+                                        traitEvidence = emptyTraitEvidenceAnnotations
+                                    )),
+                                    semanticType = resolveType(state)(semanticType),
+                                    error = None
+                                )
 
 let lowerCoreExpression expression =
     Unit
@@ -2449,6 +3283,12 @@ let lowerCoreExpression expression =
 let lowerCoreExpressionWithLayouts layouts expression =
     Unit
     |> initialStateWithLayouts(layouts)
+    |> lowerCore(expression)
+    |> buildProgram
+
+let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression =
+    Unit
+    |> initialStateWithContext(constructorLayouts)(builtinLayouts)
     |> lowerCore(expression)
     |> buildProgram
 

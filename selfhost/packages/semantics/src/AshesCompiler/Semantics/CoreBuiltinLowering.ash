@@ -1,0 +1,702 @@
+// Describes stage-0 builtin operations and emits their pre-ownership IR shapes.
+//
+// Invariants:
+// - Layouts carry schemes from the stitched semantic environment; this module never invents symbol IDs.
+// - Arguments arrive in strict source order and instruction operands retain the stage-0 order.
+// - Fresh aggregate results are marked non-runtime-managed until ownership placement classifies them.
+// - FFI, evidence, ownership-copy, parallel, and general async operations belong to later milestones.
+
+import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.Types
+export (
+    type CoreBuiltinKind(..),
+    type CoreBuiltinLayout(..),
+    type CoreBuiltinEmissionResult(..),
+    type CoreBuiltinEmission(..),
+    value coreBuiltinKind,
+    value emitCoreBuiltin,
+)
+
+type CoreBuiltinKind =
+    | CoreProgramArgs
+    | CorePrint
+    | CorePanic
+    | CoreWrite
+    | CoreWriteBytes
+    | CoreWriteLine
+    | CoreWriteError(Bool)
+    | CoreExit
+    | CoreWriteBuffered(Bool)
+    | CoreFlushStdout
+    | CoreReadLine
+    | CoreReadExact
+    | CoreConsoleEnableRaw
+    | CoreConsoleRestore
+    | CoreConsolePoll
+    | CoreMonotonicMillis
+    | CoreTextByteLength
+    | CoreFileReadText
+    | CoreFileReadAllBytes
+    | CoreFileMmap
+    | CoreFileWriteText
+    | CoreFileWriteBytes
+    | CoreFileExists
+    | CoreFileReplace
+    | CoreFileMakeExecutable
+    | CoreFileOpen
+    | CoreFileReadChunk
+    | CoreFileReadLine
+    | CoreFileClose
+    | CoreDirectoryEntries
+    | CoreDirectoryCreateAll
+    | CoreDirectoryRemoveTree
+    | CoreEnvironmentDirectory(EnvironmentDirectoryKind)
+    | CoreEnvironmentGet
+    | CoreTextUncons(Bool)
+    | CoreRuneToText
+    | CoreRuneToInt
+    | CoreRuneFromInt
+    | CoreRuneIsAsciiLetter
+    | CoreRuneIsAsciiDigit
+    | CoreRuneIsAsciiWhiteSpace
+    | CoreTextParseInt
+    | CoreTextParseFloat
+    | CoreTextFromInt
+    | CoreTextFromFloat
+    | CoreTextFormatFloat
+    | CoreTextToHex
+    | CoreTextAsciiCase(Bool)
+    | CoreMathToFloat
+    | CoreMathFloatUnary(Str)
+    | CoreMathFloatToInt(Maybe(Str))
+    | CoreMathLibm(Str)
+    | CoreBigIntFromInt
+    | CoreBigIntToString
+    | CoreBigIntToInt
+    | CoreBigIntFromString
+    | CoreBigIntBinary(Str)
+    | CoreBigIntCompare
+    | CoreRegexCompile
+    | CoreRegexCompileError
+    | CoreRegexFind
+    | CoreRegexCaptures
+    | CoreRegexSubstitute
+    | CoreHttpGet
+    | CoreHttpPost
+    | CoreTcpConnect
+    | CoreTcpSend
+    | CoreTcpReceive
+    | CoreTcpClose
+    | CoreTcpListen
+    | CoreTcpAccept
+    | CoreTcpForkWorkers
+    | CoreTcpSetDrainTimeout
+    | CoreTlsConnect
+    | CoreTlsSend
+    | CoreTlsReceive
+    | CoreTlsClose
+    | CoreTlsServerHandshake
+    | CoreBytesEmpty
+    | CoreBytesSingleton
+    | CoreBytesLength
+    | CoreBytesGet
+    | CoreBytesIndexOf
+    | CoreBytesCompare
+    | CoreBytesScanHash
+    | CoreBytesSubText
+    | CoreBytesSubView
+    | CoreBytesAppend
+    | CoreBytesAppendByte
+    | CoreBytesAllocate
+    | CoreBytesCopyRange
+    | CoreBytesSet
+    | CoreBytesSetU16Le
+    | CoreBytesSetU32Le
+    | CoreBytesSetU64Le
+    | CoreBytesFromList
+    | CoreBytesFromText
+    | CoreBytesHash
+    | CoreBytesU16Le
+    | CoreBytesU32Le
+    | CoreBytesU64Le
+    | CoreBytesGetU16Le
+    | CoreBytesGetU32Le
+    | CoreBytesGetU64Le
+    | CoreUIntToInt
+    | CoreUIntFromInt
+    | CoreSpawnProcess
+    | CoreProcessWriteStdin
+    | CoreProcessReadStdoutLine
+    | CoreProcessReadStderrLine
+    | CoreProcessWaitForExit
+    | CoreProcessKill
+
+type CoreBuiltinLayout =
+    | moduleName: Str
+    | memberName: Str
+    | scheme: TypeScheme
+    | kind: CoreBuiltinKind
+
+type CoreBuiltinEmissionResult =
+    | CoreBuiltinTemp(Int)
+    | CoreBuiltinUnit
+    | CoreBuiltinNever(Int)
+
+type CoreBuiltinEmission =
+    | instructions: List(IrInstructionKind)
+    | nextTemp: Int
+    | result: CoreBuiltinEmissionResult
+    | error: Maybe(Str)
+
+let ioBuiltinKind memberName =
+    match memberName with
+        | "print" -> Some(CorePrint)
+        | "panic" -> Some(CorePanic)
+        | "args" -> Some(CoreProgramArgs)
+        | "write" -> Some(CoreWrite)
+        | "writeBytes" -> Some(CoreWriteBytes)
+        | "writeLine" -> Some(CoreWriteLine)
+        | "writeError" -> Some(CoreWriteError(false))
+        | "writeErrorLine" -> Some(CoreWriteError(true))
+        | "exit" -> Some(CoreExit)
+        | "writeBuffered" -> Some(CoreWriteBuffered(false))
+        | "writeBufferedLine" -> Some(CoreWriteBuffered(true))
+        | "flush" -> Some(CoreFlushStdout)
+        | "readLine" -> Some(CoreReadLine)
+        | "readExact" -> Some(CoreReadExact)
+        | _ -> None
+
+let mathBuiltinKind memberName =
+    match memberName with
+        | "toFloat" -> Some(CoreMathToFloat)
+        | "sqrt" -> Some(CoreMathFloatUnary("llvm.sqrt.f64"))
+        | "floor" -> Some(CoreMathFloatUnary("llvm.floor.f64"))
+        | "ceil" -> Some(CoreMathFloatUnary("llvm.ceil.f64"))
+        | "round" -> Some(CoreMathFloatUnary("llvm.round.f64"))
+        | "trunc" -> Some(CoreMathFloatUnary("llvm.trunc.f64"))
+        | "floorToInt" -> Some(CoreMathFloatToInt(Some("llvm.floor.f64")))
+        | "roundToInt" -> Some(CoreMathFloatToInt(Some("llvm.round.f64")))
+        | "truncToInt" -> Some(CoreMathFloatToInt(None))
+        | "sin" -> Some(CoreMathLibm("sin"))
+        | "cos" -> Some(CoreMathLibm("cos"))
+        | "tan" -> Some(CoreMathLibm("tan"))
+        | "asin" -> Some(CoreMathLibm("asin"))
+        | "acos" -> Some(CoreMathLibm("acos"))
+        | "atan" -> Some(CoreMathLibm("atan"))
+        | "sinh" -> Some(CoreMathLibm("sinh"))
+        | "cosh" -> Some(CoreMathLibm("cosh"))
+        | "tanh" -> Some(CoreMathLibm("tanh"))
+        | "exp" -> Some(CoreMathLibm("exp"))
+        | "expm1" -> Some(CoreMathLibm("expm1"))
+        | "ln" -> Some(CoreMathLibm("log"))
+        | "log2" -> Some(CoreMathLibm("log2"))
+        | "log10" -> Some(CoreMathLibm("log10"))
+        | "log1p" -> Some(CoreMathLibm("log1p"))
+        | "cbrt" -> Some(CoreMathLibm("cbrt"))
+        | "powF" -> Some(CoreMathLibm("pow"))
+        | "atan2" -> Some(CoreMathLibm("atan2"))
+        | "hypot" -> Some(CoreMathLibm("hypot"))
+        | "fmod" -> Some(CoreMathLibm("fmod"))
+        | _ -> None
+
+let fileBuiltinKind memberName =
+    match memberName with
+        | "readText" -> Some(CoreFileReadText)
+        | "readAllBytes" -> Some(CoreFileReadAllBytes)
+        | "mmap" -> Some(CoreFileMmap)
+        | "writeText" -> Some(CoreFileWriteText)
+        | "writeBytes" -> Some(CoreFileWriteBytes)
+        | "exists" -> Some(CoreFileExists)
+        | "replace" -> Some(CoreFileReplace)
+        | "makeExecutable" -> Some(CoreFileMakeExecutable)
+        | "open" -> Some(CoreFileOpen)
+        | "readChunk" -> Some(CoreFileReadChunk)
+        | "readLine" -> Some(CoreFileReadLine)
+        | "close" -> Some(CoreFileClose)
+        | _ -> None
+
+let directoryBuiltinKind memberName =
+    match memberName with
+        | "entries" -> Some(CoreDirectoryEntries)
+        | "createAll" -> Some(CoreDirectoryCreateAll)
+        | "removeTree" -> Some(CoreDirectoryRemoveTree)
+        | _ -> None
+
+let environmentBuiltinKind memberName =
+    match memberName with
+        | "currentDirectory" -> Some(CoreEnvironmentDirectory(CurrentDirectory))
+        | "executableDirectory" -> Some(CoreEnvironmentDirectory(ExecutableDirectory))
+        | "temporaryDirectory" -> Some(CoreEnvironmentDirectory(TemporaryDirectory))
+        | "cacheDirectory" -> Some(CoreEnvironmentDirectory(CacheDirectory))
+        | "get" -> Some(CoreEnvironmentGet)
+        | _ -> None
+
+let textBuiltinKind memberName =
+    match memberName with
+        | "uncons" -> Some(CoreTextUncons(false))
+        | "unconsText" -> Some(CoreTextUncons(true))
+        | "parseInt" -> Some(CoreTextParseInt)
+        | "parseFloat" -> Some(CoreTextParseFloat)
+        | "fromInt" -> Some(CoreTextFromInt)
+        | "fromFloat" -> Some(CoreTextFromFloat)
+        | "formatFloat" -> Some(CoreTextFormatFloat)
+        | "fromBigInt" -> Some(CoreBigIntToString)
+        | "parseBigInt" -> Some(CoreBigIntFromString)
+        | "toHex" -> Some(CoreTextToHex)
+        | "byteLength" -> Some(CoreTextByteLength)
+        | "asciiUpper" -> Some(CoreTextAsciiCase(true))
+        | "asciiLower" -> Some(CoreTextAsciiCase(false))
+        | _ -> None
+
+let runeBuiltinKind memberName =
+    match memberName with
+        | "toText" -> Some(CoreRuneToText)
+        | "toInt" -> Some(CoreRuneToInt)
+        | "fromInt" -> Some(CoreRuneFromInt)
+        | "isAsciiLetter" -> Some(CoreRuneIsAsciiLetter)
+        | "isAsciiDigit" -> Some(CoreRuneIsAsciiDigit)
+        | "isAsciiWhiteSpace" -> Some(CoreRuneIsAsciiWhiteSpace)
+        | _ -> None
+
+let bigIntBuiltinKind memberName =
+    match memberName with
+        | "fromInt" -> Some(CoreBigIntFromInt)
+        | "toInt" -> Some(CoreBigIntToInt)
+        | "add" -> Some(CoreBigIntBinary("add"))
+        | "sub" -> Some(CoreBigIntBinary("sub"))
+        | "mul" -> Some(CoreBigIntBinary("mul"))
+        | "div" -> Some(CoreBigIntBinary("div"))
+        | "mod" -> Some(CoreBigIntBinary("mod"))
+        | "compare" -> Some(CoreBigIntCompare)
+        | _ -> None
+
+let regexBuiltinKind memberName =
+    match memberName with
+        | "compileRaw" -> Some(CoreRegexCompile)
+        | "compileError" -> Some(CoreRegexCompileError)
+        | "findFrom" -> Some(CoreRegexFind)
+        | "capturesFrom" -> Some(CoreRegexCaptures)
+        | "substituteAll" -> Some(CoreRegexSubstitute)
+        | _ -> None
+
+let bytesBuiltinKind memberName =
+    match memberName with
+        | "empty" -> Some(CoreBytesEmpty)
+        | "singleton" -> Some(CoreBytesSingleton)
+        | "length" -> Some(CoreBytesLength)
+        | "get" -> Some(CoreBytesGet)
+        | "indexOf" -> Some(CoreBytesIndexOf)
+        | "compare" -> Some(CoreBytesCompare)
+        | "scanHash" -> Some(CoreBytesScanHash)
+        | "subText" -> Some(CoreBytesSubText)
+        | "subView" -> Some(CoreBytesSubView)
+        | "append" -> Some(CoreBytesAppend)
+        | "appendByte" -> Some(CoreBytesAppendByte)
+        | "allocate" -> Some(CoreBytesAllocate)
+        | "copyRange" -> Some(CoreBytesCopyRange)
+        | "set" -> Some(CoreBytesSet)
+        | "setU16Le" -> Some(CoreBytesSetU16Le)
+        | "setU32Le" -> Some(CoreBytesSetU32Le)
+        | "setU64Le" -> Some(CoreBytesSetU64Le)
+        | "fromList" -> Some(CoreBytesFromList)
+        | "fromText" -> Some(CoreBytesFromText)
+        | "hash" -> Some(CoreBytesHash)
+        | "u16Le" -> Some(CoreBytesU16Le)
+        | "u32Le" -> Some(CoreBytesU32Le)
+        | "u64Le" -> Some(CoreBytesU64Le)
+        | "getU16Le" -> Some(CoreBytesGetU16Le)
+        | "getU32Le" -> Some(CoreBytesGetU32Le)
+        | "getU64Le" -> Some(CoreBytesGetU64Le)
+        | _ -> None
+
+let tcpBuiltinKind memberName =
+    match memberName with
+        | "connect" -> Some(CoreTcpConnect)
+        | "send" -> Some(CoreTcpSend)
+        | "receive" -> Some(CoreTcpReceive)
+        | "close" -> Some(CoreTcpClose)
+        | _ -> None
+
+let tcpServerBuiltinKind memberName =
+    match memberName with
+        | "listen" -> Some(CoreTcpListen)
+        | "accept" -> Some(CoreTcpAccept)
+        | "forkWorkers" -> Some(CoreTcpForkWorkers)
+        | "setDrainTimeout" -> Some(CoreTcpSetDrainTimeout)
+        | _ -> None
+
+let tlsBuiltinKind memberName =
+    match memberName with
+        | "connect" -> Some(CoreTlsConnect)
+        | "send" -> Some(CoreTlsSend)
+        | "receive" -> Some(CoreTlsReceive)
+        | "close" -> Some(CoreTlsClose)
+        | _ -> None
+
+let processBuiltinKind memberName =
+    match memberName with
+        | "spawn" -> Some(CoreSpawnProcess)
+        | "writeStdin" -> Some(CoreProcessWriteStdin)
+        | "readStdoutLine" -> Some(CoreProcessReadStdoutLine)
+        | "readStderrLine" -> Some(CoreProcessReadStderrLine)
+        | "waitForExit" -> Some(CoreProcessWaitForExit)
+        | "kill" -> Some(CoreProcessKill)
+        | _ -> None
+
+let consoleBuiltinKind memberName =
+    match memberName with
+        | "enableRawInput" -> Some(CoreConsoleEnableRaw)
+        | "restoreInput" -> Some(CoreConsoleRestore)
+        | "pollInput" -> Some(CoreConsolePoll)
+        | "monotonicMillis" -> Some(CoreMonotonicMillis)
+        | _ -> None
+
+let coreBuiltinKind moduleName memberName =
+    match moduleName with
+        | "Ashes.IO" -> ioBuiltinKind(memberName)
+        | "Ashes.Number.Math" -> mathBuiltinKind(memberName)
+        | "Ashes.IO.File" -> fileBuiltinKind(memberName)
+        | "Ashes.IO.Directory" -> directoryBuiltinKind(memberName)
+        | "Ashes.IO.Environment" -> environmentBuiltinKind(memberName)
+        | "Ashes.Text" -> textBuiltinKind(memberName)
+        | "Ashes.Rune" -> runeBuiltinKind(memberName)
+        | "Ashes.Number.BigInt" -> bigIntBuiltinKind(memberName)
+        | "Ashes.Internal.Regex" -> regexBuiltinKind(memberName)
+        | "Ashes.Byte" -> bytesBuiltinKind(memberName)
+        | "Ashes.Number.UInt" ->
+            match memberName with
+                | "toInt" -> Some(CoreUIntToInt)
+                | "fromInt" -> Some(CoreUIntFromInt)
+                | _ -> None
+        | "Ashes.Net.Http" ->
+            match memberName with
+                | "get" -> Some(CoreHttpGet)
+                | "post" -> Some(CoreHttpPost)
+                | _ -> None
+        | "Ashes.Net.Tcp" -> tcpBuiltinKind(memberName)
+        | "Ashes.Net.Tcp.Server" -> tcpServerBuiltinKind(memberName)
+        | "Ashes.Net.Tls" -> tlsBuiltinKind(memberName)
+        | "Ashes.Net.Tls.Server" ->
+            if memberName == "handshake"
+            then Some(CoreTlsServerHandshake)
+            else None
+        | "Ashes.IO.Process" -> processBuiltinKind(memberName)
+        | "Ashes.IO.Console" -> consoleBuiltinKind(memberName)
+        | _ -> None
+
+let emitted instructions nextTemp result =
+    CoreBuiltinEmission(
+        instructions = instructions,
+        nextTemp = nextTemp,
+        result = result,
+        error = None
+    )
+
+let emissionFailure start message =
+    CoreBuiltinEmission(
+        instructions = [],
+        nextTemp = start,
+        result = CoreBuiltinTemp(-1),
+        error = Some(message)
+    )
+
+let target0 start build = emitted([build(start)])(start + 1)(CoreBuiltinTemp(start))
+
+let target1 start first build = emitted([build(start)(first)])(start + 1)(CoreBuiltinTemp(start))
+
+let target2 start first second build = emitted([build(start)(first)(second)])(start + 1)(CoreBuiltinTemp(start))
+
+let target3 start first second third build =
+    emitted(
+        [build(start)(first)(second)(third)],
+        start + 1,
+        CoreBuiltinTemp(start)
+    )
+
+let target4 start first second third fourth build =
+    emitted(
+        [build(start)(first)(second)(third)(fourth)],
+        start + 1,
+        CoreBuiltinTemp(start)
+    )
+
+let target5 start first second third fourth fifth build =
+    emitted(
+        [build(start)(first)(second)(third)(fourth)(fifth)],
+        start + 1,
+        CoreBuiltinTemp(start)
+    )
+
+let unit instructions start = emitted(instructions)(start)(CoreBuiltinUnit)
+
+let unitWithTarget start build = emitted([build(start)])(start + 1)(CoreBuiltinUnit)
+
+let identity start value = emitted([])(start)(CoreBuiltinTemp(value))
+
+let never start value instruction = emitted([instruction(value)])(start)(CoreBuiltinNever(value))
+
+let managedTarget1 start first build =
+    target1(start)(first)(given (target) ->
+        given (argument) -> build(target)(argument)(false))
+
+let managedTarget2 start first second build =
+    target2(start)(first)(second)(given (target) ->
+        given (left) ->
+            given (right) -> build(target)(left)(right)(false))
+
+let runeRange start rune lower upper =
+    emitted(
+        [
+            LoadConstInt(start)(lower),
+            LoadConstInt(start + 1)(upper),
+            CmpIntGe(start + 2)(rune)(start),
+            CmpIntLe(start + 3)(rune)(start + 1),
+            AndInt(start + 4)(start + 2)(start + 3)
+        ]
+    )(start + 5)(CoreBuiltinTemp(start + 4))
+
+let runeAsciiLetter start rune =
+    emitted(
+        [
+            LoadConstInt(start)(65),
+            LoadConstInt(start + 1)(90),
+            CmpIntGe(start + 2)(rune)(start),
+            CmpIntLe(start + 3)(rune)(start + 1),
+            AndInt(start + 4)(start + 2)(start + 3),
+            LoadConstInt(start + 5)(97),
+            LoadConstInt(start + 6)(122),
+            CmpIntGe(start + 7)(rune)(start + 5),
+            CmpIntLe(start + 8)(rune)(start + 6),
+            AndInt(start + 9)(start + 7)(start + 8),
+            OrInt(start + 10)(start + 4)(start + 9)
+        ]
+    )(start + 11)(CoreBuiltinTemp(start + 10))
+
+let runeAsciiWhiteSpace start rune =
+    emitted(
+        [
+            LoadConstInt(start)(32),
+            LoadConstInt(start + 1)(9),
+            LoadConstInt(start + 2)(10),
+            LoadConstInt(start + 3)(13),
+            CmpIntEq(start + 4)(rune)(start),
+            CmpIntEq(start + 5)(rune)(start + 1),
+            CmpIntEq(start + 6)(rune)(start + 2),
+            CmpIntEq(start + 7)(rune)(start + 3),
+            OrInt(start + 8)(start + 4)(start + 5),
+            OrInt(start + 9)(start + 8)(start + 6),
+            OrInt(start + 10)(start + 9)(start + 7)
+        ]
+    )(start + 11)(CoreBuiltinTemp(start + 10))
+
+let floatToInt start argument intrinsic =
+    match intrinsic with
+        | None -> target1(start)(argument)(FloatToInt)
+        | Some(name) ->
+            emitted(
+                [
+                    FloatUnaryIntrinsic(start)(argument)(name),
+                    FloatToInt(start + 1)(start)
+                ]
+            )(start + 2)(CoreBuiltinTemp(start + 1))
+
+let textFormatFloat start value precision = managedTarget2(start)(value)(precision)(TextFormatFloat)
+
+let regexCaptures start code subject offset = target3(start)(code)(subject)(offset)(RegexCaptures)
+
+let rsub start code subject replacement = target3(start)(code)(subject)(replacement)(RegexSubstitute)
+
+let tlsServerHandshake start socket cert key = target3(start)(socket)(cert)(key)(CreateTlsServerHandshakeTask)
+
+let bytesScanHash start value needle offset = target3(start)(value)(needle)(offset)(BytesScanHash)
+
+let tcpForkWorkers start workers port = target2(start)(port)(workers)(CreateForkWorkersTask)
+
+let uintFromInt start value =
+    emitted(
+        [
+            LoadConstInt(start)(255),
+            AndInt(start + 1)(value)(start)
+        ]
+    )(start + 2)(CoreBuiltinTemp(start + 1))
+
+let printValue start value semanticType =
+    match semanticType with
+        | SemInt -> unit([PrintInt(value)])(start)
+        | SemUInt(bits) ->
+            if bits < 64
+            then unit([PrintInt(value)])(start)
+            else emissionFailure(start)("print does not support u64")
+        | SemString -> unit([PrintStr(value)])(start)
+        | SemBool -> unit([PrintBool(value)])(start)
+        | other -> emissionFailure(start)("print does not support " + formatSemanticType(other))
+
+let emitCoreBuiltin kind start arguments argumentTypes =
+    match (kind, arguments, argumentTypes) with
+        | (CoreProgramArgs, [], []) -> target0(start)(LoadProgramArgs)
+        | (CorePrint, value :: [], semanticType :: []) -> printValue(start)(value)(semanticType)
+        | (CorePanic, value :: [], _type :: []) -> never(start)(value)(PanicStr)
+        | (CoreWrite, value :: [], _types) -> unit([WriteStr(value)])(start)
+        | (CoreWriteBytes, value :: [], _types) -> unit([WriteStr(value)])(start)
+        | (CoreWriteLine, value :: [], _types) -> unit([PrintStr(value)])(start)
+        | (CoreWriteError(newline), value :: [], _types) -> unit([WriteErrorStr(value)(newline)])(start)
+        | (CoreExit, value :: [], _types) -> never(start)(value)(ExitProcess)
+        | (CoreWriteBuffered(newline), value :: [], _types) -> unit([WriteBufferedStr(value)(newline)])(start)
+        | (CoreFlushStdout, _unit :: [], _types) -> unit([FlushStdout])(start)
+        | (CoreReadLine, _unit :: [], _types) -> target0(start)(ReadLine)
+        | (CoreReadExact, count :: [], _types) -> target1(start)(count)(ReadExact)
+        | (CoreConsoleEnableRaw, _unit :: [], _types) -> target0(start)(ConsoleEnableRaw)
+        | (CoreConsoleRestore, token :: [], _types) -> unit([ConsoleRestore(token)])(start)
+        | (CoreConsolePoll, timeout :: [], _types) -> target1(start)(timeout)(ConsolePoll)
+        | (CoreMonotonicMillis, _unit :: [], _types) -> target0(start)(MonotonicMillis)
+        | (CoreTextByteLength, text :: [], _types) -> target1(start)(text)(TextByteLength)
+        | (CoreFileReadText, path :: [], _types) -> target1(start)(path)(FileReadText)
+        | (CoreFileReadAllBytes, path :: [], _types) -> target1(start)(path)(FileReadAllBytes)
+        | (CoreFileMmap, path :: [], _types) -> target1(start)(path)(FileMmap)
+        | (CoreFileWriteText, path :: value :: [], _types) -> target2(start)(path)(value)(FileWriteText)
+        | (CoreFileWriteBytes, path :: value :: [], _types) -> target2(start)(path)(value)(FileWriteBytes)
+        | (CoreFileExists, path :: [], _types) -> target1(start)(path)(FileExists)
+        | (CoreFileReplace, source :: destination :: [], _types) -> target2(start)(source)(destination)(FileReplace)
+        | (CoreFileMakeExecutable, path :: [], _types) -> target1(start)(path)(FileMakeExecutable)
+        | (CoreFileOpen, path :: [], _types) -> target1(start)(path)(FileOpen)
+        | (CoreFileReadChunk, fileHandle :: count :: [], _types) -> target2(start)(fileHandle)(count)(FileReadChunk)
+        | (CoreFileReadLine, fileHandle :: [], _types) -> target1(start)(fileHandle)(FileReadLine)
+        | (CoreFileClose, fileHandle :: [], _types) -> target1(start)(fileHandle)(FileClose)
+        | (CoreDirectoryEntries, path :: [], _types) -> target1(start)(path)(DirectoryEntries)
+        | (CoreDirectoryCreateAll, path :: [], _types) -> target1(start)(path)(DirectoryCreateAll)
+        | (CoreDirectoryRemoveTree, path :: [], _types) -> target1(start)(path)(DirectoryRemoveTree)
+        | (CoreEnvironmentDirectory(directoryKind), _unit :: [], _types) ->
+            target0(start)(given (target) -> EnvironmentDirectory(target)(directoryKind))
+        | (CoreEnvironmentGet, name :: [], _types) -> target1(start)(name)(EnvironmentGet)
+        | (CoreTextUncons(stringHead), text :: [], _types) ->
+            managedTarget1(start)(text)(if stringHead
+            then TextUnconsText
+            else TextUncons)
+        | (CoreRuneToText, rune :: [], _types) -> managedTarget1(start)(rune)(RuneToText)
+        | (CoreRuneToInt, rune :: [], _types) -> identity(start)(rune)
+        | (CoreRuneFromInt, value :: [], _types) -> managedTarget1(start)(value)(RuneFromInt)
+        | (CoreRuneIsAsciiLetter, rune :: [], _types) -> runeAsciiLetter(start)(rune)
+        | (CoreRuneIsAsciiDigit, rune :: [], _types) -> runeRange(start)(rune)(48)(57)
+        | (CoreRuneIsAsciiWhiteSpace, rune :: [], _types) -> runeAsciiWhiteSpace(start)(rune)
+        | (CoreTextParseInt, text :: [], _types) -> managedTarget1(start)(text)(TextParseInt)
+        | (CoreTextParseFloat, text :: [], _types) -> managedTarget1(start)(text)(TextParseFloat)
+        | (CoreTextFromInt, value :: [], _types) -> managedTarget1(start)(value)(TextFromInt)
+        | (CoreTextFromFloat, value :: [], _types) -> managedTarget1(start)(value)(TextFromFloat)
+        | (CoreTextFormatFloat, value :: precision :: [], _types) -> textFormatFloat(start)(value)(precision)
+        | (CoreTextToHex, value :: [], _types) -> managedTarget1(start)(value)(TextToHex)
+        | (CoreTextAsciiCase(upper), text :: [], _types) ->
+            target1(start)(text)(given (target) ->
+                given (source) -> TextAsciiCase(target)(source)(upper)(false))
+        | (CoreMathToFloat, value :: [], _types) -> target1(start)(value)(IntToFloat)
+        | (CoreMathFloatUnary(name), value :: [], _types) ->
+            target1(start)(value)(given (target) ->
+                given (source) -> FloatUnaryIntrinsic(target)(source)(name))
+        | (CoreMathFloatToInt(intrinsic), value :: [], _types) -> floatToInt(start)(value)(intrinsic)
+        | (CoreMathLibm(name), values, _types) ->
+            target0(start)(given (target) -> CallLibm(target)(name)(values))
+        | (CoreBigIntFromInt, value :: [], _types) -> managedTarget1(start)(value)(BigIntFromInt)
+        | (CoreBigIntToString, value :: [], _types) -> managedTarget1(start)(value)(BigIntToString)
+        | (CoreBigIntToInt, value :: [], _types) -> managedTarget1(start)(value)(BigIntToInt)
+        | (CoreBigIntFromString, value :: [], _types) -> managedTarget1(start)(value)(BigIntFromString)
+        | (CoreBigIntBinary(operation), left :: right :: [], _types) ->
+            target2(start)(left)(right)(given (target) ->
+                given (first) ->
+                    given (second) -> BigIntBinary(target)(first)(second)(operation)(false))
+        | (CoreBigIntCompare, left :: right :: [], _types) -> target2(start)(left)(right)(BigIntCompare)
+        | (CoreRegexCompile, pattern :: [], _types) -> target1(start)(pattern)(RegexCompile)
+        | (CoreRegexCompileError, pattern :: [], _types) -> target1(start)(pattern)(RegexCompileError)
+        | (CoreRegexFind, code :: subject :: from :: [], _types) -> target3(start)(code)(subject)(from)(RegexFind)
+        | (CoreRegexCaptures, code :: subject :: from :: [], _types) -> regexCaptures(start)(code)(subject)(from)
+        | (CoreRegexSubstitute, code :: subject :: replacement :: [], _types) -> rsub(start)(code)(subject)(replacement)
+        | (CoreHttpGet, url :: [], _types) -> target1(start)(url)(CreateHttpGetTask)
+        | (CoreHttpPost, url :: body :: [], _types) -> target2(start)(url)(body)(CreateHttpPostTask)
+        | (CoreTcpConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTcpConnectTask)
+        | (CoreTcpSend, socket :: text :: [], _types) -> target2(start)(socket)(text)(CreateTcpSendTask)
+        | (CoreTcpReceive, socket :: count :: [], _types) -> target2(start)(socket)(count)(CreateTcpReceiveTask)
+        | (CoreTcpClose, socket :: [], _types) -> target1(start)(socket)(CreateTcpCloseTask)
+        | (CoreTcpListen, port :: [], _types) -> target1(start)(port)(CreateTcpListenTask)
+        | (CoreTcpAccept, socket :: [], _types) -> target1(start)(socket)(CreateTcpAcceptTask)
+        | (CoreTcpForkWorkers, workers :: port :: [], _types) -> tcpForkWorkers(start)(workers)(port)
+        | (CoreTcpSetDrainTimeout, timeout :: [], _types) ->
+            unitWithTarget(start)(given (target) -> SetDrainTimeout(target)(timeout))
+        | (CoreTlsConnect, host :: port :: [], _types) -> target2(start)(host)(port)(CreateTlsConnectTask)
+        | (CoreTlsSend, socket :: text :: [], _types) -> target2(start)(socket)(text)(CreateTlsSendTask)
+        | (CoreTlsReceive, socket :: count :: [], _types) -> target2(start)(socket)(count)(CreateTlsReceiveTask)
+        | (CoreTlsClose, socket :: [], _types) -> target1(start)(socket)(CreateTlsCloseTask)
+        | (CoreTlsServerHandshake, socket :: cert :: key :: [], _types) -> tlsServerHandshake(start)(socket)(cert)(key)
+        | (CoreBytesEmpty, _unit :: [], _types) ->
+            target0(start)(given (target) -> BytesEmpty(target)(false))
+        | (CoreBytesSingleton, value :: [], _types) -> managedTarget1(start)(value)(BytesSingleton)
+        | (CoreBytesLength, value :: [], _types) -> target1(start)(value)(BytesLength)
+        | (CoreBytesGet, value :: index :: [], _types) -> target2(start)(value)(index)(BytesGet)
+        | (CoreBytesIndexOf, value :: needle :: from :: [], _types) -> target3(start)(value)(needle)(from)(BytesIndexOf)
+        | (CoreBytesCompare, left :: right :: [], _types) -> target2(start)(left)(right)(BytesCompare)
+        | (CoreBytesScanHash, value :: needle :: from :: [], _types) -> bytesScanHash(start)(value)(needle)(from)
+        | (CoreBytesSubText, value :: from :: count :: [], _types) ->
+            target3(start)(value)(from)(count)(given (target) ->
+                given (bytes) ->
+                    given (offset) ->
+                        given (length) -> BytesSubText(target)(bytes)(offset)(length)(false))
+        | (CoreBytesSubView, value :: from :: count :: [], _types) -> target3(start)(value)(from)(count)(BytesSubView)
+        | (CoreBytesAppend, left :: right :: [], _types) -> managedTarget2(start)(left)(right)(BytesAppend)
+        | (CoreBytesAppendByte, value :: byte :: [], _types) -> managedTarget2(start)(value)(byte)(BytesAppendByte)
+        | (CoreBytesAllocate, count :: [], _types) ->
+            target1(start)(count)(given (target) ->
+                given (length) -> BytesAllocate(target)(length)(false))
+        | (CoreBytesCopyRange, destination :: destinationOffset :: source :: sourceOffset :: count :: [], _types) ->
+            target5(start)(destination)(destinationOffset)(source)(sourceOffset)(count)(
+                given (target) ->
+                    given (first) ->
+                        given (firstOffset) ->
+                            given (second) ->
+                                given (secondOffset) ->
+                                    given (length) ->
+                                        BytesCopyRange(
+                                            target,
+                                            first,
+                                            firstOffset,
+                                            second,
+                                            secondOffset,
+                                            length,
+                                            false,
+                                            false
+                                        )
+            )
+        | (CoreBytesSet, value :: offset :: replacement :: [], _types) ->
+            target3(start)(value)(offset)(replacement)(given (target) ->
+                given (bytes) ->
+                    given (index) ->
+                        given (item) -> BytesSet(target)(bytes)(index)(item)(false)(false))
+        | (CoreBytesSetU16Le, value :: offset :: replacement :: [], _types) ->
+            target3(start)(value)(offset)(replacement)(given (target) ->
+                given (bytes) ->
+                    given (index) ->
+                        given (item) -> BytesSetU16Le(target)(bytes)(index)(item)(false)(false))
+        | (CoreBytesSetU32Le, value :: offset :: replacement :: [], _types) ->
+            target3(start)(value)(offset)(replacement)(given (target) ->
+                given (bytes) ->
+                    given (index) ->
+                        given (item) -> BytesSetU32Le(target)(bytes)(index)(item)(false)(false))
+        | (CoreBytesSetU64Le, value :: offset :: replacement :: [], _types) ->
+            target3(start)(value)(offset)(replacement)(given (target) ->
+                given (bytes) ->
+                    given (index) ->
+                        given (item) -> BytesSetU64Le(target)(bytes)(index)(item)(false)(false))
+        | (CoreBytesFromList, values :: [], _types) -> managedTarget1(start)(values)(BytesFromList)
+        | (CoreBytesFromText, text :: [], _types) -> identity(start)(text)
+        | (CoreBytesHash, value :: [], _types) -> target1(start)(value)(BytesHash)
+        | (CoreBytesU16Le, value :: [], _types) -> managedTarget1(start)(value)(BytesU16Le)
+        | (CoreBytesU32Le, value :: [], _types) -> managedTarget1(start)(value)(BytesU32Le)
+        | (CoreBytesU64Le, value :: [], _types) -> managedTarget1(start)(value)(BytesU64Le)
+        | (CoreBytesGetU16Le, value :: offset :: [], _types) -> target2(start)(value)(offset)(BytesGetU16Le)
+        | (CoreBytesGetU32Le, value :: offset :: [], _types) -> target2(start)(value)(offset)(BytesGetU32Le)
+        | (CoreBytesGetU64Le, value :: offset :: [], _types) -> target2(start)(value)(offset)(BytesGetU64Le)
+        | (CoreUIntToInt, value :: [], _types) -> identity(start)(value)
+        | (CoreUIntFromInt, value :: [], _types) -> uintFromInt(start)(value)
+        | (CoreSpawnProcess, executable :: args :: [], _types) -> target2(start)(executable)(args)(SpawnProcess)
+        | (CoreProcessWriteStdin, process :: text :: [], _types) -> target2(start)(process)(text)(ProcessWriteStdin)
+        | (CoreProcessReadStdoutLine, process :: [], _types) -> target1(start)(process)(ProcessReadStdoutLine)
+        | (CoreProcessReadStderrLine, process :: [], _types) -> target1(start)(process)(ProcessReadStderrLine)
+        | (CoreProcessWaitForExit, process :: [], _types) -> target1(start)(process)(ProcessWaitForExit)
+        | (CoreProcessKill, process :: [], _types) -> target1(start)(process)(ProcessKill)
+        | _ -> emissionFailure(start)("builtin arguments do not match the registered arity")
