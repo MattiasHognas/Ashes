@@ -9756,13 +9756,8 @@ public sealed partial class Lowering
         Emit(new IrInst.SaveArenaState(callWmCursorSlot, callWmEndSlot));
 
         // For non-TCO calls, sub-expressions are NOT in tail position
-        var savedTailPos = _tcoCtx?.InTailPosition ?? false;
-        if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
-
+        using TcoTailPositionScope tailPosition = new(_tcoCtx);
         (int currentTemp, TypeRef currentType) = LowerCallRoot(rootExpr, collectedArgs);
-
-        if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-
         currentType = Prune(currentType);
         if (currentType is TypeRef.TNever)
         {
@@ -9785,6 +9780,7 @@ public sealed partial class Lowering
         {
             return earlyResult;
         }
+        tailPosition.Restore();
 
         UnifyExpectedType(currentType, request.ExpectedType);
         var callResultType = Prune(currentType);
