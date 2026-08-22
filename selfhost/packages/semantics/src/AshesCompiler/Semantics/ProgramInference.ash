@@ -1449,7 +1449,7 @@ and expressionDependsOnTraitMethod traitName methodName expression =
             then true
             else matchCasesDependOnTraitMethod(traitName)(methodName)(cases)
         | ExprAwait(task) -> expressionDependsOnTraitMethod(traitName)(methodName)(task)
-        | ExprRecord(_name, fields) -> expressionFieldsDependOnTraitMethod(traitName)(methodName)(fields)
+        | ExprRecord(_name, fields, _isMultiline) -> expressionFieldsDependOnTraitMethod(traitName)(methodName)(fields)
         | ExprRecordUpdate(target, fields) ->
             if expressionDependsOnTraitMethod(traitName)(methodName)(target)
             then true

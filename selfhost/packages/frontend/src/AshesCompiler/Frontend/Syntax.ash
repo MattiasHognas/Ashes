@@ -133,7 +133,7 @@ type Expr =
     | ExprCons(Expr, Expr)
     | ExprMatch(Expr, List((Pattern, Expr, Maybe(Expr))), Maybe(Int))
     | ExprAwait(Expr)
-    | ExprRecord(Str, List((Str, Expr)))
+    | ExprRecord(Str, List((Str, Expr)), Bool)
     | ExprRecordUpdate(Expr, List((Str, Expr)))
     | ExprPerform(Expr)
     | ExprHandle(Expr, List((Maybe(Str), Str, List(Pattern), Expr)))

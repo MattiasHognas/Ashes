@@ -540,10 +540,13 @@ and rewriteExpression project moduleName boundary locals expression =
             task
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
             |> ExprAwait
-        | ExprRecord(name, fields) ->
+        | ExprRecord(name, fields, isMultiline) ->
             fields
             |> rewriteExpressionFields(project)(moduleName)(boundary)(locals)
-            |> ExprRecord(rewriteTypeName(project)(moduleName)(boundary)([])(name))
+            |> (given (rewrittenFields) ->
+                ExprRecord(
+                    rewriteTypeName(project)(moduleName)(boundary)([])(name)
+                )(rewrittenFields)(isMultiline))
         | ExprRecordUpdate(value, fields) ->
             fields
             |> rewriteExpressionFields(project)(moduleName)(boundary)(locals)

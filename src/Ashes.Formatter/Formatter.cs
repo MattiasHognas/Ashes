@@ -929,7 +929,7 @@ public static class Formatter
                 && IsSingleLine(c.Arg, preferPipelines),
             Expr.Await awaitExpr => IsSingleLine(awaitExpr.Task, preferPipelines),
             Expr.Perform perform => IsSingleLine(perform.Operation, preferPipelines),
-            Expr.RecordLit rl => rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
+            Expr.RecordLit rl => !rl.IsMultiline && rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
             Expr.RecordUpdate ru => IsSingleLine(ru.Target, preferPipelines) && ru.Updates.All(f => IsSingleLine(f.Value, preferPipelines)),
             _ => false
         };
@@ -1591,7 +1591,7 @@ public static class Formatter
                 }
 
             case Expr.RecordLit rl:
-                WriteRecordLitInline(sb, rl, indent, preferPipelines, options);
+                WriteRecordLit(sb, rl, indent, preferPipelines, options);
                 return;
 
             case Expr.RecordUpdate ru:
@@ -1917,11 +1917,33 @@ public static class Formatter
         sb.Append(']');
     }
 
-    private static void WriteRecordLitInline(StringBuilder sb, Expr.RecordLit rl, int indent, bool preferPipelines, FormattingOptions options)
+    private static void WriteRecordLit(StringBuilder sb, Expr.RecordLit rl, int indent, bool preferPipelines, FormattingOptions options)
     {
         // Brace-free construction: TypeName(field = value, ...)
         sb.Append(rl.TypeName);
         sb.Append('(');
+        if (rl.IsMultiline)
+        {
+            sb.Append(options.NewLine);
+            for (int index = 0; index < rl.Fields.Count; index++)
+            {
+                WriteIndent(sb, indent + options.IndentSize, options);
+                sb.Append(rl.Fields[index].Name);
+                sb.Append(" = ");
+                WriteExpr(sb, rl.Fields[index].Value, indent + options.IndentSize, 0, preferPipelines, options);
+                if (index < rl.Fields.Count - 1)
+                {
+                    sb.Append(',');
+                }
+
+                sb.Append(options.NewLine);
+            }
+
+            WriteIndent(sb, indent, options);
+            sb.Append(')');
+            return;
+        }
+
         for (int i = 0; i < rl.Fields.Count; i++)
         {
             if (i > 0)

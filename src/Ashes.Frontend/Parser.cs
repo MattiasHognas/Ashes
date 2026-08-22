@@ -2182,7 +2182,7 @@ public sealed class Parser
         // It is recognised only when the first argument is `ident =` (a bare `=`, not `==`).
         if (NamedArgumentFollows())
         {
-            return ParseRecordConstruction(function, start);
+            return ParseRecordConstruction(function, start, leftParen.End);
         }
 
         List<Expr> arguments = [];
@@ -2260,7 +2260,7 @@ public sealed class Parser
     /// record construction, so <paramref name="callee"/> must be a simple unqualified type-name
     /// identifier; otherwise a diagnostic is reported and recovery continues.
     /// </summary>
-    private Expr ParseRecordConstruction(Expr callee, int start)
+    private Expr ParseRecordConstruction(Expr callee, int start, int leftParenEnd)
     {
         string typeName;
         if (callee is Expr.Var v && v.Name.Length > 0 && char.IsUpper(v.Name[0]))
@@ -2273,6 +2273,7 @@ public sealed class Parser
             typeName = (callee as Expr.Var)?.Name ?? string.Empty;
         }
 
+        int firstFieldStart = _current.Position;
         var fields = new List<(string Name, Expr Value)>();
         var fieldName = Consume(TokenKind.Ident).Text;
         Consume(TokenKind.Equals);
@@ -2289,7 +2290,10 @@ public sealed class Parser
         }
 
         Consume(TokenKind.RParen);
-        return RegisterExpr(new Expr.RecordLit(typeName, fields), start, LastConsumedEnd);
+        return RegisterExpr(new Expr.RecordLit(typeName, fields)
+        {
+            IsMultiline = ContainsLineBreak(leftParenEnd, firstFieldStart),
+        }, start, LastConsumedEnd);
     }
 
     /// <summary>

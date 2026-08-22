@@ -200,6 +200,7 @@ Spacing
   line, indented one level; commas follow every argument except the last; and the closing parenthesis
   aligns with the call expression's indentation. This applies recursively to nested calls and does not
   change the language's curried application semantics.
+- The same layout rule applies to the named arguments of record construction.
 - No line ends in trailing whitespace.
 
 Example:

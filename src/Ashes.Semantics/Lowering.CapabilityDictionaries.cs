@@ -562,7 +562,7 @@ public sealed partial class Lowering
                 return MapBindingExpression(e, f);
             case Expr.TupleLit x: return new Expr.TupleLit(x.Elements.Select(f).ToList());
             case Expr.ListLit x: return new Expr.ListLit(x.Elements.Select(f).ToList()) { IsMultiline = x.IsMultiline };
-            case Expr.RecordLit x: return new Expr.RecordLit(x.TypeName, x.Fields.Select(fld => (fld.Name, f(fld.Value))).ToList());
+            case Expr.RecordLit x: return new Expr.RecordLit(x.TypeName, x.Fields.Select(fld => (fld.Name, f(fld.Value))).ToList()) { IsMultiline = x.IsMultiline };
             case Expr.RecordUpdate x: return new Expr.RecordUpdate(f(x.Target), x.Updates.Select(u => (u.Name, f(u.Value))).ToList());
             case Expr.Match x:
                 return new Expr.Match(

@@ -323,10 +323,10 @@ and rewriteTraitMethodReferences shapes expression =
             task
             |> rewriteTraitMethodReferences(shapes)
             |> ExprAwait
-        | ExprRecord(name, fields) ->
+        | ExprRecord(name, fields, isMultiline) ->
             fields
             |> rewriteTraitMethodFields(shapes)
-            |> ExprRecord(name)
+            |> (given (rewritten) -> ExprRecord(name)(rewritten)(isMultiline))
         | ExprRecordUpdate(value, fields) ->
             fields
             |> rewriteTraitMethodFields(shapes)
