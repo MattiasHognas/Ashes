@@ -14,4 +14,5 @@ import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.ModuleInterface
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.ModulePlan
+import AshesCompiler.Frontend.InlineModules
 Unit
