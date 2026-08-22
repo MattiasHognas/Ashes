@@ -12,6 +12,7 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
+import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -21,7 +22,9 @@ import AshesCompiler.Semantics.Unification
 export (
     type CoreLoweringError(..),
     type CoreLoweringResult(..),
+    type CoreConstructorLayout(..),
     value lowerCoreExpression,
+    value lowerCoreExpressionWithLayouts,
     value lowerCoreRecursiveGroup,
 )
 
@@ -29,6 +32,9 @@ type CoreLoweringError =
     | UnknownLoweringBinding(Str)
     | CoreCallRequiresFunction(SemanticType)
     | CoreCallTypeMismatch(UnificationError)
+    | CoreConstructorArityMismatch(Str, Int, Int)
+    | UnknownCoreRecordField(Str, Str)
+    | CoreRecordUpdateRequiresRecord(SemanticType)
     | UnsupportedCoreLoweringPattern(Str)
     | CoreRecursiveBindingRequiresFunction(Str)
     | UnsupportedCoreLoweringExpression(Str)
@@ -38,6 +44,14 @@ type CoreLoweringResult =
     | program: Maybe(IrProgram)
     | semanticType: SemanticType
     | error: Maybe(CoreLoweringError)
+
+type CoreConstructorLayout =
+    | name: Str
+    | tag: Int
+    | scheme: TypeScheme
+    | fieldNames: List(Str)
+    | isZeroCost: Bool
+    deriving {Eq, Show}
 
 type CoreBindingLocation =
     | CoreLocal(Int)
@@ -53,6 +67,7 @@ type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
     | functions: List(IrFunction)
     | bindings: List(CoreBinding)
+    | constructorLayouts: List(CoreConstructorLayout)
     | nextTemp: Int
     | nextLocal: Int
     | nextLambdaId: Int
@@ -152,6 +167,34 @@ type FunctionTypeResolution =
     | resultType: SemanticType
     | error: Maybe(CoreLoweringError)
 
+type LoweredCoreValues =
+    | state: CoreLoweringState
+    | temps: List(Int)
+    | semanticTypes: List(SemanticType)
+    | error: Maybe(CoreLoweringError)
+
+type CoreConstructorShape =
+    | state: CoreLoweringState
+    | layout: CoreConstructorLayout
+    | parameterTypes: List(SemanticType)
+    | resultType: SemanticType
+
+type CoreCallSpine =
+    | root: Expr
+    | arguments: List(Expr)
+
+type CoreRecordArguments =
+    | expressions: List(Expr)
+    | error: Maybe(CoreLoweringError)
+
+type FreshCoreTypes =
+    | state: CoreLoweringState
+    | semanticTypes: List(SemanticType)
+
+type CorePatternField =
+    | index: Int
+    | semanticType: SemanticType
+
 let emptyScheme semanticType =
     TypeScheme(
         quantified = [],
@@ -159,11 +202,12 @@ let emptyScheme semanticType =
         constraints = []
     )
 
-let initialState unit =
+let initialStateWithLayouts layouts unit =
     CoreLoweringState(
         reversedInstructions = [],
         functions = [],
         bindings = [],
+        constructorLayouts = layouts,
         nextTemp = 0,
         nextLocal = 0,
         nextLambdaId = 0,
@@ -173,6 +217,8 @@ let initialState unit =
         typeSupply = initialTypeVariableSupply(Unit),
         substitution = []
     )
+
+let initialState unit = initialStateWithLayouts([])(unit)
 
 let withNextTemp nextTemp (state: CoreLoweringState) = state with nextTemp = nextTemp
 
@@ -294,6 +340,119 @@ let bindType left right state =
                 | UnificationResult { substitution = added, error = None } ->
                     (withSubstitution(append(added)(existing))(state), None)
                 | UnificationResult { error = Some(error) } -> (state, Some(CoreCallTypeMismatch(error)))
+
+let recursive findConstructorLayout (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | (CoreConstructorLayout { name = candidate } as layout) :: rest ->
+            if name == candidate
+            then Some(layout)
+            else findConstructorLayout(name)(rest)
+
+let constructorLayout name state =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts } -> findConstructorLayout(name)(layouts)
+
+let recursive splitConstructorType semanticType reversed =
+    match semanticType with
+        | SemFunction(parameterType, resultType, _row) -> splitConstructorType(resultType)(parameterType :: reversed)
+        | resultType -> (reverse(reversed), resultType)
+
+let instantiateConstructor layout state =
+    match (layout, state) with
+        | (CoreConstructorLayout { scheme = scheme }, CoreLoweringState { typeSupply = supply }) ->
+            match instantiate(scheme)(supply) with
+                | InstantiationResult { semanticType = semanticType, supply = nextSupply } ->
+                    match splitConstructorType(semanticType)([]) with
+                        | (parameterTypes, resultType) ->
+                            CoreConstructorShape(
+                                state = withTypeSupply(nextSupply)(state),
+                                layout = layout,
+                                parameterTypes = parameterTypes,
+                                resultType = resultType
+                            )
+
+let recursive coreListLength values =
+    match values with
+        | [] -> 0
+        | _ :: rest -> 1 + coreListLength(rest)
+
+let constructorResultName layout =
+    match layout with
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } ->
+            match splitConstructorType(body)([]) with
+                | (_parameters, SemNamed(_symbolId, name, _arguments)) -> Some(name)
+                | _ -> None
+
+let constructorArity layout =
+    match layout with
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } ->
+            match splitConstructorType(body)([]) with
+                | (parameterTypes, _resultType) -> coreListLength(parameterTypes)
+
+let recursive findRecordLayout (typeName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | (CoreConstructorLayout { fieldNames = _field :: _rest } as layout) :: tail ->
+            match constructorResultName(layout) with
+                | Some(candidate) ->
+                    if candidate == typeName
+                    then Some(layout)
+                    else findRecordLayout(typeName)(tail)
+                | None -> findRecordLayout(typeName)(tail)
+        | _layout :: tail -> findRecordLayout(typeName)(tail)
+
+let recordLayout typeName state =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts } -> findRecordLayout(typeName)(layouts)
+
+let failedCoreValues state error =
+    LoweredCoreValues(
+        state = state,
+        temps = [],
+        semanticTypes = [],
+        error = Some(error)
+    )
+
+let finishCoreValues state reversedTemps reversedTypes =
+    LoweredCoreValues(
+        state = state,
+        temps = reverse(reversedTemps),
+        semanticTypes = reverse(reversedTypes),
+        error = None
+    )
+
+let recursive lowerCoreValuesInto expressions lower state reversedTemps reversedTypes =
+    match expressions with
+        | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
+        | expression :: rest ->
+            match lower(expression)(state) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+                | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
+                    lowerCoreValuesInto(
+                        rest,
+                        lower,
+                        nextState,
+                        temp :: reversedTemps,
+                        semanticType :: reversedTypes
+                    )
+
+let lowerCoreValues expressions lower state = lowerCoreValuesInto(expressions)(lower)(state)([])([])
+
+let recursive bindCoreValueTypes expected actual state =
+    match (expected, actual) with
+        | ([], []) -> (state, None)
+        | (expectedHead :: expectedTail, actualHead :: actualTail) ->
+            match bindType(expectedHead)(actualHead)(state) with
+                | (failedState, Some(error)) -> (failedState, Some(error))
+                | (typedState, None) -> bindCoreValueTypes(expectedTail)(actualTail)(typedState)
+        | _ ->
+            (state, Some(actual
+            |> coreListLength
+            |> TypeArityMismatch(
+                coreListLength(expected)
+            )
+            |> CoreCallTypeMismatch))
 
 let lowerConstant kind semanticType state =
     match freshTemp(state) with
@@ -899,21 +1058,415 @@ let finishPatternComparison valueTemp valueType failLabel comparison loweredCons
                                 error = None
                             )
 
+let recursive coreRecordPatterns fields =
+    match fields with
+        | [] -> []
+        | (_fieldName, pattern) :: rest -> pattern :: coreRecordPatterns(rest)
+
+let recursive prepareCorePatternBindings pending seen state =
+    match pending with
+        | [] -> state
+        | pattern :: rest ->
+            match pattern with
+                | PatternAt(_span, inner) -> prepareCorePatternBindings(inner :: rest)(seen)(state)
+                | PatternVar(name) ->
+                    if containsName(name)(seen)
+                    then prepareCorePatternBindings(rest)(seen)(state)
+                    else
+                        match freshType(state) with
+                            | FreshType { state = typedState, semanticType = semanticType } ->
+                                match freshLocal(typedState) with
+                                    | FreshLocal { state = localState, local = local } ->
+                                        localState
+                                        |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
+                                        |> prepareCorePatternBindings(rest)(name :: seen)
+                | PatternCons(head, tail) -> prepareCorePatternBindings(head :: tail :: rest)(seen)(state)
+                | PatternTuple(elements) ->
+                    prepareCorePatternBindings(append(elements)(rest))(seen)(state)
+                | PatternConstructor(_name, elements) ->
+                    prepareCorePatternBindings(append(elements)(rest))(seen)(state)
+                | PatternRecord(_name, fields) ->
+                    prepareCorePatternBindings(append(coreRecordPatterns(fields))(rest))(seen)(state)
+                | PatternAs(inner, name) ->
+                    if containsName(name)(seen)
+                    then prepareCorePatternBindings(inner :: rest)(seen)(state)
+                    else
+                        match freshType(state) with
+                            | FreshType { state = typedState, semanticType = semanticType } ->
+                                match freshLocal(typedState) with
+                                    | FreshLocal { state = localState, local = local } ->
+                                        localState
+                                        |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
+                                        |> prepareCorePatternBindings(inner :: rest)(name :: seen)
+                | PatternOr(first :: _alternatives) -> prepareCorePatternBindings(first :: rest)(seen)(state)
+                | _ -> prepareCorePatternBindings(rest)(seen)(state)
+
+let preparePattern pattern state = prepareCorePatternBindings([pattern])([])(state)
+
 let lowerPatternVariable name valueTemp valueType state =
-    match freshLocal(state) with
-        | FreshLocal { state = localState, local = local } ->
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            match lookupBinding(name)(bindings) with
+                | Some(CoreBinding { name = _bindingName, scheme = TypeScheme { quantified = _quantified, body = bindingType, constraints = _constraints }, location = CoreLocal(local) }) ->
+                    match bindType(bindingType)(valueType)(state) with
+                        | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                        | (typedState, None) ->
+                            LoweredCorePattern(
+                                state = emit(StoreLocal(local)(valueTemp))(typedState),
+                                error = None
+                            )
+                | None ->
+                    LoweredCorePattern(
+                        state = state,
+                        error = Some(UnsupportedCoreLoweringPattern("missing prepared variable " + name))
+                    )
+                | Some(_binding) ->
+                    LoweredCorePattern(
+                        state = state,
+                        error = Some(UnsupportedCoreLoweringPattern("invalid prepared variable " + name))
+                    )
+
+let recursive freshCoreTypes count reversed state =
+    if count <= 0
+    then FreshCoreTypes(state = state, semanticTypes = reverse(reversed))
+    else
+        match freshType(state) with
+            | FreshType { state = nextState, semanticType = semanticType } ->
+                freshCoreTypes(
+                    count - 1,
+                    semanticType :: reversed,
+                    nextState
+                )
+
+let finishPatternNonZero valueTemp failLabel zero =
+    match zero with
+        | LoweredCoreValue { state = state, temp = zeroTemp } ->
+            match freshTemp(state) with
+                | FreshTemp { state = compareState, temp = compareTemp } ->
+                    LoweredCorePattern(
+                        state = compareState
+                        |> emit(CmpIntNe(compareTemp)(valueTemp)(zeroTemp))
+                        |> emit(JumpIfFalse(compareTemp)(failLabel)),
+                        error = None
+                    )
+
+let requirePatternNonZero valueTemp failLabel state =
+    state
+    |> lowerConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
+    |> finishPatternNonZero(valueTemp)(failLabel)
+
+let finishEmptyListPattern valueTemp valueType failLabel fresh =
+    match fresh with
+        | FreshType { state = typedState, semanticType = elementType } ->
+            match bindType(valueType)(SemList(elementType))(typedState) with
+                | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                | (state, None) ->
+                    state
+                    |> lowerConstant(given (target) -> LoadConstInt(target)(0))(SemInt)
+                    |> finishPatternComparison(valueTemp)(SemInt)(failLabel)(CmpIntEq)
+
+let lowerEmptyListPattern valueTemp valueType failLabel state =
+    state
+    |> freshType
+    |> finishEmptyListPattern(valueTemp)(valueType)(failLabel)
+
+let lowerLoadedPattern pattern valueType failLabel lowerPattern loaded =
+    match loaded with
+        | FreshTemp { state = state, temp = temp } -> lowerPattern(pattern)(temp)(valueType)(failLabel)(state)
+
+let loadTuplePatternField valueTemp index pattern valueType failLabel lowerPattern state =
+    state
+    |> freshTemp
+    |> (given (fresh) ->
+        match fresh with
+            | FreshTemp { state = loadState, temp = temp } ->
+                FreshTemp(
+                    state = emit(LoadMemOffset(temp)(valueTemp)(index * 8))(loadState),
+                    temp = temp
+                ))
+    |> lowerLoadedPattern(pattern)(valueType)(failLabel)(lowerPattern)
+
+let recursive lowerTuplePatternFields patterns types valueTemp index failLabel lowerPattern result =
+    match (patterns, types, result) with
+        | (_patterns, _types, LoweredCorePattern { error = Some(_error) }) -> result
+        | ([], [], _) -> result
+        | (pattern :: patternRest, semanticType :: typeRest, LoweredCorePattern { state = state }) ->
+            state
+            |> loadTuplePatternField(valueTemp)(index)(pattern)(semanticType)(failLabel)(lowerPattern)
+            |> lowerTuplePatternFields(patternRest)(typeRest)(valueTemp)(index + 1)(failLabel)(lowerPattern)
+        | _ -> result
+
+let finishTuplePattern pattern valueTemp valueType failLabel lowerPattern fresh =
+    match (pattern, fresh) with
+        | (PatternTuple(patterns), FreshCoreTypes { state = state, semanticTypes = types }) ->
+            match bindType(valueType)(SemTuple(types))(state) with
+                | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                | (typedState, None) ->
+                    let lowerFields = lowerTuplePatternFields(patterns)(types)(valueTemp)(0)(failLabel)
+                    in lowerFields(lowerPattern)(LoweredCorePattern(state = typedState, error = None))
+        | (_pattern, FreshCoreTypes { state = state }) ->
             LoweredCorePattern(
-                state = localState
-                |> emit(StoreLocal(local)(valueTemp))
-                |> addBinding(name)(emptyScheme(valueType))(CoreLocal(local)),
+                state = state,
+                error = Some(UnsupportedCoreLoweringPattern("tuple"))
+            )
+
+let lowerTuplePattern pattern valueTemp valueType failLabel lowerPattern state =
+    match pattern with
+        | PatternTuple(patterns) ->
+            state
+            |> freshCoreTypes(coreListLength(patterns))([])
+            |> finishTuplePattern(pattern)(valueTemp)(valueType)(failLabel)(lowerPattern)
+        | _ -> LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("tuple")))
+
+let finishConsPatternTail tailPattern tailTemp listType failLabel lowerPattern headResult =
+    match headResult with
+        | LoweredCorePattern { error = Some(_error) } -> headResult
+        | LoweredCorePattern { state = state, error = None } ->
+            lowerPattern(
+                tailPattern,
+                tailTemp,
+                listType,
+                failLabel,
+                state
+            )
+
+let lowerConsPatternFields headPattern tailPattern valueTemp elementType failLabel lowerPattern checked =
+    match checked with
+        | LoweredCorePattern { error = Some(_error) } -> checked
+        | LoweredCorePattern { state = state, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = headState, temp = headTemp } ->
+                    match freshTemp(headState) with
+                        | FreshTemp { state = tailState, temp = tailTemp } ->
+                            let loadedState =
+                                tailState
+                                |> emit(LoadMemOffset(headTemp)(valueTemp)(0))
+                                |> emit(LoadMemOffset(tailTemp)(valueTemp)(8))
+                            in
+                                loadedState
+                                |> lowerPattern(headPattern)(headTemp)(elementType)(failLabel)
+                                |> finishConsPatternTail(
+                                    tailPattern,
+                                    tailTemp,
+                                    SemList(elementType),
+                                    failLabel,
+                                    lowerPattern
+                                )
+
+let finishConsPattern headPattern tailPattern valueTemp valueType failLabel lowerPattern fresh =
+    match fresh with
+        | FreshType { state = state, semanticType = elementType } ->
+            match bindType(valueType)(SemList(elementType))(state) with
+                | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                | (typedState, None) ->
+                    typedState
+                    |> requirePatternNonZero(valueTemp)(failLabel)
+                    |> lowerConsPatternFields(headPattern)(tailPattern)(valueTemp)(elementType)(failLabel)(lowerPattern)
+
+let lowerConsPattern headPattern tailPattern valueTemp valueType failLabel lowerPattern state =
+    state
+    |> freshType
+    |> finishConsPattern(headPattern)(tailPattern)(valueTemp)(valueType)(failLabel)(lowerPattern)
+
+let lowerAdtPatternField valueTemp index pattern semanticType failLabel lowerPattern result =
+    match result with
+        | LoweredCorePattern { error = Some(_error) } -> result
+        | LoweredCorePattern { state = state, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = loadState, temp = fieldTemp } ->
+                    loadState
+                    |> emit(GetAdtField(fieldTemp)(valueTemp)(index))
+                    |> lowerPattern(pattern)(fieldTemp)(semanticType)(failLabel)
+
+let recursive lowerAdtPatternFields patterns types valueTemp index failLabel lowerPattern result =
+    match (patterns, types) with
+        | ([], []) -> result
+        | (pattern :: patternRest, semanticType :: typeRest) ->
+            result
+            |> lowerAdtPatternField(valueTemp)(index)(pattern)(semanticType)(failLabel)(lowerPattern)
+            |> lowerAdtPatternFields(patternRest)(typeRest)(valueTemp)(index + 1)(failLabel)(lowerPattern)
+        | _ -> result
+
+let finishConstructorTag valueTemp tag failLabel state =
+    match freshTemp(state) with
+        | FreshTemp { state = tagState, temp = tagTemp } ->
+            tagState
+            |> emit(GetAdtTag(tagTemp)(valueTemp))
+            |> lowerConstant(given (target) -> LoadConstInt(target)(tag))(SemInt)
+            |> finishPatternComparison(tagTemp)(SemInt)(failLabel)(CmpIntEq)
+
+let lowerZeroCostPattern patterns parameterTypes valueTemp failLabel lowerPattern state =
+    match (patterns, parameterTypes) with
+        | (pattern :: [], semanticType :: []) -> lowerPattern(pattern)(valueTemp)(semanticType)(failLabel)(state)
+        | _ ->
+            LoweredCorePattern(
+                state = state,
+                error = Some(UnsupportedCoreLoweringPattern("zero-cost constructor arity"))
+            )
+
+let finishConstructorPattern patterns valueTemp valueType failLabel lowerPattern shape =
+    match shape with
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { isZeroCost = true }, parameterTypes = parameterTypes, resultType = resultType } ->
+            match bindType(valueType)(resultType)(state) with
+                | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                | (typedState, None) ->
+                    lowerZeroCostPattern(
+                        patterns,
+                        parameterTypes,
+                        valueTemp,
+                        failLabel,
+                        lowerPattern,
+                        typedState
+                    )
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag }, parameterTypes = parameterTypes, resultType = resultType } ->
+            if coreListLength(patterns) != coreListLength(parameterTypes)
+            then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
+            else
+                match bindType(valueType)(resultType)(state) with
+                    | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                    | (typedState, None) ->
+                        typedState
+                        |> finishConstructorTag(valueTemp)(tag)(failLabel)
+                        |> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)
+
+let lowerConstructorPattern name patterns valueTemp valueType failLabel lowerPattern state =
+    match constructorLayout(name)(state) with
+        | None ->
+            LoweredCorePattern(
+                state = state,
+                error = Some(UnsupportedCoreLoweringPattern("unknown constructor " + name))
+            )
+        | Some(layout) ->
+            state
+            |> instantiateConstructor(layout)
+            |> finishConstructorPattern(patterns)(valueTemp)(valueType)(failLabel)(lowerPattern)
+
+let recursive findPatternField (name: Str) (fieldNames: List(Str)) (fieldTypes: List(SemanticType)) index =
+    match (fieldNames, fieldTypes) with
+        | (fieldName :: fieldRest, fieldType :: typeRest) ->
+            if name == fieldName
+            then Some(CorePatternField(index = index, semanticType = fieldType))
+            else findPatternField(name)(fieldRest)(typeRest)(index + 1)
+        | _ -> None
+
+let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp failLabel lowerPattern result =
+    match (fields, result) with
+        | ([], _) -> result
+        | (_fields, LoweredCorePattern { error = Some(_error) }) -> result
+        | ((fieldName, pattern) :: rest, LoweredCorePattern { state = state, error = None }) ->
+            match findPatternField(fieldName)(fieldNames)(fieldTypes)(0) with
+                | None ->
+                    LoweredCorePattern(state = state, error = fieldName
+                    |> UnknownCoreRecordField("record pattern")
+                    |> Some)
+                | Some(CorePatternField { index = index, semanticType = semanticType }) ->
+                    result
+                    |> lowerAdtPatternField(valueTemp)(index)(pattern)(semanticType)(failLabel)(lowerPattern)
+                    |> lowerRecordPatternFields(rest)(fieldNames)(fieldTypes)(valueTemp)(failLabel)(lowerPattern)
+
+let finishRecordPattern fields valueTemp valueType failLabel lowerPattern shape =
+    match shape with
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, fieldNames = fieldNames }, parameterTypes = fieldTypes, resultType = resultType } ->
+            match bindType(valueType)(resultType)(state) with
+                | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                | (typedState, None) ->
+                    typedState
+                    |> finishConstructorTag(valueTemp)(tag)(failLabel)
+                    |> lowerRecordPatternFields(fields)(fieldNames)(fieldTypes)(valueTemp)(failLabel)(lowerPattern)
+
+let lowerRecordPattern name fields valueTemp valueType failLabel lowerPattern state =
+    match constructorLayout(name)(state) with
+        | None ->
+            LoweredCorePattern(
+                state = state,
+                error = Some(UnsupportedCoreLoweringPattern("unknown record " + name))
+            )
+        | Some(layout) ->
+            state
+            |> instantiateConstructor(layout)
+            |> finishRecordPattern(fields)(valueTemp)(valueType)(failLabel)(lowerPattern)
+
+let finishAsPattern name valueTemp valueType inner =
+    match inner with
+        | LoweredCorePattern { error = Some(_error) } -> inner
+        | LoweredCorePattern { state = state, error = None } -> lowerPatternVariable(name)(valueTemp)(valueType)(state)
+
+let finishOrAlternative successLabel result =
+    match result with
+        | LoweredCorePattern { error = Some(_error) } -> result
+        | LoweredCorePattern { state = state, error = None } ->
+            LoweredCorePattern(
+                state = emit(Jump(successLabel))(state),
                 error = None
             )
+
+let labelOrAlternative nextLabel lowered =
+    match lowered with
+        | LoweredCorePattern { state = state, error = error } ->
+            LoweredCorePattern(
+                state = emit(Label(nextLabel))(state),
+                error = error
+            )
+
+let recursive lowerOrAlternatives alternatives valueTemp valueType failLabel successLabel lowerPattern result =
+    match (alternatives, result) with
+        | (_alternatives, LoweredCorePattern { error = Some(_error) }) -> result
+        | ([], _) -> result
+        | (alternative :: [], LoweredCorePattern { state = state, error = None }) ->
+            match lowerPattern(alternative)(valueTemp)(valueType)(failLabel)(state) with
+                | LoweredCorePattern { state = finalState, error = error } ->
+                    LoweredCorePattern(
+                        state = emit(Label(successLabel))(finalState),
+                        error = error
+                    )
+        | (alternative :: rest, LoweredCorePattern { state = state, error = None }) ->
+            match freshLabel("pattern_or_next")(state) with
+                | FreshLabel { state = labelState, label = nextLabel } ->
+                    labelState
+                    |> lowerPattern(alternative)(valueTemp)(valueType)(nextLabel)
+                    |> finishOrAlternative(successLabel)
+                    |> labelOrAlternative(nextLabel)
+                    |> lowerOrAlternatives(rest)(valueTemp)(valueType)(failLabel)(successLabel)(lowerPattern)
+
+let lowerOrPattern alternatives valueTemp valueType failLabel lowerPattern state =
+    match freshLabel("pattern_or_match")(state) with
+        | FreshLabel { state = labelState, label = successLabel } ->
+            let lowerAlternatives = lowerOrAlternatives(alternatives)(valueTemp)(valueType)(failLabel)(successLabel)
+            in lowerAlternatives(lowerPattern)(LoweredCorePattern(state = labelState, error = None))
 
 let recursive lowerPattern pattern valueTemp valueType failLabel state =
     match pattern with
         | PatternAt(_span, inner) -> lowerPattern(inner)(valueTemp)(valueType)(failLabel)(state)
         | PatternWildcard -> LoweredCorePattern(state = state, error = None)
         | PatternVar(name) -> lowerPatternVariable(name)(valueTemp)(valueType)(state)
+        | PatternEmptyList -> lowerEmptyListPattern(valueTemp)(valueType)(failLabel)(state)
+        | PatternCons(head, tail) -> lowerConsPattern(head)(tail)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
+        | PatternTuple(_elements) -> lowerTuplePattern(pattern)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
+        | PatternConstructor(name, patterns) ->
+            lowerConstructorPattern(
+                name,
+                patterns,
+                valueTemp,
+                valueType,
+                failLabel,
+                lowerPattern,
+                state
+            )
+        | PatternRecord(name, fields) ->
+            lowerRecordPattern(
+                name,
+                fields,
+                valueTemp,
+                valueType,
+                failLabel,
+                lowerPattern,
+                state
+            )
+        | PatternAs(inner, name) ->
+            state
+            |> lowerPattern(inner)(valueTemp)(valueType)(failLabel)
+            |> finishAsPattern(name)(valueTemp)(valueType)
+        | PatternOr(alternatives) -> lowerOrPattern(alternatives)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
         | PatternInt(value) ->
             state
             |> lowerConstant(given (target) -> LoadConstInt(target)(value))(SemInt)
@@ -981,6 +1534,7 @@ let lowerMatchArm pattern body guard failLabel lower plan =
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
+                    |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
                     |> lowerMatchGuard(guard)(failLabel)(lower)
                     |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(outerBindings)(lower)
@@ -1323,6 +1877,442 @@ let lowerLetRecursive name value body lower state =
             |> relabelSingleRecursive(lambdaId)
             |> lowerPreparedRecursiveGroup([(name, value)])(body)(lower)(outerBindings)
 
+let recursive emitTupleFields baseTemp index temps state =
+    match temps with
+        | [] -> state
+        | temp :: rest ->
+            state
+            |> emit(StoreMemOffset(baseTemp)(index * 8)(temp))
+            |> emitTupleFields(baseTemp)(index + 1)(rest)
+
+let finishTupleLowering lowered =
+    match lowered with
+        | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValues { state = state, temps = temps, semanticTypes = semanticTypes, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocatedState, temp = tupleTemp } ->
+                    allocatedState
+                    |> emit(Alloc(tupleTemp)(coreListLength(temps) * 8)(false))
+                    |> emitTupleFields(tupleTemp)(0)(temps)
+                    |> success(tupleTemp)(SemTuple(semanticTypes))
+
+let lowerTuple elements lower state =
+    state
+    |> lowerCoreValues(elements)(lower)
+    |> finishTupleLowering
+
+let allocateListCell headTemp tailTemp elementType state =
+    match freshTemp(state) with
+        | FreshTemp { state = allocatedState, temp = cellTemp } ->
+            allocatedState
+            |> emit(Alloc(cellTemp)(16)(false))
+            |> emit(StoreMemOffset(cellTemp)(0)(headTemp))
+            |> emit(StoreMemOffset(cellTemp)(8)(tailTemp))
+            |> success(cellTemp)(elementType
+            |> resolveType(allocatedState)
+            |> SemList)
+
+let finishCons head tail =
+    match (head, tail) with
+        | (LoweredCoreValue { state = failedState, error = Some(error) }, _tail) -> failure(failedState)(error)
+        | (_head, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
+        | (LoweredCoreValue { temp = headTemp, semanticType = headType }, LoweredCoreValue { state = tailState, temp = tailTemp, semanticType = tailType }) ->
+            match bindType(SemList(headType))(tailType)(tailState) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (typedState, None) -> allocateListCell(headTemp)(tailTemp)(headType)(typedState)
+
+let finishConsTail lower tailExpression head =
+    match head with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = headState } ->
+            headState
+            |> lower(tailExpression)
+            |> finishCons(head)
+
+let lowerCons head tail lower state =
+    state
+    |> lower(head)
+    |> finishConsTail(lower)(tail)
+
+let emptyList state =
+    match freshType(state) with
+        | FreshType { state = typedState, semanticType = elementType } ->
+            lowerConstant(given (target) -> LoadConstInt(target)(0))(SemList(elementType))(typedState)
+
+let recursive lowerListElements elements elementType tailTemp lower state =
+    match elements with
+        | [] ->
+            success(tailTemp)(elementType
+            |> resolveType(state)
+            |> SemList)(state)
+        | expression :: rest ->
+            match lower(expression)(state) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
+                    match bindType(elementType)(headType)(valueState) with
+                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (typedState, None) ->
+                            match allocateListCell(headTemp)(tailTemp)(elementType)(typedState) with
+                                | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
+                                    lowerListElements(
+                                        rest,
+                                        elementType,
+                                        cellTemp,
+                                        lower,
+                                        cellState
+                                    )
+                                | failed -> failed
+
+let finishListLiteral elements lower empty =
+    match empty with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = emptyState, temp = emptyTemp, semanticType = SemList(elementType), error = None } ->
+            lowerListElements(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
+        | LoweredCoreValue { state = failedState } ->
+            failure(
+                failedState,
+                UnsupportedCoreLoweringExpression("invalid empty list type")
+            )
+
+let lowerListLiteral elements lower state =
+    state
+    |> emptyList
+    |> finishListLiteral(elements)(lower)
+
+let recursive emitAdtFields baseTemp index temps state =
+    match temps with
+        | [] -> state
+        | temp :: rest ->
+            state
+            |> emit(SetAdtField(baseTemp)(index)(temp))
+            |> emitAdtFields(baseTemp)(index + 1)(rest)
+
+let finishConstructorAllocation layout resultType lowered =
+    match (layout, lowered) with
+        | (_layout, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
+        | (CoreConstructorLayout { isZeroCost = true }, LoweredCoreValues { state = state, temps = temp :: [], error = None }) ->
+            success(temp)(resolveType(state)(resultType))(state)
+        | (CoreConstructorLayout { name = name, isZeroCost = true }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
+            temps
+            |> coreListLength
+            |> CoreConstructorArityMismatch(name)(1)
+            |> failure(state)
+        | (CoreConstructorLayout { tag = tag }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocatedState, temp = resultTemp } ->
+                    allocatedState
+                    |> emit(AllocAdt(resultTemp)(tag)(coreListLength(temps))(false))
+                    |> emitAdtFields(resultTemp)(0)(temps)
+                    |> success(resultTemp)(resolveType(allocatedState)(resultType))
+
+let finishConstructorArguments arguments lower shape =
+    match shape with
+        | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType } ->
+            let expectedArity = coreListLength(parameterTypes)
+            in
+                let actualArity = coreListLength(arguments)
+                in
+                    if expectedArity != actualArity
+                    then
+                        match layout with
+                            | CoreConstructorLayout { name = name } ->
+                                actualArity
+                                |> CoreConstructorArityMismatch(name)(expectedArity)
+                                |> failure(state)
+                    else
+                        match lowerCoreValues(arguments)(lower)(state) with
+                            | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                            | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
+                                match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
+                                    | (failedState, Some(error)) -> failure(failedState)(error)
+                                    | (typedState, None) ->
+                                        let typedValues = lowered with state = typedState
+                                        in finishConstructorAllocation(layout)(resultType)(typedValues)
+
+let lowerConstructor layout arguments lower state =
+    state
+    |> instantiateConstructor(layout)
+    |> finishConstructorArguments(arguments)(lower)
+
+let recursive collectCallSpine expression =
+    match expression with
+        | ExprAt(_span, inner) -> collectCallSpine(inner)
+        | ExprCall(function, argument, _whitespace, _layout) ->
+            match collectCallSpine(function) with
+                | CoreCallSpine { root = root, arguments = arguments } ->
+                    CoreCallSpine(
+                        root = root,
+                        arguments = append(arguments)([argument])
+                    )
+        | root -> CoreCallSpine(root = root, arguments = [])
+
+let recursive constructorParameterNames name count index =
+    if index >= count
+    then []
+    else
+        "__core_ctor_" + name + "_" + Ashes.Text.fromInt(index) :: constructorParameterNames(
+            name,
+            count,
+            index + 1
+        )
+
+let recursive applyConstructorParameters expression parameters =
+    match parameters with
+        | [] -> expression
+        | parameter :: rest ->
+            applyConstructorParameters(
+                ExprCall(
+                    expression,
+                    ExprVar(parameter),
+                    false,
+                    callArgumentsInline
+                ),
+                rest
+            )
+
+let recursive wrapConstructorParameters parameters body =
+    match parameters with
+        | [] -> body
+        | parameter :: rest ->
+            ExprLambda(
+                parameter,
+                wrapConstructorParameters(rest)(body),
+                None
+            )
+
+let constructorLambda layout =
+    match layout with
+        | CoreConstructorLayout { name = name } ->
+            let parameters =
+                constructorParameterNames(name)(constructorArity(layout))(0)
+            in
+                parameters
+                |> applyConstructorParameters(ExprVar(name))
+                |> wrapConstructorParameters(parameters)
+
+let tryLowerConstructorCall expression lower state =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
+            match constructorLayout(name)(state) with
+                | None -> None
+                | Some(layout) ->
+                    if coreListLength(arguments) == constructorArity(layout)
+                    then
+                        state
+                        |> lowerConstructor(layout)(arguments)(lower)
+                        |> Some
+                    else None
+        | _ -> None
+
+let recursive findNamedField (name: Str) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> None
+        | (candidate, expression) :: rest ->
+            if name == candidate
+            then Some(expression)
+            else findNamedField(name)(rest)
+
+let recursive orderRecordArguments (typeName: Str) (fieldNames: List(Str)) (fields: List((Str, Expr))) reversed =
+    match fieldNames with
+        | [] -> CoreRecordArguments(expressions = reverse(reversed), error = None)
+        | fieldName :: rest ->
+            match findNamedField(fieldName)(fields) with
+                | None ->
+                    CoreRecordArguments(expressions = [], error = fieldName
+                    |> UnknownCoreRecordField(typeName)
+                    |> Some)
+                | Some(expression) -> orderRecordArguments(typeName)(rest)(fields)(expression :: reversed)
+
+let lowerRecord name fields lower state =
+    match constructorLayout(name)(state) with
+        | None -> failure(state)(UnknownLoweringBinding(name))
+        | Some(CoreConstructorLayout { fieldNames = [] }) ->
+            ""
+            |> UnknownCoreRecordField(name)
+            |> failure(state)
+        | Some(CoreConstructorLayout { fieldNames = fieldNames } as layout) ->
+            match orderRecordArguments(name)(fieldNames)(fields)([]) with
+                | CoreRecordArguments { error = Some(error) } -> failure(state)(error)
+                | CoreRecordArguments { expressions = expressions, error = None } ->
+                    lowerConstructor(
+                        layout,
+                        expressions,
+                        lower,
+                        state
+                    )
+
+let emitRecordFieldLoad receiverTemp fieldType index fresh =
+    match fresh with
+        | FreshTemp { state = state, temp = fieldTemp } ->
+            state
+            |> emit(GetAdtField(fieldTemp)(receiverTemp)(index))
+            |> success(fieldTemp)(resolveType(state)(fieldType))
+
+let loadResolvedRecordField typeName fieldName receiverTemp fieldNames fieldTypes typed =
+    match typed with
+        | (failedState, Some(error)) -> failure(failedState)(error)
+        | (typedState, None) ->
+            match findPatternField(fieldName)(fieldNames)(fieldTypes)(0) with
+                | None ->
+                    fieldName
+                    |> UnknownCoreRecordField(typeName)
+                    |> failure(typedState)
+                | Some(CorePatternField { index = index, semanticType = fieldType }) ->
+                    typedState
+                    |> freshTemp
+                    |> emitRecordFieldLoad(receiverTemp)(fieldType)(index)
+
+let finishRecordFieldShape typeName fieldName receiverTemp receiverType fieldNames shape =
+    match shape with
+        | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType } ->
+            state
+            |> bindType(receiverType)(resultType)
+            |> loadResolvedRecordField(typeName)(fieldName)(receiverTemp)(fieldNames)(fieldTypes)
+
+let finishRecordFieldLayout typeName fieldName receiverTemp receiverType state layout =
+    match layout with
+        | None -> failure(state)(CoreRecordUpdateRequiresRecord(receiverType))
+        | Some(CoreConstructorLayout { fieldNames = fieldNames } as constructor) ->
+            state
+            |> instantiateConstructor(constructor)
+            |> finishRecordFieldShape(typeName)(fieldName)(receiverTemp)(receiverType)(fieldNames)
+
+let finishRecordFieldAccess _receiverName fieldName lowered =
+    match lowered with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = state, temp = receiverTemp, semanticType = receiverType, error = None } ->
+            match resolveType(state)(receiverType) with
+                | SemNamed(_symbolId, typeName, _arguments) ->
+                    state
+                    |> recordLayout(typeName)
+                    |> finishRecordFieldLayout(typeName)(fieldName)(receiverTemp)(receiverType)(state)
+                | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
+
+let lowerRecordFieldAccess receiverName fieldName state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            match lookupBinding(receiverName)(bindings) with
+                | None -> failure(state)(UnknownLoweringBinding(receiverName + "." + fieldName))
+                | Some(binding) ->
+                    state
+                    |> lowerBoundVariable(binding)
+                    |> finishRecordFieldAccess(receiverName)(fieldName)
+
+let finishUpdatedRecordField expectedType reversedTemps reversedTypes lowered =
+    match lowered with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+        | LoweredCoreValue { state = valueState, temp = temp, semanticType = semanticType, error = None } ->
+            match bindType(expectedType)(semanticType)(valueState) with
+                | (failedState, Some(error)) -> failedCoreValues(failedState)(error)
+                | (typedState, None) ->
+                    LoweredCoreValues(
+                        state = typedState,
+                        temps = temp :: reversedTemps,
+                        semanticTypes = expectedType :: reversedTypes,
+                        error = None
+                    )
+
+let loadUnchangedRecordField targetTemp index fieldType state reversedTemps reversedTypes =
+    match freshTemp(state) with
+        | FreshTemp { state = loadState, temp = temp } ->
+            LoweredCoreValues(
+                state = emit(GetAdtField(temp)(targetTemp)(index))(loadState),
+                temps = temp :: reversedTemps,
+                semanticTypes = fieldType :: reversedTypes,
+                error = None
+            )
+
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp index lower reversedTemps reversedTypes state =
+    match (fieldNames, fieldTypes) with
+        | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
+        | (fieldName :: fieldRest, fieldType :: typeRest) ->
+            let loweredField =
+                match findNamedField(fieldName)(updates) with
+                    | None ->
+                        loadUnchangedRecordField(
+                            targetTemp,
+                            index,
+                            fieldType,
+                            state,
+                            reversedTemps,
+                            reversedTypes
+                        )
+                    | Some(expression) ->
+                        state
+                        |> lower(expression)
+                        |> finishUpdatedRecordField(fieldType)(reversedTemps)(reversedTypes)
+            in
+                match loweredField with
+                    | LoweredCoreValues { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+                    | LoweredCoreValues { state = nextState, temps = nextTemps, semanticTypes = nextTypes, error = None } ->
+                        lowerRecordUpdateFields(
+                            fieldRest,
+                            typeRest,
+                            updates,
+                            targetTemp,
+                            index + 1,
+                            lower,
+                            nextTemps,
+                            nextTypes,
+                            nextState
+                        )
+        | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
+
+let lowerTypedRecordUpdate layout resultType fieldNames fieldTypes fields targetTemp lower typed =
+    match typed with
+        | (failedState, Some(error)) -> failure(failedState)(error)
+        | (typedState, None) ->
+            typedState
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(lower)([])([])
+            |> finishConstructorAllocation(layout)(resultType)
+
+let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
+    match shape with
+        | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType } ->
+            state
+            |> bindType(targetType)(resultType)
+            |> lowerTypedRecordUpdate(layout)(resultType)(fieldNames)(fieldTypes)(fields)(targetTemp)(lower)
+
+let finishRecordUpdateLayout fields targetTemp targetType lower state layout =
+    match layout with
+        | None -> failure(state)(CoreRecordUpdateRequiresRecord(targetType))
+        | Some(CoreConstructorLayout { fieldNames = fieldNames } as constructor) ->
+            state
+            |> instantiateConstructor(constructor)
+            |> finishRecordUpdateShape(constructor)(fieldNames)(fields)(targetTemp)(targetType)(lower)
+
+let finishRecordUpdate fields lower loweredTarget =
+    match loweredTarget with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = state, temp = targetTemp, semanticType = targetType, error = None } ->
+            match resolveType(state)(targetType) with
+                | SemNamed(_symbolId, typeName, _arguments) ->
+                    state
+                    |> recordLayout(typeName)
+                    |> finishRecordUpdateLayout(fields)(targetTemp)(targetType)(lower)(state)
+                | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
+
+let lowerRecordUpdate target fields lower state =
+    state
+    |> lower(target)
+    |> finishRecordUpdate(fields)(lower)
+
+let finishCoreConstructorReference layout lower state =
+    if constructorArity(layout) == 0
+    then lowerConstructor(layout)([])(lower)(state)
+    else
+        lower(constructorLambda(layout))(state)
+
+let lowerCoreVariable name lower state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            match lookupBinding(name)(bindings) with
+                | Some(binding) -> lowerBoundVariable(binding)(state)
+                | None ->
+                    match constructorLayout(name)(state) with
+                        | Some(layout) -> finishCoreConstructorReference(layout)(lower)(state)
+                        | None -> failure(state)(UnknownLoweringBinding(name))
+
 let expressionName expression =
     match expression with
         | ExprBigInt(_) -> "BigInt"
@@ -1343,7 +2333,8 @@ let recursive lowerCore expression state =
             lowerConstant(given (target) -> LoadConstInt(target)(value))(SemRune)(state)
         | ExprBool(value) ->
             lowerConstant(given (target) -> LoadConstBool(target)(value))(SemBool)(state)
-        | ExprVar(name) -> lowerVariable(name)(state)
+        | ExprVar(name) -> lowerCoreVariable(name)(lowerCore)(state)
+        | ExprQualifiedVar(receiverName, fieldName) -> lowerRecordFieldAccess(receiverName)(fieldName)(state)
         | ExprLet(name, value, body, _parameters, _annotation, _requirements) ->
             lowerLet(
                 name,
@@ -1362,7 +2353,15 @@ let recursive lowerCore expression state =
             )
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
         | ExprLambda(parameter, body, _annotation) -> lowerLambda(parameter)(body)(false)(lowerCore)(state)
-        | ExprCall(function, argument, _whitespace, _layout) -> lowerCall(function)(argument)(lowerCore)(state)
+        | ExprCall(function, argument, _whitespace, _layout) ->
+            match tryLowerConstructorCall(expression)(lowerCore)(state) with
+                | Some(lowered) -> lowered
+                | None -> lowerCall(function)(argument)(lowerCore)(state)
+        | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
+        | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
+        | ExprCons(head, tail) -> lowerCons(head)(tail)(lowerCore)(state)
+        | ExprRecord(name, fields, _isMultiline) -> lowerRecord(name)(fields)(lowerCore)(state)
+        | ExprRecordUpdate(target, fields) -> lowerRecordUpdate(target)(fields)(lowerCore)(state)
         | ExprMatch(value, cases, _position) -> lowerMatch(value)(cases)(lowerCore)(state)
         | unsupported ->
             failure(state)(unsupported
@@ -1444,6 +2443,12 @@ let buildProgram lowered =
 let lowerCoreExpression expression =
     Unit
     |> initialState
+    |> lowerCore(expression)
+    |> buildProgram
+
+let lowerCoreExpressionWithLayouts layouts expression =
+    Unit
+    |> initialStateWithLayouts(layouts)
     |> lowerCore(expression)
     |> buildProgram
 

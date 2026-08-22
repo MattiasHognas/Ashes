@@ -326,8 +326,15 @@ same public behavior.
   types, retain member order, and reconstruct siblings through one shared environment. Tail-position
   recursive applications remain strict ordinary calls at this phase; the later optimization milestone
   owns the specified ordinary and mutual back-edge transformations and their ownership/reset rules.
-- [ ] Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field access,
-  patterns, and record updates.
+- [x] Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field access,
+  patterns, and record updates. The pure core lowerer now emits stage-0-compatible tuple words,
+  two-word list cells, interned string references, tagged constructor/record cells, and erased
+  zero-cost wrappers. Constructor layouts carry stable tags, schemes, and declared field order;
+  first-class and partial constructors use ordinary curried closures. Structural matches cover
+  empty/cons lists, tuples, constructors, records, `as`, and `or` patterns, while field access and
+  immutable record updates use declared indices and evaluate replacement fields once. `Bytes` has
+  no source literal form; byte-producing and byte-consuming intrinsics remain with the builtin
+  operation item immediately below.
 - [ ] Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
 - [ ] Lower external calls, resources/destructors, native ownership conventions, library/resource
