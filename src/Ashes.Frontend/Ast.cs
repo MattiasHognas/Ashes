@@ -226,8 +226,12 @@ public abstract record Expr
     /// <param name="Task">The task expression being awaited.</param>
     public sealed record Await(Expr Task) : Expr;
 
-    /// <summary>Record literal: <c>TypeName { field1 = e1, field2 = e2 }</c>.</summary>
-    public sealed record RecordLit(string TypeName, IReadOnlyList<(string Name, Expr Value)> Fields) : Expr;
+    /// <summary>Record construction: <c>TypeName(field1 = e1, field2 = e2)</c>.</summary>
+    public sealed record RecordLit(string TypeName, IReadOnlyList<(string Name, Expr Value)> Fields) : Expr
+    {
+        /// <summary>Preserves whether the first written named argument began on a new line.</summary>
+        public bool IsMultiline { get; init; }
+    }
 
     /// <summary>Record update: <c>{ expr with field1 = e1, field2 = e2 }</c>.</summary>
     public sealed record RecordUpdate(Expr Target, IReadOnlyList<(string Name, Expr Value)> Updates) : Expr;

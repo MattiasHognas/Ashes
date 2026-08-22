@@ -10,7 +10,7 @@ let pointType =
         "Str"
     )], fieldNames = ["x", "label"])], isRecord = true, derivingTraits = [])
 
-let pointValue = ExprRecord("Point")([("label", ExprString("origin")), ("x", ExprInt(1))])
+let pointValue = ExprRecord("Point")([("label", ExprString("origin")), ("x", ExprInt(1))])(false)
 
 let expectPoint expression =
     match inferProgram(ProgramSyntax(items = [TopLevelType(pointType)], body = Some(expression))) with
@@ -35,7 +35,7 @@ let expectValidRecords unit =
 
 let rejectMissingRecordField unit =
     match [("x", ExprInt(1))]
-    |> ExprRecord("Point")
+    |> (given (fields) -> ExprRecord("Point")(fields)(false))
     |> inferPointExpression with
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(MissingRecordField("Point", "label"))) } -> Unit
         | _ -> test.fail("record literals should require every field")
@@ -49,14 +49,14 @@ let rejectUnknownRecordField unit =
 
 let rejectDuplicateRecordField unit =
     match [("x", ExprInt(1)), ("x", ExprInt(2)), ("label", ExprString("origin"))]
-    |> ExprRecord("Point")
+    |> (given (fields) -> ExprRecord("Point")(fields)(false))
     |> inferPointExpression with
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(DuplicateRecordField("x"))) } -> Unit
         | _ -> test.fail("record fields should not be repeated")
 
 let rejectWrongRecordFieldType unit =
     match [("x", ExprString("wrong")), ("label", ExprString("origin"))]
-    |> ExprRecord("Point")
+    |> (given (fields) -> ExprRecord("Point")(fields)(false))
     |> inferPointExpression with
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
         | _ -> test.fail("record field values should match their declared types")

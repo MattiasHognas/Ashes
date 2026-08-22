@@ -23,7 +23,7 @@ let tupleElements : Expr -> List(Expr) needs {ConsoleIO} =
 let assertRecord : Expr -> Unit needs {ConsoleIO} =
     given (expression) ->
         match ParserExpressionTests.unspan(expression) with
-            | ExprRecord(typeName, fields) ->
+            | ExprRecord(typeName, fields, _isMultiline) ->
                 match fields with
                     | (firstName, _firstValue) :: (secondName, _secondValue) :: [] ->
                         if typeName != "Point"

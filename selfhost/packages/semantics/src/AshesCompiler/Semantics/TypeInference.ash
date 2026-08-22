@@ -2993,7 +2993,7 @@ and inferWith expression environment substitution supply ambientRow =
                                 )
                         | failure -> failure
                 | failure -> failure
-        | ExprRecord(name, fields) ->
+        | ExprRecord(name, fields, _isMultiline) ->
             match resolveConstructorBinding(name)(environment) with
                 | None -> inferenceFailure(SemNever)(substitution)(supply)(UnknownRecordType(name))
                 | Some(ConstructorInferenceDefinition { name = _constructorName, scheme = scheme, fieldNames = fieldNames }) ->

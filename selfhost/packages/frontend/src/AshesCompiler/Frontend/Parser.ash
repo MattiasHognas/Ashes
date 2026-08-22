@@ -97,7 +97,8 @@ let parserCurrentPosition (state: ParserState) =
     (let current = parserCurrent(state)
     in current.position)
 
-let parserAt start end expression = ExprAt(spanFromBounds(start)(end))(expression)
+let parserAt start end expression =
+    ExprAt(spanFromBounds(start)(end))(expression)
 
 let parserUnspan expression =
     match expression with
@@ -166,7 +167,10 @@ let parserIsUpperName text =
         if Ashes.Byte.length(bytes) <= 0
         then false
         else
-            let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(0))
+            let first =
+                0
+                |> Ashes.Byte.get(bytes)
+                |> Ashes.Number.UInt.toInt
             in
                 if first < 65
                 then false
@@ -178,7 +182,10 @@ let parserIsLowerName text =
         if Ashes.Byte.length(bytes) <= 0
         then false
         else
-            let first = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(0))
+            let first =
+                0
+                |> Ashes.Byte.get(bytes)
+                |> Ashes.Number.UInt.toInt
             in
                 if first < 97
                 then false
@@ -187,7 +194,10 @@ let parserIsLowerName text =
 let parserQualifiedName parts =
     match parts with
         | [] -> ("", "")
-        | name :: moduleParts -> (join(".")(reverseList(moduleParts)), name)
+        | name :: moduleParts ->
+            (moduleParts
+            |> reverseList
+            |> join("."), name)
 
 let parserCurrentStartsNamedArgument (state: ParserState) =
     match state with
@@ -213,7 +223,10 @@ let parserStateSource (state: ParserState) =
     match state with
         | (_tokens, _diagnostics, source) -> source
 
-let parserSourceByteAt bytes position = Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(position))
+let parserSourceByteAt bytes position =
+    position
+    |> Ashes.Byte.get(bytes)
+    |> Ashes.Number.UInt.toInt
 
 let recursive parserSourceContainsLineBreak bytes position endPosition =
     if position >= endPosition
@@ -229,7 +242,9 @@ let parserCallStartsOnNewLine state leftParen firstArgument =
         | RParen -> false
         | _ ->
             parserSourceContainsLineBreak(
-                Ashes.Byte.fromText(parserStateSource(state)),
+                state
+                |> parserStateSource
+                |> Ashes.Byte.fromText,
                 tokenEnd(leftParen),
                 parserExprStart(firstArgument)
             )
@@ -239,10 +254,21 @@ let parserListStartsOnNewLine state leftBracket firstElement =
         | RBracket -> false
         | _ ->
             parserSourceContainsLineBreak(
-                Ashes.Byte.fromText(parserStateSource(state)),
+                state
+                |> parserStateSource
+                |> Ashes.Byte.fromText,
                 tokenEnd(leftBracket),
                 parserExprStart(firstElement)
             )
+
+let parserRecordStartsOnNewLine state leftParen =
+    parserSourceContainsLineBreak(
+        state
+        |> parserStateSource
+        |> Ashes.Byte.fromText,
+        tokenEnd(leftParen),
+        parserCurrentPosition(state)
+    )
 
 let recursive parserLineStart bytes position =
     if position <= 0
@@ -268,7 +294,10 @@ let recursive parserOnlyIndentBefore bytes position current =
                     then parserOnlyIndentBefore(bytes)(position)(current + 1)
                     else false
 
-let parserStartsSourceLine bytes position = parserOnlyIndentBefore(bytes)(position)(parserLineStart(bytes)(position))
+let parserStartsSourceLine bytes position =
+    position
+    |> parserLineStart(bytes)
+    |> parserOnlyIndentBefore(bytes)(position)
 
 let parserSourceColumn bytes position = position - parserLineStart(bytes)(position)
 
@@ -391,7 +420,8 @@ let recursive parserTokensBeforeEof (tokens: List(Token)) =
             then []
             else token :: parserTokensBeforeEof(tail)
 
-let parserTopLevelAt start end item = TopLevelAt(spanFromBounds(start)(end))(item)
+let parserTopLevelAt start end item =
+    TopLevelAt(spanFromBounds(start)(end))(item)
 
 let parserPatternSpan pattern =
     match pattern with
@@ -406,7 +436,8 @@ let parserPatternEnd pattern =
     (let span = parserPatternSpan(pattern)
     in span.end)
 
-let parserPatternAt start end pattern = PatternAt(spanFromBounds(start)(end))(pattern)
+let parserPatternAt start end pattern =
+    PatternAt(spanFromBounds(start)(end))(pattern)
 
 let parserUnspanPattern pattern =
     match pattern with
@@ -426,7 +457,8 @@ let parserTypeEnd typeExpression =
     (let span = parserTypeSpan(typeExpression)
     in span.end)
 
-let parserTypeAt start end typeExpression = TypeAt(spanFromBounds(start)(end))(typeExpression)
+let parserTypeAt start end typeExpression =
+    TypeAt(spanFromBounds(start)(end))(typeExpression)
 
 let parserCapabilityName capabilityReference =
     match capabilityReference with
@@ -619,7 +651,8 @@ and parserParseNamedTypePrimary state =
                                     tokenEnd(rightParen),
                                     TypeApplied(name.text)(arguments)
                                 ), afterArguments)
-            else (parserTypeAt(name.position)(tokenEnd(name))(TypeNamed(name.text)), afterName)
+            else
+                (parserTypeAt(name.position)(tokenEnd(name))(TypeNamed(name.text)), afterName)
 and parserParseTupleTypeTail start reversed state =
     match parserConsume(Comma)(state) with
         | (_comma, afterComma) ->
@@ -635,7 +668,9 @@ and parserParseTupleTypeTail start reversed state =
                                     (parserTypeAt(
                                         start,
                                         tokenEnd(rightParen),
-                                        TypeTuple(reverseList(elements))
+                                        elements
+                                        |> reverseList
+                                        |> TypeTuple
                                     ), afterRightParen)
 and parserParseTypeArguments state =
     if parserCurrentKind(state) == RParen
@@ -755,7 +790,10 @@ and parserParseQualifiedIdentifier state =
         | (first, afterFirst) -> parserParseQualifiedIdentifierTail(first.text :: [])(afterFirst)
 and parserParseQualifiedIdentifierTail reversed state =
     if parserCurrentKind(state) != Dot
-    then (join(".")(reverseList(reversed)), state)
+    then
+        (reversed
+        |> reverseList
+        |> join("."), state)
     else
         match parserAdvance(state) with
             | (_dot, afterDot) ->
@@ -774,7 +812,10 @@ let parserBuildCallArguments function arguments start end isWhitespace isMultili
             | [] -> current
             | argument :: tail ->
                 let layout = parserCallArgumentLayout(isMultiline)(isFirst)
-                in build(parserAt(start)(end)(ExprCall(current)(argument)(isWhitespace)(layout)))(tail)(false)
+                in
+                    build(layout
+                    |> ExprCall(current)(argument)(isWhitespace)
+                    |> parserAt(start)(end))(tail)(false)
     in build(function)(arguments)(true))
 
 let recursive parserParseExpression state = parserParseMatch(state)
@@ -873,9 +914,14 @@ and parserParseHandlerArms start body reversedArms state =
                 (parserAt(
                     start,
                     parserExprEnd(lastBody),
-                    ExprHandle(body)(reverseList(reversedArms))
+                    reversedArms
+                    |> reverseList
+                    |> ExprHandle(body)
                 ), state)
-            | [] -> (parserAt(start)(parserExprEnd(body))(ExprHandle(body)([])), state)
+            | [] ->
+                ([]
+                |> ExprHandle(body)
+                |> parserAt(start)(parserExprEnd(body)), state)
     else
         match parserAdvance(state) with
             | (_pipe, afterPipe) ->
@@ -1071,9 +1117,12 @@ and parserBuildLambdas parameters body start =
             | (parameter, annotation) :: tail ->
                 build(
                     tail,
-                    parserAt(start)(parserExprEnd(current))(ExprLambda(parameter)(current)(annotation))
+                    annotation
+                    |> ExprLambda(parameter)(current)
+                    |> parserAt(start)(parserExprEnd(current))
                 )
-    in build(reverseList(parameters))(body))
+    in
+        build(reverseList(parameters))(body))
 and parserParseLetResult state =
     match parserAdvance(state) with
         | (letToken, afterLet) ->
@@ -1234,7 +1283,9 @@ and parserParsePipeTail left state =
                         match parserParseComparison(afterOperator) with
                             | (right, afterRight) ->
                                 parserParsePipeTail(
-                                    parserAt(parserExprStart(left))(parserExprEnd(right))(ExprResultPipe(left)(right)),
+                                    right
+                                    |> ExprResultPipe(left)
+                                    |> parserAt(parserExprStart(left))(parserExprEnd(right)),
                                     afterRight
                                 )
             | PipeBangGreater ->
@@ -1306,7 +1357,9 @@ and parserParseBitwiseOrTail left state =
                         match parserParseBitwiseXor(afterOperator) with
                             | (right, afterRight) ->
                                 parserParseBitwiseOrTail(
-                                    parserAt(parserExprStart(left))(parserExprEnd(right))(ExprBitwiseOr(left)(right)),
+                                    right
+                                    |> ExprBitwiseOr(left)
+                                    |> parserAt(parserExprStart(left))(parserExprEnd(right)),
                                     afterRight
                                 ))
 and parserParseBitwiseXor state =
@@ -1323,7 +1376,9 @@ and parserParseBitwiseXorTail left state =
                     match parserParseBitwiseAnd(afterOperator) with
                         | (right, afterRight) ->
                             parserParseBitwiseXorTail(
-                                parserAt(parserExprStart(left))(parserExprEnd(right))(ExprBitwiseXor(left)(right)),
+                                right
+                                |> ExprBitwiseXor(left)
+                                |> parserAt(parserExprStart(left))(parserExprEnd(right)),
                                 afterRight
                             ))
 and parserParseBitwiseAnd state =
@@ -1340,7 +1395,9 @@ and parserParseBitwiseAndTail left state =
                     match parserParseCons(afterOperator) with
                         | (right, afterRight) ->
                             parserParseBitwiseAndTail(
-                                parserAt(parserExprStart(left))(parserExprEnd(right))(ExprBitwiseAnd(left)(right)),
+                                right
+                                |> ExprBitwiseAnd(left)
+                                |> parserAt(parserExprStart(left))(parserExprEnd(right)),
                                 afterRight
                             ))
 and parserParseCons state =
@@ -1381,7 +1438,8 @@ and parserParseShiftOperator left state kind =
                         if kind == LessLess
                         then ExprShiftLeft(left)(right)
                         else ExprShiftRight(left)(right)
-                    in parserParseShiftTail(parserAt(parserExprStart(left))(parserExprEnd(right))(body))(afterRight)
+                    in
+                        parserParseShiftTail(parserAt(parserExprStart(left))(parserExprEnd(right))(body))(afterRight)
 and parserParseAdditive state =
     match parserParseMultiplicative(state) with
         | (left, nextState) -> parserParseAdditiveTail(left)(nextState)
@@ -1403,7 +1461,8 @@ and parserParseAdditiveOperator left state kind =
                         if kind == Plus
                         then ExprAdd(left)(right)
                         else ExprSubtract(left)(right)
-                    in parserParseAdditiveTail(parserAt(parserExprStart(left))(parserExprEnd(right))(body))(afterRight)
+                    in
+                        parserParseAdditiveTail(parserAt(parserExprStart(left))(parserExprEnd(right))(body))(afterRight)
 and parserParseMultiplicative state =
     match parserParseUnary(state) with
         | (left, nextState) -> parserParseMultiplicativeTail(left)(nextState)
@@ -1488,7 +1547,9 @@ and parserParseUnary state =
                                         (parserAt(
                                             operator.position,
                                             parserExprEnd(operand),
-                                            ExprFloat(0.0 - value)(parserToggleFloatSign(text))
+                                            text
+                                            |> parserToggleFloatSign
+                                            |> ExprFloat(0.0 - value)
                                         ), afterOperand)
                                     | _ ->
                                         let zero = parserAt(operator.position)(operator.position + 1)(ExprInt(0))
@@ -1512,7 +1573,7 @@ and parserParseCallTail function state =
                 match parserAdvance(state) with
                     | (leftParen, afterLeftParen) ->
                         if parserCurrentStartsNamedArgument(afterLeftParen)
-                        then parserParseRecordArguments(function)(start)(afterLeftParen)
+                        then parserParseRecordArguments(function)(start)(leftParen)(afterLeftParen)
                         else
                             match parserParseCallArgumentList(afterLeftParen) with
                                 | (arguments, rightParen, afterArguments) ->
@@ -1576,39 +1637,39 @@ and parserParseMoreCallArguments reversedArguments state =
         else
             match parserConsume(RParen)(state) with
                 | (rightParen, afterRightParen) -> (reverseList(reversedArguments), rightParen, afterRightParen))
-and parserParseRecordArguments function start state =
+and parserParseRecordArguments function start leftParen state =
+    leftParen
+    |> parserRecordStartsOnNewLine(state)
+    |> parserParseRecordArgumentsWithLayout(function)(start)(state)
+and parserParseRecordArgumentsWithLayout function start state isMultiline =
     match parserUnspan(function) with
         | ExprVar(typeName) ->
-            let checkedState =
-                if parserIsUpperName(typeName)
-                then state
-                else
-                    parserDiagnostic(
-                        state,
-                        parserCurrent(state),
-                        "Named arguments are only allowed in record construction."
-                    )
-            in
-                match parserParseNamedFields([])(checkedState) with
-                    | (fields, rightParen, afterFields) ->
-                        parserParseCallTail(
-                            parserAt(start)(tokenEnd(rightParen))(ExprRecord(typeName)(fields)),
-                            afterFields
-                        )
+            state
+            |> parserCheckRecordTypeName(typeName)
+            |> parserFinishRecordArguments(typeName)(start)(isMultiline)
         | _ ->
-            let diagnosed =
-                parserDiagnostic(
-                    state,
-                    parserCurrent(state),
-                    "Named arguments are only allowed in record construction."
-                )
-            in
-                match parserParseNamedFields([])(diagnosed) with
-                    | (fields, rightParen, afterFields) ->
-                        parserParseCallTail(
-                            parserAt(start)(tokenEnd(rightParen))(ExprRecord("")(fields)),
-                            afterFields
-                        )
+            state
+            |> parserInvalidRecordConstruction
+            |> parserFinishRecordArguments("")(start)(isMultiline)
+and parserCheckRecordTypeName typeName state =
+    if parserIsUpperName(typeName)
+    then state
+    else parserInvalidRecordConstruction(state)
+and parserInvalidRecordConstruction state =
+    parserDiagnostic(
+        state,
+        parserCurrent(state),
+        "Named arguments are only allowed in record construction."
+    )
+and parserFinishRecordArguments typeName start isMultiline state =
+    match parserParseNamedFields([])(state) with
+        | (fields, rightParen, afterFields) ->
+            parserParseCallTail(
+                isMultiline
+                |> ExprRecord(typeName)(fields)
+                |> parserAt(start)(tokenEnd(rightParen)),
+                afterFields
+            )
 and parserParseNamedFields reversedFields state =
     match parserConsume(Ident)(state) with
         | (name, afterName) ->
@@ -1652,7 +1713,8 @@ and parserParsePrimary state =
                                     tokenEnd(token),
                                     ExprUInt(token.intValue)(bits)(token.text)
                                 ), afterToken)
-                            else (parserAt(token.position)(tokenEnd(token))(ExprInt(token.intValue)), afterToken)
+                            else
+                                (parserAt(token.position)(tokenEnd(token))(ExprInt(token.intValue)), afterToken)
             | BigInt ->
                 match parserAdvance(state) with
                     | (token, afterToken) ->
@@ -1687,17 +1749,20 @@ and parserParsePrimary state =
                         ), afterToken)
             | True ->
                 match parserAdvance(state) with
-                    | (token, afterToken) -> (parserAt(token.position)(tokenEnd(token))(ExprBool(true)), afterToken)
+                    | (token, afterToken) ->
+                        (parserAt(token.position)(tokenEnd(token))(ExprBool(true)), afterToken)
             | False ->
                 match parserAdvance(state) with
-                    | (token, afterToken) -> (parserAt(token.position)(tokenEnd(token))(ExprBool(false)), afterToken)
+                    | (token, afterToken) ->
+                        (parserAt(token.position)(tokenEnd(token))(ExprBool(false)), afterToken)
             | Ident -> parserParseVariable(state)
             | LParen -> parserParseParenthesized(state)
             | LBracket -> parserParseList(state)
             | _ -> parserBadPrimary(state))
 and parserParseVariable state =
     match parserAdvance(state) with
-        | (first, afterFirst) -> parserParseVariableTail(first.position)(tokenEnd(first))(first.text :: [])(afterFirst)
+        | (first, afterFirst) ->
+            parserParseVariableTail(first.position)(tokenEnd(first))(first.text :: [])(afterFirst)
 and parserParseVariableTail start end reversedParts state =
     (let current = parserCurrent(state)
     in
@@ -1707,7 +1772,10 @@ and parserParseVariableTail start end reversedParts state =
                 | (moduleName, name) ->
                     if moduleName == ""
                     then (parserAt(start)(end)(ExprVar(name)), state)
-                    else (parserAt(start)(end)(ExprQualifiedVar(moduleName)(name)), state)
+                    else
+                        (name
+                        |> ExprQualifiedVar(moduleName)
+                        |> parserAt(start)(end), state)
         else
             match parserAdvance(state) with
                 | (_dot, afterDot) ->
@@ -1729,7 +1797,9 @@ and parserParseParenthesized state =
                     then parserParseExpression(afterLeftParen)
                     else
                         parserParseParenthesizedFlatBody(
-                            Ashes.Byte.fromText(parserStateSource(afterLeftParen)),
+                            afterLeftParen
+                            |> parserStateSource
+                            |> Ashes.Byte.fromText,
                             afterLeftParen
                         )
                 else parserParseExpression(afterLeftParen)
@@ -1827,7 +1897,9 @@ and parserParseParenthesizedFlatBody sourceBytes state =
                                                                                 requirements
                                                                             ), afterBody)
 and parserParseFlatExpressionValue sourceBytes declarationColumn state =
-    match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(false)(parserStateTokens(state)) with
+    match state
+    |> parserStateTokens
+    |> parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(false) with
         | (valueTokens, remainingTokens) ->
             let boundaryPosition =
                 match remainingTokens with
@@ -1842,14 +1914,21 @@ and parserParseFlatExpressionValue sourceBytes declarationColumn state =
                 in
                     match parserParseExpression(temporaryState) with
                         | (value, afterValue) ->
-                            let unconsumed = parserTokensBeforeEof(parserStateTokens(afterValue))
-                            in (value, parserStateWithTokens(afterValue)(appendList(unconsumed)(remainingTokens)))
+                            let unconsumed =
+                                afterValue
+                                |> parserStateTokens
+                                |> parserTokensBeforeEof
+                            in
+                                (value, remainingTokens
+                                |> appendList(unconsumed)
+                                |> parserStateWithTokens(afterValue))
 and parserBuildLetExpression start recursiveBinding name value body parameters annotation requirements =
     (let expression =
         if recursiveBinding
         then ExprLetRecursive(name)(value)(body)(parameters)(annotation)(requirements)
         else ExprLet(name)(value)(body)(parameters)(annotation)(requirements)
-    in parserAt(start)(parserExprEnd(body))(expression))
+    in
+        parserAt(start)(parserExprEnd(body))(expression))
 and parserParseTupleTail start reversedElements state =
     match parserConsume(Comma)(state) with
         | (_comma, afterComma) ->
@@ -1865,7 +1944,9 @@ and parserParseTupleTail start reversedElements state =
                                     (parserAt(
                                         start,
                                         tokenEnd(rightParen),
-                                        ExprTuple(reverseList(elements))
+                                        elements
+                                        |> reverseList
+                                        |> ExprTuple
                                     ), afterRightParen)
 and parserParseList state =
     match parserAdvance(state) with
@@ -2017,7 +2098,8 @@ and parserParseIdentifierPattern state =
     match parserAdvance(state) with
         | (name, afterName) ->
             if name.text == "_"
-            then (parserPatternAt(name.position)(tokenEnd(name))(PatternWildcard), afterName)
+            then
+                (parserPatternAt(name.position)(tokenEnd(name))(PatternWildcard), afterName)
             else
                 match parserCurrentKind(afterName) with
                     | LParen ->
@@ -2045,7 +2127,8 @@ and parserParseIdentifierPattern state =
                                             tokenEnd(rightBrace),
                                             PatternRecord(name.text)(fields)
                                         ), afterFields)
-                    | _ -> (parserPatternAt(name.position)(tokenEnd(name))(PatternVar(name.text)), afterName)
+                    | _ ->
+                        (parserPatternAt(name.position)(tokenEnd(name))(PatternVar(name.text)), afterName)
 and parserParsePatternList state terminator =
     if parserCurrentKind(state) == terminator
     then
@@ -2113,7 +2196,9 @@ and parserParseTuplePatternTail start reversed state =
                                     (parserPatternAt(
                                         start,
                                         tokenEnd(rightParen),
-                                        PatternTuple(reverseList(elements))
+                                        elements
+                                        |> reverseList
+                                        |> PatternTuple
                                     ), afterRightParen)
 and parserParseIntegerPattern state =
     match parserAdvance(state) with
@@ -2154,7 +2239,8 @@ and parserParseRunePattern state =
             ), afterToken)
 and parserParseBooleanPattern state value =
     match parserAdvance(state) with
-        | (token, afterToken) -> (parserPatternAt(token.position)(tokenEnd(token))(PatternBool(value)), afterToken)
+        | (token, afterToken) ->
+            (parserPatternAt(token.position)(tokenEnd(token))(PatternBool(value)), afterToken)
 and parserBadPattern state =
     (let current = parserCurrent(state)
     in
@@ -2166,7 +2252,8 @@ and parserBadPattern state =
             )
         in
             match parserAdvance(diagnosed) with
-                | (_bad, afterBad) -> (parserPatternAt(current.position)(tokenEnd(current))(PatternWildcard), afterBad))
+                | (_bad, afterBad) ->
+                    (parserPatternAt(current.position)(tokenEnd(current))(PatternWildcard), afterBad))
 and parserPatternIsIrrefutable pattern =
     match parserUnspanPattern(pattern) with
         | PatternVar(_) -> true
@@ -2234,7 +2321,8 @@ and parserBadPrimary state =
             )
         in
             match parserAdvance(diagnosed) with
-                | (_bad, afterBad) -> (parserAt(current.position)(tokenEnd(current))(ExprInt(0)), afterBad))
+                | (_bad, afterBad) ->
+                    (parserAt(current.position)(tokenEnd(current))(ExprInt(0)), afterBad))
 
 let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBindingPipes state =
     (let tokens = parserStateTokens(state)
@@ -2252,7 +2340,10 @@ let parserParseDelimitedTopLevelValue sourceBytes declarationColumn splitBinding
                         in
                             match parserParseExpression(temporaryState) with
                                 | (value, afterValue) ->
-                                    let unconsumed = parserTokensBeforeEof(parserStateTokens(afterValue))
+                                    let unconsumed =
+                                        afterValue
+                                        |> parserStateTokens
+                                        |> parserTokensBeforeEof
                                     in
                                         let mergedTokens = appendList(unconsumed)(remainingTokens)
                                         in (value, parserStateWithTokens(afterValue)(mergedTokens)))
@@ -2352,7 +2443,10 @@ and parserParseExportItem state =
                 match parserConsume(Ident)(afterType) with
                     | (name, afterName) ->
                         if parserCurrentKind(afterName) != LParen
-                        then (Some(ExportType(name.text)(ExportConstructorsHidden)), afterName)
+                        then
+                            (ExportConstructorsHidden
+                            |> ExportType(name.text)
+                            |> Some, afterName)
                         else
                             match parserAdvance(afterName) with
                                 | (_leftParen, afterLeftParen) ->
@@ -2444,13 +2538,17 @@ and parserParseExternalType start state =
                             (parserTopLevelAt(
                                 start,
                                 tokenEnd(name),
-                                TopLevelExternal(ExternalOpaqueType(name.text)(None))
+                                None
+                                |> ExternalOpaqueType(name.text)
+                                |> TopLevelExternal
                             ), afterName)
                     else
                         (parserTopLevelAt(
                             start,
                             tokenEnd(name),
-                            TopLevelExternal(ExternalOpaqueType(name.text)(None))
+                            None
+                            |> ExternalOpaqueType(name.text)
+                            |> TopLevelExternal
                         ), afterName)
 and parserParseExternalFunction start state =
     match parserConsume(Ident)(state) with
@@ -2709,7 +2807,9 @@ and parserParseCapabilityOperations sourceBytes declarationColumn reversed state
                                 afterName
                             )
 and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
-    match parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(true)(parserStateTokens(state)) with
+    match state
+    |> parserStateTokens
+    |> parserSplitTopLevelTokens(sourceBytes)(declarationColumn)(true) with
         | (typeTokens, remainingTokens) ->
             let boundaryPosition =
                 match remainingTokens with
@@ -2724,7 +2824,10 @@ and parserParseDelimitedTypeValue sourceBytes declarationColumn state =
                 in
                     match parserParseTypeExpressionState(temporaryState) with
                         | (typeExpression, afterType) ->
-                            let unconsumed = parserTokensBeforeEof(parserStateTokens(afterType))
+                            let unconsumed =
+                                afterType
+                                |> parserStateTokens
+                                |> parserTokensBeforeEof
                             in
                                 (typeExpression, parserStateWithTokens(
                                     afterType,
@@ -3349,7 +3452,8 @@ and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings r
     (let checkedState =
         if recursiveBinding
         then state
-        else parserDiagnostic(state)(parserCurrent(state))("'and' is only allowed in a 'let recursive' binding group.")
+        else
+            parserDiagnostic(state)(parserCurrent(state))("'and' is only allowed in a 'let recursive' binding group.")
     in
         match parserAdvance(checkedState) with
             | (andToken, afterAnd) ->
@@ -3376,7 +3480,9 @@ and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings r
                                     parserTopLevelAt(
                                         start,
                                         valueEnd,
-                                        TopLevelRecursiveGroup(reverseList(bindings))
+                                        bindings
+                                        |> reverseList
+                                        |> TopLevelRecursiveGroup
                                     )
                                 in parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterBinding))
 
@@ -3401,7 +3507,10 @@ let parseProgram source =
                                         "Unexpected token after end of program: " + tokenKindName(current.kind) + "."
                                     )
                             in
-                                let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
+                                let parserDiagnostics =
+                                    finalState
+                                    |> parserStateDiagnostics
+                                    |> reverseList
                                 in
                                     ProgramParseResult(program = ProgramSyntax(items = items, body = body), diagnostics = appendList(
                                         lexed.diagnostics,
@@ -3427,7 +3536,10 @@ let parseExpression source =
                                     "Unexpected token after end of expression: " + tokenKindName(current.kind) + "."
                                 )
                         in
-                            let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
+                            let parserDiagnostics =
+                                finalState
+                                |> parserStateDiagnostics
+                                |> reverseList
                             in
                                 ExpressionParseResult(expression = expression, diagnostics = appendList(
                                     lexed.diagnostics,
@@ -3453,7 +3565,10 @@ let parseTypeExpression source =
                                     "Unexpected token after end of type expression: " + tokenKindName(current.kind) + "."
                                 )
                         in
-                            let parserDiagnostics = reverseList(parserStateDiagnostics(finalState))
+                            let parserDiagnostics =
+                                finalState
+                                |> parserStateDiagnostics
+                                |> reverseList
                             in
                                 TypeExpressionParseResult(typeExpression = typeExpression, diagnostics = appendList(
                                     lexed.diagnostics,

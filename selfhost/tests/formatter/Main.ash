@@ -1,4 +1,5 @@
 import Ashes.Test as test
+import Ashes.Text.join
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Formatter.Formatter
@@ -63,6 +64,25 @@ let assertIdempotent source =
         |> formatExpression
         |> test.assertEqual(first))
 
+let multilineRecordExpected =
+    join("\n")([
+        "ExternalFunctionAbi(",
+        "    name = name,",
+        "    parameters = parameters,",
+        "    runtimeCapabilities = capabilities",
+        ")",
+        ""
+    ])
+
+let multilineRecordSource =
+    join("\n")([
+        "ExternalFunctionAbi(",
+        "name=name,",
+        "parameters=parameters,",
+        "runtimeCapabilities=capabilities",
+        ")"
+    ])
+
 let assertPattern expected pattern =
     (let actual = formatPattern(pattern)
     in
@@ -123,6 +143,11 @@ let run unit =
             "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
         ))
     |> (given (_) -> assertExpression("f(\n    value\n)\n")("f(\nvalue\n)"))
+    |> (given (_) ->
+        assertExpression(
+            multilineRecordExpected,
+            multilineRecordSource
+        ))
     |> (given (_) ->
         assertExpression(
             "[\n    first,\n    [\n        second,\n        third\n    ],\n    f(\n        fourth,\n        fifth\n    )\n]\n",

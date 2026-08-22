@@ -235,7 +235,10 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                         if isMultiline
                         then formatterMultilineList(elements)(indent)
                         else "[" + formatterJoin(", ")(formatterExpressionInline)(elements) + "]"
-                    | ExprRecord(name, fields) -> name + "(" + formatterJoin(", ")(formatterExprField)(fields) + ")"
+                    | ExprRecord(name, fields, isMultiline) ->
+                        if isMultiline
+                        then formatterMultilineRecord(name)(fields)(indent)
+                        else name + "(" + formatterJoin(", ")(formatterExprField)(fields) + ")"
                     | ExprRecordUpdate(target, fields) ->
                         formatterWrap(
                             parent,
@@ -356,6 +359,26 @@ and formatterExprField : (Str, Expr) -> Str =
     given (field) ->
         match field with
             | (name, value) -> name + " = " + formatterExpressionInline(value)
+and formatterMultilineRecord : Str -> List((Str, Expr)) -> Int -> Str =
+    given (name) ->
+        given (fields) ->
+            given (indent) ->
+                name + "(\n" + formatterMultilineFields(
+                    fields,
+                    indent + 4
+                ) + "\n" + formatterIndent(indent) + ")"
+and formatterMultilineFields : List((Str, Expr)) -> Int -> Str =
+    given (fields) ->
+        given (indent) ->
+            match fields with
+                | [] -> ""
+                | (name, value) :: [] -> formatterIndent(indent) + name + " = " + formatterExpr(value)(0)(indent)
+                | (name, value) :: tail ->
+                    formatterIndent(indent) + name + " = " + formatterExpr(
+                        value,
+                        0,
+                        indent
+                    ) + ",\n" + formatterMultilineFields(tail)(indent)
 and formatterMultilineCall : Expr -> Int -> Str =
     given (expression) ->
         given (indent) ->
@@ -513,6 +536,7 @@ and formatterExpressionIsMultiline : Expr -> Bool =
             | ExprHandle(_, _) -> true
             | ExprCall(_, _, _, layout) -> layout != callArgumentsInline
             | ExprList(_, isMultiline) -> isMultiline
+            | ExprRecord(_, _, isMultiline) -> isMultiline
             | _ -> false
 
 let formatExpression expression = formatterExpr(expression)(0)(0) + "\n"

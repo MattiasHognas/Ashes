@@ -466,7 +466,7 @@ public sealed class FormatterTests
             "type alias Identifier(a) = a\n\n" +
             "type UserId = UserId(Int)\n\n" +
             "print(1)\n";
-        var diagnostics = new Ashes.Frontend.Diagnostics();
+        Ashes.Frontend.Diagnostics diagnostics = new();
         var program = new Ashes.Frontend.Parser(source, diagnostics).ParseProgram();
 
         diagnostics.Errors.ShouldBeEmpty();
@@ -636,6 +636,30 @@ public sealed class FormatterTests
 
         diagnostics.Errors.ShouldBeEmpty();
         Ashes.Formatter.Formatter.Format(expression).ShouldBe(source);
+    }
+
+    [Test]
+    public void Format_should_preserve_multiline_record_construction()
+    {
+        const string source = """
+            ExternalFunctionAbi(
+                name = name,
+                parameters = parameters,
+                runtimeCapabilities = capabilities
+            )
+
+            """;
+        Ashes.Frontend.Diagnostics diagnostics = new();
+        Expr expression = new Ashes.Frontend.Parser(source, diagnostics).ParseExpression();
+
+        diagnostics.Errors.ShouldBeEmpty();
+        string formatted = Ashes.Formatter.Formatter.Format(expression);
+        formatted.ShouldBe(source);
+
+        Ashes.Frontend.Diagnostics reparsedDiagnostics = new();
+        Expr reparsed = new Ashes.Frontend.Parser(formatted, reparsedDiagnostics).ParseExpression();
+        reparsedDiagnostics.Errors.ShouldBeEmpty();
+        Ashes.Formatter.Formatter.Format(reparsed).ShouldBe(formatted);
     }
 
     [Test]
