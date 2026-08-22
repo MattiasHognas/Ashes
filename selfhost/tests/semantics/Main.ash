@@ -35,6 +35,7 @@ import CoreLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
 import CoreCapabilityLoweringTests
+import StateMachineTransformTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -202,6 +203,7 @@ let run unit =
     |> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests
     |> CoreExternalLoweringTests.runCoreExternalLoweringTests
     |> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests
+    |> StateMachineTransformTests.runStateMachineTransformTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

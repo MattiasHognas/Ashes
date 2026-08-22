@@ -340,7 +340,7 @@ same public behavior.
 - [x] Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
 - [x] Lower capability handlers/providers and trait evidence according to the completed semantic plans.
-- [ ] Transform async functions into state machines with coroutine frames, resumptions, task scheduling,
+- [x] Transform async functions into state machines with coroutine frames, resumptions, task scheduling,
   cancellation/error paths, and structured parallelism.
 - [ ] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions.
