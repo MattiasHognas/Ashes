@@ -306,8 +306,10 @@ same public behavior.
 
 #### IR model and lowering
 
-- [ ] Model the complete `IrProgram`, functions, registers, locals, literals, coroutine metadata,
-  ownership instructions, and stable function-origin lineage.
+- [x] Model the complete `IrProgram`, functions, registers, locals, literals, coroutine metadata,
+  ownership instructions, and stable function-origin lineage. The pure model covers all 229 current
+  instruction variants, source locations, task-frame ABI constants, external/trait metadata, and
+  typed source/generated ownership without depending on emitted-label parsing.
 - [ ] Implement the canonical lowered/final IR text format and deterministic function selection used by
   `--emit-ir` and compiler reports.
 - [ ] Lower constants, locals, strict left-to-right evaluation, calls, closures, captures, partial

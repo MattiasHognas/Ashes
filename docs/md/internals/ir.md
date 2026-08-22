@@ -18,6 +18,8 @@ The root container for a compiled Ashes program:
 | `EntryFunction` | `IrFunction` | Top-level expression (`_start_main`) |
 | `Functions` | `List<IrFunction>` | Lifted lambdas and named functions |
 | `StringLiterals` | `List<IrStringLiteral>` | All string constants with labels |
+| `ExternalFunctions` | `List<IrExternalFunction>` | Validated external declarations used by lowering and linking |
+| `ExternalOpaqueTypes` | `Set<string>` | Opaque native types referenced by the program |
 | `UsesPrintInt` | `bool` | Whether `PrintInt` is used |
 | `UsesPrintStr` | `bool` | Whether `PrintStr` is used |
 | `UsesPrintBool` | `bool` | Whether `PrintBool` is used |
@@ -25,6 +27,7 @@ The root container for a compiled Ashes program:
 | `UsesClosures` | `bool` | Whether closures are created |
 | `UsesAsync` | `bool` | Whether async/await is used |
 | `CapabilityHandlerGlobals` | `int` | Number of declared capabilities (one handler-evidence global each) |
+| `TraitEvidence` | `TraitEvidenceAnnotations` | Stable dictionary-ABI and concrete-resolution facts for reports |
 
 The `Uses*` flags allow the backend to omit unused runtime helpers.
 
@@ -115,6 +118,9 @@ Instructions use integer indices to address values:
 Each instruction that produces a value writes to a `Target` temporary.
 Each instruction that consumes values reads from `Source`, `Left`,
 `Right`, or named parameter temporaries.
+
+Every instruction also carries an optional source `Location` for debug information. It is immutable
+metadata attached before the instruction enters a function and does not affect execution semantics.
 
 ---
 
@@ -410,7 +416,7 @@ to the innermost installed handler frame for that capability, 0 when none. See
 
 | Instruction | Fields | Description |
 |-------------|--------|-------------|
-| `CreateTask` | `Target`, `ClosureTemp`, `StateStructSize`, `CaptureCount` | Allocate task/state struct from closure |
+| `CreateTask` | `Target`, `ClosureTemp`, `StateStructSize`, `CaptureCount`, `FrameDropperLabel`, `LoopResetEligible` | Allocate task/state struct from closure |
 | `CreateCompletedTask` | `Target`, `ResultTemp` | Allocate pre-completed task (state = -1) |
 | `AwaitTask` | `Target`, `TaskTemp` | Await a sub-task inside a coroutine |
 | `RunTask` | `Target`, `TaskTemp` | Synchronously drive a task to completion |
