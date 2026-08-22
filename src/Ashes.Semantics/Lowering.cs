@@ -11354,6 +11354,11 @@ public sealed partial class Lowering
         {
             runtimeManaged = IsRuntimeManageableTupleElement(elements[i]);
         }
+        MaterializeEscapingArenaTupleElements(
+            tuple,
+            elements,
+            request,
+            runtimeManaged);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
         {
@@ -11366,6 +11371,33 @@ public sealed partial class Lowering
         return (
             tupleTemp,
             new TypeRef.TTuple(elements.Select(element => element.Type).ToList()));
+    }
+
+    private void MaterializeEscapingArenaTupleElements(
+        Expr.TupleLit tuple,
+        List<LoweredValue> elements,
+        LoweredValueRequest request,
+        bool runtimeManaged)
+    {
+        // A requested RC tuple can still fall back to an arena shell when one nested generic ADT is
+        // not runtime-manageable. Copy only finite String-bearing elements that borrow a live RC
+        // owner before lexical cleanup releases it. Recursive graphs, lists, and Bytes views remain
+        // on their existing placement paths; cloning those here would turn hot tuple returns into
+        // unbounded per-call copies.
+        if (runtimeManaged
+            || !request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
+        {
+            return;
+        }
+
+        for (int i = 0; i < elements.Count; i++)
+        {
+            if (EscapingTupleElementNeedsOwnedCopy(tuple.Elements[i], elements[i].Type))
+            {
+                int copiedTemp = EmitDeepCopy(elements[i].Temp, elements[i].Type);
+                elements[i] = CreateLoweredValue(copiedTemp, elements[i].Type);
+            }
+        }
     }
 
     // A bare string variable placed into a tuple that ESCAPES the function (the tuple is the
@@ -11462,6 +11494,71 @@ public sealed partial class Lowering
                 && (pruned is TypeRef.TTuple or TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt
                     || pruned is TypeRef.TList list && CanArenaReset(Prune(list.Element))
                     || pruned is TypeRef.TNamedType);
+    }
+
+    private bool EscapingTupleElementNeedsOwnedCopy(
+        Expr expression,
+        TypeRef type)
+    {
+        return IsFiniteStringAggregateType(type, new HashSet<TypeSymbol>())
+            && (expression is Expr.Var && Prune(type) is TypeRef.TStr
+                || ExpressionContainsStringBinding(expression));
+    }
+
+    private bool ExpressionContainsStringBinding(Expr expression)
+    {
+        if (expression is Expr.Var variable)
+        {
+            return Lookup(variable.Name) is { } binding
+                && Prune(binding.Type) is TypeRef.TStr;
+        }
+
+        if (expression is Expr.TupleLit tuple)
+        {
+            return tuple.Elements.Any(ExpressionContainsStringBinding);
+        }
+
+        return TryDescribeConstructorExpression(
+                expression,
+                out _,
+                out List<Expr>? arguments,
+                out _)
+            && arguments is not null
+            && arguments.Any(ExpressionContainsStringBinding);
+    }
+
+    private bool IsFiniteStringAggregateType(
+        TypeRef type,
+        HashSet<TypeSymbol> path)
+    {
+        TypeRef valueType = Prune(type);
+        if (CanArenaReset(valueType) || valueType is TypeRef.TStr)
+        {
+            return true;
+        }
+
+        if (valueType is TypeRef.TTuple tuple)
+        {
+            return tuple.Elements.All(element =>
+                IsFiniteStringAggregateType(element, path));
+        }
+
+        if (valueType is not TypeRef.TNamedType named
+            || named.Symbol.Constructors.Count == 0
+            || BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+            || IsResourceBearing(named)
+            || !path.Add(named.Symbol))
+        {
+            return false;
+        }
+
+        bool supported = named.Symbol.Constructors.All(constructor =>
+            Enumerable.Range(0, constructor.Arity).All(index =>
+                IsFiniteStringAggregateType(
+                    InstantiateConstructorParameterType(constructor, index, named),
+                    path)));
+        path.Remove(named.Symbol);
+        return supported;
     }
 
     private (int, TypeRef) LowerCons(
