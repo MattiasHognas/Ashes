@@ -213,15 +213,23 @@ let recursive collectBody headerIndent lines reversed =
                 then collectBody(headerIndent)(rest)(line :: reversed)
                 else InlineModuleBody(lines = reverseList(reversed), remaining = lines)
 
-let addCollectedModule name body (collection: InlineModuleCollection) =
-    (let names = name :: collection.names
-    in
-        let modules = DirectInlineModule(name = name, body = body) :: collection.modules
-        in InlineModuleCollection(names = names, outer = collection.outer, modules = modules))
+let collectedNames (collection: InlineModuleCollection) = collection.names
 
-let addOuterLine line (collection: InlineModuleCollection) =
-    (let outer = line :: collection.outer
-    in InlineModuleCollection(names = collection.names, outer = outer, modules = collection.modules))
+let collectedOuter (collection: InlineModuleCollection) = collection.outer
+
+let collectedModules (collection: InlineModuleCollection) = collection.modules
+
+let addCollectedModule name body collection =
+    (let names = name :: collectedNames(collection)
+    in
+        let modules = DirectInlineModule(name = name, body = body) :: collectedModules(collection)
+        in InlineModuleCollection(names = names, outer = collectedOuter(collection), modules = modules))
+
+let addOuterLine line collection =
+    (let outer = line :: collectedOuter(collection)
+    in
+        let names = collectedNames(collection)
+        in InlineModuleCollection(names = names, outer = outer, modules = collectedModules(collection)))
 
 let finishCollectedModule name body collection remaining = Ok((addCollectedModule(name)(body)(collection), remaining))
 
@@ -442,6 +450,11 @@ let finishInlineModuleExpansion modules source =
     |> deepCopy
     |> Ok
 
+let finishExpandedModules outerSource result =
+    match result with
+        | Error(error) -> Error(error)
+        | Ok(expandedModules) -> finishInlineModuleExpansion(expandedModules)(outerSource)
+
 let recursive expandCollectedModules scope childNames modules =
     match modules with
         | [] -> Ok([])
@@ -481,11 +494,13 @@ and expandInlineModules scope source =
                             | _ ->
                                 let childNames = directModuleNames(modules)
                                 in
-                                    match expandCollectedModules(scope)(childNames)(modules) with
-                                        | Error(error) -> Error(error)
-                                        | Ok(expandedModules) ->
-                                            collection.outer
-                                            |> reverseList
-                                            |> Ashes.Text.join("\n")
-                                            |> rewriteInlineQualifiers(scope)(childNames)
-                                            |> finishInlineModuleExpansion(expandedModules))
+                                    let outerSource =
+                                        collection.outer
+                                        |> reverseList
+                                        |> Ashes.Text.join("\n")
+                                        |> rewriteInlineQualifiers(scope)(childNames)
+                                        |> deepCopy
+                                    in
+                                        modules
+                                        |> expandCollectedModules(scope)(childNames)
+                                        |> finishExpandedModules(outerSource))

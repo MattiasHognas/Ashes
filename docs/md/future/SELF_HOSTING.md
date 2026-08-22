@@ -282,11 +282,13 @@ same public behavior.
   module boundary; deriving output stays module-local while eligibility validation shares the stitched
   declaration context, trait orphan checks retain package identity, and implementation coherence is
   program-global. Retaining source-function origins through the future IR remains.
-- [~] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
-  with cross-file imports, exports, aliases, and selector ambiguity rules. Pure-Ashes lifting now covers
+- [x] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
+  with cross-file imports, exports, aliases, and selector ambiguity rules. Pure-Ashes lifting covers
   header recognition, indentation and dedenting, nested name composition, child-before-parent order,
   same-scope qualifier rewriting, and restricted-body, reserved-name, and duplicate-name validation.
-  Compilation-plan integration, file/inline collisions, and cross-file import/export resolution remain.
+  Reachable compilation planning now publishes synthetic sources with stable provenance, orders nested
+  children before parents, rejects reachable file/inline collisions, honors compatibility and explicit
+  parent exports, and resolves cross-file whole-module, alias, value-selector, and uppercase type imports.
 - [ ] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
   pointers, buffers, out parameters, symbols, libraries, and capability requirements.
 - [ ] Validate external ABI combinations and produce the metadata required by lowering, code generation,

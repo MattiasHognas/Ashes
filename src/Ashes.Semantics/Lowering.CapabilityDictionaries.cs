@@ -583,7 +583,10 @@ public sealed partial class Lowering
         {
             Expr.Lambda x => CopyLambdaSpans(
                 x,
-                new Expr.Lambda(x.ParamName, map(x.Body))),
+                new Expr.Lambda(x.ParamName, map(x.Body))
+                {
+                    ParamAnnotation = x.ParamAnnotation,
+                }),
             Expr.Let x => CopyLetSpans(
                 x,
                 new Expr.Let(x.Name, map(x.Value), map(x.Body))

@@ -217,6 +217,32 @@ public sealed class TraitEvidenceLoweringTests
     }
 
     [Test]
+    public void CapabilityDictionaryRewritePreservesInlineParameterAnnotations()
+    {
+        const string source = """
+            type Named =
+                | names: List(Str)
+            type Counted =
+                | names: Int
+
+            capability Ask =
+                | ask : Unit -> Unit
+
+            let names (collection: Named) = collection.names
+            let use : Unit -> List(Str) needs {Ask} =
+                given (unit) ->
+                    let ignored = Ask.ask(unit)
+                    in names(Named(names = []))
+
+            0
+            """;
+
+        _ = Lower(source, out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
+    [Test]
     public void SupertraitOperatorUsesEvidenceProjectedFromTheRootDictionary()
     {
         const string source = """

@@ -58,7 +58,7 @@ let recursive constructorNames (constructors: List(TypeConstructor)) =
 let recursive bindingNames (bindings: List(LetBindingSyntax)) =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest ->
+        | LetBindingSyntax { name = name } :: rest ->
             deepCopy(
                 name
             ) :: bindingNames(
@@ -68,7 +68,7 @@ let recursive bindingNames (bindings: List(LetBindingSyntax)) =
 let recursive valueExportsForBindings (bindings: List(LetBindingSyntax)) =
     match bindings with
         | [] -> []
-        | LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements } :: rest ->
+        | LetBindingSyntax { name = name } :: rest ->
             ImportValueExport(
                 deepCopy(name)
             ) :: valueExportsForBindings(rest)
@@ -83,12 +83,12 @@ let recursive constructorExports (constructors: List(TypeConstructor)) =
 
 let compatibilityExportsForItem item =
     match unspanTopLevel(item) with
-        | TopLevelLet(LetBindingSyntax { name = name, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements }, _recursive) ->
+        | TopLevelLet(LetBindingSyntax { name = name }, _recursive) ->
             [ImportValueExport(
                 deepCopy(name)
             )]
         | TopLevelRecursiveGroup(bindings) -> valueExportsForBindings(bindings)
-        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) ->
+        | TopLevelType(TypeDecl { name = name, constructors = constructors }) ->
             ImportTypeExport(
                 deepCopy(name)
             ) :: constructorExports(constructors)
@@ -96,13 +96,15 @@ let compatibilityExportsForItem item =
             [ImportTypeExport(
                 deepCopy(name)
             )]
-        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) ->
-            [ImportTypeExport(
-                deepCopy(name)
-            ), ImportConstructorExport(
-                deepCopy(constructorName)
-            )]
-        | TopLevelTrait(TraitDecl { name = name, typeParameters = _typeParameters, supertraits = _supertraits, methods = _methods }) ->
+        | TopLevelZeroCostType(declaration) ->
+            match declaration with
+                | ZeroCostTypeDecl { name = name, constructor = TypeConstructor { name = constructorName } } ->
+                    [ImportTypeExport(
+                        deepCopy(name)
+                    ), ImportConstructorExport(
+                        deepCopy(constructorName)
+                    )]
+        | TopLevelTrait(TraitDecl { name = name }) ->
             [ImportTypeExport(
                 deepCopy(name)
             )]
@@ -116,7 +118,23 @@ let recursive appendExports left right =
 let recursive collectCompatibilityExports items =
     match items with
         | [] -> []
-        | item :: rest -> appendExports(compatibilityExportsForItem(item))(collectCompatibilityExports(rest))
+        | item :: rest ->
+            rest
+            |> collectCompatibilityExports
+            |> appendExports(compatibilityExportsForItem(item))
+
+let recursive compatibilityModuleExports names =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            ImportModuleExport(deepCopy(name)) :: compatibilityModuleExports(rest)
+
+let compatibilityExports directModules items =
+    (let exports = collectCompatibilityExports(items)
+    in
+        directModules
+        |> compatibilityModuleExports
+        |> appendExports(exports))
 
 let recursive hasExportDeclaration items =
     match items with
@@ -131,19 +149,21 @@ let recursive hasDeclaredValue name items =
         | [] -> false
         | item :: rest ->
             match unspanTopLevel(item) with
-                | TopLevelLet(LetBindingSyntax { name = bindingName, value = _value, sugarParameters = _sugarParameters, typeAnnotation = _typeAnnotation, requirements = _requirements }, _recursive) ->
+                | TopLevelLet(LetBindingSyntax { name = bindingName }, _recursive) ->
                     if bindingName == name
                     then true
                     else hasDeclaredValue(name)(rest)
                 | TopLevelRecursiveGroup(bindings) ->
-                    if containsText(name)(bindingNames(bindings))
+                    if bindings
+                    |> bindingNames
+                    |> containsText(name)
                     then true
                     else hasDeclaredValue(name)(rest)
                 | _ -> hasDeclaredValue(name)(rest)
 
 let declaredTypeForItem item =
     match unspanTopLevel(item) with
-        | TopLevelType(TypeDecl { name = name, typeParameters = _typeParameters, constructors = constructors, isRecord = _isRecord, derivingTraits = _derivingTraits }) ->
+        | TopLevelType(TypeDecl { name = name, constructors = constructors }) ->
             Some(
                 DeclaredTypeInterface(name = deepCopy(name), constructors = constructorNames(constructors))
             )
@@ -151,10 +171,12 @@ let declaredTypeForItem item =
             Some(
                 DeclaredTypeInterface(name = deepCopy(name), constructors = [])
             )
-        | TopLevelZeroCostType(ZeroCostTypeDecl { name = name, typeParameters = _typeParameters, constructor = TypeConstructor { name = constructorName, parameters = _parameters, fieldNames = _fieldNames }, derivingTraits = _derivingTraits }) ->
-            Some(
-                DeclaredTypeInterface(name = deepCopy(name), constructors = [deepCopy(constructorName)])
-            )
+        | TopLevelZeroCostType(declaration) ->
+            match declaration with
+                | ZeroCostTypeDecl { name = name, constructor = TypeConstructor { name = constructorName } } ->
+                    Some(
+                        DeclaredTypeInterface(name = deepCopy(name), constructors = [deepCopy(constructorName)])
+                    )
         | _ -> None
 
 let recursive findDeclaredType name items =
@@ -168,6 +190,8 @@ let recursive findDeclaredType name items =
                     else findDeclaredType(name)(rest)
                 | None -> findDeclaredType(name)(rest)
 
+let moduleInterface name exports = ModuleImportInterface(name = deepCopy(name), exports = exports)
+
 let exportKey item =
     match item with
         | ExportValue(name) -> "value:" + name
@@ -178,10 +202,22 @@ let addUniqueExport moduleName export reversed =
     if containsExport(export)(reversed)
     then
         match export with
-            | ImportValueExport(name) -> Error(DuplicateModuleExport(moduleName)("value:" + name))
-            | ImportTypeExport(name) -> Error(DuplicateModuleExport(moduleName)("type:" + name))
-            | ImportConstructorExport(name) -> Error(DuplicateModuleExport(moduleName)("constructor:" + name))
-            | ImportModuleExport(name) -> Error(DuplicateModuleExport(moduleName)("module:" + name))
+            | ImportValueExport(name) ->
+                "value:" + name
+                |> DuplicateModuleExport(moduleName)
+                |> Error
+            | ImportTypeExport(name) ->
+                "type:" + name
+                |> DuplicateModuleExport(moduleName)
+                |> Error
+            | ImportConstructorExport(name) ->
+                "constructor:" + name
+                |> DuplicateModuleExport(moduleName)
+                |> Error
+            | ImportModuleExport(name) ->
+                "module:" + name
+                |> DuplicateModuleExport(moduleName)
+                |> Error
     else Ok(export :: reversed)
 
 let recursive addConstructorExports moduleName names declaredConstructors reversed =
@@ -190,10 +226,15 @@ let recursive addConstructorExports moduleName names declaredConstructors revers
         | name :: rest ->
             if containsText(name)(declaredConstructors)
             then
-                match addUniqueExport(moduleName)(ImportConstructorExport(deepCopy(name)))(reversed) with
+                match addUniqueExport(moduleName)(name
+                |> deepCopy
+                |> ImportConstructorExport)(reversed) with
                     | Error(error) -> Error(error)
                     | Ok(next) -> addConstructorExports(moduleName)(rest)(declaredConstructors)(next)
-            else Error(UnknownModuleExport(moduleName)(name))
+            else
+                name
+                |> UnknownModuleExport(moduleName)
+                |> Error
 
 let addTypeConstructors moduleName selection (declaration: DeclaredTypeInterface) reversed =
     match declaration with
@@ -205,9 +246,14 @@ let addTypeConstructors moduleName selection (declaration: DeclaredTypeInterface
 
 let addTypeExport moduleName name selection declarations reversed =
     match findDeclaredType(name)(declarations) with
-        | None -> Error(UnknownModuleExport(moduleName)(name))
+        | None ->
+            name
+            |> UnknownModuleExport(moduleName)
+            |> Error
         | Some(declaration) ->
-            match addUniqueExport(moduleName)(ImportTypeExport(deepCopy(name)))(reversed) with
+            match addUniqueExport(moduleName)(name
+            |> deepCopy
+            |> ImportTypeExport)(reversed) with
                 | Error(error) -> Error(error)
                 | Ok(withType) -> addTypeConstructors(moduleName)(selection)(declaration)(withType)
 
@@ -215,20 +261,39 @@ let addExplicitExport moduleName directModules declarations item reversed =
     match item with
         | ExportValue(name) ->
             if hasDeclaredValue(name)(declarations)
-            then addUniqueExport(moduleName)(ImportValueExport(deepCopy(name)))(reversed)
-            else Error(UnknownModuleExport(moduleName)(name))
+            then
+                addUniqueExport(moduleName)(name
+                |> deepCopy
+                |> ImportValueExport)(reversed)
+            else
+                name
+                |> UnknownModuleExport(moduleName)
+                |> Error
         | ExportType(name, selection) -> addTypeExport(moduleName)(name)(selection)(declarations)(reversed)
         | ExportModule(name) ->
             if containsText(name)(directModules)
-            then addUniqueExport(moduleName)(ImportModuleExport(deepCopy(name)))(reversed)
-            else Error(UnknownModuleExport(moduleName)(name))
+            then
+                addUniqueExport(moduleName)(name
+                |> deepCopy
+                |> ImportModuleExport)(reversed)
+            else
+                name
+                |> UnknownModuleExport(moduleName)
+                |> Error
 
 let recursive buildExplicitExports moduleName directModules declarations remaining keys reversed =
     match remaining with
-        | [] -> Ok(reverseList(reversed))
+        | [] ->
+            reversed
+            |> reverseList
+            |> Ok
         | item :: rest ->
             if containsText(exportKey(item))(keys)
-            then Error(DuplicateModuleExport(moduleName)(exportKey(item)))
+            then
+                item
+                |> exportKey
+                |> DuplicateModuleExport(moduleName)
+                |> Error
             else
                 match addExplicitExport(moduleName)(directModules)(declarations)(item)(reversed) with
                     | Error(error) -> Error(error)
@@ -244,7 +309,11 @@ let recursive buildExplicitExports moduleName directModules declarations remaini
 
 let buildFromItems moduleName directModules items =
     match items with
-        | [] -> Ok(ModuleImportInterface(name = deepCopy(moduleName), exports = []))
+        | [] ->
+            directModules
+            |> compatibilityModuleExports
+            |> moduleInterface(moduleName)
+            |> Ok
         | first :: rest ->
             match unspanTopLevel(first) with
                 | TopLevelExport(declaration) ->
@@ -253,14 +322,18 @@ let buildFromItems moduleName directModules items =
                     else
                         match buildExplicitExports(moduleName)(directModules)(items)(declaration.items)([])([]) with
                             | Error(error) -> Error(error)
-                            | Ok(exports) -> Ok(ModuleImportInterface(name = deepCopy(moduleName), exports = exports))
+                            | Ok(exports) ->
+                                exports
+                                |> moduleInterface(moduleName)
+                                |> Ok
                 | _ ->
                     if hasExportDeclaration(rest)
                     then Error(InvalidExportDeclaration(moduleName))
                     else
-                        Ok(
-                            ModuleImportInterface(name = deepCopy(moduleName), exports = collectCompatibilityExports(items))
-                        )
+                        items
+                        |> compatibilityExports(directModules)
+                        |> moduleInterface(moduleName)
+                        |> Ok
 
 let buildModuleInterface moduleName directModules program =
     match program with

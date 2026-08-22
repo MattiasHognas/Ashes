@@ -56,6 +56,16 @@ let checkCompatibilityInterface unit =
         )
     )
 
+let checkCompatibilityModules unit =
+    ProgramSyntax(items = [], body = None)
+    |> buildModuleInterface("Example")(["Internal"])
+    |> assertNamed(
+        "compatibility modules",
+        Ok(
+            ModuleImportInterface(name = "Example", exports = [ImportModuleExport("Internal")])
+        )
+    )
+
 let explicitProgram =
     ProgramSyntax(items = [TopLevelExport(
         ExportDecl(items = [ExportValue("run"), ExportType(
@@ -118,6 +128,7 @@ let checkDuplicateExport unit =
 let run unit =
     unit
     |> checkCompatibilityInterface
+    |> checkCompatibilityModules
     |> checkExplicitInterface
     |> checkExportPosition
     |> checkUnknownExport
