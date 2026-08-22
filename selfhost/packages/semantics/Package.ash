@@ -30,4 +30,16 @@ import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ModuleReferenceRewriting
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.ProjectInference
+import AshesCompiler.Semantics.TaskStructLayout
+import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrText
+import AshesCompiler.Semantics.IrFunctionSelection
+import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreBuiltinLowering
+import AshesCompiler.Semantics.CoreCapabilityLowering
+import AshesCompiler.Semantics.CoreExternalLowering
+import AshesCompiler.Semantics.StateMachineTransform
+import AshesCompiler.Semantics.CoroutineFrame
 Unit
