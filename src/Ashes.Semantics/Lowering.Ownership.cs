@@ -445,7 +445,7 @@ public sealed partial class Lowering
                 if ((info.RuntimeManaged
                         || info.IsResource
                         || info.IsResourceBearing
-                        || string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+                        || IsFunctionOwnership(info))
                     && !info.IsDropped)
                 {
                     drops.Add(info);
@@ -533,7 +533,7 @@ public sealed partial class Lowering
             // RC insertion can reclaim the container without conflating it with resource closing.
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, info.RuntimeManaged));
         }
-        else if (string.Equals(info.TypeName, "Function", StringComparison.Ordinal))
+        else if (IsFunctionOwnership(info))
         {
             EmitFunctionDrop(loadTemp, info);
         }
@@ -561,6 +561,9 @@ public sealed partial class Lowering
             Emit(new IrInst.RcDrop(loadTemp, info.TypeName, info.Slot, RuntimeManaged: true));
         }
     }
+
+    private bool IsFunctionOwnership(OwnershipInfo info) =>
+        info.Type is not null && Prune(info.Type) is TypeRef.TFun;
 
     private bool TryEmitRuntimeManagedTupleDrop(OwnershipInfo info, int loadTemp)
     {
