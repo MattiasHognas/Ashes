@@ -4069,7 +4069,7 @@ public sealed partial class Lowering
             }
 
             if (owned.IsResource || owned.IsResourceBearing
-                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal)
+                || IsFunctionOwnership(owned)
                 || !owned.RuntimeManaged && owned.Type is not null && !CanArenaReset(owned.Type))
             {
                 return false;
@@ -4094,7 +4094,7 @@ public sealed partial class Lowering
 
             if (owned.IsResource
                 || owned.IsResourceBearing
-                || string.Equals(owned.TypeName, "Function", StringComparison.Ordinal))
+                || IsFunctionOwnership(owned))
             {
                 return false;
             }
