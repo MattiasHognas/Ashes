@@ -3,6 +3,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
+import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 export (
     value runCoreLoweringTests,
@@ -28,6 +29,148 @@ let loweredType expression =
 
 let dump expression =
     formatIr(loweredProgram(expression))(LoweredIr)(None)
+
+let loweredProgramWithLayouts layouts expression =
+    match lowerCoreExpressionWithLayouts(layouts)(expression) with
+        | CoreLoweringResult { program = Some(program), error = None } -> program
+        | CoreLoweringResult { error = Some(error) } ->
+            error
+            |> Ashes.Trait.Show.show
+            |> (given (text) -> test.fail("core lowering with layouts failed: " + text))
+        | _ -> test.fail("core lowering with layouts produced no program")
+
+let entryInstructions program =
+    match program with
+        | IrProgram { entryFunction = IrFunction { instructions = instructions } } -> instructions
+
+let entryLocalCount program =
+    match program with
+        | IrProgram { entryFunction = IrFunction { localCount = localCount } } -> localCount
+
+let maybeIntType = SemNamed(40)("Maybe")([SemInt])
+
+let pointType = SemNamed(41)("Point")([])
+
+let userIdType = SemNamed(42)("UserId")([])
+
+let pairType = SemNamed(43)("Pair")([])
+
+let structuralLayouts =
+    [
+        CoreConstructorLayout(
+            name = "None",
+            tag = 0,
+            scheme = TypeScheme(quantified = [], body = maybeIntType, constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "Some",
+            tag = 1,
+            scheme = TypeScheme(
+                quantified = [],
+                body = SemFunction(SemInt)(maybeIntType)(None),
+                constraints = []
+            ),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "Point",
+            tag = 0,
+            scheme = TypeScheme(
+                quantified = [],
+                body = SemFunction(SemInt)(SemFunction(SemInt)(pointType)(None))(None),
+                constraints = []
+            ),
+            fieldNames = ["x", "y"],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "UserId",
+            tag = 0,
+            scheme = TypeScheme(
+                quantified = [],
+                body = SemFunction(SemInt)(userIdType)(None),
+                constraints = []
+            ),
+            fieldNames = [],
+            isZeroCost = true
+        ),
+        CoreConstructorLayout(
+            name = "Pair",
+            tag = 0,
+            scheme = TypeScheme(
+                quantified = [],
+                body = SemFunction(SemInt)(SemFunction(SemInt)(pairType)(None))(None),
+                constraints = []
+            ),
+            fieldNames = [],
+            isZeroCost = false
+        )
+    ]
+
+let recursive containsAlloc size instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(_target, candidate, _managed) } :: rest ->
+            if size == candidate
+            then true
+            else containsAlloc(size)(rest)
+        | _ :: rest -> containsAlloc(size)(rest)
+
+let recursive containsAllocAdt tag fieldCount instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AllocAdt(_target, candidateTag, candidateFields, _managed) } :: rest ->
+            let matches =
+                if tag == candidateTag
+                then fieldCount == candidateFields
+                else false
+            in
+                if matches
+                then true
+                else containsAllocAdt(tag)(fieldCount)(rest)
+        | _ :: rest -> containsAllocAdt(tag)(fieldCount)(rest)
+
+let recursive containsLoadOffset offset instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadMemOffset(_target, _base, candidate) } :: rest ->
+            if offset == candidate
+            then true
+            else containsLoadOffset(offset)(rest)
+        | _ :: rest -> containsLoadOffset(offset)(rest)
+
+let recursive containsGetAdtField index instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = GetAdtField(_target, _base, candidate) } :: rest ->
+            if index == candidate
+            then true
+            else containsGetAdtField(index)(rest)
+        | _ :: rest -> containsGetAdtField(index)(rest)
+
+let recursive containsGetAdtTag instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = GetAdtTag(_, _) } :: _rest -> true
+        | _ :: rest -> containsGetAdtTag(rest)
+
+let recursive functionsContainAllocAdt tag fieldCount functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest ->
+            if containsAllocAdt(tag)(fieldCount)(instructions)
+            then true
+            else functionsContainAllocAdt(tag)(fieldCount)(rest)
+
+let programContainsAllocAdt tag fieldCount program =
+    match program with
+        | IrProgram { entryFunction = IrFunction { instructions = instructions }, functions = functions } ->
+            if containsAllocAdt(tag)(fieldCount)(instructions)
+            then true
+            else functionsContainAllocAdt(tag)(fieldCount)(functions)
 
 let constantLocalExpression =
     ExprLet(
@@ -420,6 +563,240 @@ let expectMutualRecursiveGroup unit =
                     |> (given (text) -> test.fail("mutual recursion lowering failed: " + text))
                 | _ -> test.fail("mutual recursion lowering produced no program"))))(unit)
 
+let expectTupleListAndStringLayouts unit =
+    ((given (_) ->
+        ExprTuple([
+            ExprInt(1),
+            ExprList([
+                ExprInt(2),
+                ExprInt(3)
+            ])(true),
+            ExprString("tail")
+        ])
+        |> loweredProgram
+        |> entryInstructions
+        |> (given (instructions) ->
+            Unit
+            |> (given (_) ->
+                instructions
+                |> containsAlloc(16)
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                instructions
+                |> containsAlloc(24)
+                |> test.assertEqual(true)))))(unit)
+
+let expectOrdinaryAndZeroCostConstructors unit =
+    unit
+    |> (given (_) ->
+        callArgumentsInline
+        |> ExprCall(
+            ExprVar("Some"),
+            ExprInt(7),
+            false
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> containsAllocAdt(1)(1)
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        callArgumentsInline
+        |> ExprCall(
+            ExprVar("UserId"),
+            ExprInt(7),
+            false
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> containsAllocAdt(0)(1)
+        |> test.assertEqual(false))
+    |> (given (_) ->
+        []
+        |> ExprLet(
+            "partial",
+            ExprCall(
+                ExprVar("Pair"),
+                ExprInt(1),
+                false,
+                callArgumentsInline
+            ),
+            ExprCall(
+                ExprVar("partial"),
+                ExprInt(2),
+                false,
+                callArgumentsInline
+            ),
+            [],
+            None
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> programContainsAllocAdt(0)(2)
+        |> test.assertEqual(true))
+
+let listPatternExpression =
+    ExprMatch(
+        ExprList([ExprInt(7)])(false),
+        [
+            (PatternCons(PatternVar("head"))(PatternVar("tail")), ExprVar("head"), None),
+            (PatternEmptyList, ExprInt(0), None)
+        ],
+        None
+    )
+
+let tuplePatternExpression =
+    ExprMatch(
+        ExprTuple([ExprInt(1), ExprInt(2)]),
+        [
+            (PatternTuple([PatternVar("first"), PatternWildcard]), ExprVar("first"), None)
+        ],
+        None
+    )
+
+let expectListAndTuplePatterns unit =
+    unit
+    |> (given (_) ->
+        listPatternExpression
+        |> loweredProgram
+        |> entryInstructions
+        |> (given (instructions) ->
+            Unit
+            |> (given (_) ->
+                instructions
+                |> containsLoadOffset(0)
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                instructions
+                |> containsLoadOffset(8)
+                |> test.assertEqual(true))))
+    |> (given (_) ->
+        tuplePatternExpression
+        |> loweredProgram
+        |> entryInstructions
+        |> containsLoadOffset(8)
+        |> test.assertEqual(true))
+
+let adtPatternExpression =
+    ExprMatch(
+        ExprCall(
+            ExprVar("Some"),
+            ExprInt(7),
+            false,
+            callArgumentsInline
+        ),
+        [
+            (PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None),
+            (PatternConstructor("None")([]), ExprInt(0), None)
+        ],
+        None
+    )
+
+let expectAdtAndZeroCostPatterns unit =
+    unit
+    |> (given (_) ->
+        adtPatternExpression
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> (given (instructions) ->
+            Unit
+            |> (given (_) ->
+                instructions
+                |> containsGetAdtTag
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                instructions
+                |> containsGetAdtField(0)
+                |> test.assertEqual(true))))
+    |> (given (_) ->
+        None
+        |> ExprMatch(
+            ExprCall(
+                ExprVar("UserId"),
+                ExprInt(8),
+                false,
+                callArgumentsInline
+            ),
+            [
+                (PatternConstructor("UserId")([PatternVar("value")]), ExprVar("value"), None)
+            ]
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> containsGetAdtTag
+        |> test.assertEqual(false))
+
+let pointExpression =
+    ExprRecord(
+        "Point",
+        [
+            ("y", ExprInt(2)),
+            ("x", ExprInt(1))
+        ],
+        true
+    )
+
+let recordUpdateAndAccessExpression =
+    ExprLet(
+        "point",
+        pointExpression,
+        ExprLet(
+            "updated",
+            ExprRecordUpdate(ExprVar("point"))([("y", ExprInt(9))]),
+            ExprQualifiedVar("updated")("x"),
+            [],
+            None,
+            []
+        ),
+        [],
+        None,
+        []
+    )
+
+let expectRecordConstructionUpdateAndAccess unit =
+    ((given (_) ->
+        recordUpdateAndAccessExpression
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> (given (instructions) ->
+            Unit
+            |> (given (_) ->
+                instructions
+                |> containsAllocAdt(0)(2)
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                instructions
+                |> containsGetAdtField(0)
+                |> test.assertEqual(true)))))(unit)
+
+let expectRecordAsAndOrPatterns unit =
+    unit
+    |> (given (_) ->
+        None
+        |> ExprMatch(
+            pointExpression,
+            [
+                (PatternRecord("Point")([("y", PatternVar("value"))]), ExprVar("value"), None)
+            ]
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+        |> containsGetAdtField(1)
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        None
+        |> ExprMatch(
+            ExprInt(2),
+            [
+                (PatternOr([
+                    PatternAs(PatternInt(1))("value"),
+                    PatternAs(PatternInt(2))("value")
+                ]), ExprVar("value"), None),
+                (PatternWildcard, ExprInt(0), None)
+            ]
+        )
+        |> loweredProgram
+        |> entryLocalCount
+        |> test.assertEqual(2))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -432,4 +809,10 @@ let runCoreLoweringTests unit =
     |> expectGuardedMatchOrder
     |> expectRecursiveSelfReference
     |> expectMutualRecursiveGroup
+    |> expectTupleListAndStringLayouts
+    |> expectOrdinaryAndZeroCostConstructors
+    |> expectListAndTuplePatterns
+    |> expectAdtAndZeroCostPatterns
+    |> expectRecordConstructionUpdateAndAccess
+    |> expectRecordAsAndOrPatterns
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))
