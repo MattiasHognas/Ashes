@@ -172,6 +172,36 @@ public sealed partial class Lowering
         public List<TcoParamPlacementDecision> History { get; } = [];
     }
 
+    /// <summary>
+    /// Suppresses tail position while an ordinary call's root and arguments are lowered. Returning
+    /// early still restores the enclosing TCO state through <see cref="Dispose"/>.
+    /// </summary>
+    private readonly struct TcoTailPositionScope : IDisposable
+    {
+        private readonly TcoContext? _context;
+        private readonly bool _savedTailPosition;
+
+        public TcoTailPositionScope(TcoContext? context)
+        {
+            _context = context;
+            _savedTailPosition = context?.InTailPosition ?? false;
+            if (context is not null)
+            {
+                context.InTailPosition = false;
+            }
+        }
+
+        public void Restore()
+        {
+            if (_context is not null)
+            {
+                _context.InTailPosition = _savedTailPosition;
+            }
+        }
+
+        public void Dispose() => Restore();
+    }
+
     // TCO (tail call optimization) state
     private sealed class TcoContext
     {
