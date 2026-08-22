@@ -242,6 +242,184 @@ let expectStringInterning unit =
                         | _ -> test.fail("equal string constants should retain the first literal")
                 | _ -> test.fail("equal string constants should share one deterministic literal"))))(unit)
 
+let conditionalExpression =
+    ExprIf(
+        ExprBool(true),
+        ExprInt(1),
+        ExprInt(2)
+    )
+
+let expectConditionalControlFlow unit =
+    ((given (_) ->
+        conditionalExpression
+        |> dump
+        |> test.assertEqual([
+            "IR (lowered)",
+            "============",
+            "",
+            "function _start_main  [ProgramEntry]",
+            "  locals=1 temps=4",
+            "    LoadConstBool         Target=0 Value=true",
+            "    JumpIfFalse           CondTemp=0 Target=else_0",
+            "    LoadConstInt          Target=1 Value=1",
+            "    StoreLocal            Slot=0 Source=1",
+            "    Jump                  Target=endif_1",
+            "  else_0:",
+            "    LoadConstInt          Target=2 Value=2",
+            "    StoreLocal            Slot=0 Source=2",
+            "  endif_1:",
+            "    LoadLocal             Target=3 Slot=0",
+            "    Return                Source=3",
+            ""
+        ])))(unit)
+
+let guardedMatchExpression =
+    ExprMatch(
+        ExprInt(3),
+        [
+            (PatternInt(2), ExprInt(20), None),
+            (PatternVar("n"), ExprVar("n"), Some(ExprBool(false))),
+            (PatternWildcard, ExprInt(40), None)
+        ],
+        None
+    )
+
+let expectGuardedMatchOrder unit =
+    ((given (_) ->
+        guardedMatchExpression
+        |> dump
+        |> test.assertEqual([
+            "IR (lowered)",
+            "============",
+            "",
+            "function _start_main  [ProgramEntry]",
+            "  locals=2 temps=9",
+            "    LoadConstInt          Target=0 Value=3",
+            "    LoadConstInt          Target=1 Value=2",
+            "    CmpIntEq              Target=2 Left=0 Right=1",
+            "    JumpIfFalse           CondTemp=2 Target=match_next_2",
+            "    LoadConstInt          Target=3 Value=20",
+            "    StoreLocal            Slot=0 Source=3",
+            "    Jump                  Target=match_end_0",
+            "  match_next_2:",
+            "    StoreLocal            Slot=1 Source=0",
+            "    LoadConstBool         Target=4",
+            "    JumpIfFalse           CondTemp=4 Target=match_next_3",
+            "    LoadLocal             Target=5 Slot=1",
+            "    StoreLocal            Slot=0 Source=5",
+            "    Jump                  Target=match_end_0",
+            "  match_next_3:",
+            "    LoadConstInt          Target=6 Value=40",
+            "    StoreLocal            Slot=0 Source=6",
+            "    Jump                  Target=match_end_0",
+            "  match_none_1:",
+            "    LoadConstInt          Target=7 Value=0",
+            "    StoreLocal            Slot=0 Source=7",
+            "  match_end_0:",
+            "    LoadLocal             Target=8 Slot=0",
+            "    Return                Source=8",
+            ""
+        ])))(unit)
+
+let recursiveExpression =
+    ExprLetRecursive(
+        "loop",
+        ExprLambda(
+            "n",
+            ExprCall(
+                ExprVar("loop"),
+                ExprVar("n"),
+                false,
+                callArgumentsInline
+            ),
+            None
+        ),
+        ExprVar("loop"),
+        [],
+        None,
+        []
+    )
+
+let expectRecursiveSelfReference unit =
+    ((given (_) ->
+        recursiveExpression
+        |> dump
+        |> test.assertEqual([
+            "IR (lowered)",
+            "============",
+            "",
+            "function lambda_0  [ClosureHelper]",
+            "  locals=2 temps=4",
+            "    LoadLocal             Target=0 Slot=0",
+            "    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0",
+            "    LoadLocal             Target=2 Slot=1",
+            "    CallClosure           Target=3 ClosureTemp=1 ArgTemp=2",
+            "    Return                Source=3",
+            "",
+            "function _start_main  [ProgramEntry]",
+            "  locals=1 temps=3",
+            "    LoadConstInt          Target=0 Value=0",
+            "    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0",
+            "    StoreLocal            Slot=0 Source=1",
+            "    LoadLocal             Target=2 Slot=0",
+            "    Return                Source=2",
+            ""
+        ])))(unit)
+
+let mutualBinding name sibling =
+    (name, ExprLambda(
+        "n",
+        ExprCall(
+            ExprVar(sibling),
+            ExprVar("n"),
+            false,
+            callArgumentsInline
+        ),
+        None
+    ))
+
+let recursive hasClosureFor expectedLabel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = MakeClosure(_target, label, _environment, _size, _managed, _cell, _topLevel) } :: rest ->
+            if label == expectedLabel
+            then true
+            else hasClosureFor(expectedLabel)(rest)
+        | _ :: rest -> hasClosureFor(expectedLabel)(rest)
+
+let expectMutualMembers functions =
+    match functions with
+        | IrFunction { label = "recgroup_0_even", instructions = evenInstructions } :: IrFunction { label = "recgroup_1_odd", instructions = oddInstructions } :: [] ->
+            Unit
+            |> (given (_) ->
+                evenInstructions
+                |> hasClosureFor("recgroup_1_odd")
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                oddInstructions
+                |> hasClosureFor("recgroup_0_even")
+                |> test.assertEqual(true))
+        | _ -> test.fail("mutual recursion should retain source member order and labels")
+
+let expectMutualRecursiveGroup unit =
+    ((given (_) ->
+        ExprVar("even")
+        |> lowerCoreRecursiveGroup([
+            mutualBinding("even")("odd"),
+            mutualBinding("odd")("even")
+        ])
+        |> (given (result) ->
+            match result with
+                | CoreLoweringResult { program = Some(IrProgram { functions = functions }), error = None } ->
+                    expectMutualMembers(
+                        functions
+                    )
+                | CoreLoweringResult { error = Some(error) } ->
+                    error
+                    |> Ashes.Trait.Show.show
+                    |> (given (text) -> test.fail("mutual recursion lowering failed: " + text))
+                | _ -> test.fail("mutual recursion lowering produced no program"))))(unit)
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -250,4 +428,8 @@ let runCoreLoweringTests unit =
     |> expectStrictImmediateCall
     |> expectPartialApplicationOrder
     |> expectStringInterning
+    |> expectConditionalControlFlow
+    |> expectGuardedMatchOrder
+    |> expectRecursiveSelfReference
+    |> expectMutualRecursiveGroup
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))
