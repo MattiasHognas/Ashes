@@ -12125,7 +12125,10 @@ public sealed partial class Lowering
                     [lam.ParamName],
                     sub => new Expr.Lambda(
                         lam.ParamName,
-                        SubstituteVars(lam.Body, sub, recordRebuiltBinder)));
+                        SubstituteVars(lam.Body, sub, recordRebuiltBinder))
+                    {
+                        ParamAnnotation = lam.ParamAnnotation,
+                    });
             case Expr.Let l:
                 return RecordBinder(
                     l,

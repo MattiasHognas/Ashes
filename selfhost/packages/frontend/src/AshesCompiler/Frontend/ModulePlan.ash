@@ -23,6 +23,7 @@ type ModulePlanUnit =
     | source: ResolvedModuleSource
     | imports: List(ImportHeaderEntry)
     | interface: ModuleImportInterface
+    | dependencies: List(Str)
     deriving {Eq, Show}
 
 type PlannedModule =
@@ -38,12 +39,17 @@ type ModulePlanError =
     | ModuleInterfaceNameMismatch(Str, Str)
     | ModulePlanImportError(Str, ImportResolutionError)
     | ModuleImportCycle(List(Str))
+    | UnexportedNestedModule(Str, Str, Str)
     deriving {Eq, Show}
 
 type ModulePlanState =
     | plannedNames: List(Str)
     | visitingNames: List(Str)
     | reversedModules: List(PlannedModule)
+
+let planned n s i m = PlannedModule(name = n, source = s, imports = i, interface = m)
+
+let st p v r = ModulePlanState(plannedNames = p, visitingNames = v, reversedModules = r)
 
 let recursive containsName (name: Str) (names: List(Str)) =
     match names with
@@ -53,18 +59,25 @@ let recursive containsName (name: Str) (names: List(Str)) =
             then true
             else containsName(name)(rest)
 
+let publishUnit unit =
+    match unit with
+        | ModulePlanUnit { name = _name } as candidate -> deepCopy(candidate)
+
 let recursive findUnit (name: Str) (units: List(ModulePlanUnit)) =
     match units with
         | [] -> None
-        | (ModulePlanUnit { name = unitName, source = _source, imports = _imports, interface = _moduleInterface } as unit) :: rest ->
+        | (ModulePlanUnit { name = unitName } as unit) :: rest ->
             if unitName == name
-            then Some(deepCopy(unit))
+            then
+                unit
+                |> publishUnit
+                |> Some
             else findUnit(name)(rest)
 
 let recursive interfacesFromUnits (units: List(ModulePlanUnit)) =
     match units with
         | [] -> []
-        | ModulePlanUnit { name = _name, source = _source, imports = _imports, interface = moduleInterface } :: rest ->
+        | ModulePlanUnit { interface = moduleInterface } :: rest ->
             deepCopy(
                 moduleInterface
             ) :: interfacesFromUnits(rest)
@@ -72,12 +85,19 @@ let recursive interfacesFromUnits (units: List(ModulePlanUnit)) =
 let recursive validateUnits (units: List(ModulePlanUnit)) (seen: List(Str)) =
     match units with
         | [] -> None
-        | ModulePlanUnit { name = unitName, source = _source, imports = _imports, interface = ModuleImportInterface { name = interfaceName, exports = _exports } } :: rest ->
+        | ModulePlanUnit { name = unitName, interface = ModuleImportInterface { name = interfaceName } } :: rest ->
             if containsName(unitName)(seen)
-            then Some(DuplicatePlanModule(deepCopy(unitName)))
+            then
+                Some(unitName
+                |> deepCopy
+                |> DuplicatePlanModule)
             else
                 if interfaceName != unitName
-                then Some(ModuleInterfaceNameMismatch(deepCopy(unitName))(deepCopy(interfaceName)))
+                then
+                    interfaceName
+                    |> deepCopy
+                    |> ModuleInterfaceNameMismatch(deepCopy(unitName))
+                    |> Some
                 else validateUnits(rest)(unitName :: seen)
 
 let resolvedModuleName (resolved: ResolvedImport) =
@@ -85,6 +105,93 @@ let resolvedModuleName (resolved: ResolvedImport) =
         | ResolvedModuleImport(moduleName, _alias, _sourceLine, _written) -> moduleName
         | ResolvedValueImport(moduleName, _exportName, _localName, _sourceLine, _written) -> moduleName
         | ResolvedTypeImport(moduleName, _exportName, _localName, _sourceLine, _written) -> moduleName
+
+let recursive lastPart parts =
+    match parts with
+        | [] -> ""
+        | value :: [] -> value
+        | _head :: rest -> lastPart(rest)
+
+let recursive dropLast parts =
+    match parts with
+        | [] -> []
+        | _last :: [] -> []
+        | head :: rest -> head :: dropLast(rest)
+
+let parentAndChild name =
+    (let parts = Ashes.Text.split(name)(".")
+    in
+        match parts
+        |> dropLast
+        |> Ashes.Text.join(".") with
+            | "" -> None
+            | parent -> Some((parent, lastPart(parts))))
+
+let recursive interfaceExportsModule child exports =
+    match exports with
+        | [] -> false
+        | ImportModuleExport(name) :: rest ->
+            if name == child
+            then true
+            else interfaceExportsModule(child)(rest)
+        | _export :: rest -> interfaceExportsModule(child)(rest)
+
+let recursive findInterface name interfaces =
+    match interfaces with
+        | [] -> None
+        | ModuleImportInterface { name = candidate, exports = exports } :: rest ->
+            if candidate == name
+            then Some(exports)
+            else findInterface(name)(rest)
+
+let isInlineModuleSource source =
+    match source with
+        | InlineModuleSource(_path, _text) -> true
+        | _ -> false
+
+let recursive findUnitSource name units =
+    match units with
+        | [] -> None
+        | ModulePlanUnit { name = candidate, source = source } :: rest ->
+            if candidate == name
+            then Some(source)
+            else findUnitSource(name)(rest)
+
+let importerIsInside parent importer =
+    if importer == parent
+    then true
+    else Ashes.Text.startsWith(importer)(parent + ".")
+
+let recursive validateInlineImportPath importer name units interfaces =
+    match findUnitSource(name)(units) with
+        | Some(source) ->
+            if isInlineModuleSource(source)
+            then
+                match parentAndChild(name) with
+                    | None -> Ok(Unit)
+                    | Some((parent, child)) ->
+                        if importerIsInside(parent)(importer)
+                        then validateInlineImportPath(importer)(parent)(units)(interfaces)
+                        else
+                            match findInterface(parent)(interfaces) with
+                                | None -> validateInlineImportPath(importer)(parent)(units)(interfaces)
+                                | Some(exports) ->
+                                    if interfaceExportsModule(child)(exports)
+                                    then validateInlineImportPath(importer)(parent)(units)(interfaces)
+                                    else
+                                        child
+                                        |> UnexportedNestedModule(importer)(parent)
+                                        |> Error
+            else Ok(Unit)
+        | None -> Ok(Unit)
+
+let recursive validateInlineImports importer imports units interfaces =
+    match imports with
+        | [] -> Ok(Unit)
+        | resolved :: rest ->
+            match validateInlineImportPath(importer)(resolvedModuleName(resolved))(units)(interfaces) with
+                | Error(error) -> Error(error)
+                | Ok(_) -> validateInlineImports(importer)(rest)(units)(interfaces)
 
 let recursive collectDependencyNames (imports: List(ResolvedImport)) (seen: List(Str)) (reversed: List(Str)) =
     match imports with
@@ -109,24 +216,46 @@ let recursive dropBefore (name: Str) (names: List(Str)) =
             then candidate :: rest
             else dropBefore(name)(rest)
 
-let cycleChain (name: Str) (visiting: List(Str)) = appendList(dropBefore(name)(reverseList(visiting)))([deepCopy(name)])
+let cycleChain (name: Str) (visiting: List(Str)) =
+    appendList(visiting
+    |> reverseList
+    |> dropBefore(name))([deepCopy(name)])
 
-let finalizeModule (unit: ModulePlanUnit) resolved originalVisiting (state: ModulePlanState) =
+let finalizeModule unit resolved originalVisiting state =
     match unit with
-        | ModulePlanUnit { name = unitName, source = unitSource, imports = _unitImports, interface = unitInterface } ->
-            Ok(
-                ModulePlanState(plannedNames = unitName :: state.plannedNames, visitingNames = originalVisiting, reversedModules = PlannedModule(name = unitName, source = unitSource, imports = resolved, interface = unitInterface) :: state.reversedModules)
-            )
+        | ModulePlanUnit { name = unitName, source = unitSource, interface = unitInterface } ->
+            let module = planned(unitName)(unitSource)(resolved)(unitInterface)
+            in
+                module :: state.reversedModules
+                |> st(unitName :: state.plannedNames)(originalVisiting)
+                |> Ok
 
-let recursive visitResolved (unit: ModulePlanUnit) (resolved: List(ResolvedImport)) (units: List(ModulePlanUnit)) (interfaces: List(ModuleImportInterface)) (originalVisiting: List(Str)) (state: ModulePlanState) =
-    match visitDependencies(dependencyNames(resolved))(units)(interfaces)(state) with
-        | Error(error) -> Error(error)
-        | Ok(afterDependencies) -> finalizeModule(unit)(resolved)(originalVisiting)(afterDependencies)
-and visitFound (unit: ModulePlanUnit) (units: List(ModulePlanUnit)) (interfaces: List(ModuleImportInterface)) (state: ModulePlanState) =
+let recursive visitResolved unit resolved units interfaces originalVisiting state =
     match unit with
-        | ModulePlanUnit { name = unitName, source = _unitSource, imports = unitImports, interface = _unitInterface } ->
-            match resolveImports(interfaces)(deepCopy(unitImports)) with
-                | Error(error) -> Error(ModulePlanImportError(deepCopy(unitName))(error))
+        | ModulePlanUnit { name = unitName, dependencies = unitDependencies } ->
+            match validateInlineImports(unitName)(resolved)(units)(interfaces) with
+                | Error(error) -> Error(error)
+                | Ok(_) ->
+                    match visitDependencies(
+                        resolved
+                        |> dependencyNames
+                        |> appendList(unitDependencies),
+                        units,
+                        interfaces,
+                        state
+                    ) with
+                        | Error(error) -> Error(error)
+                        | Ok(afterDependencies) -> finalizeModule(unit)(resolved)(originalVisiting)(afterDependencies)
+and visitFound unit units interfaces state =
+    match unit with
+        | ModulePlanUnit { name = unitName, imports = unitImports } ->
+            match unitImports
+            |> deepCopy
+            |> resolveImports(interfaces) with
+                | Error(error) ->
+                    error
+                    |> ModulePlanImportError(deepCopy(unitName))
+                    |> Error
                 | Ok(resolved) ->
                     visitResolved(
                         unit,
@@ -134,19 +263,25 @@ and visitFound (unit: ModulePlanUnit) (units: List(ModulePlanUnit)) (interfaces:
                         units,
                         interfaces,
                         state.visitingNames,
-                        ModulePlanState(plannedNames = state.plannedNames, visitingNames = unitName :: state.visitingNames, reversedModules = state.reversedModules)
+                        st(state.plannedNames)(unitName :: state.visitingNames)(state.reversedModules)
                     )
-and visitModule (name: Str) (units: List(ModulePlanUnit)) (interfaces: List(ModuleImportInterface)) (state: ModulePlanState) =
+and visitModule name units interfaces state =
     if containsName(name)(state.plannedNames)
     then Ok(state)
     else
         if containsName(name)(state.visitingNames)
-        then Error(ModuleImportCycle(cycleChain(name)(state.visitingNames)))
+        then
+            Error(state.visitingNames
+            |> cycleChain(name)
+            |> ModuleImportCycle)
         else
             match findUnit(name)(units) with
-                | None -> Error(UnknownPlanEntry(deepCopy(name)))
+                | None ->
+                    Error(name
+                    |> deepCopy
+                    |> UnknownPlanEntry)
                 | Some(unit) -> visitFound(unit)(units)(interfaces)(state)
-and visitDependencies (names: List(Str)) (units: List(ModulePlanUnit)) (interfaces: List(ModuleImportInterface)) (state: ModulePlanState) =
+and visitDependencies names units interfaces state =
     match names with
         | [] -> Ok(state)
         | name :: rest ->
@@ -159,15 +294,24 @@ let buildWithInterfaces (entry: Str) (units: List(ModulePlanUnit)) (interfaces: 
         entry,
         units,
         interfaces,
-        ModulePlanState(plannedNames = [], visitingNames = [], reversedModules = [])
+        st([])([])([])
     ) with
         | Error(error) -> Error(error)
-        | Ok(state) -> Ok(reverseList(state.reversedModules))
+        | Ok(state) ->
+            state.reversedModules
+            |> reverseList
+            |> Ok
 
 let buildModulePlan (entry: Str) (units: List(ModulePlanUnit)) =
     match validateUnits(units)([]) with
         | Some(error) -> Error(error)
         | None ->
             match findUnit(entry)(units) with
-                | None -> Error(UnknownPlanEntry(deepCopy(entry)))
-                | Some(_unit) -> buildWithInterfaces(entry)(units)(interfacesFromUnits(units))
+                | None ->
+                    Error(entry
+                    |> deepCopy
+                    |> UnknownPlanEntry)
+                | Some(_unit) ->
+                    units
+                    |> interfacesFromUnits
+                    |> buildWithInterfaces(entry)(units)

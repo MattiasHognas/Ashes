@@ -11,6 +11,7 @@ import Ashes.IO.Path
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportHeader
 import AshesCompiler.Frontend.ImportHeader.ImportHeaderError
+import AshesCompiler.Frontend.InlineModules
 import AshesCompiler.Frontend.ModuleInterface
 import AshesCompiler.Frontend.ModuleInterface.ModuleInterfaceBuildError
 import AshesCompiler.Frontend.ModulePlan
@@ -44,6 +45,9 @@ type ProjectCompilationError =
     | ProjectCompilationImportHeaderError(Str, ImportHeaderError)
     | ProjectCompilationParseError(Str)
     | ProjectCompilationInterfaceError(Str, ModuleInterfaceBuildError)
+    | ProjectCompilationInlineModuleError(Str, InlineModuleError)
+    | ProjectCompilationInlineFileCollision(Str, Str)
+    | ProjectCompilationReservedInlineModule(Str, Str)
     | ProjectCompilationModulePlanError(ModulePlanError)
     deriving {Eq, Show}
 
@@ -52,16 +56,33 @@ type IndexedProjectSource =
     | path: Str
 
 type LoadedProjectModule =
-    | unit: ModulePlanUnit
+    | units: List(ModulePlanUnit)
     | dependencies: List(Str)
+
+type ReachableModuleSet =
+    | names: List(Str)
+    | units: List(ModulePlanUnit)
+
+type ParsedProjectModule =
+    | name: Str
+    | source: ResolvedModuleSource
+    | imports: List(ImportHeaderEntry)
+    | dependencies: List(Str)
+    | directModules: List(Str)
+
+let cu n s i m d = deepCopy(ModulePlanUnit(name = n, source = s, imports = i, interface = m, dependencies = d))
+
+let pm n s i d m = deepCopy(ParsedProjectModule(name = n, source = s, imports = i, dependencies = d, directModules = m))
+
+let mkLoaded units dependencies = deepCopy(LoadedProjectModule(units = units, dependencies = dependencies))
 
 let projectEntryPath (layout: ProjectLayout) =
     match layout with
-        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = entryPath, entryModuleName = _entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = _manifest } -> entryPath
+        | ProjectLayout { entryPath = entryPath } -> entryPath
 
 let projectEntryModuleName (layout: ProjectLayout) =
     match layout with
-        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = entryModuleName, sourceRoots = _sourceRoots, includeRoots = _includeRoots, outDir = _outDir, manifest = _manifest } -> entryModuleName
+        | ProjectLayout { entryModuleName = entryModuleName } -> entryModuleName
 
 let recursive containsText (value: Str) (values: List(Str)) =
     match values with
@@ -119,7 +140,7 @@ let indexedSource (style: Style) (roots: List(Str)) (entryPath: Str) (entryModul
             | None -> Error(ProjectCompilationUnmappedSource(path))
             | Some(relative) -> Ok(IndexedProjectSource(name = moduleNameFromRelative(style)(relative), path = path))
 
-let recursive indexSources (style: Style) (roots: List(Str)) (entryPath: Str) (entryModuleName: Str) (paths: List(Str)) =
+let recursive indexSources style roots entryPath entryModuleName paths =
     match paths with
         | [] -> Ok([])
         | path :: rest ->
@@ -155,118 +176,308 @@ let hasIndexedModule (name: Str) (sources: List(IndexedProjectSource)) =
         | [] -> false
         | _ -> true
 
-let dependencyModuleName (sources: List(IndexedProjectSource)) (entry: ImportHeaderEntry) =
-    match entry.selector with
-        | Some(_selector) -> entry.modulePath
-        | None ->
-            if hasIndexedModule(entry.modulePath)(sources)
-            then entry.modulePath
-            else
-                match parentModuleName(entry.modulePath) with
-                    | Some(parent) ->
-                        if hasIndexedModule(parent)(sources)
-                        then parent
-                        else entry.modulePath
-                    | None -> entry.modulePath
+let recursive nearestIndexedAncestor (name: Str) (sources: List(IndexedProjectSource)) =
+    match parentModuleName(name) with
+        | None -> None
+        | Some(parent) ->
+            if hasIndexedModule(parent)(sources)
+            then Some(parent)
+            else nearestIndexedAncestor(parent)(sources)
 
-let recursive dependencyModuleNames (sources: List(IndexedProjectSource)) (imports: List(ImportHeaderEntry)) =
+let dependencyLoadNames (sources: List(IndexedProjectSource)) (available: List(Str)) (entry: ImportHeaderEntry) =
+    if containsText(entry.modulePath)(available)
+    then [deepCopy(entry.modulePath)]
+    else
+        match (hasIndexedModule(entry.modulePath)(sources), nearestIndexedAncestor(entry.modulePath)(sources)) with
+            | (true, Some(_ancestor)) -> [deepCopy(entry.modulePath)]
+            | (true, None) -> [deepCopy(entry.modulePath)]
+            | (false, Some(ancestor)) -> [ancestor]
+            | (false, None) -> [deepCopy(entry.modulePath)]
+
+let recursive deps (sources: List(IndexedProjectSource)) (available: List(Str)) (imports: List(ImportHeaderEntry)) =
     match imports with
         | [] -> []
-        | entry :: rest -> dependencyModuleName(sources)(entry) :: dependencyModuleNames(sources)(rest)
+        | entry :: rest ->
+            appendList(
+                dependencyLoadNames(sources)(available)(entry),
+                deps(sources)(available)(rest)
+            )
 
-let finishLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) (imports: List(ImportHeaderEntry)) (parsed: ProgramParseResult) =
-    match parsed with
-        | ProgramParseResult { program = program, diagnostics = diagnostics } ->
-            match diagnostics with
-                | _diagnostic :: _ -> Error(ProjectCompilationParseError(path))
-                | [] ->
-                    match buildModuleInterface(name)([])(program) with
-                        | Error(error) ->
-                            error
-                            |> ProjectCompilationInterfaceError(path)
-                            |> Error
-                        | Ok(moduleInterface) ->
-                            match imports
-                            |> deepCopy
-                            |> dependencyModuleNames(sources) with
-                                | dependencies ->
-                                    Ok(
-                                        LoadedProjectModule(unit = ModulePlanUnit(name = name, source = ProjectModuleSource(
-                                            path
-                                        ), imports = imports, interface = moduleInterface), dependencies = dependencies)
+let directChildName (parent: Str) (candidate: Str) =
+    if parent == ""
+    then
+        if Ashes.Text.contains(candidate)(".")
+        then None
+        else
+            candidate
+            |> deepCopy
+            |> Some
+    else
+        let prefix = parent + "."
+        in
+            if Ashes.Text.startsWith(candidate)(prefix)
+            then
+                let remainder =
+                    prefix
+                    |> Ashes.Text.length
+                    |> Ashes.Text.drop(candidate)
+                in
+                    if Ashes.Text.contains(remainder)(".")
+                    then None
+                    else Some(remainder)
+            else None
+
+let recursive directModuleNames (parent: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            match directChildName(parent)(name) with
+                | None -> directModuleNames(parent)(rest)
+                | Some(child) -> child :: directModuleNames(parent)(rest)
+
+let recursive inlineModuleNames (modules: List(InlineModuleInfo)) =
+    match modules with
+        | [] -> []
+        | InlineModuleInfo { name = name } :: rest -> name :: inlineModuleNames(rest)
+
+let recursive directModulePaths (parent: Str) (names: List(Str)) =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            match directChildName(parent)(name) with
+                | None -> directModulePaths(parent)(rest)
+                | Some(_child) -> deepCopy(name) :: directModulePaths(parent)(rest)
+
+let finishParsedProjectModule path module parsed =
+    match module with
+        | ParsedProjectModule { name = n, source = s, imports = i, dependencies = d, directModules = m } ->
+            match parsed with
+                | ProgramParseResult { program = program, diagnostics = diagnostics } ->
+                    match diagnostics with
+                        | _diagnostic :: _ -> Error(ProjectCompilationParseError(path))
+                        | [] ->
+                            match buildModuleInterface(n)(m)(program) with
+                                | Error(error) ->
+                                    error
+                                    |> ProjectCompilationInterfaceError(path)
+                                    |> Error
+                                | Ok(moduleInterface) ->
+                                    d
+                                    |> deepCopy
+                                    |> cu(deepCopy(n))(deepCopy(s))(deepCopy(i))(
+                                        deepCopy(moduleInterface)
                                     )
+                                    |> Ok
 
-let parseLoadedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) (source: Str) =
+let parseProjectModule path name source imports dependencies directModules text =
+    (let module = pm(name)(source)(imports)(dependencies)(directModules)
+    in
+        text
+        |> parseProgram
+        |> finishParsedProjectModule(path)(module))
+
+let recursive parseInlineModules (path: Str) (names: List(Str)) (modules: List(InlineModuleInfo)) =
+    match modules with
+        | [] -> Ok([])
+        | InlineModuleInfo { name = name, source = text } :: rest ->
+            let directModules = directModuleNames(name)(names)
+            in
+                match parseProjectModule(
+                    path + "#" + name,
+                    name,
+                    InlineModuleSource(path + "#" + name)(text),
+                    [],
+                    directModulePaths(name)(names),
+                    directModules,
+                    text
+                ) with
+                    | Error(error) -> Error(error)
+                    | Ok(unit) ->
+                        match parseInlineModules(path)(names)(rest) with
+                            | Error(error) -> Error(error)
+                            | Ok(units) -> Ok(unit :: units)
+
+let recursive validateInlineModuleSources path sources modules =
+    match modules with
+        | [] -> Ok(Unit)
+        | InlineModuleInfo { name = name } :: rest ->
+            match (name == "Ashes", Ashes.Text.startsWith(name)("Ashes.")) with
+                | (true, _) ->
+                    name
+                    |> ProjectCompilationReservedInlineModule(path)
+                    |> Error
+                | (_, true) ->
+                    name
+                    |> ProjectCompilationReservedInlineModule(path)
+                    |> Error
+                | (false, false) ->
+                    match pathsForModule(name)(sources) with
+                        | collision :: _rest ->
+                            collision
+                            |> ProjectCompilationInlineFileCollision(name)
+                            |> Error
+                        | [] -> validateInlineModuleSources(path)(sources)(rest)
+
+let finishExpandedModule name scope path sources imports expansion =
+    match expansion with
+        | InlineModuleExpansion { source = outerSource, modules = inlineModules } ->
+            match validateInlineModuleSources(path)(sources)(inlineModules) with
+                | Error(error) -> Error(error)
+                | Ok(_) ->
+                    let names = inlineModuleNames(inlineModules)
+                    in
+                        let inlineNames = deepCopy(names)
+                        in
+                            let outerDependencies = deepCopy(names)
+                            in
+                                let outerDirectModules =
+                                    names
+                                    |> deepCopy
+                                    |> directModuleNames(scope)
+                                in
+                                    match inlineModules
+                                    |> deepCopy
+                                    |> parseInlineModules(path)(inlineNames) with
+                                        | Error(error) -> Error(error)
+                                        | Ok(inlineUnits) ->
+                                            match parseProjectModule(
+                                                path,
+                                                name,
+                                                ProjectModuleSource(path),
+                                                imports,
+                                                outerDependencies,
+                                                outerDirectModules,
+                                                outerSource
+                                            ) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(outerUnit) ->
+                                                    let units = appendList(inlineUnits)([outerUnit])
+                                                    in
+                                                        imports
+                                                        |> deps(sources)(name :: deepCopy(names))
+                                                        |> mkLoaded(units)
+                                                        |> Ok
+
+let expandLoadedSource name scope path sources imports source =
+    match expandInlineModules(scope)(source) with
+        | Error(error) ->
+            error
+            |> ProjectCompilationInlineModuleError(path)
+            |> Error
+        | Ok(expansion) -> finishExpandedModule(name)(scope)(path)(sources)(imports)(expansion)
+
+let expandLoadedModule (entryModuleName: Str) (name: Str) =
+    (let scope =
+        if name == entryModuleName
+        then ""
+        else name
+    in expandLoadedSource(name)(scope))
+
+let parseLoadedModule entryModuleName name path sources source =
     match parseImportHeader(source) with
         | Error(error) ->
             error
             |> ProjectCompilationImportHeaderError(path)
             |> Error
-        | Ok(header) ->
-            match header with
-                | ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports } ->
-                    match deepCopy(imports) with
-                        | retainedImports ->
-                            match parseProgram(sourceWithoutImports) with
-                                | parsed -> finishLoadedModule(name)(path)(sources)(retainedImports)(parsed)
+        | Ok(ParsedImportHeader { imports = imports, sourceWithoutImports = sourceWithoutImports }) ->
+            expandLoadedModule(entryModuleName)(name)(path)(sources)(deepCopy(imports))(sourceWithoutImports)
 
-let readIndexedModule (name: Str) (path: Str) (sources: List(IndexedProjectSource)) =
+let readIndexedModule entryModuleName name path sources =
     match Ashes.IO.File.readText(path) with
         | Error(error) ->
             error
             |> ProjectCompilationReadError(path)
             |> Error
-        | Ok(source) -> parseLoadedModule(name)(path)(sources)(source)
+        | Ok(source) -> parseLoadedModule(entryModuleName)(name)(path)(sources)(source)
 
-let loadNamedModule (name: Str) (sources: List(IndexedProjectSource)) =
+let loadNamedModule entryModuleName (name: Str) (sources: List(IndexedProjectSource)) =
     match pathsForModule(name)(sources) with
         | [] ->
             sources
             |> indexedModuleNames
             |> ProjectCompilationMissingModule(name)
             |> Error
-        | path :: [] -> readIndexedModule(name)(path)(sources)
+        | path :: [] -> readIndexedModule(entryModuleName)(name)(path)(sources)
         | paths ->
             paths
             |> ProjectCompilationAmbiguousModule(name)
             |> Error
 
-let recursive loadReachableModules (pending: List(Str)) (loaded: List(Str)) (reversedUnits: List(ModulePlanUnit)) (sources: List(IndexedProjectSource)) =
+let recursive unitNames units =
+    match units with
+        | [] -> []
+        | ModulePlanUnit { name = name } :: rest -> deepCopy(name) :: unitNames(rest)
+
+let recursive loadReachableModules entryModuleName pending loaded reversedUnits sources =
     match pending with
-        | [] ->
-            reversedUnits
-            |> reverseList
-            |> Ok
+        | [] -> Ok(ReachableModuleSet(names = loaded, units = reverseList(reversedUnits)))
         | name :: rest ->
             if containsText(name)(loaded)
-            then loadReachableModules(rest)(loaded)(reversedUnits)(sources)
+            then loadReachableModules(entryModuleName)(rest)(loaded)(reversedUnits)(sources)
             else
-                match loadNamedModule(name)(sources) with
+                match loadNamedModule(deepCopy(entryModuleName))(name)(sources) with
                     | Error(error) -> Error(error)
                     | Ok(loadedModule) ->
-                        loadReachableModules(
-                            appendList(loadedModule.dependencies)(rest),
-                            name :: loaded,
-                            loadedModule.unit :: reversedUnits,
-                            sources
-                        )
+                        let retainedUnits = deepCopy(loadedModule.units)
+                        in
+                            let names =
+                                retainedUnits
+                                |> deepCopy
+                                |> unitNames
+                            in
+                                loadReachableModules(
+                                    entryModuleName,
+                                    appendList(deepCopy(loadedModule.dependencies))(rest),
+                                    appendList(names)(loaded),
+                                    appendList(reverseList(retainedUnits))(reversedUnits),
+                                    sources
+                                )
+
+let recursive lastModuleName names =
+    match names with
+        | [] -> None
+        | name :: [] ->
+            name
+            |> deepCopy
+            |> Some
+        | _name :: rest -> lastModuleName(rest)
 
 let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List(IndexedProjectSource)) =
-    match loadReachableModules([projectEntryModuleName(layout)])([])([])(sources) with
-        | Error(error) -> Error(error)
-        | Ok(units) ->
-            match buildModulePlan(projectEntryModuleName(layout))(units) with
-                | Error(error) -> Error(ProjectCompilationModulePlanError(error))
-                | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules))
+    (let loadLayout = deepCopy(layout)
+    in
+        match loadReachableModules(
+            projectEntryModuleName(loadLayout),
+            [projectEntryModuleName(layout)],
+            [],
+            [],
+            sources
+        ) with
+            | Error(error) -> Error(error)
+            | Ok(ReachableModuleSet { names = names, units = units }) ->
+                match lastModuleName(names) with
+                    | None ->
+                        []
+                        |> ProjectCompilationMissingModule("")
+                        |> Error
+                    | Some(entryModuleName) ->
+                        match buildModulePlan(entryModuleName)(units) with
+                            | Error(error) -> Error(ProjectCompilationModulePlanError(error))
+                            | Ok(modules) -> Ok(ProjectCompilationPlan(sourceFiles = paths, modules = modules)))
 
 let indexEnumeratedSources (style: Style) (layout: ProjectLayout) (roots: List(Str)) (paths: List(Str)) =
-    match indexSources(style)(roots)(projectEntryPath(layout))(projectEntryModuleName(layout))(paths) with
-        | Error(error) -> Error(error)
-        | Ok(sources) -> planIndexedSources(layout)(paths)(sources)
+    (let retainedLayout = deepCopy(layout)
+    in
+        match paths
+        |> deepCopy
+        |> indexSources(style)(roots)(layout
+        |> deepCopy
+        |> projectEntryPath)(projectEntryModuleName(layout)) with
+            | Error(error) -> Error(error)
+            | Ok(sources) -> planIndexedSources(retainedLayout)(paths)(sources))
 
 let projectSourceRoots (layout: ProjectLayout) =
     match layout with
-        | ProjectLayout { projectFilePath = _projectFilePath, projectDirectory = _projectDirectory, entryPath = _entryPath, entryModuleName = _entryModuleName, sourceRoots = sourceRoots, includeRoots = includeRoots, outDir = _outDir, manifest = _manifest } ->
+        | ProjectLayout { sourceRoots = sourceRoots, includeRoots = includeRoots } ->
             appendList(
                 sourceRoots,
                 includeRoots
@@ -275,7 +486,7 @@ let projectSourceRoots (layout: ProjectLayout) =
 let recursive dependencySourceRoots dependencies =
     match dependencies with
         | [] -> []
-        | ResolvedProjectDependency { name = _name, namespace = _namespace, sourceRoots = roots, projectDirectory = _projectDirectory, entryPath = _entryPath, isDev = _isDev } :: rest ->
+        | ResolvedProjectDependency { sourceRoots = roots } :: rest ->
             rest
             |> dependencySourceRoots
             |> appendList(roots)
@@ -292,7 +503,7 @@ let planCompilationRoots style (layout: ProjectLayout) roots =
         | Error(error) -> Error(ProjectCompilationSourceEnumerationError(error))
         | Ok(enumerated) ->
             enumerated
-            |> ensureEntrySource(layout)
+            |> ensureEntrySource(deepCopy(layout))
             |> indexEnumeratedSources(style)(layout)(roots)
 
 let continueProjectDependencyGraph style (layout: ProjectLayout) graphResult =
@@ -300,10 +511,11 @@ let continueProjectDependencyGraph style (layout: ProjectLayout) graphResult =
         | Error(error) -> Error(ProjectCompilationDependencyGraphError(error))
         | Ok(graph) ->
             graph
-            |> compilationSourceRoots(layout)
+            |> compilationSourceRoots(deepCopy(layout))
             |> planCompilationRoots(style)(layout)
 
 let buildProjectCompilationPlan (style: Style) (layout: ProjectLayout) =
     layout
+    |> deepCopy
     |> resolveProjectDependencyGraph(style)
     |> continueProjectDependencyGraph(style)(layout)

@@ -27,6 +27,7 @@ type ModuleSourceRoots =
 type ResolvedModuleSource =
     | ProjectModuleSource(Str)
     | ShippedModuleSource(Str)
+    | InlineModuleSource(Str, Str)
     deriving {Eq, Show}
 
 type ModuleSourceError =
@@ -70,10 +71,10 @@ let recursive collectMatches roots relativePath available seen reversed =
 
 let allProjectRoots (roots: ModuleSourceRoots) =
     match roots with
-        | ModuleSourceRoots { sourceRoots = sourceRoots, includeRoots = includeRoots, dependencyRoots = dependencyRoots, shippedRoot = _shippedRoot } ->
+        | ModuleSourceRoots { sourceRoots = s, includeRoots = i, dependencyRoots = d } ->
             appendList(
-                sourceRoots,
-                appendList(includeRoots)(dependencyRoots)
+                s,
+                appendList(i)(d)
             )
 
 let projectMatches roots relativePath available =
