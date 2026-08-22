@@ -31,6 +31,7 @@ import ExternalAbiTests
 import IrTests
 import IrFunctionSelectionTests
 import IrTextTests
+import CoreLoweringTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -194,6 +195,7 @@ let run unit =
     |> IrTests.runIrTests
     |> IrFunctionSelectionTests.runIrFunctionSelectionTests
     |> IrTextTests.runIrTextTests
+    |> CoreLoweringTests.runCoreLoweringTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests
