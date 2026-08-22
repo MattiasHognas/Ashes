@@ -14,6 +14,8 @@ import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Semantics.CoreBuiltinLowering
+import AshesCompiler.Semantics.CoreExternalLowering
+import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -27,6 +29,7 @@ export (
     value lowerCoreExpression,
     value lowerCoreExpressionWithLayouts,
     value lowerCoreExpressionWithContext,
+    value lowerCoreExpressionWithFullContext,
     value lowerCoreRecursiveGroup,
 )
 
@@ -38,6 +41,8 @@ type CoreLoweringError =
     | CoreConstructorArityMismatch(Str, Int, Int)
     | CoreBuiltinArityMismatch(Str, Str, Int, Int)
     | UnsupportedCoreBuiltinLowering(Str)
+    | CoreExternalDirectOnlyViolation(Str)
+    | UnsupportedCoreExternalLowering(Str)
     | UnknownCoreRecordField(Str, Str)
     | CoreRecordUpdateRequiresRecord(SemanticType)
     | UnsupportedCoreLoweringPattern(Str)
@@ -74,6 +79,9 @@ type CoreLoweringState =
     | bindings: List(CoreBinding)
     | constructorLayouts: List(CoreConstructorLayout)
     | builtinLayouts: List(CoreBuiltinLayout)
+    | externalLayouts: List(CoreExternalFunctionLayout)
+    | externalFunctions: List(ExternalFunctionAbi)
+    | externalOpaqueTypes: List(Str)
     | nextTemp: Int
     | nextLocal: Int
     | nextLambdaId: Int
@@ -244,13 +252,16 @@ let emptyScheme semanticType =
         constraints = []
     )
 
-let initialStateWithContext constructorLayouts builtinLayouts unit =
+let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit =
     CoreLoweringState(
         reversedInstructions = [],
         functions = [],
         bindings = [],
         constructorLayouts = constructorLayouts,
         builtinLayouts = builtinLayouts,
+        externalLayouts = externalLayouts,
+        externalFunctions = externalFunctions,
+        externalOpaqueTypes = externalOpaqueTypes,
         nextTemp = 0,
         nextLocal = 0,
         nextLambdaId = 0,
@@ -260,6 +271,8 @@ let initialStateWithContext constructorLayouts builtinLayouts unit =
         typeSupply = initialTypeVariableSupply(Unit),
         substitution = []
     )
+
+let initialStateWithContext constructorLayouts builtinLayouts unit = initialStateWithFullContext(constructorLayouts)(builtinLayouts)([])([])([])(unit)
 
 let initialStateWithLayouts layouts unit = initialStateWithContext(layouts)([])(unit)
 
@@ -2347,6 +2360,141 @@ let tryLowerBuiltinCall expression lower state =
                     else None
         | _ -> None
 
+let externalLayout name state =
+    match state with
+        | CoreLoweringState { externalLayouts = layouts } -> tryFindExternalLayout(name)(layouts)
+
+let recursive buildExternalParameterNameList count index =
+    if index >= count
+    then []
+    else "__ext_param_" + Ashes.Text.fromInt(index) :: buildExternalParameterNameList(count)(index + 1)
+
+let recursive applyExternalParameters expression parameters =
+    match parameters with
+        | [] -> expression
+        | parameter :: rest ->
+            applyExternalParameters(
+                ExprCall(
+                    expression,
+                    ExprVar(parameter),
+                    false,
+                    callArgumentsInline
+                )
+            )(rest)
+
+let recursive wrapExternalParameters parameters body =
+    match parameters with
+        | [] -> body
+        | parameter :: rest ->
+            ExprLambda(
+                parameter,
+                wrapExternalParameters(rest)(body),
+                None
+            )
+
+let externalWrapperLambda layout =
+    match layout with
+        | CoreExternalFunctionLayout { name = name, abi = abi } ->
+            match abi with
+                | ExternalFunctionAbi { parameters = parameters } ->
+                    let inputCount = externalInputParameterCount(parameters)
+                    in
+                        if inputCount == 0
+                        then
+                            ExprLambda(
+                                "__ext_unit",
+                                ExprCall(ExprVar(name))(ExprVar("__ext_unit"))(false)(callArgumentsInline),
+                                None
+                            )
+                        else
+                            let paramNames = buildExternalParameterNameList(inputCount)(0)
+                            in
+                                paramNames
+                                |> applyExternalParameters(ExprVar(name))
+                                |> wrapExternalParameters(paramNames)
+
+let finishCoreExternalReference layout lower state =
+    match layout with
+        | CoreExternalFunctionLayout { name = name, abi = abi } ->
+            match abi with
+                | ExternalFunctionAbi { directOnly = directOnly } ->
+                    if directOnly
+                    then failure(state)(CoreExternalDirectOnlyViolation(name))
+                    else
+                        lower(externalWrapperLambda(layout))(state)
+
+let unwrapNullaryExternalArgs expectedCount arguments =
+    if expectedCount == 0
+    then
+        match arguments with
+            | ExprVar("Unit") :: [] -> []
+            | other -> other
+    else arguments
+
+let recursive emitInstructions (instructions: List(IrInstructionKind)) state =
+    match instructions with
+        | [] -> state
+        | inst :: rest ->
+            state
+            |> emit(inst)
+            |> emitInstructions(rest)
+
+let lowerExternalCallArguments abi arguments lower state =
+    match lowerCoreValues(arguments)(lower)(state) with
+        | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValues { state = valuesState, temps = argTemps, semanticTypes = argTypes, error = None } ->
+            match valuesState with
+                | CoreLoweringState { nextTemp = startTemp, nextLocal = startLocal } ->
+                    match emitDirectExternalCall(abi)(startTemp)(startLocal)(argTemps)(argTypes) with
+                        | CoreExternalLoweringEmission { error = Some(err) } -> failure(valuesState)(UnsupportedCoreExternalLowering(err))
+                        | CoreExternalLoweringEmission { instructions = callInstrs, nextTemp = endTemp, nextLocal = endLocal, resultTemp = resTemp, resultType = resType, error = None } ->
+                            let emittedState =
+                                valuesState
+                                |> emitInstructions(callInstrs)
+                                |> withNextTemp(endTemp)
+                                |> withNextLocal(endLocal)
+                            in success(resTemp)(resType)(emittedState)
+
+let tryLowerExternalCall expression lower state =
+    match collectCallSpine(expression) with
+        | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
+            match externalLayout(name)(state) with
+                | None -> None
+                | Some(layout) ->
+                    match layout with
+                        | CoreExternalFunctionLayout { abi = abi } ->
+                            match abi with
+                                | ExternalFunctionAbi { parameters = parameters } ->
+                                    let expectedCount = externalInputParameterCount(parameters)
+                                    in
+                                        let normalizedArgs = unwrapNullaryExternalArgs(expectedCount)(arguments)
+                                        in
+                                            if coreListLength(normalizedArgs) == expectedCount
+                                            then
+                                                state
+                                                |> lowerExternalCallArguments(abi)(normalizedArgs)(lower)
+                                                |> Some
+                                            else None
+        | CoreCallSpine { root = ExprQualifiedVar(_moduleName, name), arguments = arguments } ->
+            match externalLayout(name)(state) with
+                | None -> None
+                | Some(layout) ->
+                    match layout with
+                        | CoreExternalFunctionLayout { abi = abi } ->
+                            match abi with
+                                | ExternalFunctionAbi { parameters = parameters } ->
+                                    let expectedCount = externalInputParameterCount(parameters)
+                                    in
+                                        let normalizedArgs = unwrapNullaryExternalArgs(expectedCount)(arguments)
+                                        in
+                                            if coreListLength(normalizedArgs) == expectedCount
+                                            then
+                                                state
+                                                |> lowerExternalCallArguments(abi)(normalizedArgs)(lower)
+                                                |> Some
+                                            else None
+        | _ -> None
+
 let recursive findNamedField (name: Str) (fields: List((Str, Expr))) =
     match fields with
         | [] -> None
@@ -3068,18 +3216,26 @@ let finishCoreBuiltinReference layout lower state =
 
 let lowerCoreVariable name lower state =
     match state with
-        | CoreLoweringState { bindings = bindings } ->
+        | CoreLoweringState { bindings = bindings, externalLayouts = externalLayouts } ->
             match lookupBinding(name)(bindings) with
                 | Some(binding) -> lowerBoundVariable(binding)(state)
                 | None ->
                     match constructorLayout(name)(state) with
                         | Some(layout) -> finishCoreConstructorReference(layout)(lower)(state)
-                        | None -> failure(state)(UnknownLoweringBinding(name))
+                        | None ->
+                            match tryFindExternalLayout(name)(externalLayouts) with
+                                | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
+                                | None -> failure(state)(UnknownLoweringBinding(name))
 
 let lowerCoreQualifiedVariable moduleName memberName lower state =
     match builtinLayout(moduleName)(memberName)(state) with
         | Some(layout) -> finishCoreBuiltinReference(layout)(lower)(state)
-        | None -> lowerRecordFieldAccess(moduleName)(memberName)(state)
+        | None ->
+            match state with
+                | CoreLoweringState { externalLayouts = externalLayouts } ->
+                    match tryFindExternalLayout(memberName)(externalLayouts) with
+                        | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
+                        | None -> lowerRecordFieldAccess(moduleName)(memberName)(state)
 
 let lowerQualified moduleName memberName lower state = lowerCoreQualifiedVariable(moduleName)(memberName)(lower)(state)
 
@@ -3148,7 +3304,10 @@ let recursive lowerCore expression state =
                 | None ->
                     match tryLowerBuiltinCall(expression)(lowerCore)(state) with
                         | Some(lowered) -> lowered
-                        | None -> lowerCall(function)(argument)(lowerCore)(state)
+                        | None ->
+                            match tryLowerExternalCall(expression)(lowerCore)(state) with
+                                | Some(lowered) -> lowered
+                                | None -> lowerCall(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) -> lowerCons(head)(tail)(lowerCore)(state)
@@ -3233,7 +3392,7 @@ let buildProgram lowered =
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
             match state with
-                | CoreLoweringState { reversedInstructions = instructions, functions = functions, nextLocal = localCount, nextTemp = tempCount, stringLiterals = stringLiterals } ->
+                | CoreLoweringState { reversedInstructions = instructions, functions = functions, externalFunctions = externalFunctions, externalOpaqueTypes = externalOpaqueTypes, nextLocal = localCount, nextTemp = tempCount, stringLiterals = stringLiterals } ->
                     let entry =
                         IrFunction(
                             label = "_start_main",
@@ -3259,8 +3418,8 @@ let buildProgram lowered =
                                         entryFunction = entry,
                                         functions = functions,
                                         stringLiterals = stringLiterals,
-                                        externalFunctions = [],
-                                        externalOpaqueTypes = [],
+                                        externalFunctions = externalFunctions,
+                                        externalOpaqueTypes = externalOpaqueTypes,
                                         usesPrintInt = usesPrintInt,
                                         usesPrintStr = usesPrintStr,
                                         usesPrintBool = usesPrintBool,
@@ -3289,6 +3448,12 @@ let lowerCoreExpressionWithLayouts layouts expression =
 let lowerCoreExpressionWithContext constructorLayouts builtinLayouts expression =
     Unit
     |> initialStateWithContext(constructorLayouts)(builtinLayouts)
+    |> lowerCore(expression)
+    |> buildProgram
+
+let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes expression =
+    Unit
+    |> initialStateWithFullContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)
     |> lowerCore(expression)
     |> buildProgram
 

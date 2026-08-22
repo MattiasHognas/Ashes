@@ -337,7 +337,7 @@ same public behavior.
   operation item immediately below.
 - [x] Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
-- [ ] Lower external calls, resources/destructors, native ownership conventions, library/resource
+- [x] Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
 - [ ] Lower capability handlers/providers and trait evidence according to the completed semantic plans.
 - [ ] Transform async functions into state machines with coroutine frames, resumptions, task scheduling,

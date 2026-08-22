@@ -33,6 +33,7 @@ import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
 import CoreBuiltinLoweringTests
+import CoreExternalLoweringTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -198,6 +199,7 @@ let run unit =
     |> IrTextTests.runIrTextTests
     |> CoreLoweringTests.runCoreLoweringTests
     |> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests
+    |> CoreExternalLoweringTests.runCoreExternalLoweringTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests
