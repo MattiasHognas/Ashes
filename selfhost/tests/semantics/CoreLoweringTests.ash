@@ -1,5 +1,6 @@
 import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
@@ -797,6 +798,205 @@ let expectRecordAsAndOrPatterns unit =
         |> entryLocalCount
         |> test.assertEqual(2))
 
+type CoreOperationClass =
+    | AddIntClass
+    | SubIntClass
+    | MulIntClass
+    | DivIntClass
+    | DivUIntClass
+    | AndIntClass
+    | OrIntClass
+    | XorIntClass
+    | ShlIntClass
+    | ShrIntClass
+    | AddFloatClass
+    | SubFloatClass
+    | MulFloatClass
+    | DivFloatClass
+    | CmpIntGtClass
+    | CmpIntGeClass
+    | CmpIntLtClass
+    | CmpIntLeClass
+    | CmpIntEqClass
+    | CmpUIntGtClass
+    | CmpFloatEqClass
+    | CmpStrNeClass
+    | BigIntBinaryClass(Str)
+    | ConcatStrClass
+    | LoadProgramArgsClass
+    | WriteStrClass
+    deriving {Eq, Show}
+
+let classifyCoreOperation operation =
+    match operation with
+        | AddInt(_, _, _) -> Some(AddIntClass)
+        | SubInt(_, _, _) -> Some(SubIntClass)
+        | MulInt(_, _, _) -> Some(MulIntClass)
+        | DivInt(_, _, _) -> Some(DivIntClass)
+        | DivUInt(_, _, _) -> Some(DivUIntClass)
+        | AndInt(_, _, _) -> Some(AndIntClass)
+        | OrInt(_, _, _) -> Some(OrIntClass)
+        | XorInt(_, _, _) -> Some(XorIntClass)
+        | ShlInt(_, _, _) -> Some(ShlIntClass)
+        | ShrInt(_, _, _) -> Some(ShrIntClass)
+        | AddFloat(_, _, _) -> Some(AddFloatClass)
+        | SubFloat(_, _, _) -> Some(SubFloatClass)
+        | MulFloat(_, _, _) -> Some(MulFloatClass)
+        | DivFloat(_, _, _) -> Some(DivFloatClass)
+        | CmpIntGt(_, _, _) -> Some(CmpIntGtClass)
+        | CmpIntGe(_, _, _) -> Some(CmpIntGeClass)
+        | CmpIntLt(_, _, _) -> Some(CmpIntLtClass)
+        | CmpIntLe(_, _, _) -> Some(CmpIntLeClass)
+        | CmpIntEq(_, _, _) -> Some(CmpIntEqClass)
+        | CmpUIntGt(_, _, _) -> Some(CmpUIntGtClass)
+        | CmpFloatEq(_, _, _) -> Some(CmpFloatEqClass)
+        | CmpStrNe(_, _, _) -> Some(CmpStrNeClass)
+        | BigIntBinary(_, _, _, name, _) -> Some(BigIntBinaryClass(name))
+        | ConcatStr(_, _, _, _) -> Some(ConcatStrClass)
+        | LoadProgramArgs(_) -> Some(LoadProgramArgsClass)
+        | WriteStr(_) -> Some(WriteStrClass)
+        | _ -> None
+
+let recursive containsCoreOperation expected instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = operation } :: rest ->
+            match classifyCoreOperation(operation) with
+                | Some(actual) ->
+                    if actual == expected
+                    then true
+                    else containsCoreOperation(expected)(rest)
+                | None -> containsCoreOperation(expected)(rest)
+
+let operatorCases =
+    [
+        (ExprAdd(ExprInt(1))(ExprInt(2)), AddIntClass),
+        (ExprSubtract(ExprInt(3))(ExprInt(2)), SubIntClass),
+        ("2.0"
+        |> ExprFloat(2.0)
+        |> ExprSubtract(ExprInt(0)), SubFloatClass),
+        ("3.0"
+        |> ExprFloat(3.0)
+        |> ExprMultiply(ExprFloat(2.0)("2.0")), MulFloatClass),
+        (ExprDivide(ExprInt(6))(ExprInt(2)), DivIntClass),
+        (ExprModulo(ExprInt(7))(ExprInt(3)), SubIntClass),
+        (ExprBitwiseAnd(ExprInt(7))(ExprInt(3)), AndIntClass),
+        (ExprBitwiseOr(ExprInt(4))(ExprInt(1)), OrIntClass),
+        (ExprBitwiseXor(ExprInt(7))(ExprInt(2)), XorIntClass),
+        (ExprShiftLeft(ExprInt(1))(ExprInt(3)), ShlIntClass),
+        ("3u8"
+        |> ExprUInt(3)(8)
+        |> ExprShiftLeft(ExprUInt(1)(8)("1u8")), ShlIntClass),
+        ("3u8"
+        |> ExprUInt(3)(8)
+        |> ExprShiftLeft(ExprUInt(1)(8)("1u8")), ShlIntClass),
+        (ExprShiftRight(ExprInt(8))(ExprInt(2)), ShrIntClass),
+        (ExprBitwiseNot(ExprInt(1)), XorIntClass),
+        (ExprLogicalNot(ExprBool(true)), CmpIntEqClass),
+        ("1u8"
+        |> ExprUInt(1)(8)
+        |> ExprGreaterThan(ExprUInt(2)(8)("2u8")), CmpUIntGtClass),
+        (ExprGreaterOrEqual(ExprInt(2))(ExprInt(1)), CmpIntGeClass),
+        (ExprLessThan(ExprInt(1))(ExprInt(2)), CmpIntLtClass),
+        (ExprLessOrEqual(ExprInt(1))(ExprInt(2)), CmpIntLeClass),
+        ("1.0"
+        |> ExprFloat(1.0)
+        |> ExprEqual(ExprFloat(1.0)("1.0")), CmpFloatEqClass),
+        (ExprNotEqual(ExprString("a"))(ExprString("b")), CmpStrNeClass),
+        (ExprAdd(ExprBigInt("9223372036854775808"))(ExprBigInt("1")), BigIntBinaryClass("add")),
+        (ExprAdd(ExprString("a"))(ExprString("b")), ConcatStrClass)
+    ]
+
+let expectOperatorCase case unit =
+    match case with
+        | (expression, expected) ->
+            expression
+            |> loweredProgram
+            |> entryInstructions
+            |> containsCoreOperation(expected)
+            |> test.assertEqual(true)
+
+let recursive expectOperatorCases cases unit =
+    match cases with
+        | [] -> unit
+        | head :: tail ->
+            unit
+            |> expectOperatorCase(head)
+            |> expectOperatorCases(tail)
+
+let unitType = SemNamed(60)("Unit")([])
+
+let builtinConstructorLayouts =
+    [
+        CoreConstructorLayout(
+            name = "Unit",
+            tag = 0,
+            scheme = TypeScheme(quantified = [], body = unitType, constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        )
+    ]
+
+let builtinLayouts =
+    [
+        CoreBuiltinLayout(
+            moduleName = "Ashes.IO",
+            memberName = "args",
+            scheme = TypeScheme(quantified = [], body = SemList(SemString), constraints = []),
+            kind = CoreProgramArgs
+        ),
+        CoreBuiltinLayout(
+            moduleName = "Ashes.IO",
+            memberName = "write",
+            scheme = TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(unitType)(None),
+                constraints = []
+            ),
+            kind = CoreWrite
+        )
+    ]
+
+let loweredProgramWithContext expression =
+    match lowerCoreExpressionWithContext(builtinConstructorLayouts)(builtinLayouts)(expression) with
+        | CoreLoweringResult { program = Some(program), error = None } -> program
+        | CoreLoweringResult { error = Some(error) } ->
+            error
+            |> Ashes.Trait.Show.show
+            |> (given (text) -> test.fail("core builtin integration failed: " + text))
+        | _ -> test.fail("core builtin integration produced no program")
+
+let programUsesConcat program =
+    match program with
+        | IrProgram { usesConcatStr = value } -> value
+
+let expectBuiltinIntegration unit =
+    unit
+    |> (given (_) ->
+        "args"
+        |> ExprQualifiedVar("Ashes.IO")
+        |> loweredProgramWithContext
+        |> entryInstructions
+        |> containsCoreOperation(LoadProgramArgsClass)
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        callArgumentsInline
+        |> ExprCall(
+            ExprQualifiedVar("Ashes.IO")("write"),
+            ExprString("hello"),
+            false
+        )
+        |> loweredProgramWithContext
+        |> entryInstructions
+        |> containsCoreOperation(WriteStrClass)
+        |> test.assertEqual(true))
+    |> (given (_) ->
+        ExprString("b")
+        |> ExprAdd(ExprString("a"))
+        |> loweredProgram
+        |> programUsesConcat
+        |> test.assertEqual(true))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -815,4 +1015,6 @@ let runCoreLoweringTests unit =
     |> expectAdtAndZeroCostPatterns
     |> expectRecordConstructionUpdateAndAccess
     |> expectRecordAsAndOrPatterns
+    |> expectOperatorCases(operatorCases)
+    |> expectBuiltinIntegration
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))

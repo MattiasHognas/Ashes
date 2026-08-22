@@ -47,8 +47,7 @@ let tokenTextHex value =
                     position
                     |> Ashes.Byte.get(bytes)
                     |> Ashes.Number.UInt.toInt
-                in
-                    encode(position + 1)(encoded + tokenHexDigit(current / 16) + tokenHexDigit(current % 16))
+                in encode(position + 1)(encoded + tokenHexDigit(current / 16) + tokenHexDigit(current % 16))
         in encode(0)(""))
 
 let tokenFloatPayload (token: Token) =
@@ -62,18 +61,7 @@ let tokenFloatPayload (token: Token) =
                 | Error(_) -> Ashes.Text.fromFloat(token.floatValue)
         | _ -> "0"
 
-let serializeToken (token: Token) =
-    tokenKindName(token.kind)
-    + "\t"
-    + tokenTextHex(token.text)
-    + "\t"
-    + Ashes.Text.fromInt(token.intValue)
-    + "\t"
-    + tokenFloatPayload(token)
-    + "\t"
-    + Ashes.Text.fromInt(token.position)
-    + "\t"
-    + Ashes.Text.fromInt(token.length)
+let serializeToken (token: Token) = tokenKindName(token.kind) + "\t" + tokenTextHex(token.text) + "\t" + Ashes.Text.fromInt(token.intValue) + "\t" + tokenFloatPayload(token) + "\t" + Ashes.Text.fromInt(token.position) + "\t" + Ashes.Text.fromInt(token.length)
 
 let recursive serializeTokenRecords tokens =
     match tokens with

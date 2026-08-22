@@ -811,6 +811,43 @@ public sealed class TraitEvidenceLoweringTests
             .ShouldBeTrue();
     }
 
+    [Test]
+    public void LongSequentialBindingChainDoesNotOverflowTraitLowering()
+    {
+        const string source = """
+            trait Eq(a) = | equal : a -> a -> Bool
+            implement Eq(Int) =
+                | equal = given (left) -> given (right) -> left == right
+            0
+            """;
+        Diagnostics diagnostics = new();
+        Ashes.Frontend.Program parsed = new Parser(source, diagnostics).ParseProgram();
+        List<TopLevelItem> items = parsed.Items.ToList();
+        const int bindingCount = 3_000;
+        for (int index = 0; index < bindingCount; index++)
+        {
+            items.Add(new TopLevelItem.LetDecl(
+                $"value{index}",
+                new Expr.IntLit(index),
+                IsRecursive: false));
+        }
+        string finalName = $"value{bindingCount - 1}";
+        Expr call = new Expr.Call(
+            new Expr.Call(
+                new Expr.QualifiedVar("Eq", "equal"),
+                new Expr.Var(finalName)),
+            new Expr.Var(finalName));
+        Ashes.Frontend.Program program = parsed with
+        {
+            Items = items,
+            Body = call,
+        };
+
+        _ = new Lowering(diagnostics).Lower(program);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+    }
+
     private static IrProgram Lower(
         string source,
         out Diagnostics diagnostics,

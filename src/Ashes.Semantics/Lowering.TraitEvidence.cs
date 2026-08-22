@@ -2389,8 +2389,15 @@ public sealed partial class Lowering
                 }
                 return new Expr.Var(TraitImplementationMethodBindingName(trait, referencedMethod.Name));
             }
+
+            if (current is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive)
+            {
+                return RewriteTraitBindingChain(current, Rewrite);
+            }
+
             return MapChildExpressions(current, Rewrite);
         }
+
         Expr rewritten = Rewrite(implementation);
         if (!hasSelfReference)
         {
@@ -2404,6 +2411,73 @@ public sealed partial class Lowering
         AstSpans.Set(recursiveImplementation, span);
         AstSpans.SetLetRecursiveName(recursiveImplementation, span);
         return recursiveImplementation;
+    }
+
+    private static Expr RewriteTraitBindingChain(Expr first, Func<Expr, Expr> rewrite)
+    {
+        List<Func<Expr, Expr>> rebuild = [];
+        Expr current = first;
+        while (TryPrepareTraitBindingRewrite(current, rewrite, rebuild, out Expr body))
+        {
+            current = body;
+        }
+
+        Expr rewritten = rewrite(current);
+        for (int index = rebuild.Count - 1; index >= 0; index--)
+        {
+            rewritten = rebuild[index](rewritten);
+        }
+        return rewritten;
+    }
+
+    private static bool TryPrepareTraitBindingRewrite(
+        Expr current,
+        Func<Expr, Expr> rewrite,
+        List<Func<Expr, Expr>> rebuild,
+        out Expr body)
+    {
+        switch (current)
+        {
+            case Expr.Lambda lambda:
+                rebuild.Add(next => CopyLambdaSpans(lambda, new Expr.Lambda(lambda.ParamName, next)
+                {
+                    ParamAnnotation = lambda.ParamAnnotation,
+                }));
+                body = lambda.Body;
+                return true;
+            case Expr.Let binding:
+                Expr value = rewrite(binding.Value);
+                rebuild.Add(next => CopyLetSpans(binding, new Expr.Let(binding.Name, value, next)
+                {
+                    TypeAnnotation = binding.TypeAnnotation,
+                    Requires = binding.Requires,
+                    SugarParams = binding.SugarParams,
+                }));
+                body = binding.Body;
+                return true;
+            case Expr.LetResult binding:
+                Expr resultValue = rewrite(binding.Value);
+                rebuild.Add(next => CopyLetResultSpans(
+                    binding,
+                    new Expr.LetResult(binding.Name, resultValue, next)));
+                body = binding.Body;
+                return true;
+            case Expr.LetRecursive binding:
+                Expr recursiveValue = rewrite(binding.Value);
+                rebuild.Add(next => CopyLetRecursiveSpans(
+                    binding,
+                    new Expr.LetRecursive(binding.Name, recursiveValue, next)
+                    {
+                        TypeAnnotation = binding.TypeAnnotation,
+                        Requires = binding.Requires,
+                        SugarParams = binding.SugarParams,
+                    }));
+                body = binding.Body;
+                return true;
+            default:
+                body = current;
+                return false;
+        }
     }
 
     private bool IsSelectedTraitMethodReference(
@@ -2441,7 +2515,9 @@ public sealed partial class Lowering
         }
 
         HashSet<string> captures = new(StringComparer.Ordinal);
-        void Visit(Expr current)
+        Stack<Expr> pending = new();
+        pending.Push(expression);
+        while (pending.TryPop(out Expr? current))
         {
             if (current is Expr.QualifiedVar reference)
             {
@@ -2456,11 +2532,10 @@ public sealed partial class Lowering
             }
             _ = MapChildExpressions(current, child =>
             {
-                Visit(child);
+                pending.Push(child);
                 return child;
             });
         }
-        Visit(expression);
         return captures;
     }
 

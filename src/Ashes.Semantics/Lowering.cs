@@ -3075,7 +3075,69 @@ public sealed partial class Lowering
         }
     }
 
-    private (int, TypeRef) LowerLet(
+    private enum SequentialBindingKind
+    {
+        Ordinary,
+        Recursive,
+    }
+
+    private sealed record SequentialBindingFrame(
+        SequentialBindingKind Kind,
+        string Name,
+        bool PopInlinableShadow,
+        bool RemoveCoroutineHelperMarker);
+
+    private (int, TypeRef) LowerLet(Expr.Let let, LoweredValueRequest request) =>
+        LowerSequentialBindingChain(let, request);
+
+    private (int Temp, TypeRef Type) LowerSequentialBindingChain(
+        Expr first,
+        LoweredValueRequest request)
+    {
+        List<SequentialBindingFrame> frames = [];
+        Expr current = first;
+        while (current is Expr.Let or Expr.LetRecursive)
+        {
+            if (current is Expr.Let binding)
+            {
+                frames.Add(PushSequentialLet(binding, request));
+                current = binding.Body;
+            }
+            else if (current is Expr.LetRecursive recursive)
+            {
+                frames.Add(PushSequentialRecursiveLet(recursive, request));
+                current = recursive.Body;
+            }
+        }
+
+        (int Temp, TypeRef Type) result = frames[^1].Kind == SequentialBindingKind.Ordinary
+            ? LowerEscapingResult(current, request: request)
+            : LowerExpr(current, request).AsPair();
+        for (int index = frames.Count - 1; index >= 0; index--)
+        {
+            SequentialBindingFrame frame = frames[index];
+            if (frame.PopInlinableShadow)
+            {
+                PopInlinableShadow(frame.Name);
+            }
+            if (frame.RemoveCoroutineHelperMarker)
+            {
+                _coroutineHelperArity.Remove(frame.Name);
+            }
+            result = frame.Kind == SequentialBindingKind.Ordinary
+                ? PopLetScope(result.Temp, result.Type)
+                : PopRecursiveLetScope(result);
+        }
+        return result;
+    }
+
+    private (int Temp, TypeRef Type) PopRecursiveLetScope((int Temp, TypeRef Type) result)
+    {
+        _scopes.Pop();
+        return result;
+    }
+
+    private SequentialBindingFrame PushSequentialLet(
         Expr.Let let,
         LoweredValueRequest request)
     {
@@ -3126,10 +3188,11 @@ public sealed partial class Lowering
             // so match the defining let by the value object identity recorded at registration.
             || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
         bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
-        var (bodyTemp, bodyType) = LowerEscapingResult(let.Body, request: request);
-        if (shadowed) PopInlinableShadow(let.Name);
-
-        return PopLetScope(bodyTemp, bodyType);
+        return new SequentialBindingFrame(
+            SequentialBindingKind.Ordinary,
+            let.Name,
+            shadowed,
+            RemoveCoroutineHelperMarker: false);
     }
 
     private TypeScheme FinalizeLetTraitScheme(
@@ -5240,6 +5303,11 @@ public sealed partial class Lowering
 
     private (int, TypeRef) LowerLetRecursive(
         Expr.LetRecursive letRecursive,
+        LoweredValueRequest request) =>
+        LowerSequentialBindingChain(letRecursive, request);
+
+    private SequentialBindingFrame PushSequentialRecursiveLet(
+        Expr.LetRecursive letRecursive,
         LoweredValueRequest request)
     {
         RegisterHoverParameterNames(AstSpans.GetLetRecursiveNameOrDefault(letRecursive), letRecursive.Value);
@@ -5291,15 +5359,11 @@ public sealed partial class Lowering
             usesTraitDictionary ? signature.Type : null,
             usesTraitDictionary ? traitDictionaryInfo!.Dictionaries.Count : 0,
             needsLateTraitTypeHint);
-
-        var (bodyTemp, bodyType) = LowerExpr(letRecursive.Body, request);
-        if (helperMarkerAdded)
-        {
-            _coroutineHelperArity.Remove(letRecursive.Name);
-        }
-
-        _scopes.Pop();
-        return (bodyTemp, bodyType);
+        return new SequentialBindingFrame(
+            SequentialBindingKind.Recursive,
+            letRecursive.Name,
+            PopInlinableShadow: false,
+            RemoveCoroutineHelperMarker: helperMarkerAdded);
     }
 
     private ResolvedBindingSignature ResolveRecursiveTraitSignature(
