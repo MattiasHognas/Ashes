@@ -20,10 +20,12 @@ export (
     value addTypeParameter,
     value addTypeDefinition,
     value addTypeDefinitionWithProvenance,
+    value addExternalTypeDefinition,
     value addTypeAliasDefinition,
     value nominalTypeProvenance,
     value nextTypeDefinitionSymbolId,
     value prepareTypeResolutionContext,
+    value resolveSemanticTypeApplication,
     value resolveTypeExpression,
 )
 
@@ -34,6 +36,7 @@ type DeclarationProvenance =
 type TypeDefinition =
     | NominalTypeDefinition(Int, Str, Int, DeclarationProvenance)
     | AliasTypeDefinition(Str, List(Int), SemanticType)
+    | ExternalTypeDefinition(Str, Maybe(Str))
 
 type TypeResolutionContext =
     | parameters: List((Str, SemanticType))
@@ -91,6 +94,10 @@ let addTypeAliasDefinition name parameterIds target context =
                 target
             ) :: definitions)
 
+let addExternalTypeDefinition name destructor context =
+    match context with
+        | TypeResolutionContext { parameters = parameters, definitions = definitions } -> TypeResolutionContext(parameters = parameters, definitions = ExternalTypeDefinition(name)(destructor) :: definitions)
+
 let recursive typeListLength values =
     match values with
         | [] -> 0
@@ -117,6 +124,10 @@ let recursive findTypeDefinition name definitions =
                     if name == candidateName
                     then Some(definition)
                     else findTypeDefinition(name)(tail)
+                | ExternalTypeDefinition(candidateName, _destructor) ->
+                    if name == candidateName
+                    then Some(definition)
+                    else findTypeDefinition(name)(tail)
 
 let recursive findNominalTypeProvenance symbolId definitions =
     match definitions with
@@ -126,6 +137,7 @@ let recursive findNominalTypeProvenance symbolId definitions =
             then Some(provenance)
             else findNominalTypeProvenance(symbolId)(tail)
         | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> findNominalTypeProvenance(symbolId)(tail)
+        | ExternalTypeDefinition(_name, _destructor) :: tail -> findNominalTypeProvenance(symbolId)(tail)
 
 let nominalTypeProvenance symbolId context =
     match context with
@@ -143,6 +155,7 @@ let recursive maximumTypeDefinitionSymbolId definitions maximum =
             then maximumTypeDefinitionSymbolId(tail)(symbolId)
             else maximumTypeDefinitionSymbolId(tail)(maximum)
         | AliasTypeDefinition(_name, _parameterIds, _target) :: tail -> maximumTypeDefinitionSymbolId(tail)(maximum)
+        | ExternalTypeDefinition(_name, _destructor) :: tail -> maximumTypeDefinitionSymbolId(tail)(maximum)
 
 let nextTypeDefinitionSymbolId context =
     match context with
@@ -281,6 +294,15 @@ and resolveTypeDefinition name arguments definitions =
                         TypeResolutionResult(semanticType = SemNever, error = Some(
                             TypeNameArityMismatch(name)(expectedArity)(actualArity)
                         ))
+        | Some(ExternalTypeDefinition(definitionName, _destructor)) ->
+            if arguments == []
+            then TypeResolutionResult(semanticType = SemOpaque(definitionName), error = None)
+            else
+                TypeResolutionResult(semanticType = SemNever, error = Some(
+                    TypeNameArityMismatch(name)(0)(typeListLength(arguments))
+                ))
+
+let resolveSemanticTypeApplication name arguments context = resolveNamed(name)(arguments)(context)
 
 let recursive resolveTypeExpressions expressions context reversed =
     match expressions with

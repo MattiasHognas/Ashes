@@ -12,6 +12,7 @@ import AshesCompiler.Semantics.TypeResolution
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.DerivingExpansion
+import AshesCompiler.Semantics.ExternalTyping
 import Ashes.Collection.List.reverse
 import Ashes.Collection.List.sortBy
 import Ashes.Text.compare as compareText
@@ -61,6 +62,7 @@ type ProgramInferenceError =
     | OrphanTraitImplementation(Str)
     | OverlappingTraitImplementations(Str)
     | ProgramDerivingExpansionError(DerivingExpansionError)
+    | ProgramExternalTypingError(ExternalTypingError)
     | InvalidStitchedProgram(Str)
     | UnsupportedTopLevelDeclaration(Str)
     deriving {Eq, Show}
@@ -2018,13 +2020,66 @@ let inferTopLevelLet binding isRecursive state =
                             ))
         | (_binding, failedState) -> failedState
 
-let recursive inferTopLevelItems items state =
+let recursive collectExternalDeclarations items reversed =
+    match items with
+        | [] -> reverse(reversed)
+        | TopLevelAt(_span, inner) :: tail -> collectExternalDeclarations(inner :: tail)(reversed)
+        | TopLevelExternal(declaration) :: tail -> collectExternalDeclarations(tail)(declaration :: reversed)
+        | _head :: tail -> collectExternalDeclarations(tail)(reversed)
+
+let withProgramInferenceEnvironment environment (state: ProgramInferenceState) = state with environment = environment
+
+let withProgramInferenceError error (state: ProgramInferenceState) = state with error = error
+
+let recursive registerExternalOpaqueTypes declarations state =
+    match declarations with
+        | [] -> state
+        | ExternalOpaqueType(name, destructor) :: tail ->
+            match state with
+                | ProgramInferenceState { environment = environment, error = None } ->
+                    state
+                    |> withProgramInferenceEnvironment(addInferenceExternalType(
+                        name,
+                        destructor,
+                        environment
+                    ))
+                    |> registerExternalOpaqueTypes(tail)
+                | failedState -> failedState
+        | _declaration :: tail -> registerExternalOpaqueTypes(tail)(state)
+
+let registerExternalFunction declaration declarations state =
+    match state with
+        | ProgramInferenceState { environment = environment, error = None } ->
+            match typeExternalFunction(
+                declaration,
+                declarations,
+                inferenceTypeResolutionContext(environment)
+            ) with
+                | ExternalFunctionTypingResult { typing = Some(ExternalFunctionTyping { name = name, directType = directType, firstClassType = firstClassType }), error = None } ->
+                    let directScheme = TypeScheme(quantified = [], body = directType, constraints = [])
+                    in
+                        let firstClassScheme =
+                            match firstClassType with
+                                | None -> None
+                                | Some(semanticType) -> Some(TypeScheme(quantified = [], body = semanticType, constraints = []))
+                        in
+                            environment
+                            |> addExternalFunctionBinding(
+                                name,
+                                directScheme,
+                                firstClassScheme
+                            )
+                            |> (given (nextEnvironment) -> withProgramInferenceEnvironment(nextEnvironment)(state))
+                | ExternalFunctionTypingResult { error = Some(error) } -> withProgramInferenceError(Some(ProgramExternalTypingError(error)))(state)
+        | failedState -> failedState
+
+let recursive inferTopLevelItems items externalDeclarations state =
     match items with
         | [] -> state
         | head :: tail ->
             let nextState =
                 match head with
-                    | TopLevelAt(_span, inner) -> inferTopLevelItems([inner])(state)
+                    | TopLevelAt(_span, inner) -> inferTopLevelItems([inner])(externalDeclarations)(state)
                     | TopLevelExport(_export) -> state
                     | TopLevelType(declaration) -> registerTypeDeclaration(declaration)(state)
                     | TopLevelTypeAlias(declaration) -> registerTypeAlias(declaration)(state)
@@ -2035,13 +2090,22 @@ let recursive inferTopLevelItems items state =
                     | TopLevelImplementation(declaration) -> registerTraitImplementation(declaration)(state)
                     | TopLevelLet(binding, isRecursive) -> inferTopLevelLet(binding)(isRecursive)(state)
                     | TopLevelRecursiveGroup(bindings) -> inferRecursiveGroup(bindings)(state)
+                    | TopLevelExternal(declaration) ->
+                        match declaration with
+                            | ExternalOpaqueType(_name, _destructor) -> state
+                            | ExternalFunction(_, _, _, _, _, _) ->
+                                registerExternalFunction(
+                                    declaration,
+                                    externalDeclarations,
+                                    state
+                                )
                     | _ ->
                         match state with
                             | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = _error } ->
                                 ProgramInferenceState(environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = Some(
                                     UnsupportedTopLevelDeclaration("declaration kind")
                                 ))
-            in inferTopLevelItems(tail)(nextState)
+            in inferTopLevelItems(tail)(externalDeclarations)(nextState)
 
 let recursive appendProgramUnitItems left right =
     match left with
@@ -2092,14 +2156,14 @@ let stateWithInferencePackage packageId state =
                 environment
             ), substitution = substitution, supply = supply, nextTypeSymbolId = nextTypeSymbolId, error = error)
 
-let recursive inferExpandedProgramUnits units state =
+let recursive inferExpandedProgramUnits units externalDeclarations state =
     match units with
         | [] -> state
         | ProgramInferenceUnit { packageId = packageId, program = ProgramSyntax { items = items } } :: tail ->
             state
             |> stateWithInferencePackage(packageId)
-            |> inferTopLevelItems(items)
-            |> inferExpandedProgramUnits(tail)
+            |> inferTopLevelItems(items)(externalDeclarations)
+            |> inferExpandedProgramUnits(tail)(externalDeclarations)
 
 let inferProgramUnitBody body entryPackageId state =
     match stateWithInferencePackage(entryPackageId)(state) with
@@ -2121,6 +2185,11 @@ let inferProgramUnitBody body entryPackageId state =
                 error
             ))
 
+let initialProgramInferenceState error environment =
+    ProgramInferenceState(environment = environment, substitution = [], supply = initialTypeVariableSupply(Unit), nextTypeSymbolId = environment
+    |> inferenceTypeResolutionContext
+    |> nextTypeDefinitionSymbolId, error = error)
+
 let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion =
     match expansion with
         | ProgramUnitExpansion { units = _units, error = Some(error) } ->
@@ -2128,20 +2197,20 @@ let inferExpandedProgramUnitsFrom baseEnvironment body entryPackageId expansion 
                 error
             ))
         | ProgramUnitExpansion { units = units, error = None } ->
-            let declarations =
-                collectTraitDeclarations(expandedProgramUnitItems(units))([])
+            let items = expandedProgramUnitItems(units)
             in
-                let initialState =
-                    ProgramInferenceState(environment = baseEnvironment, substitution = [], supply = initialTypeVariableSupply(
-                        Unit
-                    ), nextTypeSymbolId = baseEnvironment
-                    |> inferenceTypeResolutionContext
-                    |> nextTypeDefinitionSymbolId, error = validateTraitDeclarations(declarations)(declarations)([]))
+                let declarations = collectTraitDeclarations(items)([])
                 in
-                    initialState
-                    |> inferExpandedProgramUnits(units)
-                    |> validateTraitDefaults(declarations)
-                    |> inferProgramUnitBody(body)(entryPackageId)
+                    let externalDeclarations = collectExternalDeclarations(items)([])
+                    in
+                        baseEnvironment
+                        |> initialProgramInferenceState(
+                            validateTraitDeclarations(declarations)(declarations)([])
+                        )
+                        |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> inferExpandedProgramUnits(units)(externalDeclarations)
+                        |> validateTraitDefaults(declarations)
+                        |> inferProgramUnitBody(body)(entryPackageId)
 
 let inferProgramUnitsFrom baseEnvironment units body entryPackageId =
     units
@@ -2153,50 +2222,18 @@ let inferExpandedProgramFromPackage packageId baseEnvironment program =
         | ProgramSyntax { items = items, body = body } ->
             let initialEnvironment = withInferencePackage(packageId)(baseEnvironment)
             in
-                let initialState =
-                    ProgramInferenceState(environment = initialEnvironment, substitution = [], supply = initialTypeVariableSupply(
-                        Unit
-                    ), nextTypeSymbolId = initialEnvironment
-                    |> inferenceTypeResolutionContext
-                    |> nextTypeDefinitionSymbolId, error = None)
+                let declarations = collectTraitDeclarations(items)([])
                 in
-                    let declarations = collectTraitDeclarations(items)([])
+                    let externalDeclarations = collectExternalDeclarations(items)([])
                     in
-                        let validatedState =
-                            match validateTraitDeclarations(declarations)(declarations)([]) with
-                                | None -> initialState
-                                | Some(error) ->
-                                    ProgramInferenceState(environment = initialEnvironment, substitution = [], supply = initialTypeVariableSupply(
-                                        Unit
-                                    ), nextTypeSymbolId = initialEnvironment
-                                    |> inferenceTypeResolutionContext
-                                    |> nextTypeDefinitionSymbolId, error = Some(error))
-                        in
-                            match validatedState
-                            |> inferTopLevelItems(items)
-                            |> validateTraitDefaults(declarations) with
-                                | ProgramInferenceState { environment = environment, substitution = substitution, supply = supply, nextTypeSymbolId = _nextTypeSymbolId, error = None } ->
-                                    match body with
-                                        | None ->
-                                            ProgramInferenceResult(semanticType = SemTuple(
-                                                []
-                                            ), substitution = substitution, environment = environment, error = None)
-                                        | Some(expression) ->
-                                            match inferExpressionFrom(
-                                                expression,
-                                                environment,
-                                                substitution,
-                                                supply
-                                            ) with
-                                                | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = None } -> ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = None)
-                                                | TypeInferenceResult { semanticType = semanticType, substitution = bodySubstitution, supply = _bodySupply, constraints = _constraints, error = Some(error) } ->
-                                                    ProgramInferenceResult(semanticType = semanticType, substitution = bodySubstitution, environment = environment, error = Some(
-                                                        ProgramExpressionError(error)
-                                                    ))
-                                | ProgramInferenceState { environment = environment, substitution = substitution, supply = _supply, nextTypeSymbolId = _nextTypeSymbolId, error = Some(error) } ->
-                                    ProgramInferenceResult(semanticType = SemNever, substitution = substitution, environment = environment, error = Some(
-                                        error
-                                    ))
+                        initialEnvironment
+                        |> initialProgramInferenceState(
+                            validateTraitDeclarations(declarations)(declarations)([])
+                        )
+                        |> registerExternalOpaqueTypes(externalDeclarations)
+                        |> inferTopLevelItems(items)(externalDeclarations)
+                        |> validateTraitDefaults(declarations)
+                        |> inferProgramUnitBody(body)(packageId)
 
 let inferProgramFromPackage packageId baseEnvironment program =
     match expandDerivedImplementations(program) with
