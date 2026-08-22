@@ -299,8 +299,10 @@ same public behavior.
   zero-cost representations, preserves ordered parameter/source shapes and native ownership, verifies
   resource and owned-string destructors, and publishes canonical function, resource, symbol/library,
   direct-call, and sorted runtime-authority metadata with the inferred program.
-- [ ] Match the current compiler's entry-expression rules, project diagnostics, and deterministic
-  diagnostic ordering across files.
+- [x] Match the current compiler's entry-expression rules, project diagnostics, and deterministic
+  diagnostic ordering across files. Declaration-only entries infer Unit, non-entry trailing bodies
+  are ignored, and reachable parse diagnostics retain their structured source/span data in stable
+  discovery, span, and emission order.
 
 #### IR model and lowering
 

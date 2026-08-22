@@ -4,6 +4,7 @@
 // - Project, include, dependency, and shipped sources retain their namespace boundaries.
 // - Imports are parsed and resolved against built interfaces before modules are ordered.
 // - Ambiguous, missing, or cyclic modules fail planning rather than selecting an arbitrary source.
+// - Reachable parse diagnostics retain source attribution and deterministic discovery order.
 
 import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
@@ -21,6 +22,7 @@ import AshesCompiler.Frontend.ModulePlan.PlannedModule
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Semantics.ProjectDependencyGraph
+import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectSourceEnumeration.ProjectSourceEnumerationError
@@ -43,7 +45,7 @@ type ProjectCompilationError =
     | ProjectCompilationAmbiguousModule(Str, List(Str))
     | ProjectCompilationReadError(Str, Str)
     | ProjectCompilationImportHeaderError(Str, ImportHeaderError)
-    | ProjectCompilationParseError(Str)
+    | ProjectCompilationParseError(List(ProjectDiagnostic))
     | ProjectCompilationInterfaceError(Str, ModuleInterfaceBuildError)
     | ProjectCompilationInlineModuleError(Str, InlineModuleError)
     | ProjectCompilationInlineFileCollision(Str, Str)
@@ -58,10 +60,30 @@ type IndexedProjectSource =
 type LoadedProjectModule =
     | units: List(ModulePlanUnit)
     | dependencies: List(Str)
+    | names: List(Str)
+    | diagnosticSources: List(ProjectDiagnosticSource)
 
 type ReachableModuleSet =
     | names: List(Str)
     | units: List(ModulePlanUnit)
+    | diagnosticSources: List(ProjectDiagnosticSource)
+
+type ParsedProjectModuleResult =
+    | unit: Maybe(ModulePlanUnit)
+    | diagnosticSource: Maybe(ProjectDiagnosticSource)
+
+type ParsedProjectModuleCollection =
+    | units: List(ModulePlanUnit)
+    | diagnosticSources: List(ProjectDiagnosticSource)
+
+type ExpandedProjectModuleContext =
+    | name: Str
+    | scope: Str
+    | path: Str
+    | sources: List(IndexedProjectSource)
+    | imports: List(ImportHeaderEntry)
+    | outerSource: Str
+    | inlineNames: List(Str)
 
 type ParsedProjectModule =
     | name: Str
@@ -71,10 +93,6 @@ type ParsedProjectModule =
     | directModules: List(Str)
 
 let cu n s i m d = deepCopy(ModulePlanUnit(name = n, source = s, imports = i, interface = m, dependencies = d))
-
-let pm n s i d m = deepCopy(ParsedProjectModule(name = n, source = s, imports = i, dependencies = d, directModules = m))
-
-let mkLoaded units dependencies = deepCopy(LoadedProjectModule(units = units, dependencies = dependencies))
 
 let projectEntryPath (layout: ProjectLayout) =
     match layout with
@@ -249,53 +267,84 @@ let recursive directModulePaths (parent: Str) (names: List(Str)) =
                 | Some(_child) -> deepCopy(name) :: directModulePaths(parent)(rest)
 
 let finishParsedProjectModule path module parsed =
-    match module with
-        | ParsedProjectModule { name = n, source = s, imports = i, dependencies = d, directModules = m } ->
-            match parsed with
-                | ProgramParseResult { program = program, diagnostics = diagnostics } ->
-                    match diagnostics with
-                        | _diagnostic :: _ -> Error(ProjectCompilationParseError(path))
-                        | [] ->
-                            match buildModuleInterface(n)(m)(program) with
-                                | Error(error) ->
-                                    error
-                                    |> ProjectCompilationInterfaceError(path)
-                                    |> Error
-                                | Ok(moduleInterface) ->
-                                    d
-                                    |> deepCopy
-                                    |> cu(deepCopy(n))(deepCopy(s))(deepCopy(i))(
-                                        deepCopy(moduleInterface)
-                                    )
-                                    |> Ok
+    match (module, parsed) with
+        | (ParsedProjectModule { name = n, source = s, imports = i, dependencies = d, directModules = m }, ProgramParseResult { program = program, diagnostics = [] }) ->
+            match buildModuleInterface(n)(m)(program) with
+                | Error(error) ->
+                    error
+                    |> ProjectCompilationInterfaceError(path)
+                    |> Error
+                | Ok(moduleInterface) ->
+                    Some(d
+                    |> deepCopy
+                    |> cu(deepCopy(n))(deepCopy(s))(deepCopy(i))(
+                        deepCopy(moduleInterface)
+                    ))
+                    |> (given (unit) -> ParsedProjectModuleResult(unit = unit, diagnosticSource = None))
+                    |> Ok
+        | (_module, ProgramParseResult { diagnostics = diagnostics }) ->
+            Ok(ParsedProjectModuleResult(
+                unit = None,
+                diagnosticSource = Some(ProjectDiagnosticSource(
+                    sourcePath = path,
+                    diagnostics = diagnostics
+                ))
+            ))
 
-let parseProjectModule path name source imports dependencies directModules text =
-    (let module = pm(name)(source)(imports)(dependencies)(directModules)
-    in
-        text
-        |> parseProgram
-        |> finishParsedProjectModule(path)(module))
+let parseProjectModule path module text =
+    text
+    |> parseProgram
+    |> finishParsedProjectModule(path)(module)
+
+let inlineParsedProjectModule path names name text =
+    ParsedProjectModule(
+        name = name,
+        source = InlineModuleSource(path + "#" + name)(text),
+        imports = [],
+        dependencies = directModulePaths(name)(names),
+        directModules = directModuleNames(name)(names)
+    )
+
+let parsedProjectModuleUnits result =
+    match result with
+        | ParsedProjectModuleResult { unit = Some(unit) } -> [unit]
+        | ParsedProjectModuleResult { unit = None } -> []
+
+let parsedProjectModuleDiagnostics result =
+    match result with
+        | ParsedProjectModuleResult { diagnosticSource = Some(source) } -> [source]
+        | ParsedProjectModuleResult { diagnosticSource = None } -> []
+
+let prependParsedProjectModule result collection =
+    match collection with
+        | ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources } ->
+            ParsedProjectModuleCollection(
+                units = appendList(parsedProjectModuleUnits(result))(units),
+                diagnosticSources = appendList(parsedProjectModuleDiagnostics(result))(diagnosticSources)
+            )
+
+let continueInlineModuleParsing parsed tailResult =
+    match tailResult with
+        | Error(error) -> Error(error)
+        | Ok(collection) ->
+            collection
+            |> prependParsedProjectModule(parsed)
+            |> Ok
 
 let recursive parseInlineModules (path: Str) (names: List(Str)) (modules: List(InlineModuleInfo)) =
     match modules with
-        | [] -> Ok([])
+        | [] -> Ok(ParsedProjectModuleCollection(units = [], diagnosticSources = []))
         | InlineModuleInfo { name = name, source = text } :: rest ->
-            let directModules = directModuleNames(name)(names)
-            in
-                match parseProjectModule(
-                    path + "#" + name,
-                    name,
-                    InlineModuleSource(path + "#" + name)(text),
-                    [],
-                    directModulePaths(name)(names),
-                    directModules,
-                    text
-                ) with
-                    | Error(error) -> Error(error)
-                    | Ok(unit) ->
-                        match parseInlineModules(path)(names)(rest) with
-                            | Error(error) -> Error(error)
-                            | Ok(units) -> Ok(unit :: units)
+            text
+            |> parseProjectModule(path + "#" + name)(inlineParsedProjectModule(path)(names)(name)(text))
+            |> continueParsedInlineModule(path)(names)(rest)
+and continueParsedInlineModule path names rest result =
+    match result with
+        | Error(error) -> Error(error)
+        | Ok(parsed) ->
+            rest
+            |> parseInlineModules(path)(names)
+            |> continueInlineModuleParsing(parsed)
 
 let recursive validateInlineModuleSources path sources modules =
     match modules with
@@ -318,45 +367,91 @@ let recursive validateInlineModuleSources path sources modules =
                             |> Error
                         | [] -> validateInlineModuleSources(path)(sources)(rest)
 
+let appendOuterParsedModule outer collection =
+    match collection with
+        | ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources } ->
+            ParsedProjectModuleCollection(
+                units = outer
+                |> parsedProjectModuleUnits
+                |> appendList(units),
+                diagnosticSources = outer
+                |> parsedProjectModuleDiagnostics
+                |> appendList(diagnosticSources)
+            )
+
+let completeExpandedModule context collection =
+    match (context, collection) with
+        | (ExpandedProjectModuleContext { name = name, sources = sources, imports = imports, inlineNames = inlineNames }, ParsedProjectModuleCollection { units = units, diagnosticSources = diagnosticSources }) ->
+            LoadedProjectModule(
+                units = units,
+                dependencies = deps(sources)(name :: deepCopy(inlineNames))(imports),
+                names = appendList(inlineNames)([name]),
+                diagnosticSources = diagnosticSources
+            )
+            |> deepCopy
+            |> Ok
+
+let finishOuterProjectModule context collection result =
+    match result with
+        | Error(error) -> Error(error)
+        | Ok(outer) ->
+            collection
+            |> appendOuterParsedModule(outer)
+            |> completeExpandedModule(context)
+
+let outerParsedProjectModule context =
+    match context with
+        | ExpandedProjectModuleContext { name = name, scope = scope, path = path, imports = imports, inlineNames = inlineNames } ->
+            ParsedProjectModule(
+                name = name,
+                source = ProjectModuleSource(path),
+                imports = imports,
+                dependencies = deepCopy(inlineNames),
+                directModules = inlineNames
+                |> deepCopy
+                |> directModuleNames(scope)
+            )
+
+let parseOuterProjectModule context collection =
+    match context with
+        | ExpandedProjectModuleContext { path = path, outerSource = outerSource } ->
+            outerSource
+            |> parseProjectModule(path)(outerParsedProjectModule(context))
+            |> finishOuterProjectModule(context)(collection)
+
+let finishInlineProjectModules context result =
+    match result with
+        | Error(error) -> Error(error)
+        | Ok(collection) -> parseOuterProjectModule(context)(collection)
+
+let finishValidatedInlineModules inlineModules context result =
+    match (context, result) with
+        | (_context, Error(error)) -> Error(error)
+        | (ExpandedProjectModuleContext { path = path, inlineNames = inlineNames }, Ok(_)) ->
+            inlineModules
+            |> deepCopy
+            |> parseInlineModules(path)(deepCopy(inlineNames))
+            |> finishInlineProjectModules(context)
+
+let validateExpandedInlineModules inlineModules context =
+    match context with
+        | ExpandedProjectModuleContext { path = path, sources = sources } ->
+            inlineModules
+            |> validateInlineModuleSources(path)(sources)
+            |> finishValidatedInlineModules(inlineModules)(context)
+
 let finishExpandedModule name scope path sources imports expansion =
     match expansion with
         | InlineModuleExpansion { source = outerSource, modules = inlineModules } ->
-            match validateInlineModuleSources(path)(sources)(inlineModules) with
-                | Error(error) -> Error(error)
-                | Ok(_) ->
-                    let names = inlineModuleNames(inlineModules)
-                    in
-                        let inlineNames = deepCopy(names)
-                        in
-                            let outerDependencies = deepCopy(names)
-                            in
-                                let outerDirectModules =
-                                    names
-                                    |> deepCopy
-                                    |> directModuleNames(scope)
-                                in
-                                    match inlineModules
-                                    |> deepCopy
-                                    |> parseInlineModules(path)(inlineNames) with
-                                        | Error(error) -> Error(error)
-                                        | Ok(inlineUnits) ->
-                                            match parseProjectModule(
-                                                path,
-                                                name,
-                                                ProjectModuleSource(path),
-                                                imports,
-                                                outerDependencies,
-                                                outerDirectModules,
-                                                outerSource
-                                            ) with
-                                                | Error(error) -> Error(error)
-                                                | Ok(outerUnit) ->
-                                                    let units = appendList(inlineUnits)([outerUnit])
-                                                    in
-                                                        imports
-                                                        |> deps(sources)(name :: deepCopy(names))
-                                                        |> mkLoaded(units)
-                                                        |> Ok
+            validateExpandedInlineModules(inlineModules)(ExpandedProjectModuleContext(
+                name = name,
+                scope = scope,
+                path = path,
+                sources = sources,
+                imports = imports,
+                outerSource = outerSource,
+                inlineNames = inlineModuleNames(inlineModules)
+            ))
 
 let expandLoadedSource name scope path sources imports source =
     match expandInlineModules(scope)(source) with
@@ -403,35 +498,44 @@ let loadNamedModule entryModuleName (name: Str) (sources: List(IndexedProjectSou
             |> ProjectCompilationAmbiguousModule(name)
             |> Error
 
-let recursive unitNames units =
-    match units with
-        | [] -> []
-        | ModulePlanUnit { name = name } :: rest -> deepCopy(name) :: unitNames(rest)
-
-let recursive loadReachableModules entryModuleName pending loaded reversedUnits sources =
+let recursive loadReachableModules entryModuleName pending loaded reversedUnits reversedDiagnosticSources sources =
     match pending with
-        | [] -> Ok(ReachableModuleSet(names = loaded, units = reverseList(reversedUnits)))
+        | [] ->
+            Ok(ReachableModuleSet(
+                names = loaded,
+                units = reverseList(reversedUnits),
+                diagnosticSources = reverseList(reversedDiagnosticSources)
+            ))
         | name :: rest ->
             if containsText(name)(loaded)
-            then loadReachableModules(entryModuleName)(rest)(loaded)(reversedUnits)(sources)
+            then
+                loadReachableModules(
+                    entryModuleName,
+                    rest,
+                    loaded,
+                    reversedUnits,
+                    reversedDiagnosticSources,
+                    sources
+                )
             else
                 match loadNamedModule(deepCopy(entryModuleName))(name)(sources) with
                     | Error(error) -> Error(error)
-                    | Ok(loadedModule) ->
-                        let retainedUnits = deepCopy(loadedModule.units)
-                        in
-                            let names =
-                                retainedUnits
+                    | Ok(LoadedProjectModule { units = units, dependencies = dependencies, names = names, diagnosticSources = diagnosticSources }) ->
+                        loadReachableModules(
+                            entryModuleName,
+                            appendList(deepCopy(dependencies))(rest),
+                            appendList(deepCopy(names))(loaded),
+                            appendList(units
+                            |> deepCopy
+                            |> reverseList)(reversedUnits),
+                            appendList(
+                                diagnosticSources
                                 |> deepCopy
-                                |> unitNames
-                            in
-                                loadReachableModules(
-                                    entryModuleName,
-                                    appendList(deepCopy(loadedModule.dependencies))(rest),
-                                    appendList(names)(loaded),
-                                    appendList(reverseList(retainedUnits))(reversedUnits),
-                                    sources
-                                )
+                                |> reverseList,
+                                reversedDiagnosticSources
+                            ),
+                            sources
+                        )
 
 let recursive lastModuleName names =
     match names with
@@ -450,10 +554,15 @@ let planIndexedSources (layout: ProjectLayout) (paths: List(Str)) (sources: List
             [projectEntryModuleName(layout)],
             [],
             [],
+            [],
             sources
         ) with
             | Error(error) -> Error(error)
-            | Ok(ReachableModuleSet { names = names, units = units }) ->
+            | Ok(ReachableModuleSet { diagnosticSources = _diagnostic :: _rest as diagnosticSources }) ->
+                Error(diagnosticSources
+                |> orderProjectDiagnostics
+                |> ProjectCompilationParseError)
+            | Ok(ReachableModuleSet { names = names, units = units, diagnosticSources = [] }) ->
                 match lastModuleName(names) with
                     | None ->
                         []

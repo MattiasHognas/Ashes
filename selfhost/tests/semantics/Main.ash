@@ -32,6 +32,7 @@ import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
 import ProjectCompilationPlanningTests
+import ProjectDiagnosticsTests
 import ModuleSemanticStitchingTests
 import ModuleReferenceRewritingTests
 import ProjectSyntaxStitchingTests
@@ -191,6 +192,7 @@ let run unit =
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests
     |> ProjectCompilationPlanningTests.runProjectCompilationPlanningTests
+    |> ProjectDiagnosticsTests.runProjectDiagnosticsTests
     |> ModuleSemanticStitchingTests.runModuleSemanticStitchingTests
     |> ModuleReferenceRewritingTests.runModuleReferenceRewritingTests
     |> ProjectSyntaxStitchingTests.runProjectSyntaxStitchingTests
