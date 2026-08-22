@@ -20,6 +20,39 @@ let requireStitched units =
         | Ok(project) -> project
         | Error(error) -> test.fail("project syntax should stitch before inference: " + Ashes.Trait.Show.show(error))
 
+let ignoredDependencyBody =
+    SemanticStitchUnit(
+        name = "Dependency",
+        packageId = "dependency@1.0.0",
+        sourcePath = "/deps/Dependency.ash",
+        imports = [],
+        interface = interface("Dependency")([]),
+        program = ProgramSyntax(items = [], body = Some(ExprString("ignored"))),
+        isEntry = false
+    )
+
+let declarationOnlyEntry =
+    SemanticStitchUnit(
+        name = "Main",
+        packageId = "app@1.0.0",
+        sourcePath = "/app/Main.ash",
+        imports = [],
+        interface = interface("Main")([]),
+        program = ProgramSyntax(items = [], body = None),
+        isEntry = true
+    )
+
+let expectDeclarationOnlyEntry unit =
+    match [ignoredDependencyBody, declarationOnlyEntry]
+    |> requireStitched
+    |> inferStitchedProject with
+        | ProgramInferenceResult { semanticType = SemTuple([]), error = None } -> Unit
+        | ProgramInferenceResult { error = Some(error) } ->
+            error
+            |> Ashes.Trait.Show.show
+            |> (given (shown) -> test.fail("declaration-only entry should infer: " + shown))
+        | _ -> test.fail("a declaration-only entry should infer Unit")
+
 let expectImportedValueInference unit =
     (let values =
         SemanticStitchUnit(name = "Values", packageId = "values@1.0.0", sourcePath = "/deps/Values.ash", imports = [], interface = interface(
@@ -180,6 +213,7 @@ let expectDerivingUsesOwningPackage unit =
 
 let runProjectInferenceTests unit =
     unit
+    |> expectDeclarationOnlyEntry
     |> expectImportedValueInference
     |> expectCrossPackageOrphanRejection
     |> expectProgramGlobalCoherence

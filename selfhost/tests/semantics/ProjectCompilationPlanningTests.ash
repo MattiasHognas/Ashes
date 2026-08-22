@@ -3,6 +3,7 @@ import Ashes.IO.Path
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.ModulePlan
 import AshesCompiler.Semantics.ProjectCompilationPlanning
+import AshesCompiler.Semantics.ProjectDiagnostics
 import AshesCompiler.Semantics.ProjectDiscovery
 let requireUnit name result =
     match result with
@@ -266,6 +267,50 @@ let checkAmbiguousPlanning root =
             | Error(_) -> test.fail("unexpected ambiguous-module error")
             | Ok(_) -> test.fail("ambiguous module should fail planning"))
 
+let prepareDiagnosticFixture root =
+    root
+    |> Ashes.IO.Directory.removeTree
+    |> requireUnit("remove stale diagnostic fixture")
+    |> (given (_) ->
+        "src"
+        |> join(Unix)(root)
+        |> Ashes.IO.Directory.createAll
+        |> requireUnit("create diagnostic source root"))
+    |> (given (_) -> writeFile(root)("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeFile(root)("src/Main.ash")("import First\nimport Second\n0"))
+    |> (given (_) -> writeFile(root)("src/First.ash")("let = first"))
+    |> (given (_) -> writeFile(root)("src/Second.ash")("let = second"))
+
+let recursive projectDiagnosticPaths diagnostics =
+    match diagnostics with
+        | [] -> []
+        | ProjectDiagnostic { sourcePath = path } :: rest -> path :: projectDiagnosticPaths(rest)
+
+let expectedDiagnosticPaths root =
+    [
+        join(Unix)(root)("src/First.ash"),
+        join(Unix)(root)("src/Second.ash")
+    ]
+
+let expectOrderedParseDiagnostics root result =
+    match result with
+        | Error(ProjectCompilationParseError(diagnostics)) ->
+            diagnostics
+            |> projectDiagnosticPaths
+            |> test.assertEqual(expectedDiagnosticPaths(root))
+        | Error(error) -> test.fail("unexpected project parse error: " + Ashes.Trait.Show.show(error))
+        | Ok(_) -> test.fail("reachable parse diagnostics should fail project planning")
+
+let checkDiagnosticPlanning root =
+    "ashes.json"
+    |> join(Unix)(root)
+    |> loadProject(Unix)
+    |> (given (loaded) ->
+        match loaded with
+            | Error(_error) -> test.fail("diagnostic project should load")
+            | Ok(layout) -> buildProjectCompilationPlan(Unix)(layout))
+    |> expectOrderedParseDiagnostics(root)
+
 let runProjectCompilationPlanningTests unit =
     Unit
     |> Ashes.IO.Environment.temporaryDirectory
@@ -318,6 +363,14 @@ let runProjectCompilationPlanningTests unit =
     |> (given (root) ->
         root
         |> checkAmbiguousPlanning
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> prepareDiagnosticFixture
+        |> (given (_) -> root))
+    |> (given (root) ->
+        root
+        |> checkDiagnosticPlanning
         |> (given (_) -> root))
     |> (given (root) ->
         root
