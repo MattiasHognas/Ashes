@@ -104,6 +104,21 @@ Maps a label to a string constant:
 Referenced by `LoadConstStr`. The backend emits these as read-only globals
 using the ordinary String payload layout with the view bit set.
 
+### Text dumps and function selection
+
+`--emit-ir lowered` and `--emit-ir final` use the same deterministic text shape. Lifted functions are
+rendered in their existing `IrProgram.Functions` order, followed by `EntryFunction`; no label sort or
+instruction ordinal is introduced. A function filter is an ordinal, ASCII-case-insensitive substring
+match over the emitted label and, when origin metadata exists, its generated label, source name,
+qualified source name, and immediate generated-parent label. An absent filter selects every function.
+
+Each ordinary instruction prints its opcode in a 22-column field followed by its meaningful operands.
+Null, false, empty-string, and optional integer `-1` values are omitted, while zero and `long` `-1`
+remain visible. Collections print their stable element count rather than their contents. Source
+locations use `path:line:column`; labels are left-aligned as control-flow anchors. Trait dictionary and
+resolution annotations precede the functions in their stored order. The pure-Ashes implementation
+models this format exhaustively so its output does not depend on runtime reflection.
+
 ---
 
 ## Registers and Locals
