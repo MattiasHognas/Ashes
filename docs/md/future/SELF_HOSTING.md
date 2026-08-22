@@ -340,10 +340,13 @@ same public behavior.
 - [x] Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
 - [x] Lower capability handlers/providers and trait evidence according to the completed semantic plans.
-- [x] Transform async functions into state machines with coroutine frames, resumptions, task scheduling,
-  cancellation/error paths, and structured parallelism.
-- [ ] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
-  explanation metadata through generated helper functions.
+- [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
+  explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
+  and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
+  Function origins maintain structured provenance across entry, source functions, lambdas, specializations,
+  wrappers, coroutines, normalizers, droppers, and copiers. Hover and public authority collectors index
+  inferred types and capability requirements, and compilation decision snapshots capture function ownership,
+  value placements, and external authority records.
 - [ ] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler.
 
 #### Optimization, ownership, and reuse

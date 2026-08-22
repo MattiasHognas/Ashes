@@ -42,4 +42,8 @@ import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.StateMachineTransform
 import AshesCompiler.Semantics.CoroutineFrame
+import AshesCompiler.Semantics.SourceContext
+import AshesCompiler.Semantics.FunctionOrigins
+import AshesCompiler.Semantics.HoverTypeInfo
+import AshesCompiler.Semantics.DecisionSnapshot
 Unit
