@@ -258,6 +258,46 @@ public sealed class LspHoverTests
         }
     }
 
+    [Test]
+    public void Selfhost_frontend_files_hover_cleanly_in_lsp()
+    {
+        var repoRoot = FindRepoRoot();
+        var tokenPath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/Token.ash");
+        var tokenSource = File.ReadAllText(tokenPath);
+        int gtPos = tokenSource.IndexOf("left > right", StringComparison.Ordinal) + 5;
+        var tokenHover = DocumentService.GetHover(tokenSource, gtPos, tokenPath);
+        tokenHover.ShouldNotBeNull();
+        tokenHover.Value.Contents.ShouldNotContain("ASH010");
+        tokenHover.Value.Contents.ShouldNotContain("ambiguous");
+
+        var importPath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/ImportResolution.ash");
+        var importSource = File.ReadAllText(importPath);
+        int neqPos = importSource.IndexOf("candidateModule != existingModule", StringComparison.Ordinal) + 16;
+        var importHover = DocumentService.GetHover(importSource, neqPos, importPath);
+        importHover.ShouldNotBeNull();
+        importHover.Value.Contents.ShouldNotContain("ASH010");
+        importHover.Value.Contents.ShouldNotContain("ambiguous");
+
+        var moduleSourcePath = Path.Combine(repoRoot, "selfhost/packages/frontend/src/AshesCompiler/Frontend/ModuleSource.ash");
+        var moduleSourceText = File.ReadAllText(moduleSourcePath);
+        int exportPos = moduleSourceText.IndexOf("export (", StringComparison.Ordinal);
+        var exportHover = DocumentService.GetHover(moduleSourceText, exportPos, moduleSourcePath);
+        if (exportHover is not null)
+        {
+            exportHover.Value.Contents.ShouldNotContain("must be called directly");
+        }
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "Ashes.slnx")))
+        {
+            dir = Path.GetDirectoryName(dir);
+        }
+        return dir ?? Directory.GetCurrentDirectory();
+    }
+
     private sealed class TempDocument : IAsyncDisposable
     {
         private readonly string _directory;

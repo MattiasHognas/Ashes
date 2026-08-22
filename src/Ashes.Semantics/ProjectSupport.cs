@@ -1494,6 +1494,11 @@ public static class ProjectSupport
     /// </summary>
     public static CombinedCompilationLayout BuildCompilationLayout(ProjectCompilationPlan plan, string? entrySourceOverride = null)
     {
+        if (entrySourceOverride is not null)
+        {
+            entrySourceOverride = ApplySelectorRenames(entrySourceOverride, plan.EntryModule.Selectors);
+        }
+
         if (entrySourceOverride is null || !ContainsInlineModule(entrySourceOverride))
         {
             return BuildCompilationLayoutCore(plan.OrderedModules, plan.EntryModule, entrySourceOverride);
@@ -1504,7 +1509,7 @@ public static class ProjectSupport
         var orderedModules = new List<ProjectModule>(plan.OrderedModules.Count + entryInlineModules.Count);
         var entryModule = plan.EntryModule with
         {
-            Source = ApplySelectorRenames(entryOuter, plan.EntryModule.Selectors)
+            Source = entryOuter
         };
 
         foreach (var module in plan.OrderedModules)
@@ -2936,6 +2941,7 @@ public static class ProjectSupport
         foreach (var selector in module.Selectors)
         {
             if (!IsValueExportName(selector.ExportName)
+                || IsBuiltinIntrinsicMember(selector.ModuleName, selector.ExportName)
                 || !referencedVariables.Contains(selector.LocalName)
                 || !localNames.Add(selector.LocalName))
             {
