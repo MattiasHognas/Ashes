@@ -1139,10 +1139,12 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Constant_propagation_clears_at_multi_predecessor_label()
+    public void Constant_propagation_meets_agreeing_constants_at_multi_predecessor_label()
     {
-        // end_0 has two predecessors (Jump from then + fall-through from else)
-        // so constants should NOT propagate through it.
+        // end_0 has two predecessors (Jump from then + fall-through from else). Neither
+        // branch touches t0/t1, so both agree they are still 10/20 — the meet over both
+        // edges should retain that fact and let AddInt(5, 0, 1) fold to 30, even though
+        // this is a genuine multi-predecessor label.
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 10),
@@ -1156,8 +1158,8 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(4, 77),
             new IrInst.StoreLocal(0, 4),
             new IrInst.Label("end_0"),
-            // At end_0: both then and else branches reach here — t0, t1 should NOT be known
-            new IrInst.AddInt(5, 0, 1),         // should NOT be folded
+            // t0=10 and t1=20 agree on every path into end_0, so this should fold.
+            new IrInst.AddInt(5, 0, 1),
             new IrInst.Return(5),
         };
 
@@ -1165,10 +1167,125 @@ public sealed class IrOptimizerTests
         var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
         var optimized = IrOptimizer.Optimize(program);
 
-        // AddInt should NOT be folded at multi-predecessor label
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 5, Value: 30 })
+            .ShouldBeTrue("Expected constant 30 from meeting agreeing facts across a multi-predecessor label.");
         optimized.EntryFunction.Instructions
             .Any(i => i is IrInst.AddInt { Target: 5 })
-            .ShouldBeTrue("AddInt should NOT be folded at multi-predecessor label.");
+            .ShouldBeFalse("AddInt should fold once the meet proves both operands agree on every path.");
+    }
+
+    [Test]
+    public void Constant_propagation_clears_disagreeing_value_at_multi_predecessor_label_but_keeps_agreeing_one()
+    {
+        // t2 is reassigned to a different constant (99 vs 77) on each of the two paths
+        // into end_0, so the meet must drop it — but t0 (10 on every path) must survive.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 10),
+            new IrInst.LoadConstBool(1, false),
+            new IrInst.JumpIfFalse(1, "else_0"),
+            new IrInst.LoadConstInt(2, 99),      // then branch: t2 = 99
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(2, 77),      // else branch: t2 = 77 — disagrees with then
+            new IrInst.Label("end_0"),
+            new IrInst.AddInt(3, 2, 2),          // t2 disagrees — must NOT fold
+            new IrInst.AddInt(4, 0, 0),          // t0 agrees (10 everywhere) — must fold to 20
+            new IrInst.AddInt(5, 3, 4),          // keeps both t3 and t4 live for dead-code elimination
+            new IrInst.Return(5),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 6, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AddInt { Target: 3 })
+            .ShouldBeTrue("AddInt should NOT fold when its operand disagrees across incoming edges.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 4, Value: 20 })
+            .ShouldBeTrue("AddInt on the agreeing operand should still fold even though a sibling temp disagreed.");
+    }
+
+    [Test]
+    public void Constant_propagation_meets_across_three_predecessors()
+    {
+        // end_0 has three predecessors: two explicit Jumps (from the two "then" bodies)
+        // plus fall-through from the final "else" body. All three set t1 to the same
+        // constant 5, so the three-way meet should retain it and fold AddInt(3, 1, 1).
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, false),
+            new IrInst.JumpIfFalse(0, "b2"),
+            new IrInst.LoadConstInt(1, 5),        // path A
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("b2"),
+            new IrInst.LoadConstBool(2, false),
+            new IrInst.JumpIfFalse(2, "b3"),
+            new IrInst.LoadConstInt(1, 5),        // path B
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("b3"),
+            new IrInst.LoadConstInt(1, 5),        // path C (falls through into end_0)
+            new IrInst.Label("end_0"),
+            new IrInst.AddInt(3, 1, 1),
+            new IrInst.Return(3),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 4, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 3, Value: 10 })
+            .ShouldBeTrue("Expected constant 10 from a three-way meet where every predecessor agrees.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AddInt { Target: 3 })
+            .ShouldBeFalse("AddInt should fold once all three incoming edges agree.");
+    }
+
+    [Test]
+    public void Constant_propagation_preserves_state_into_switch_case_labels()
+    {
+        // A SwitchTag case label has exactly one predecessor edge — the switch itself —
+        // whose source state is simply whatever was known right before dispatch. That
+        // state should propagate into every case (and the default), not be cleared.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.LoadConstInt(1, 0),
+            new IrInst.SwitchTag(1, [(0, "case_a"), (1, "case_b")], "default_0"),
+            new IrInst.Label("case_a"),
+            new IrInst.AddInt(2, 0, 0),
+            new IrInst.StoreLocal(0, 2),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("case_b"),
+            new IrInst.AddInt(3, 0, 0),
+            new IrInst.StoreLocal(0, 3),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("default_0"),
+            new IrInst.AddInt(4, 0, 0),
+            new IrInst.StoreLocal(0, 4),
+            new IrInst.Label("end_0"),
+            // Each case's result is stored to the same local slot and read back here so
+            // none of them is dead — DCE must not be able to strip any of the three folds.
+            new IrInst.LoadLocal(5, 0),
+            new IrInst.Return(5),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 6, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        foreach (int target in new[] { 2, 3, 4 })
+        {
+            optimized.EntryFunction.Instructions
+                .Any(i => i is IrInst.LoadConstInt loadConst && loadConst.Target == target && loadConst.Value == 84)
+                .ShouldBeTrue($"Expected t0=42 to propagate into every switch case, folding target {target} to 84.");
+            optimized.EntryFunction.Instructions
+                .Any(i => i is IrInst.AddInt addInt && addInt.Target == target)
+                .ShouldBeFalse($"AddInt at target {target} should fold using the pre-switch known state.");
+        }
     }
 
     // Compile-time evaluation tests

@@ -367,6 +367,13 @@ same public behavior.
   devirtualization (CallClosure -> CallKnown), constant propagation and folding with single-predecessor
   label flow, identity elimination and strength reduction, unreachable code elimination, dead code
   elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
+- [ ] Extend constant propagation to compute a true meet-over-paths at multi-predecessor labels (a fact
+  survives only if every incoming edge agrees on it), not just single-predecessor label flow. The C#
+  optimizer computes this by accumulating a state snapshot per predecessor edge (explicit branches, plus
+  one edge per `SwitchTag` case/default, plus fall-through) and, once every edge into a label has been
+  observed, intersecting them; a label with an edge not yet observed at that point in a forward scan
+  (e.g. a loop back-edge) still conservatively clears all knowledge, matching the historical behavior for
+  loop headers.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and

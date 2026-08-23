@@ -974,8 +974,13 @@ public static class IrOptimizer
 
     // Constant folding
     // Evaluate arithmetic on known constant operands at compile time.
-    // Labels with a single predecessor preserve constant knowledge from
-    // that predecessor, enabling folding across branch boundaries.
+    // At a label, the constant state entering it is the meet (intersection of
+    // agreeing facts) over every predecessor edge already observed by this
+    // single forward scan — a fact survives only if every incoming edge agrees
+    // on it. A predecessor reached by a backward branch (e.g. a loop back-edge)
+    // hasn't been visited yet when the label is first reached, so its edge is
+    // unknown; a label with such an edge falls back to clearing all knowledge,
+    // matching the historical conservative behavior for loop headers.
 
     private static List<IrInst> FoldConstants(List<IrInst> instructions)
     {
@@ -984,16 +989,16 @@ public static class IrOptimizer
         var knownFloats = new Dictionary<int, double>();
         var knownBools = new Dictionary<int, bool>();
 
-        // Pre-scan: count how many explicit branches (Jump/JumpIfFalse) target
-        // each label. Combined with fall-through analysis, this tells us the
-        // total predecessor count at each label.
+        // Pre-scan: count how many explicit branch edges (Jump/JumpIfFalse/SwitchTag
+        // cases) target each label. Combined with fall-through analysis, this tells
+        // us the total predecessor count at each label.
         var branchRefs = CountBranchRefsToLabels(instructions);
 
-        // Saved constant state for single-predecessor labels reached by a
-        // JumpIfFalse or Jump from elsewhere (not by fall-through).
-        var savedIntStates = new Dictionary<string, Dictionary<int, long>>(StringComparer.Ordinal);
-        var savedFloatStates = new Dictionary<string, Dictionary<int, double>>(StringComparer.Ordinal);
-        var savedBoolStates = new Dictionary<string, Dictionary<int, bool>>(StringComparer.Ordinal);
+        // Snapshots of constant state saved at each branch/jump/switch-case site,
+        // keyed by target label, one entry per predecessor edge observed so far.
+        var savedIntStates = new Dictionary<string, List<Dictionary<int, long>>>(StringComparer.Ordinal);
+        var savedFloatStates = new Dictionary<string, List<Dictionary<int, double>>>(StringComparer.Ordinal);
+        var savedBoolStates = new Dictionary<string, List<Dictionary<int, bool>>>(StringComparer.Ordinal);
 
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
@@ -1307,45 +1312,46 @@ public static class IrOptimizer
         Dictionary<int, long> knownInts,
         Dictionary<int, double> knownFloats,
         Dictionary<int, bool> knownBools,
-        Dictionary<string, Dictionary<int, long>> savedIntStates,
-        Dictionary<string, Dictionary<int, double>> savedFloatStates,
-        Dictionary<string, Dictionary<int, bool>> savedBoolStates,
+        Dictionary<string, List<Dictionary<int, long>>> savedIntStates,
+        Dictionary<string, List<Dictionary<int, double>>> savedFloatStates,
+        Dictionary<string, List<Dictionary<int, bool>>> savedBoolStates,
         List<IrInst> result)
     {
         switch (inst)
         {
-            // Labels, jumps, and control flow invalidate constant knowledge —
-            // unless the label has a single predecessor, in which case we can
-            // propagate constants from that predecessor.
+            // Labels restore the meet (intersection of agreeing facts) over every
+            // predecessor edge observed so far; see ApplyLabelConstantState.
             case IrInst.Label lbl:
                 ApplyLabelConstantState(lbl, prevIsTerminator, branchRefs, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
                 result.Add(inst);
                 return false;
 
             case IrInst.JumpIfFalse jif:
-                // Save state for the target label — will be used if the label turns
-                // out to be a single-predecessor label (only this branch targets it).
-                savedIntStates[jif.Target] = new Dictionary<int, long>(knownInts);
-                savedFloatStates[jif.Target] = new Dictionary<int, double>(knownFloats);
-                savedBoolStates[jif.Target] = new Dictionary<int, bool>(knownBools);
+                // Record this edge's state snapshot for the target label — one of
+                // potentially several predecessor edges that will be met together.
+                SaveEdgeState(jif.Target, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
                 result.Add(inst);
                 return false; // JumpIfFalse is conditional, not a terminator
 
             case IrInst.Jump jmp:
-                // Save state for the target label.
-                savedIntStates[jmp.Target] = new Dictionary<int, long>(knownInts);
-                savedFloatStates[jmp.Target] = new Dictionary<int, double>(knownFloats);
-                savedBoolStates[jmp.Target] = new Dictionary<int, bool>(knownBools);
+                SaveEdgeState(jmp.Target, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
                 result.Add(inst);
                 return true; // Jump is an unconditional terminator
 
-            case IrInst.SwitchTag:
-                // Multi-way terminator. Do not save per-target constant state — each case
-                // label is multi-predecessor by construction, so the Label handler clears
-                // constant knowledge there. Marking it a terminator prevents the following
-                // label from inheriting stale fall-through constants.
+            case IrInst.SwitchTag sw:
+                // Every case (and the default) is reached by exactly one edge — the
+                // switch itself — whose source state is simply the state right before
+                // dispatch (the tag test doesn't invalidate any other known fact).
+                // Recording that single snapshot per target lets the label handler's
+                // ordinary meet logic apply here too, rather than needing a special case.
+                foreach (var (_, caseLabel) in sw.Cases)
+                {
+                    SaveEdgeState(caseLabel, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
+                }
+
+                SaveEdgeState(sw.DefaultLabel, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
                 result.Add(inst);
-                return true;
+                return true; // Multi-way terminator
 
             default:
                 result.Add(inst);
@@ -1354,9 +1360,56 @@ public static class IrOptimizer
     }
 
     /// <summary>
-    /// Applies the constant-state transition for a label in the constant-folding pass:
-    /// restores the branch point's saved state for a single-predecessor label, keeps the
-    /// current state for a fall-through-only label, and clears everything otherwise.
+    /// Appends a snapshot of the current constant state as one more predecessor edge
+    /// for <paramref name="targetLabel"/>, to be combined via meet once every edge into
+    /// that label has been observed (see <see cref="ApplyLabelConstantState"/>).
+    /// </summary>
+    private static void SaveEdgeState(
+        string targetLabel,
+        Dictionary<int, long> knownInts,
+        Dictionary<int, double> knownFloats,
+        Dictionary<int, bool> knownBools,
+        Dictionary<string, List<Dictionary<int, long>>> savedIntStates,
+        Dictionary<string, List<Dictionary<int, double>>> savedFloatStates,
+        Dictionary<string, List<Dictionary<int, bool>>> savedBoolStates)
+    {
+        if (!savedIntStates.TryGetValue(targetLabel, out var intList))
+        {
+            intList = new List<Dictionary<int, long>>();
+            savedIntStates[targetLabel] = intList;
+        }
+
+        intList.Add(new Dictionary<int, long>(knownInts));
+
+        if (!savedFloatStates.TryGetValue(targetLabel, out var floatList))
+        {
+            floatList = new List<Dictionary<int, double>>();
+            savedFloatStates[targetLabel] = floatList;
+        }
+
+        floatList.Add(new Dictionary<int, double>(knownFloats));
+
+        if (!savedBoolStates.TryGetValue(targetLabel, out var boolList))
+        {
+            boolList = new List<Dictionary<int, bool>>();
+            savedBoolStates[targetLabel] = boolList;
+        }
+
+        boolList.Add(new Dictionary<int, bool>(knownBools));
+    }
+
+    /// <summary>
+    /// Applies the constant-state transition for a label in the constant-folding pass.
+    /// If every predecessor edge into this label has already been observed by this
+    /// forward scan (all branch/switch-case sites plus fall-through, if any), the
+    /// entering state is the meet over those edges — a fact survives only if every
+    /// edge agrees on it. This subsumes the single-predecessor case (a meet of one
+    /// snapshot is that snapshot) and the fall-through-only case (a meet of just the
+    /// live state is the live state) as special cases of the same computation. If some
+    /// predecessor hasn't been observed yet — a backward branch (loop back-edge) whose
+    /// source appears later in the instruction stream — its state is unknowable here,
+    /// so all constant knowledge is conservatively cleared, matching this label's only
+    /// literal fall-through predecessor edge.
     /// </summary>
     private static void ApplyLabelConstantState(
         IrInst.Label lbl,
@@ -1365,33 +1418,49 @@ public static class IrOptimizer
         Dictionary<int, long> knownInts,
         Dictionary<int, double> knownFloats,
         Dictionary<int, bool> knownBools,
-        Dictionary<string, Dictionary<int, long>> savedIntStates,
-        Dictionary<string, Dictionary<int, double>> savedFloatStates,
-        Dictionary<string, Dictionary<int, bool>> savedBoolStates)
+        Dictionary<string, List<Dictionary<int, long>>> savedIntStates,
+        Dictionary<string, List<Dictionary<int, double>>> savedFloatStates,
+        Dictionary<string, List<Dictionary<int, bool>>> savedBoolStates)
     {
         bool hasFallthrough = !prevIsTerminator;
         int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
         int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
 
-        if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+        savedIntStates.TryGetValue(lbl.Name, out var intSnapshots);
+        int observedPredecessors = (intSnapshots?.Count ?? 0) + (hasFallthrough ? 1 : 0);
+
+        if (totalPredecessors > 0 && observedPredecessors == totalPredecessors)
         {
-            // Single-predecessor label reached only by a branch (no fall-through):
-            // restore the saved state from the branch point.
+            // Every predecessor edge has been observed — compute the true meet.
+            var floatSnapshots = savedFloatStates.GetValueOrDefault(lbl.Name);
+            var boolSnapshots = savedBoolStates.GetValueOrDefault(lbl.Name);
+
+            var intEdges = new List<Dictionary<int, long>>(intSnapshots ?? []);
+            var floatEdges = new List<Dictionary<int, double>>(floatSnapshots ?? []);
+            var boolEdges = new List<Dictionary<int, bool>>(boolSnapshots ?? []);
+
+            if (hasFallthrough)
+            {
+                intEdges.Add(new Dictionary<int, long>(knownInts));
+                floatEdges.Add(new Dictionary<int, double>(knownFloats));
+                boolEdges.Add(new Dictionary<int, bool>(knownBools));
+            }
+
+            var meetInts = ComputeMeet(intEdges);
+            var meetFloats = ComputeMeet(floatEdges);
+            var meetBools = ComputeMeet(boolEdges);
+
             knownInts.Clear();
-            foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
+            foreach (var kv in meetInts) knownInts[kv.Key] = kv.Value;
             knownFloats.Clear();
-            foreach (var kv in savedFloatStates[lbl.Name]) knownFloats[kv.Key] = kv.Value;
+            foreach (var kv in meetFloats) knownFloats[kv.Key] = kv.Value;
             knownBools.Clear();
-            foreach (var kv in savedBoolStates[lbl.Name]) knownBools[kv.Key] = kv.Value;
-        }
-        else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
-        {
-            // Fall-through-only label (no branches target it) — keep current
-            // constant state because sequential execution is the only path.
+            foreach (var kv in meetBools) knownBools[kv.Key] = kv.Value;
         }
         else
         {
-            // Multiple predecessors — clear all constant knowledge.
+            // Either unreachable (no predecessors at all) or a predecessor edge
+            // (a backward branch) hasn't been observed yet — clear conservatively.
             knownInts.Clear();
             knownFloats.Clear();
             knownBools.Clear();
@@ -1401,6 +1470,34 @@ public static class IrOptimizer
         savedIntStates.Remove(lbl.Name);
         savedFloatStates.Remove(lbl.Name);
         savedBoolStates.Remove(lbl.Name);
+    }
+
+    /// <summary>
+    /// Computes the meet (intersection of agreeing facts) over a set of constant-state
+    /// snapshots from different predecessor edges into the same label: a key survives
+    /// only if it is present with the same value in every snapshot.
+    /// </summary>
+    private static Dictionary<int, TValue> ComputeMeet<TValue>(List<Dictionary<int, TValue>> edgeSnapshots)
+    {
+        if (edgeSnapshots.Count == 0)
+        {
+            return [];
+        }
+
+        var meet = new Dictionary<int, TValue>(edgeSnapshots[0]);
+        for (int i = 1; i < edgeSnapshots.Count && meet.Count > 0; i++)
+        {
+            var other = edgeSnapshots[i];
+            foreach (var key in meet.Keys.ToArray())
+            {
+                if (!other.TryGetValue(key, out var otherValue) || !EqualityComparer<TValue>.Default.Equals(meet[key], otherValue))
+                {
+                    meet.Remove(key);
+                }
+            }
+        }
+
+        return meet;
     }
 
     // Identity elimination and strength reduction
