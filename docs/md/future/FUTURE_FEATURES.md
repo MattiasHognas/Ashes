@@ -8,8 +8,10 @@ compiler's optimization/codegen work in the [Compiler Changelog](../internals/ch
 
 | Feature | Status | Description |
 |---------|--------|-------------|
+| [Optimizer Improvements](OPTIMIZER_IMPROVEMENTS.md) | Exploratory | Capability gap analysis and prioritized backlog for the IR optimizer |
 | [Self-Hosting](SELF_HOSTING.md) | Exploratory | Rewrite the compiler in Ashes |
 | [WebAssembly Target](WASM_TARGET.md) | Exploratory | A `wasm32` backend for browsers and sandboxed plugin hosts |
+| [Package Registry Website: Follow-up Work](REGISTRY_WEBSITE.md) | Deferred product work | Follow-up work for the shipped public package-discovery website |
 
 ---
 

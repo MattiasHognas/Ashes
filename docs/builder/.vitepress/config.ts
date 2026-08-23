@@ -152,7 +152,10 @@ export default defineConfig({
           page("Projects", "/guide/projects"),
           page("Testing", "/guide/testing"),
           page("Fuzz Testing", "/guide/fuzz-testing"),
-          page("Migrating Ambient Capabilities", "/guide/migrating-ambient-capabilities"),
+          page(
+            "Migrating Ambient Capabilities",
+            "/guide/migrating-ambient-capabilities",
+          ),
           page("Debugging", "/guide/debugging"),
           page("Development", "/guide/development"),
           page("Local CI/CD", "/guide/local-ci"),
@@ -182,9 +185,9 @@ export default defineConfig({
       },
       {
         text: "Future Designs",
-        collapsed: true,
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
+          page("Optimizer Improvements", "/future/OPTIMIZER_IMPROVEMENTS"),
           page("Package Registry Website", "/future/REGISTRY_WEBSITE"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
           page("WebAssembly Target", "/future/WASM_TARGET"),
