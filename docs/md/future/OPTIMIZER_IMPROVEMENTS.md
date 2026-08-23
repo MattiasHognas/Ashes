@@ -32,8 +32,10 @@ Two constraints shaped every recommendation:
    result freshness, moves/borrows, heap-layout classification, Perceus dup/drop insertion, allocation
    reuse for tuples/ADTs/closures/tail paths — is **not yet ported** (`[ ]`, lines 377-393). Every task
    below therefore carries a **Self-Hosting Impact** note: for the already-ported pipeline, the C# change
-   must be mirrored in `selfhost/` and the `[x]` bullet's description updated to match (parity would
-   otherwise silently rot); for the not-yet-ported ownership/reuse work, the task's outcome becomes part
+   must be mirrored in `selfhost/`, tracked by a **new** `[ ]` checklist line next to the existing `[x]`
+   one rather than a rewrite of that line's text (parity would otherwise silently rot, or worse, get
+   silently misrepresented as already having shipped — see the hard gate in Section 5); for the
+   not-yet-ported ownership/reuse work, the task's outcome becomes part
    of what the self-hosted port must build *directly* — there is no already-shipped self-host behavior to
    go back and fix, so the self-host implementer should target the improved C# design from the start
    rather than porting an intermediate version and upgrading it twice.
@@ -375,6 +377,18 @@ brief — see the cited evidence in Section 2 for how each was ruled in.
 > a future agent picking up self-hosting work would have no way to detect on their own. Every
 > **Completion Criteria** below repeats this as an explicit checklist item so it cannot be missed by
 > only skimming that subsection.
+>
+> **Never edit an already-`[x]` `SELF_HOSTING.md` line to describe a capability it didn't originally
+> claim.** Several tasks below (marked in their Self-Hosting Impact subsection) extend a pipeline stage
+> that `SELF_HOSTING.md` already lists as ported (`[x]`). Rewriting that bullet's text in place to fold
+> in the new capability would silently launder a genuine gap into an already-checked-off item — a future
+> self-hosting implementer reading `[x]` has no way to tell "this exact thing shipped" apart from "this
+> plus something else, added after the fact, shipped." Instead, add a **new, separate `[ ]` checklist
+> line** immediately after the existing `[x]` one, scoped to exactly the delta this task introduces (e.g.
+> "extend constant propagation to a true meet-over-paths at multi-predecessor labels, not just
+> single-predecessor label flow"), and leave the original `[x]` line's wording untouched. The new line
+> only flips to `[x]` once the self-hosted port actually implements that delta — it is normal for it to
+> stay `[ ]` for a long time after the C# side lands.
 
 ### OPT-001: Meet-Over-Paths Constant Propagation at Multi-Predecessor Labels
 
@@ -426,10 +440,10 @@ multi-predecessor label is retained and can be folded at subsequent reads; no re
 
 **Self-Hosting Impact (required to close this task).** The self-hosted deterministic optimization pipeline already claims to have
 ported "constant propagation and folding with single-predecessor label flow" (`SELF_HOSTING.md:367`,
-marked `[x]`) — that description is now the self-host implementation's *ceiling*, not just its current
-state. Once this lands in C#, `SELF_HOSTING.md:361-369`'s bullet text must be updated to describe
-meet-over-paths propagation, and the self-hosted `selfhost/` optimizer must be extended to match — this
-is a case of updating an already-shipped self-host feature, not building a new one.
+marked `[x]`) — that claim was true and stays true; it must not be edited. Once this lands in C#, add a
+**new** `[ ]` line directly after `SELF_HOSTING.md:361-369`'s existing `[x]` bullet, scoped to exactly
+the delta: extending constant propagation to a true meet-over-paths at multi-predecessor labels. It
+flips to `[x]` only once the self-hosted `selfhost/` optimizer is actually extended to match.
 
 ---
 
@@ -477,8 +491,10 @@ literal-derived condition's dead arm disappears from optimized output.
 No `JumpIfFalse` with a statically-known condition survives `FoldConstants`; new
 tests pass; no regression.
 
-**Self-Hosting Impact (required to close this task).** Same bullet as `OPT-001` (`SELF_HOSTING.md:361-369`, `[x]`) — extends the
-already-ported constant-folding pipeline description and requires a matching `selfhost/` change.
+**Self-Hosting Impact (required to close this task).** Same pipeline bullet as `OPT-001` (`SELF_HOSTING.md:361-369`, `[x]`) —
+add a **new** `[ ]` line next to it (or extend `OPT-001`'s new line, if that task landed first and this
+one lands as part of the same body of work) scoped to constant-condition branch folding, and requires a
+matching `selfhost/` change before it flips to `[x]`. Do not edit the existing `[x]` line's text.
 
 ---
 
@@ -514,8 +530,10 @@ dropped, asserting no leftover `Borrow` remains; full regression.
 No optimized IR contains a `Borrow` introduced purely by identity reduction with
 no remaining independent use of its source; full suites green.
 
-**Self-Hosting Impact (required to close this task).** Same bullet as `OPT-001`/`OPT-002` (`SELF_HOSTING.md:361-369`, `[x]`) — requires
-a matching `selfhost/` pass-ordering fix.
+**Self-Hosting Impact (required to close this task).** Same pipeline bullet as `OPT-001`/`OPT-002` (`SELF_HOSTING.md:361-369`, `[x]`) —
+add a **new** `[ ]` line (or extend `OPT-001`'s/`OPT-002`'s new line if landing together) scoped to the
+pass-ordering fix, requiring a matching `selfhost/` change before it flips to `[x]`. Do not edit the
+existing `[x]` line's text.
 
 ---
 
@@ -626,7 +644,8 @@ instruction-count reduction on a match/if-heavy stdlib module compiled at `-O0`.
 
 **Self-Hosting Impact (required to close this task).** New addition to the deterministic optimization pipeline
 (`SELF_HOSTING.md:361-369`, currently `[x]` for the *existing* pipeline only) — once implemented in C#,
-add it to that bullet's description and to `selfhost/`'s optimizer.
+add a **new** `[ ]` line next to the existing `[x]` one describing CFG simplification, and port it to
+`selfhost/`'s optimizer before flipping that new line to `[x]`. Do not edit the existing `[x]` line's text.
 
 ---
 
@@ -685,10 +704,11 @@ call's worth of RC bookkeeping survives).
 Both example patterns fold to a single computation in `--emit-ir` output; no RC
 double-count or double-free introduced (verify via `--explain rc`); full suites green.
 
-**Self-Hosting Impact (required to close this task).** New pipeline addition (`SELF_HOSTING.md:361-369`) — port to `selfhost/` once
-landed in C#, reusing the equivalent self-hosted compile-time-evaluation purity check
-(`SELF_HOSTING.md:361-364` describes the self-hosted compile-time evaluator as already ported) as the
-oracle there too.
+**Self-Hosting Impact (required to close this task).** New pipeline addition — add a **new** `[ ]` line next to
+the existing `[x]` bullet at `SELF_HOSTING.md:361-369` describing local CSE for pure calls and field
+loads, and port it to `selfhost/` once landed in C#, reusing the equivalent self-hosted
+compile-time-evaluation purity check (`SELF_HOSTING.md:361-364` describes the self-hosted compile-time
+evaluator as already ported) as the oracle there too. Do not edit the existing `[x]` line's text.
 
 ---
 
@@ -1082,10 +1102,11 @@ passing regression test.
 
 **Self-Hosting Impact (required to close this task).** TCO analysis and cost signals are already ported (`SELF_HOSTING.md:370-376`,
 `[x]`), but that bullet describes only self-recursive and merge-eligible-mutual detection — it does not
-mention `musttail`/general tail-call guarantees, so this is a **new addition** to that bullet once
-implemented in C#. Note this task's self-host port is naturally sequenced *after* the self-hosted
-backend/codegen work, which per `SELF_HOSTING.md:396` ("LLVM code generation and runtime integration")
-has **not started** — (b) specifically cannot be ported to `selfhost/` until LLVM emission exists there.
+mention `musttail`/general tail-call guarantees. Add a **new** `[ ]` line next to it, scoped to that
+delta, once implemented in C# — do not edit the existing `[x]` line's text. Note this task's self-host
+port is naturally sequenced *after* the self-hosted backend/codegen work, which per `SELF_HOSTING.md:396`
+("LLVM code generation and runtime integration") has **not started** — (b) specifically cannot be ported
+to `selfhost/` (and its new checklist line cannot flip to `[x]`) until LLVM emission exists there.
 
 ---
 
@@ -1149,8 +1170,8 @@ closure-devirtualization tests (`IrOptimizerTests.cs:411` and similar).
 
 **Self-Hosting Impact (required to close this task).** `SELF_HOSTING.md:361-369` marks closure devirtualization as already ported
 (`[x]`, "known closure devirtualization (CallClosure -> CallKnown)"). This task extends that already-
-ported capability — update the bullet's description and port the scalarization extension to `selfhost/`
-once it lands in C#.
+ported capability — add a **new** `[ ]` line next to it describing environment scalarization, and port
+that extension to `selfhost/` once it lands in C#, flipping the new line (not the existing one) to `[x]`.
 
 ---
 
@@ -1202,8 +1223,10 @@ correct aliasing invalidation for a second pointer to the same cell — test thi
 The `swap` example and equivalent record-projection patterns show no round-trip
 `SetAdtField`-then-`GetAdtField` pair in optimized IR when provably safe to forward; full suites green.
 
-**Self-Hosting Impact (required to close this task).** Same pipeline bullet as `OPT-006`/`OPT-003` (`SELF_HOSTING.md:361-369`) — port
-alongside `OPT-006` given the shared implementation.
+**Self-Hosting Impact (required to close this task).** Same pipeline area as `OPT-006`/`OPT-003` (`SELF_HOSTING.md:361-369`, `[x]`) —
+add a **new** `[ ]` line (or fold into `OPT-006`'s new line, given the shared implementation) describing
+store-to-load/projection forwarding, and port alongside `OPT-006`. Do not edit the existing `[x]` line's
+text.
 
 ---
 
