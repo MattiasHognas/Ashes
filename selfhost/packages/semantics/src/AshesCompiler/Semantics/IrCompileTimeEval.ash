@@ -148,28 +148,32 @@ let recursive allInstructionsModeledPure evaluable instructions =
             else false
 
 let computeEvaluableFunctions program =
-    (let allFunctions = program.entryFunction :: program.functions
-    in
-        let initialCandidates =
-            map(given (f) ->
-                match f with
-                    | IrFunction { label = l } -> l)(allFunctions)
-        in
-            let recursive fixpoint candidates =
-                let filtered =
-                    filter(
-                        given (label) ->
-                            match lookupFunction(label)(allFunctions) with
-                                | None -> false
-                                | Some(fn) -> allInstructionsModeledPure(candidates)(fn.instructions)
-                    )(
-                        candidates
-                    )
+    match program with
+        | IrProgram { entryFunction = entryFunction, functions = functions } ->
+            let allFunctions = entryFunction :: functions
+            in
+                let initialCandidates =
+                    map(given (f) ->
+                        match f with
+                            | IrFunction { label = l } -> l)(allFunctions)
                 in
-                    if length(filtered) == length(candidates)
-                    then candidates
-                    else fixpoint(filtered)
-            in fixpoint(initialCandidates))
+                    let recursive fixpoint candidates =
+                        let filtered =
+                            filter(
+                                given (label) ->
+                                    match lookupFunction(label)(allFunctions) with
+                                        | None -> false
+                                        | Some(fn) ->
+                                            match fn with
+                                                | IrFunction { instructions = instructions } -> allInstructionsModeledPure(candidates)(instructions)
+                            )(
+                                candidates
+                            )
+                        in
+                            if length(filtered) == length(candidates)
+                            then candidates
+                            else fixpoint(filtered)
+                    in fixpoint(initialCandidates)
 
 let recursive lookupFunction label functions =
     match functions with

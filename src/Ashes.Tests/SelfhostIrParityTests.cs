@@ -31,6 +31,20 @@ public sealed class SelfhostIrParityTests
         IReadOnlyList<string> lines = IrTextFormatter.Format(ir, IrDumpStage.Lowered, filter: null);
         string actual = string.Join('\n', lines) + '\n';
 
+        if (string.Equals(Environment.GetEnvironmentVariable("ASHES_UPDATE_PARITY_FIXTURES"), "1", StringComparison.Ordinal))
+        {
+            string outPath = Path.Combine(fixtureDirectory, fixtureName + ".ir");
+            await File.WriteAllTextAsync(outPath, actual).ConfigureAwait(false);
+
+            string repoFixtureDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "selfhost", "parity", "semantics", "lowered-ir"));
+            if (Directory.Exists(repoFixtureDir))
+            {
+                await File.WriteAllTextAsync(Path.Combine(repoFixtureDir, fixtureName + ".ir"), actual).ConfigureAwait(false);
+            }
+
+            expected = actual;
+        }
+
         actual.ShouldBe(expected);
     }
 }

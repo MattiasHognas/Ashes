@@ -1,3 +1,4 @@
+import Ashes.IO
 import Ashes.Collection.List.length
 import Ashes.Collection.List.map
 import Ashes.Test as test

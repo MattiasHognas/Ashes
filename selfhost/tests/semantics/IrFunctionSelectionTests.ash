@@ -1,3 +1,4 @@
+import Ashes.IO
 import Ashes.Test as test
 import AshesCompiler.Semantics.IrFunctionSelection
 import AshesCompiler.Semantics.IrOrigins

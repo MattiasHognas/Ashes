@@ -1,3 +1,4 @@
+import Ashes.IO
 import Ashes.Test as test
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Semantics.ProjectDiagnostics
