@@ -1,3 +1,4 @@
+import Ashes.IO
 import Ashes.Collection.List.append
 import Ashes.Test as test
 import AshesCompiler.Semantics.CoroutineFrame

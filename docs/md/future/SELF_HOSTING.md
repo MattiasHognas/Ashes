@@ -367,8 +367,13 @@ same public behavior.
   devirtualization (CallClosure -> CallKnown), constant propagation and folding with single-predecessor
   label flow, identity elimination and strength reduction, unreachable code elimination, dead code
   elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
-- [ ] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
-  signals without changing strict evaluation order.
+- [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
+  signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
+  across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
+  decomposes mutual recursion groups into SCCs with tag-based dispatch trampoline plans. Profitability
+  and cost signals analyze parameter RC-eligibility, allocation and borrow blockers, and threshold-based
+  profitability verdicts without violating strict evaluation semantics. Fully validated with pure-Ashes
+  test suite in `selfhost/tests/semantics/TcoTests.ash`.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
   and whole-program SCC provenance summaries.
 - [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with

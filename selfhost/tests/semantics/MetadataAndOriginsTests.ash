@@ -1,5 +1,4 @@
-// Tests source maps, definition/hover identities, diagnostic locations, function origins, and explanation metadata.
-
+import Ashes.IO
 import Ashes.Collection.List.length
 import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
@@ -12,6 +11,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.Types
+// Tests source maps, definition/hover identities, diagnostic locations, function origins, and explanation metadata.
 export (
     value runMetadataAndOriginsTests,
 )

@@ -1,6 +1,10 @@
 import Ashes.Test as test
 import AshesCompiler.Semantics.ProjectManifest
-let assertNamed (name: Str) (expected: Result(ProjectManifestError, ProjectManifest)) (actual: Result(ProjectManifestError, ProjectManifest)) =
+export (
+    value runProjectManifestTests,
+)
+
+let assertNamed name expected actual =
     if expected == actual
     then Unit
     else test.fail("project manifest assertion failed: " + name)
@@ -83,7 +87,7 @@ let checkIgnoredUnsupportedDependency unit =
         )
     )
 
-let run unit =
+let runProjectManifestTests unit =
     unit
     |> checkDefaults
     |> checkCompleteManifest

@@ -1,3 +1,4 @@
+import Ashes.IO
 import Ashes.Test as test
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.Syntax
