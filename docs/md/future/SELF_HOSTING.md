@@ -368,12 +368,19 @@ same public behavior.
   label flow, identity elimination and strength reduction, unreachable code elimination, dead code
   elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
 - [ ] Extend constant propagation to compute a true meet-over-paths at multi-predecessor labels (a fact
-  survives only if every incoming edge agrees on it), not just single-predecessor label flow. The C#
-  optimizer computes this by accumulating a state snapshot per predecessor edge (explicit branches, plus
-  one edge per `SwitchTag` case/default, plus fall-through) and, once every edge into a label has been
-  observed, intersecting them; a label with an edge not yet observed at that point in a forward scan
-  (e.g. a loop back-edge) still conservatively clears all knowledge, matching the historical behavior for
-  loop headers.
+  survives only if every incoming edge agrees on it), not just single-predecessor label flow, and to
+  local-slot state (StoreLocal/LoadLocal), not just raw temps. The C# optimizer computes the meet by
+  accumulating a state snapshot per predecessor edge (explicit branches, plus one edge per `SwitchTag`
+  case/default, plus fall-through) and, once every edge into a label has been observed, intersecting
+  them; a label with an edge not yet observed at that point in a forward scan (e.g. a loop back-edge)
+  still conservatively clears all knowledge, matching the historical behavior for loop headers. Local-slot
+  tracking is not a side detail: every `let`-bound value and if/match join result in Ashes IR is lowered
+  through a mutable local slot (a StoreLocal in each producing arm, a LoadLocal at the point of use),
+  never through direct temp reuse across a label — so temp-only meet-over-paths, alone, folds nothing in
+  real compiled programs (verified: it only ever fires on synthetic hand-built IR with raw temps reused
+  directly across a branch, a shape that doesn't occur in real lowered output). A slot holds at most one
+  of Int/Float/Bool at a time; a store of an unknown or non-scalar value kills stale knowledge for that
+  slot, since a slot is ordinary mutable storage, not single-assignment like a temp.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
