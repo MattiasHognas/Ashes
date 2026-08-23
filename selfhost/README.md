@@ -87,6 +87,8 @@ Run the shared stage-0/self-hosted lowered IR parity fixtures with:
 dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/SelfhostIrParityTests/**"
 ```
 
+Set the env variable ASHES_UPDATE_PARITY_FIXTURES=1 to generate new ir output.
+
 The fixture schema and extension rules are documented in [`parity/README.md`](parity/README.md).
 
 Run the self-hosted formatter tests with:
