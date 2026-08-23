@@ -38,6 +38,7 @@ import CoreCapabilityLoweringTests
 import StateMachineTransformTests
 import MetadataAndOriginsTests
 import IrValidationTests
+import IrOptimizerTests
 import ProjectManifestTests
 import ProjectDiscoveryTests
 import ProjectSourceEnumerationTests
@@ -207,7 +208,7 @@ let run unit =
     |> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests
     |> StateMachineTransformTests.runStateMachineTransformTests
     |> MetadataAndOriginsTests.runMetadataAndOriginsTests
-    |> IrValidationTests.runIrValidationTests
+    |> IrOptimizerTests.runIrOptimizerTests
     |> ProjectManifestTests.run
     |> ProjectDiscoveryTests.runProjectDiscoveryTests
     |> ProjectSourceEnumerationTests.runProjectSourceEnumerationTests

@@ -358,8 +358,15 @@ same public behavior.
 
 #### Optimization, ownership, and reuse
 
-- [ ] Port compile-time evaluation and the current deterministic IR optimization pipeline, including
+- [x] Port compile-time evaluation and the current deterministic IR optimization pipeline, including
   constant simplification, dead-code cleanup, inlining/specialization, and metadata preservation.
+  Pure Ashes compile-time evaluation evaluates pure constant-argument calls with bounded step (50,000)
+  and depth (1,000) budgets, with full scalar call folding into constants. The deterministic optimization
+  pipeline implements trivial ownership-copy elision (erased RcDup and single-use/copy-type Borrow remap),
+  runtime RcDup sinking into branch diamonds, adjacent runtime RcDup/RcDrop fusion, known closure
+  devirtualization (CallClosure -> CallKnown), constant propagation and folding with single-predecessor
+  label flow, identity elimination and strength reduction, unreachable code elimination, dead code
+  elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
 - [ ] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
