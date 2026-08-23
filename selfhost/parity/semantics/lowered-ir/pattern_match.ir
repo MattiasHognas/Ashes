@@ -1,0 +1,65 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=15 temps=23
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=42   (pattern_match.ash:5:20)
+    AllocAdt              Target=1 Tag=1 FieldCount=1   (pattern_match.ash:5:13)
+    SetAdtField           Ptr=1 FieldIndex=0 Source=0   (pattern_match.ash:5:13)
+    StoreLocal            Slot=2 Source=1
+    LoadLocal             Target=2 Slot=2   (pattern_match.ash:7:7)
+    Borrow                Target=3 SourceTemp=2
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=4 Value=0   (pattern_match.ash:7:1)
+    CmpIntNe              Target=5 Left=3 Right=4   (pattern_match.ash:7:1)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (pattern_match.ash:7:1)
+    GetAdtTag             Target=6 Ptr=3   (pattern_match.ash:7:1)
+    LoadConstInt          Target=8 Value=1   (pattern_match.ash:7:1)
+    CmpIntEq              Target=7 Left=6 Right=8   (pattern_match.ash:7:1)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_3   (pattern_match.ash:7:1)
+    GetAdtField           Target=9 Ptr=3 FieldIndex=0   (pattern_match.ash:7:1)
+    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
+    StoreLocal            Slot=6 Source=9   (pattern_match.ash:7:1)
+    LoadLocal             Target=10 Slot=6   (pattern_match.ash:8:20)
+    LoadConstInt          Target=11 Value=1   (pattern_match.ash:8:24)
+    AddInt                Target=12 Left=10 Right=11   (pattern_match.ash:8:20)
+    StoreLocal            Slot=3 Source=12   (pattern_match.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=7
+    Jump                  Target=match_end_0   (pattern_match.ash:7:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=8
+    Jump                  Target=match_next_2   (pattern_match.ash:7:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadConstInt          Target=13 Value=0   (pattern_match.ash:7:1)
+    CmpIntNe              Target=14 Left=3 Right=13   (pattern_match.ash:7:1)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_4   (pattern_match.ash:7:1)
+    GetAdtTag             Target=15 Ptr=3   (pattern_match.ash:7:1)
+    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
+    LoadConstInt          Target=17 Value=0   (pattern_match.ash:7:1)
+    CmpIntEq              Target=16 Left=15 Right=17   (pattern_match.ash:7:1)
+    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_4   (pattern_match.ash:7:1)
+    LoadConstInt          Target=18 Value=0   (pattern_match.ash:9:16)
+    StoreLocal            Slot=3 Source=18   (pattern_match.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    Jump                  Target=match_end_0   (pattern_match.ash:7:1)
+  match_arm_cleanup_4:
+    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12
+    Jump                  Target=match_none_1   (pattern_match.ash:7:1)
+  match_none_1:
+    LoadConstInt          Target=19 Value=0   (pattern_match.ash:7:1)
+    StoreLocal            Slot=3 Source=19   (pattern_match.ash:7:1)
+  match_end_0:
+    LoadLocal             Target=20 Slot=3   (pattern_match.ash:7:1)
+    StoreLocal            Slot=13 Source=20
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=14
+    LoadLocal             Target=22 Slot=13
+    Return                Source=22
+

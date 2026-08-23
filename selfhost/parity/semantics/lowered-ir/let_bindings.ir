@@ -1,0 +1,22 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=8 temps=7
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=10   (let_bindings.ash:1:9)
+    StoreLocal            Slot=2 Source=0
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=1 Slot=2   (let_bindings.ash:2:9)
+    LoadConstInt          Target=2 Value=5   (let_bindings.ash:2:13)
+    AddInt                Target=3 Left=1 Right=2   (let_bindings.ash:2:9)
+    StoreLocal            Slot=5 Source=3
+    LoadLocal             Target=4 Slot=2   (let_bindings.ash:3:1)
+    LoadLocal             Target=5 Slot=5   (let_bindings.ash:3:5)
+    MulInt                Target=6 Left=4 Right=5   (let_bindings.ash:3:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=7
+    Return                Source=6
+

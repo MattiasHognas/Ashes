@@ -38,6 +38,7 @@
     <Content Include="Fixtures/ffi_out.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Fixtures/ffi_string.c" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../selfhost/parity/frontend/tokens/*" Link="Fixtures/SelfhostTokenParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../selfhost/parity/semantics/lowered-ir/*" Link="Fixtures/SelfhostIrParity/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

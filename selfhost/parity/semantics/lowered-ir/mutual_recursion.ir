@@ -1,0 +1,212 @@
+IR (lowered)
+============
+
+function recgroup_0_isEven  [SourceFunction from isEven]
+  locals=6 temps=11
+    LoadLocal             Target=0 Slot=1   (mutual_recursion.ash:2:8)
+    LoadConstInt          Target=1 Value=0   (mutual_recursion.ash:2:13)
+    CmpIntEq              Target=2 Left=0 Right=1   (mutual_recursion.ash:2:8)
+    JumpIfFalse           CondTemp=2 Target=else_0   (mutual_recursion.ash:2:5)
+    LoadConstBool         Target=3 Value=true   (mutual_recursion.ash:3:10)
+    StoreLocal            Slot=2 Source=3   (mutual_recursion.ash:2:5)
+    Jump                  Target=endif_1   (mutual_recursion.ash:2:5)
+  else_0:
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=5 Slot=0   (mutual_recursion.ash:4:10)
+    MakeClosure           Target=4 FuncLabel=recgroup_1_isOdd EnvPtrTemp=5 EnvSizeBytes=0   (mutual_recursion.ash:4:10)
+    LoadLocal             Target=6 Slot=1   (mutual_recursion.ash:4:16)
+    LoadConstInt          Target=7 Value=1   (mutual_recursion.ash:4:20)
+    SubInt                Target=8 Left=6 Right=7   (mutual_recursion.ash:4:16)
+    CallClosure           Target=9 ClosureTemp=4 ArgTemp=8   (mutual_recursion.ash:4:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    StoreLocal            Slot=2 Source=9   (mutual_recursion.ash:2:5)
+  endif_1:
+    LoadLocal             Target=10 Slot=2   (mutual_recursion.ash:2:5)
+    Return                Source=10
+
+function recgroup_1_isOdd  [SourceFunction from isOdd]
+  locals=6 temps=11
+    LoadLocal             Target=0 Slot=1   (mutual_recursion.ash:6:8)
+    LoadConstInt          Target=1 Value=0   (mutual_recursion.ash:6:13)
+    CmpIntEq              Target=2 Left=0 Right=1   (mutual_recursion.ash:6:8)
+    JumpIfFalse           CondTemp=2 Target=else_2   (mutual_recursion.ash:6:5)
+    LoadConstBool         Target=3   (mutual_recursion.ash:7:10)
+    StoreLocal            Slot=2 Source=3   (mutual_recursion.ash:6:5)
+    Jump                  Target=endif_3   (mutual_recursion.ash:6:5)
+  else_2:
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=5 Slot=0   (mutual_recursion.ash:8:10)
+    MakeClosure           Target=4 FuncLabel=recgroup_0_isEven EnvPtrTemp=5 EnvSizeBytes=0   (mutual_recursion.ash:8:10)
+    LoadLocal             Target=6 Slot=1   (mutual_recursion.ash:8:17)
+    LoadConstInt          Target=7 Value=1   (mutual_recursion.ash:8:21)
+    SubInt                Target=8 Left=6 Right=7   (mutual_recursion.ash:8:17)
+    CallClosure           Target=9 ClosureTemp=4 ArgTemp=8   (mutual_recursion.ash:8:10)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    StoreLocal            Slot=2 Source=9   (mutual_recursion.ash:6:5)
+  endif_3:
+    LoadLocal             Target=10 Slot=2   (mutual_recursion.ash:6:5)
+    Return                Source=10
+
+function lambda_3  [ClosureHelper]
+  locals=30 temps=33
+    LoadEnv               Target=0 Index=0
+    StoreLocal            Slot=2 Source=0
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0
+    StoreLocal            Slot=5 Source=1
+  lambda_3_body:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    SaveStackPointer      Slot=8
+    LoadLocal             Target=2 Slot=2
+    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11
+    LoadConstInt          Target=3 Value=0
+    CmpIntEq              Target=4 Left=2 Right=3
+    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_7
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadLocal             Target=5 Slot=1
+    StoreLocal            Slot=14 Source=5
+    LoadLocal             Target=6 Slot=14   (mutual_recursion.ash:2:8)
+    LoadConstInt          Target=7 Value=0   (mutual_recursion.ash:2:13)
+    CmpIntEq              Target=8 Left=6 Right=7   (mutual_recursion.ash:2:8)
+    JumpIfFalse           CondTemp=8 Target=else_8
+    LoadConstBool         Target=9 Value=true   (mutual_recursion.ash:3:10)
+    StoreLocal            Slot=15 Source=9
+    Jump                  Target=endif_9
+  else_8:
+    LoadConstInt          Target=10 Value=1
+    LoadLocal             Target=11 Slot=14   (mutual_recursion.ash:4:16)
+    LoadConstInt          Target=12 Value=1   (mutual_recursion.ash:4:20)
+    SubInt                Target=13 Left=11 Right=12   (mutual_recursion.ash:4:16)
+    LoadLocal             Target=14 Slot=2
+    LoadLocal             Target=15 Slot=1
+    StoreLocal            Slot=2 Source=10
+    StoreLocal            Slot=1 Source=13
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=28
+    RestoreStackPointer   Slot=8
+    Jump                  Target=lambda_3_body
+    LoadConstInt          Target=16 Value=0
+    StoreLocal            Slot=15 Source=16
+  endif_9:
+    LoadLocal             Target=17 Slot=15
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=16
+    StoreLocal            Slot=9 Source=17
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=17
+    Jump                  Target=match_end_4
+  match_arm_cleanup_7:
+    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=18
+    Jump                  Target=match_next_6
+  match_next_6:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    SaveArenaState        CursorLocalSlot=21 EndLocalSlot=22
+    LoadLocal             Target=18 Slot=1
+    StoreLocal            Slot=23 Source=18
+    LoadLocal             Target=19 Slot=23   (mutual_recursion.ash:6:8)
+    LoadConstInt          Target=20 Value=0   (mutual_recursion.ash:6:13)
+    CmpIntEq              Target=21 Left=19 Right=20   (mutual_recursion.ash:6:8)
+    JumpIfFalse           CondTemp=21 Target=else_11
+    LoadConstBool         Target=22   (mutual_recursion.ash:7:10)
+    StoreLocal            Slot=24 Source=22
+    Jump                  Target=endif_12
+  else_11:
+    LoadConstInt          Target=23 Value=0
+    LoadLocal             Target=24 Slot=23   (mutual_recursion.ash:8:17)
+    LoadConstInt          Target=25 Value=1   (mutual_recursion.ash:8:21)
+    SubInt                Target=26 Left=24 Right=25   (mutual_recursion.ash:8:17)
+    LoadLocal             Target=27 Slot=2
+    LoadLocal             Target=28 Slot=1
+    StoreLocal            Slot=2 Source=23
+    StoreLocal            Slot=1 Source=26
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=29
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=29
+    RestoreStackPointer   Slot=8
+    Jump                  Target=lambda_3_body
+    LoadConstInt          Target=29 Value=0
+    StoreLocal            Slot=24 Source=29
+  endif_12:
+    LoadLocal             Target=30 Slot=24
+    RestoreArenaState     CursorLocalSlot=21 EndLocalSlot=22 PreRestoreEndSlot=25
+    ReclaimArenaChunks    SavedEndSlot=22 PreRestoreEndSlot=25
+    StoreLocal            Slot=9 Source=30
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=26
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=26
+    Jump                  Target=match_end_4
+  match_arm_cleanup_10:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=27
+    Jump                  Target=match_none_5
+  match_none_5:
+    LoadConstInt          Target=31 Value=0
+    StoreLocal            Slot=9 Source=31
+  match_end_4:
+    LoadLocal             Target=32 Slot=9
+    Return                Source=32
+
+function __recgroup_dispatch_2  [MutualRecursionDispatch]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16
+    LoadLocal             Target=1 Slot=1
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1
+    LoadLocal             Target=3 Slot=0
+    MakeClosure           Target=2 FuncLabel=__recgroup_dispatch_2 EnvPtrTemp=3 EnvSizeBytes=0
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16
+    Return                Source=4
+
+function lambda_4  [MutualRecursionWrapper from isEven]
+  locals=5 temps=5
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0
+    LoadConstInt          Target=1 Value=0
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1
+    LoadLocal             Target=3 Slot=1
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    Return                Source=4
+
+function lambda_5  [MutualRecursionWrapper from isOdd]
+  locals=5 temps=5
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadEnv               Target=0 Index=0
+    LoadConstInt          Target=1 Value=1
+    CallClosure           Target=2 ClosureTemp=0 ArgTemp=1
+    LoadLocal             Target=3 Slot=1
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=4
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=8 temps=14
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=recgroup_0_isEven EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    MakeClosure           Target=2 FuncLabel=recgroup_1_isOdd EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=1 Source=2
+    LoadConstInt          Target=3 Value=0
+    MakeClosure           Target=4 FuncLabel=__recgroup_dispatch_2 EnvPtrTemp=3 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=4
+    Alloc                 Target=5 SizeBytes=8
+    LoadLocal             Target=6 Slot=2
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=6
+    MakeClosure           Target=7 FuncLabel=lambda_4 EnvPtrTemp=5 EnvSizeBytes=8
+    StoreLocal            Slot=3 Source=7
+    Alloc                 Target=8 SizeBytes=8
+    LoadLocal             Target=9 Slot=2
+    StoreMemOffset        BasePtr=8 OffsetBytes=0 Source=9
+    MakeClosure           Target=10 FuncLabel=lambda_5 EnvPtrTemp=8 EnvSizeBytes=8
+    StoreLocal            Slot=4 Source=10
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=11 Slot=3   (mutual_recursion.ash:10:1)
+    LoadConstInt          Target=12 Value=4   (mutual_recursion.ash:10:8)
+    CallClosure           Target=13 ClosureTemp=11 ArgTemp=12   (mutual_recursion.ash:10:1)
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=7
+    Return                Source=13
+
