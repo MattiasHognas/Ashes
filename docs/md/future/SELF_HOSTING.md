@@ -347,7 +347,14 @@ same public behavior.
   wrappers, coroutines, normalizers, droppers, and copiers. Hover and public authority collectors index
   inferred types and capability requirements, and compilation decision snapshots capture function ownership,
   value placements, and external authority records.
-- [ ] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler.
+- [x] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler. Pure Ashes
+  IR validation enforces program-level invariants (entry label and non-closure contract, unique function
+  and string literal labels, non-negative capability globals), function-level invariants (non-negative
+  local and temp index bounds, intra-function label uniqueness, branch target resolution to defined
+  labels, referenced string literals, non-negative coroutine metadata, and local debug metadata bounds).
+  Shared normalized lowered IR fixtures in `selfhost/parity/semantics/lowered-ir/` compare stage-0 lowering
+  and formatting with pure-Ashes output across arithmetic, let bindings, closures/captures, pattern matching,
+  and mutual recursion.
 
 #### Optimization, ownership, and reuse
 

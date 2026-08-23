@@ -1,0 +1,12 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=0 temps=5
+    LoadConstInt          Target=0 Value=1   (simple_arith.ash:1:1)
+    LoadConstInt          Target=1 Value=2   (simple_arith.ash:1:5)
+    LoadConstInt          Target=2 Value=3   (simple_arith.ash:1:9)
+    MulInt                Target=3 Left=1 Right=2   (simple_arith.ash:1:5)
+    AddInt                Target=4 Left=0 Right=3   (simple_arith.ash:1:1)
+    Return                Source=4
+

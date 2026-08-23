@@ -81,6 +81,12 @@ dotnet run --project src/Ashes.Cli -- compile \
 /tmp/ashes-selfhost-frontend-token-parity-tests selfhost/parity/frontend/tokens
 ```
 
+Run the shared stage-0/self-hosted lowered IR parity fixtures with:
+
+```bash
+dotnet run --project src/Ashes.Tests -- --no-progress --treenode-filter "/*/*/SelfhostIrParityTests/**"
+```
+
 The fixture schema and extension rules are documented in [`parity/README.md`](parity/README.md).
 
 Run the self-hosted formatter tests with:

@@ -1,0 +1,6 @@
+let makeAdder x =
+    given (y) -> x + y
+
+let add5 = makeAdder(5)
+
+add5(10)

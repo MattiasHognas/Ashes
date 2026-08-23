@@ -26,3 +26,19 @@ decoded its spelling incorrectly. Non-float tokens serialize their zero float pa
 The shared fixtures currently cover every keyword, every operator and delimiter, decoded numeric,
 string, and rune payloads, comments, and Unicode identifiers and byte spans. Malformed input belongs
 to the future structured-diagnostic parity format rather than the token-only format.
+
+## Lowered IR
+
+Lowered IR fixtures live in `semantics/lowered-ir` as matching `<name>.source` and `<name>.ir` files.
+Each `.source` file is an Ashes program, and its corresponding `.ir` file contains the normalized lowered
+IR dump produced by `IrTextFormatter` (or `formatIr`).
+
+The serialized IR output format includes:
+1. Header: `IR (lowered)` and separator line.
+2. Trait evidence table (if present in the program).
+3. Sequence of functions (helper functions followed by program entry function `_start_main`), where each function
+   specifies its label, origins/attributes, local and temporary register counts, followed by 2-space indented
+   labels and 4-space indented instructions with opcode, operands, and optional source location annotations.
+
+The shared fixtures cover arithmetic, let bindings, closures and captures, pattern matching with user ADTs,
+and mutual recursion.

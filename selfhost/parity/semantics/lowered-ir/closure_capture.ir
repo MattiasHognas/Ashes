@@ -1,0 +1,61 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from makeAdder]
+  locals=2 temps=3
+    LoadEnv               Target=0 Index=0   (closure_capture.ash:2:18)
+    LoadLocal             Target=1 Slot=1   (closure_capture.ash:2:22)
+    AddInt                Target=2 Left=0 Right=1   (closure_capture.ash:2:18)
+    Return                Source=2   (closure_capture.ash:2:5)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from makeAdder]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (closure_capture.ash:2:5)
+    LoadLocal             Target=1 Slot=1   (closure_capture.ash:2:5)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (closure_capture.ash:2:5)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (closure_capture.ash:2:5)
+    LoadConstInt          Target=3 Value=0   (closure_capture.ash:2:5)
+    Return                Source=3   (closure_capture.ash:2:5)
+
+function lambda_0  [SourceFunction from makeAdder]
+  locals=2 temps=3
+    Alloc                 Target=0 SizeBytes=8   (closure_capture.ash:2:5)
+    LoadLocal             Target=1 Slot=1   (closure_capture.ash:2:5)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (closure_capture.ash:2:5)
+    MakeClosure           Target=2 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (closure_capture.ash:2:5)
+    Return                Source=2
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=14
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=2 Slot=2   (closure_capture.ash:4:12)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=5   (closure_capture.ash:4:22)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (closure_capture.ash:4:12)
+    StoreLocal            Slot=8 Source=5
+    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10
+    LoadLocal             Target=6 Slot=8   (closure_capture.ash:6:1)
+    Borrow                Target=7 SourceTemp=6
+    LoadConstInt          Target=8 Value=10   (closure_capture.ash:6:6)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (closure_capture.ash:6:1)
+    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11
+    StoreLocal            Slot=12 Source=9
+    LoadLocal             Target=10 Slot=8
+    CleanupResource       SourceTemp=10 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=13
+    LoadLocal             Target=11 Slot=12
+    StoreLocal            Slot=14 Source=11
+    LoadLocal             Target=12 Slot=2
+    CleanupResource       SourceTemp=12 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
+    LoadLocal             Target=13 Slot=14
+    Return                Source=13
+

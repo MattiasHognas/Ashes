@@ -356,5 +356,5 @@ let runMetadataAndOriginsTests unit =
                         in
                             let _ = testDecisionSnapshot(Unit)
                             in
-                                let _ = Ashes.IO.println("all self-hosted metadata and origins tests passed")
+                                let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
                                 in Unit)

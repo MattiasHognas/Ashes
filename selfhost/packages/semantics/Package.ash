@@ -46,4 +46,5 @@ import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.FunctionOrigins
 import AshesCompiler.Semantics.HoverTypeInfo
 import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.IrValidation
 Unit
