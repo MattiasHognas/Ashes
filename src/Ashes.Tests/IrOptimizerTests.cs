@@ -1250,42 +1250,156 @@ public sealed class IrOptimizerTests
         // A SwitchTag case label has exactly one predecessor edge — the switch itself —
         // whose source state is simply whatever was known right before dispatch. That
         // state should propagate into every case (and the default), not be cleared.
+        //
+        // Each case combines the shared pre-switch constant (t0=42) with a case-specific
+        // literal, so every case's folded result is distinct (43/44/45) — this isolates
+        // the SwitchTag-to-case-label propagation being tested from the (separately
+        // tested) local-slot meet-over-paths folding: since the three results disagree,
+        // the slot-0 round trip at the join stays live and can't be folded away, so DCE
+        // can't strip the evidence that each individual case folded using t0.
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 42),
             new IrInst.LoadConstInt(1, 0),
             new IrInst.SwitchTag(1, [(0, "case_a"), (1, "case_b")], "default_0"),
             new IrInst.Label("case_a"),
-            new IrInst.AddInt(2, 0, 0),
+            new IrInst.LoadConstInt(10, 1),
+            new IrInst.AddInt(2, 0, 10),
             new IrInst.StoreLocal(0, 2),
             new IrInst.Jump("end_0"),
             new IrInst.Label("case_b"),
-            new IrInst.AddInt(3, 0, 0),
+            new IrInst.LoadConstInt(11, 2),
+            new IrInst.AddInt(3, 0, 11),
             new IrInst.StoreLocal(0, 3),
             new IrInst.Jump("end_0"),
             new IrInst.Label("default_0"),
-            new IrInst.AddInt(4, 0, 0),
+            new IrInst.LoadConstInt(12, 3),
+            new IrInst.AddInt(4, 0, 12),
             new IrInst.StoreLocal(0, 4),
             new IrInst.Label("end_0"),
-            // Each case's result is stored to the same local slot and read back here so
-            // none of them is dead — DCE must not be able to strip any of the three folds.
             new IrInst.LoadLocal(5, 0),
             new IrInst.Return(5),
         };
 
-        var fn = new IrFunction("entry", instructions, 1, 6, false);
+        var fn = new IrFunction("entry", instructions, 1, 13, false);
         var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
         var optimized = IrOptimizer.Optimize(program);
 
-        foreach (int target in new[] { 2, 3, 4 })
+        var expectedByTarget = new Dictionary<int, long> { [2] = 43, [3] = 44, [4] = 45 };
+        foreach (var (target, expected) in expectedByTarget)
         {
             optimized.EntryFunction.Instructions
-                .Any(i => i is IrInst.LoadConstInt loadConst && loadConst.Target == target && loadConst.Value == 84)
-                .ShouldBeTrue($"Expected t0=42 to propagate into every switch case, folding target {target} to 84.");
+                .Any(i => i is IrInst.LoadConstInt loadConst && loadConst.Target == target && loadConst.Value == expected)
+                .ShouldBeTrue($"Expected t0=42 to propagate into every switch case, folding target {target} to {expected}.");
             optimized.EntryFunction.Instructions
                 .Any(i => i is IrInst.AddInt addInt && addInt.Target == target)
                 .ShouldBeFalse($"AddInt at target {target} should fold using the pre-switch known state.");
         }
+
+        // The three cases disagree on the value stored to slot 0, so the join's
+        // LoadLocal must NOT fold — confirming the (separate) local-slot meet correctly
+        // declines here rather than accidentally picking one case's value.
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { Target: 5, Slot: 0 })
+            .ShouldBeTrue("LoadLocal should NOT fold when the switch's cases disagree on the slot's value.");
+    }
+
+    [Test]
+    public void Constant_propagation_folds_local_slot_agreeing_across_both_arms()
+    {
+        // Mirrors real compiled output: an if/match join result always round-trips
+        // through a StoreLocal (one per arm) then a LoadLocal at the point of use —
+        // never a raw temp reused directly across the label (see Ir.cs). Both arms
+        // store the same constant 0 into slot 2; the LoadLocal after the join should
+        // fold to that constant via meet-over-paths on the slot's tracked state.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, false),
+            new IrInst.JumpIfFalse(0, "else_0"),
+            new IrInst.LoadConstInt(1, 0),
+            new IrInst.StoreLocal(2, 1),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(3, 0),
+            new IrInst.StoreLocal(2, 3),
+            new IrInst.Label("end_0"),
+            new IrInst.LoadLocal(4, 2),
+            new IrInst.Return(4),
+        };
+
+        var fn = new IrFunction("entry", instructions, 3, 5, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 4, Value: 0 })
+            .ShouldBeTrue("Expected the LoadLocal reading slot 2 to fold to 0, since both arms store the same constant.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { Target: 4 })
+            .ShouldBeFalse("LoadLocal should be replaced once the slot's value is proven constant on every path.");
+    }
+
+    [Test]
+    public void Constant_propagation_does_not_fold_local_slot_disagreeing_across_arms()
+    {
+        // Same shape as the agreeing-arms test, but the two arms store different
+        // constants into the same slot — the meet must drop that knowledge, so the
+        // LoadLocal after the join must NOT be folded.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, false),
+            new IrInst.JumpIfFalse(0, "else_0"),
+            new IrInst.LoadConstInt(1, 99),
+            new IrInst.StoreLocal(2, 1),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(3, 77),
+            new IrInst.StoreLocal(2, 3),
+            new IrInst.Label("end_0"),
+            new IrInst.LoadLocal(4, 2),
+            new IrInst.Return(4),
+        };
+
+        var fn = new IrFunction("entry", instructions, 3, 5, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { Target: 4, Slot: 2 })
+            .ShouldBeTrue("LoadLocal should NOT fold when the two arms store disagreeing constants to the same slot.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 4 })
+            .ShouldBeFalse("No LoadConstInt should be synthesized for a slot whose value disagrees across arms.");
+    }
+
+    [Test]
+    public void Constant_propagation_kills_local_slot_knowledge_on_non_constant_store()
+    {
+        // Slot 1 starts out known (10), but is then overwritten with a value from an
+        // unknown source (a LoadLocal from a never-recorded slot, standing in for e.g.
+        // a parameter). The subsequent StoreLocal must kill the stale knowledge, not
+        // let it survive to the following LoadLocal — a slot is mutable storage, not
+        // single-assignment.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstInt(0, 10),
+            new IrInst.StoreLocal(1, 0),   // slot 1 = known 10
+            new IrInst.LoadLocal(2, 2),    // t2 = unknown (slot 2 was never stored to)
+            new IrInst.StoreLocal(1, 2),   // slot 1 = unknown now — must kill prior knowledge
+            new IrInst.LoadLocal(3, 1),    // must NOT fold
+            new IrInst.Return(3),
+        };
+
+        var fn = new IrFunction("entry", instructions, 3, 4, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadLocal { Target: 3, Slot: 1 })
+            .ShouldBeTrue("LoadLocal should NOT fold once its slot has been overwritten with an unknown value.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 3 })
+            .ShouldBeFalse("No stale constant should survive a store of an unknown value to the same slot.");
     }
 
     // Compile-time evaluation tests
