@@ -974,26 +974,86 @@ public static class IrOptimizer
 
     // Constant folding
     // Evaluate arithmetic on known constant operands at compile time.
-    // Labels with a single predecessor preserve constant knowledge from
-    // that predecessor, enabling folding across branch boundaries.
+    // At a label, the constant state entering it is the meet (intersection of
+    // agreeing facts) over every predecessor edge already observed by this
+    // single forward scan — a fact survives only if every incoming edge agrees
+    // on it. A predecessor reached by a backward branch (e.g. a loop back-edge)
+    // hasn't been visited yet when the label is first reached, so its edge is
+    // unknown; a label with such an edge falls back to clearing all knowledge,
+    // matching the historical conservative behavior for loop headers.
+    //
+    // Tracking is not limited to raw temps: every `let`-bound value and every
+    // if/match join result in Ashes IR is lowered through a mutable local slot
+    // (a StoreLocal in each producing arm, a LoadLocal at the point of use —
+    // see Ir.cs), never through direct temp reuse across a label. Without also
+    // tracking slot-level constant state, meet-over-paths at a label would never
+    // observe anything, since the value read after a join is always a brand-new
+    // temp produced by a LoadLocal the pass otherwise treats as opaque. A slot
+    // holds at most one of Int/Float/Bool at a time (Ashes locals are statically
+    // typed); a store of an unknown or non-scalar (e.g. heap pointer, closure)
+    // value kills any stale knowledge for that slot, since a slot is ordinary
+    // mutable storage, not single-assignment like a temp.
+
+    /// <summary>
+    /// Known-constant state tracked during the constant-folding pass, for both raw
+    /// temps (produced by literal loads or folded arithmetic) and local slots (see the
+    /// remarks on <see cref="FoldConstants"/>).
+    /// </summary>
+    private sealed class ConstantFoldingState
+    {
+        public Dictionary<int, long> Ints { get; } = new();
+        public Dictionary<int, double> Floats { get; } = new();
+        public Dictionary<int, bool> Bools { get; } = new();
+        public Dictionary<int, long> LocalInts { get; } = new();
+        public Dictionary<int, double> LocalFloats { get; } = new();
+        public Dictionary<int, bool> LocalBools { get; } = new();
+
+        public ConstantFoldingState Clone()
+        {
+            var clone = new ConstantFoldingState();
+            clone.ReplaceWith(this);
+            return clone;
+        }
+
+        public void Clear()
+        {
+            Ints.Clear();
+            Floats.Clear();
+            Bools.Clear();
+            LocalInts.Clear();
+            LocalFloats.Clear();
+            LocalBools.Clear();
+        }
+
+        public void ReplaceWith(ConstantFoldingState other)
+        {
+            Ints.Clear();
+            foreach (var kv in other.Ints) Ints[kv.Key] = kv.Value;
+            Floats.Clear();
+            foreach (var kv in other.Floats) Floats[kv.Key] = kv.Value;
+            Bools.Clear();
+            foreach (var kv in other.Bools) Bools[kv.Key] = kv.Value;
+            LocalInts.Clear();
+            foreach (var kv in other.LocalInts) LocalInts[kv.Key] = kv.Value;
+            LocalFloats.Clear();
+            foreach (var kv in other.LocalFloats) LocalFloats[kv.Key] = kv.Value;
+            LocalBools.Clear();
+            foreach (var kv in other.LocalBools) LocalBools[kv.Key] = kv.Value;
+        }
+    }
 
     private static List<IrInst> FoldConstants(List<IrInst> instructions)
     {
-        // Map from temp → known constant value
-        var knownInts = new Dictionary<int, long>();
-        var knownFloats = new Dictionary<int, double>();
-        var knownBools = new Dictionary<int, bool>();
+        var state = new ConstantFoldingState();
 
-        // Pre-scan: count how many explicit branches (Jump/JumpIfFalse) target
-        // each label. Combined with fall-through analysis, this tells us the
-        // total predecessor count at each label.
+        // Pre-scan: count how many explicit branch edges (Jump/JumpIfFalse/SwitchTag
+        // cases) target each label. Combined with fall-through analysis, this tells
+        // us the total predecessor count at each label.
         var branchRefs = CountBranchRefsToLabels(instructions);
 
-        // Saved constant state for single-predecessor labels reached by a
-        // JumpIfFalse or Jump from elsewhere (not by fall-through).
-        var savedIntStates = new Dictionary<string, Dictionary<int, long>>(StringComparer.Ordinal);
-        var savedFloatStates = new Dictionary<string, Dictionary<int, double>>(StringComparer.Ordinal);
-        var savedBoolStates = new Dictionary<string, Dictionary<int, bool>>(StringComparer.Ordinal);
+        // Snapshots of constant state saved at each branch/jump/switch-case site,
+        // keyed by target label, one entry per predecessor edge observed so far.
+        var savedStates = new Dictionary<string, List<ConstantFoldingState>>(StringComparer.Ordinal);
 
         var result = new List<IrInst>(instructions.Count);
         bool changed = false;
@@ -1001,26 +1061,24 @@ public static class IrOptimizer
 
         foreach (var inst in instructions)
         {
-            if (TryRecordConstantLoad(inst, knownInts, knownFloats, knownBools, result))
+            if (TryRecordConstantLoad(inst, state.Ints, state.Floats, state.Bools, result))
             {
                 prevIsTerminator = false;
                 continue;
             }
 
-            if (TryFoldIntArithmetic(inst, knownInts, result, ref changed)
-                || TryFoldIntBitwise(inst, knownInts, result, ref changed)
-                || TryFoldFloatArithmetic(inst, knownFloats, result, ref changed)
-                || TryFoldIntEquality(inst, knownInts, knownBools, result, ref changed)
-                || TryFoldIntOrdering(inst, knownInts, knownBools, result, ref changed))
+            if (TryFoldIntArithmetic(inst, state.Ints, result, ref changed)
+                || TryFoldIntBitwise(inst, state.Ints, result, ref changed)
+                || TryFoldFloatArithmetic(inst, state.Floats, result, ref changed)
+                || TryFoldIntEquality(inst, state.Ints, state.Bools, result, ref changed)
+                || TryFoldIntOrdering(inst, state.Ints, state.Bools, result, ref changed))
             {
                 // A folded instruction leaves the terminator flag unchanged, matching the
                 // original single-switch form.
                 continue;
             }
 
-            prevIsTerminator = HandleConstantControlFlow(
-                inst, prevIsTerminator, branchRefs, knownInts, knownFloats, knownBools,
-                savedIntStates, savedFloatStates, savedBoolStates, result);
+            prevIsTerminator = HandleConstantControlFlow(inst, prevIsTerminator, branchRefs, state, savedStates, result, ref changed);
         }
 
         return changed ? result : instructions;
@@ -1295,57 +1353,73 @@ public static class IrOptimizer
     }
 
     /// <summary>
-    /// Handles the control-flow instructions of the constant-folding pass (labels, jumps,
-    /// switch, and every unhandled instruction), appending the instruction to
-    /// <paramref name="result"/>. Returns the new "previous instruction was an
-    /// unconditional terminator" flag.
+    /// Handles the control-flow and local-slot instructions of the constant-folding
+    /// pass (labels, jumps, switch, StoreLocal/LoadLocal, and every unhandled
+    /// instruction), appending the resulting instruction to <paramref name="result"/>.
+    /// Returns the new "previous instruction was an unconditional terminator" flag.
     /// </summary>
     private static bool HandleConstantControlFlow(
         IrInst inst,
         bool prevIsTerminator,
         Dictionary<string, int> branchRefs,
-        Dictionary<int, long> knownInts,
-        Dictionary<int, double> knownFloats,
-        Dictionary<int, bool> knownBools,
-        Dictionary<string, Dictionary<int, long>> savedIntStates,
-        Dictionary<string, Dictionary<int, double>> savedFloatStates,
-        Dictionary<string, Dictionary<int, bool>> savedBoolStates,
-        List<IrInst> result)
+        ConstantFoldingState state,
+        Dictionary<string, List<ConstantFoldingState>> savedStates,
+        List<IrInst> result,
+        ref bool changed)
     {
         switch (inst)
         {
-            // Labels, jumps, and control flow invalidate constant knowledge —
-            // unless the label has a single predecessor, in which case we can
-            // propagate constants from that predecessor.
+            // Labels restore the meet (intersection of agreeing facts) over every
+            // predecessor edge observed so far; see ApplyLabelConstantState.
             case IrInst.Label lbl:
-                ApplyLabelConstantState(lbl, prevIsTerminator, branchRefs, knownInts, knownFloats, knownBools, savedIntStates, savedFloatStates, savedBoolStates);
+                ApplyLabelConstantState(lbl, prevIsTerminator, branchRefs, state, savedStates);
                 result.Add(inst);
                 return false;
 
             case IrInst.JumpIfFalse jif:
-                // Save state for the target label — will be used if the label turns
-                // out to be a single-predecessor label (only this branch targets it).
-                savedIntStates[jif.Target] = new Dictionary<int, long>(knownInts);
-                savedFloatStates[jif.Target] = new Dictionary<int, double>(knownFloats);
-                savedBoolStates[jif.Target] = new Dictionary<int, bool>(knownBools);
+                // Record this edge's state snapshot for the target label — one of
+                // potentially several predecessor edges that will be met together.
+                SaveEdgeState(jif.Target, state, savedStates);
                 result.Add(inst);
                 return false; // JumpIfFalse is conditional, not a terminator
 
             case IrInst.Jump jmp:
-                // Save state for the target label.
-                savedIntStates[jmp.Target] = new Dictionary<int, long>(knownInts);
-                savedFloatStates[jmp.Target] = new Dictionary<int, double>(knownFloats);
-                savedBoolStates[jmp.Target] = new Dictionary<int, bool>(knownBools);
+                SaveEdgeState(jmp.Target, state, savedStates);
                 result.Add(inst);
                 return true; // Jump is an unconditional terminator
 
-            case IrInst.SwitchTag:
-                // Multi-way terminator. Do not save per-target constant state — each case
-                // label is multi-predecessor by construction, so the Label handler clears
-                // constant knowledge there. Marking it a terminator prevents the following
-                // label from inheriting stale fall-through constants.
+            case IrInst.SwitchTag sw:
+                // Every case (and the default) is reached by exactly one edge — the
+                // switch itself — whose source state is simply the state right before
+                // dispatch (the tag test doesn't invalidate any other known fact).
+                // Recording that single snapshot per target lets the label handler's
+                // ordinary meet logic apply here too, rather than needing a special case.
+                foreach (var (_, caseLabel) in sw.Cases)
+                {
+                    SaveEdgeState(caseLabel, state, savedStates);
+                }
+
+                SaveEdgeState(sw.DefaultLabel, state, savedStates);
                 result.Add(inst);
-                return true;
+                return true; // Multi-way terminator
+
+            case IrInst.StoreLocal store:
+                RecordLocalStore(store, state);
+                result.Add(inst);
+                return false;
+
+            case IrInst.LoadLocal load:
+                if (TryFoldLocalLoad(load, state, out var folded))
+                {
+                    result.Add(folded);
+                    changed = true;
+                }
+                else
+                {
+                    result.Add(inst);
+                }
+
+                return false;
 
             default:
                 result.Add(inst);
@@ -1354,53 +1428,181 @@ public static class IrOptimizer
     }
 
     /// <summary>
-    /// Applies the constant-state transition for a label in the constant-folding pass:
-    /// restores the branch point's saved state for a single-predecessor label, keeps the
-    /// current state for a fall-through-only label, and clears everything otherwise.
+    /// Observes a StoreLocal: if the stored value is a known scalar constant, the
+    /// slot's meet-tracked state records it; otherwise (a non-constant value, or a
+    /// non-scalar value such as a heap pointer or closure — those never appear in
+    /// <see cref="ConstantFoldingState.Ints"/>/<c>Floats</c>/<c>Bools</c> to begin with)
+    /// any stale knowledge for that slot is killed, since a slot is ordinary mutable
+    /// storage, not single-assignment like a temp.
+    /// </summary>
+    private static void RecordLocalStore(IrInst.StoreLocal store, ConstantFoldingState state)
+    {
+        state.LocalInts.Remove(store.Slot);
+        state.LocalFloats.Remove(store.Slot);
+        state.LocalBools.Remove(store.Slot);
+
+        if (state.Ints.TryGetValue(store.Source, out long intValue))
+        {
+            state.LocalInts[store.Slot] = intValue;
+        }
+        else if (state.Floats.TryGetValue(store.Source, out double floatValue))
+        {
+            state.LocalFloats[store.Slot] = floatValue;
+        }
+        else if (state.Bools.TryGetValue(store.Source, out bool boolValue))
+        {
+            state.LocalBools[store.Slot] = boolValue;
+        }
+    }
+
+    /// <summary>
+    /// Folds a LoadLocal into a literal load when its slot is known (via
+    /// <see cref="RecordLocalStore"/>, and meet-over-paths at labels for a slot written
+    /// differently — or not at all — on different incoming paths) to hold a scalar
+    /// constant. This is what makes the label meet in
+    /// <see cref="ApplyLabelConstantState"/> observable in real compiled programs: every
+    /// `let`-bound value and if/match join result is lowered through a StoreLocal/
+    /// LoadLocal round trip (Ir.cs), never through direct temp reuse across a label.
+    /// </summary>
+    private static bool TryFoldLocalLoad(IrInst.LoadLocal load, ConstantFoldingState state, out IrInst folded)
+    {
+        if (state.LocalInts.TryGetValue(load.Slot, out long intValue))
+        {
+            state.Ints[load.Target] = intValue;
+            folded = new IrInst.LoadConstInt(load.Target, intValue) { Location = load.Location };
+            return true;
+        }
+
+        if (state.LocalFloats.TryGetValue(load.Slot, out double floatValue))
+        {
+            state.Floats[load.Target] = floatValue;
+            folded = new IrInst.LoadConstFloat(load.Target, floatValue) { Location = load.Location };
+            return true;
+        }
+
+        if (state.LocalBools.TryGetValue(load.Slot, out bool boolValue))
+        {
+            state.Bools[load.Target] = boolValue;
+            folded = new IrInst.LoadConstBool(load.Target, boolValue) { Location = load.Location };
+            return true;
+        }
+
+        folded = load;
+        return false;
+    }
+
+    /// <summary>
+    /// Appends a snapshot of the current constant state as one more predecessor edge
+    /// for <paramref name="targetLabel"/>, to be combined via meet once every edge into
+    /// that label has been observed (see <see cref="ApplyLabelConstantState"/>).
+    /// </summary>
+    private static void SaveEdgeState(
+        string targetLabel,
+        ConstantFoldingState state,
+        Dictionary<string, List<ConstantFoldingState>> savedStates)
+    {
+        if (!savedStates.TryGetValue(targetLabel, out var list))
+        {
+            list = new List<ConstantFoldingState>();
+            savedStates[targetLabel] = list;
+        }
+
+        list.Add(state.Clone());
+    }
+
+    /// <summary>
+    /// Applies the constant-state transition for a label in the constant-folding pass.
+    /// If every predecessor edge into this label has already been observed by this
+    /// forward scan (all branch/switch-case sites plus fall-through, if any), the
+    /// entering state is the meet over those edges — a fact survives only if every
+    /// edge agrees on it. This subsumes the single-predecessor case (a meet of one
+    /// snapshot is that snapshot) and the fall-through-only case (a meet of just the
+    /// live state is the live state) as special cases of the same computation. If some
+    /// predecessor hasn't been observed yet — a backward branch (loop back-edge) whose
+    /// source appears later in the instruction stream — its state is unknowable here,
+    /// so all constant knowledge is conservatively cleared, matching this label's only
+    /// literal fall-through predecessor edge.
     /// </summary>
     private static void ApplyLabelConstantState(
         IrInst.Label lbl,
         bool prevIsTerminator,
         Dictionary<string, int> branchRefs,
-        Dictionary<int, long> knownInts,
-        Dictionary<int, double> knownFloats,
-        Dictionary<int, bool> knownBools,
-        Dictionary<string, Dictionary<int, long>> savedIntStates,
-        Dictionary<string, Dictionary<int, double>> savedFloatStates,
-        Dictionary<string, Dictionary<int, bool>> savedBoolStates)
+        ConstantFoldingState state,
+        Dictionary<string, List<ConstantFoldingState>> savedStates)
     {
         bool hasFallthrough = !prevIsTerminator;
         int branchCount = branchRefs.GetValueOrDefault(lbl.Name);
         int totalPredecessors = branchCount + (hasFallthrough ? 1 : 0);
 
-        if (totalPredecessors <= 1 && savedIntStates.TryGetValue(lbl.Name, out var savedInts) && !hasFallthrough)
+        savedStates.TryGetValue(lbl.Name, out var edgeSnapshots);
+        int observedPredecessors = (edgeSnapshots?.Count ?? 0) + (hasFallthrough ? 1 : 0);
+
+        if (totalPredecessors > 0 && observedPredecessors == totalPredecessors)
         {
-            // Single-predecessor label reached only by a branch (no fall-through):
-            // restore the saved state from the branch point.
-            knownInts.Clear();
-            foreach (var kv in savedInts) knownInts[kv.Key] = kv.Value;
-            knownFloats.Clear();
-            foreach (var kv in savedFloatStates[lbl.Name]) knownFloats[kv.Key] = kv.Value;
-            knownBools.Clear();
-            foreach (var kv in savedBoolStates[lbl.Name]) knownBools[kv.Key] = kv.Value;
-        }
-        else if (totalPredecessors <= 1 && hasFallthrough && branchCount == 0)
-        {
-            // Fall-through-only label (no branches target it) — keep current
-            // constant state because sequential execution is the only path.
+            // Every predecessor edge has been observed — compute the true meet.
+            var edges = new List<ConstantFoldingState>(edgeSnapshots ?? []);
+            if (hasFallthrough)
+            {
+                edges.Add(state.Clone());
+            }
+
+            var meetInts = ComputeMeet(edges.Select(e => e.Ints).ToList());
+            var meetFloats = ComputeMeet(edges.Select(e => e.Floats).ToList());
+            var meetBools = ComputeMeet(edges.Select(e => e.Bools).ToList());
+            var meetLocalInts = ComputeMeet(edges.Select(e => e.LocalInts).ToList());
+            var meetLocalFloats = ComputeMeet(edges.Select(e => e.LocalFloats).ToList());
+            var meetLocalBools = ComputeMeet(edges.Select(e => e.LocalBools).ToList());
+
+            state.Ints.Clear();
+            foreach (var kv in meetInts) state.Ints[kv.Key] = kv.Value;
+            state.Floats.Clear();
+            foreach (var kv in meetFloats) state.Floats[kv.Key] = kv.Value;
+            state.Bools.Clear();
+            foreach (var kv in meetBools) state.Bools[kv.Key] = kv.Value;
+            state.LocalInts.Clear();
+            foreach (var kv in meetLocalInts) state.LocalInts[kv.Key] = kv.Value;
+            state.LocalFloats.Clear();
+            foreach (var kv in meetLocalFloats) state.LocalFloats[kv.Key] = kv.Value;
+            state.LocalBools.Clear();
+            foreach (var kv in meetLocalBools) state.LocalBools[kv.Key] = kv.Value;
         }
         else
         {
-            // Multiple predecessors — clear all constant knowledge.
-            knownInts.Clear();
-            knownFloats.Clear();
-            knownBools.Clear();
+            // Either unreachable (no predecessors at all) or a predecessor edge
+            // (a backward branch) hasn't been observed yet — clear conservatively.
+            state.Clear();
         }
 
         // Clean up any saved state for this label.
-        savedIntStates.Remove(lbl.Name);
-        savedFloatStates.Remove(lbl.Name);
-        savedBoolStates.Remove(lbl.Name);
+        savedStates.Remove(lbl.Name);
+    }
+
+    /// <summary>
+    /// Computes the meet (intersection of agreeing facts) over a set of constant-state
+    /// snapshots from different predecessor edges into the same label: a key survives
+    /// only if it is present with the same value in every snapshot.
+    /// </summary>
+    private static Dictionary<int, TValue> ComputeMeet<TValue>(List<Dictionary<int, TValue>> edgeSnapshots)
+    {
+        if (edgeSnapshots.Count == 0)
+        {
+            return [];
+        }
+
+        var meet = new Dictionary<int, TValue>(edgeSnapshots[0]);
+        for (int i = 1; i < edgeSnapshots.Count && meet.Count > 0; i++)
+        {
+            var other = edgeSnapshots[i];
+            foreach (var key in meet.Keys.ToArray())
+            {
+                if (!other.TryGetValue(key, out var otherValue) || !EqualityComparer<TValue>.Default.Equals(meet[key], otherValue))
+                {
+                    meet.Remove(key);
+                }
+            }
+        }
+
+        return meet;
     }
 
     // Identity elimination and strength reduction

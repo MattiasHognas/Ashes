@@ -389,8 +389,31 @@ brief — see the cited evidence in Section 2 for how each was ruled in.
 > single-predecessor label flow"), and leave the original `[x]` line's wording untouched. The new line
 > only flips to `[x]` once the self-hosted port actually implements that delta — it is normal for it to
 > stay `[ ]` for a long time after the C# side lands.
+>
+> **Measure before opening the PR, and record the result — passing this task's own unit tests is not
+> sufficient evidence of real impact.** Before a task's PR is opened, compile a representative before/after
+> comparison from **actual compiled `.ash` output**, not just the task's hand-built IR test fixtures: at
+> minimum, `--emit-ir final` on a program built from the task's own worked example, and a runtime timing
+> comparison against the pre-task compiler as the "before" baseline (e.g. temporarily swap in
+> `git show <base-commit>:<file>` for the changed file(s), rebuild, compile and time the same program, then
+> restore). This is not a formality — `OPT-001` is the reason this rule exists: its originally-landed fix
+> (meet-over-paths over raw temps only) passed every unit test but folded **zero** real `if`/`match`
+> results, because every such join in real Ashes IR routes through a `StoreLocal`/`LoadLocal` round trip
+> the pass didn't track at all; only compiling the task's own worked example and inspecting the actual
+> optimized IR caught this, well after the tests were green. Record the methodology and numbers in a
+> **Measured Outcome** subsection added to that task's own entry below (alongside Completion Criteria and
+> Self-Hosting Impact) before merge, and add a row to the "Measured optimization and correctness audit"
+> table in [changelog.md](../internals/changelog.md) once the task ships — that table is the durable,
+> indexed record of shipped optimizer work; this document is the working plan, and its individual task
+> sections stay in place afterward as the reasoning and evidence trail behind that changelog entry. Update
+> the task's row in the Section 12 prioritized list's **Status** column to `Done` once merged.
 
 ### OPT-001: Meet-Over-Paths Constant Propagation at Multi-Predecessor Labels
+
+**Status: Done.** See **Measured Outcome** below — the task as originally scoped (raw temps only) shipped
+correct but with **zero** effect on real compiled programs, and had to be extended to local-slot tracking
+before it did anything observable. This section keeps the original problem statement below as written
+(for historical accuracy of the research) and records what actually happened in Measured Outcome.
 
 **Problem.** `FoldConstants`'s `ApplyLabelConstantState` (`IrOptimizer.cs:1361-1408`) clears *all*
 known-constant state at any label with more than one predecessor, instead of computing the meet
@@ -444,6 +467,41 @@ marked `[x]`) — that claim was true and stays true; it must not be edited. Onc
 **new** `[ ]` line directly after `SELF_HOSTING.md:361-369`'s existing `[x]` bullet, scoped to exactly
 the delta: extending constant propagation to a true meet-over-paths at multi-predecessor labels. It
 flips to `[x]` only once the self-hosted `selfhost/` optimizer is actually extended to match.
+
+**Measured Outcome.** The task as scoped by the "Proposed implementation" above — raw-temp-only
+meet-over-paths, restructuring only `ApplyLabelConstantState`/`FoldConstants`'s existing `knownInts`/
+`knownFloats`/`knownBools` dictionaries — was implemented first and passed all of its unit tests
+(hand-built IR with raw temps reused directly across a branch). Compiling this task's own worked example
+(`let tag = if n < 0 then 0 else 0 in tag`) and inspecting `--emit-ir final` showed **zero** effect: the
+join value is always read via a fresh `LoadLocal` from a `StoreLocal`-backed slot (Ir.cs's universal
+if/match-result lowering), a form the temp-only fix never observed, so nothing folded. Real compiled
+Ashes code apparently never exercises the raw-temp-reused-across-a-label shape at all — every named
+binding and every if/match result round-trips through a local slot. The task was extended in the same PR
+to also track local-slot constant state (`ConstantFoldingState.LocalInts`/`LocalFloats`/`LocalBools`,
+populated by `StoreLocal` and consumed/folded by `LoadLocal`, meet-propagated through labels via the same
+mechanism) — this is what actually makes the meet observable on real programs. Before/after, using a
+temporary baseline built from the pre-task compiler (`git show ce95ad17:src/Ashes.Semantics/IrOptimizer.cs`
+swapped in and rebuilt) compiled against the same source:
+- **IR**: the worked example's `classify` function collapsed from 12 instructions (2×`LoadConstInt`,
+  `StoreLocal`, `Jump`/label pair, `LoadLocal`×2, `StoreLocal`, `Return`) to 2 (a single `LoadConstInt 0`
+  feeding `Return`) at `-O0` — the branch/label structure itself remains (that's `OPT-002`'s job; not
+  attempted here) but every value-carrying instruction inside it is gone, and the dead-code pass removes
+  the now-unreferenced stores.
+- **Runtime, `-O0`** (LLVM emits the constant-folding pass's raw output essentially as-is; this is the
+  tier the doc predicted the real win would be at): a 200M-iteration TCO loop repeatedly executing the
+  worked example's pattern (`tests`-style hand-written benchmark, not part of the committed test suite)
+  ran in **0.598s before, 0.444s after** (mean of 3 runs each, <0.5% spread) — a **~26% wall-clock
+  reduction** for this pattern.
+- **Runtime, `-O2`** (the CLI default): **0.005s before and after, identical** — LLVM's own SCCP/mem2reg
+  already fully subsumes this specific case at `-O1`+ (the benchmark's loop has no externally observable
+  effect, so LLVM eliminates the whole thing), exactly matching this document's LLVM Boundary table
+  (Section 10) prediction that this optimization's real value is at `-O0`/debug builds and `--emit-ir`
+  fidelity, not `-O2`+ runtime. A program with an externally observable per-iteration effect (I/O, a
+  returned/printed value that depends on the folded computation) would be expected to retain some of the
+  `-O0` win at lower `-O` levels too, proportional to how much of it LLVM's own passes can independently
+  re-derive from the less-folded input; this was not separately measured.
+- Full suite status at merge: C# 2326/2326, LSP 70/70, e2e `test tests --pipeline both` 639 passed/0
+  failed/54 skipped, `dotnet format` clean.
 
 ---
 
@@ -1408,22 +1466,22 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 
 ## 12. Final Prioritized Task List
 
-| ID | Task | Value | Complexity | Dependencies | Priority |
-|---|---|---:|---:|---|---|
-| OPT-001 | SCCP-style meet-over-paths constant propagation | High | Low | none | P0 |
-| OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 |
-| OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 |
-| OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 |
-| OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 |
-| OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 |
-| OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 |
-| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 |
-| OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 |
-| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 |
-| OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 |
-| OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 |
-| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 |
-| OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 |
+| ID | Task | Value | Complexity | Dependencies | Priority | Status |
+|---|---|---:|---:|---|---|---|
+| OPT-001 | SCCP-style meet-over-paths constant propagation | High | Low | none | P0 | Done |
+| OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Not started |
+| OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Not started |
+| OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Not started |
+| OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Not started |
+| OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
+| OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 | Not started |
+| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 | Not started |
+| OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
+| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Not started |
+| OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Not started |
+| OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
+| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Not started |
+| OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Not started |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick
 wins or foundational infrastructure other `P1`/`P2` tasks build on; `P1` tasks are the highest-value
@@ -1432,7 +1490,9 @@ higher in risk, or dependent on `P0`/`P1` sequencing to avoid redundant rework (
 `ReuseDecision.cs`, which `OPT-009` and `OPT-011` both touch).
 
 **Before checking any row off this list as done**, open that task's section in Section 5 and confirm
-both its Completion Criteria *and* its Self-Hosting Impact requirement are satisfied — the
-`SELF_HOSTING.md` edit is part of the deliverable, not optional follow-up work. A task that lands the C#
-behavior alone is half-done: the next agent working on self-hosting has no other way to learn that the
-target they're porting to has moved.
+its Completion Criteria, its Self-Hosting Impact requirement, *and* its Measured Outcome are all
+satisfied — the `SELF_HOSTING.md` edit and the before/after measurement are part of the deliverable, not
+optional follow-up work. A task that lands the C# behavior alone is half-done: the next agent working on
+self-hosting has no other way to learn that the target they're porting to has moved, and a task whose
+"before/after" is only "its own unit tests pass" has not actually been shown to do anything on real
+programs (see the hard gate above).
