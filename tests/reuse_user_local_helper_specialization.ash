@@ -1,10 +1,10 @@
 // expect: 50|124999750000|500000
-// CO-22: a user fold in the entry file whose rebuild helpers are its OWN local functions (not
+// a user fold in the entry file whose rebuild helpers are its OWN local functions (not
 // Ashes.Collection.Map.makeNode) is now reuse-specialized to constant memory. The entry-body registration
 // computes a transitive free-variable closure: upd is registerable because its only non-stitched
 // free var is mkNode, which is registerable because its only free var is hgt (registerable: its free
 // vars are constructors), so all three register (upd + hgt/mkNode inlinable) and upd$reuse folds the
-// helpers into in-place-reuse constructors. Before CO-22 the fold referenced a user sibling helper and
+// helpers into in-place-reuse constructors. Before this fix the fold referenced a user sibling helper and
 // was rejected outright and leaked unboundedly (1.48 GB at 1M inserts). Inserts 500k rows into a
 // bounded 50-key space (each key updated on hit) and reads back every key: totalSum = n(n-1)/2 and
 // totalCt = n are shape-independent invariants, so a reuse use-after-free would change them.

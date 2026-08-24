@@ -1,5 +1,5 @@
 // expect: 15 7 207
-// CO-2 result-alias copy elision + may-alias reach summary — soundness discriminator.
+// Result-alias copy elision + may-alias reach summary — soundness discriminator.
 //
 // A `wrap`-style builder EMBEDS its parameter into a heap field of a fresh cell:
 // `wrap v x = Node(x)(v)(Leaf)` — its result may ALIAS parameter `x` (the may-alias reach summary

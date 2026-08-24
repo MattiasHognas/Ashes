@@ -123,7 +123,7 @@ public sealed partial class Lowering
         IReadOnlySet<FuncKey> unknownDynamicCallers,
         bool entryHasUnknownDynamicCall)
     {
-        // Least fixpoint (via WholeProgramFixpoint, OPT-010): grow _maFunctionsMayExecuteUnderLiveHandlerPost
+        // Least fixpoint (via WholeProgramFixpoint): grow _maFunctionsMayExecuteUnderLiveHandlerPost
         // until a full pass adds nothing further.
         WholeProgramFixpoint.RunToFixpoint(() =>
         {

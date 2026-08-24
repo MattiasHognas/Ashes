@@ -178,7 +178,7 @@ public sealed partial class Lowering
     // origin and therefore do not inherit the enclosing arm's reporting context.
     private IrFunctionOrigin? _activeReuseArmOrigin;
 
-    // CO-23 in-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
+    // In-place-overwrite guard: see ReuseTokenFieldIsDead in Lowering.Symbols.cs.
     private readonly Dictionary<int, Dictionary<int, (int Slot, int TotalRefs)>> _reuseTokenFieldBindings = new();
     private readonly Dictionary<int, int> _reuseBindingSeenBySlot = new();
     private readonly Dictionary<int, string> _reuseTrackedSlotNames = new();
@@ -351,7 +351,7 @@ public sealed partial class Lowering
         CountNameOccurrences(right, counts);
     }
 
-    /// <summary>Branch adjustment for the CO-23 seen-counters: references in a mutually-exclusive
+    /// <summary>Branch adjustment for the reuse-token seen-counters: references in a mutually-exclusive
     /// sibling branch can never execute after a constructor in THIS branch, so they are
     /// pre-credited as seen while the branch lowers and reverted afterwards.</summary>
     private Dictionary<int, int>? BeginExclusiveBranch(IEnumerable<Expr> otherBranches)
@@ -3341,7 +3341,7 @@ public sealed partial class Lowering
     //
     // An existence check (OR across terminal arms) UNLESS a genuine passthrough hazard is present, in
     // which case it must fail outright. An earlier version of this predicate used a plain existence
-    // check on the theory that tuples don't share the ADT CO-38 hazard (PR #299) — that theory was
+    // check on the theory that tuples don't share the ADT hazard fixed in PR #299 — that theory was
     // incomplete: `if cond then existingTuple else (fresh, tuple)` (one arm a bare-Var passthrough of an
     // existing, not-provably-fresh binding, the other a genuine TupleLit) requests the RC tuple
     // representation for the WHOLE position under a plain existence check, so the fresh arm's TupleLit
@@ -7431,7 +7431,7 @@ public sealed partial class Lowering
             {
                 _linearReuseNames.Add(accName);
 
-                // Move/linearity elision (CO-2), symmetric to the specialization path below: the
+                // Move/linearity elision, symmetric to the specialization path below: the
                 // direct-reuse entry deep-copy exists only to make the accumulator uniquely owned
                 // so the loop body may overwrite its matched cells in place. When the whole-program
                 // move analysis proves the accumulator is already uniquely owned at every external

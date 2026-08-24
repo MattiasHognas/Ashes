@@ -69,7 +69,7 @@ public sealed class WholeProgramFixpointTests
         });
 
         // HashSet<T>.ShouldBe(HashSet<T>) is sequence-order-sensitive in Shouldly, not
-        // set-equality (see OPT-004's IrControlFlowGraphTests) — compare via sorted sequences.
+        // set-equality (see IrControlFlowGraphTests) — compare via sorted sequences.
         candidates.OrderBy(x => x, StringComparer.Ordinal).ShouldBe(new[] { "a" });
     }
 

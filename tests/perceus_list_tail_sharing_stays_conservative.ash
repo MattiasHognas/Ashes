@@ -1,5 +1,5 @@
 // expect: 125250000
-// Perceus unification Phase 5 tail-sharing guard (CO-32's exact hazard): a cons cell built onto an
+// Perceus unification Phase 5 tail-sharing guard: a cons cell built onto an
 // EXISTING list's own tail (`h :: t`, or a tail produced by a recursive call) must never be promoted
 // to RC just because control-flow-transparent freshness now sees through if/match arms. Run at real
 // scale (1000 outer iterations x 500-element lists): a false-positive RC promotion here would either

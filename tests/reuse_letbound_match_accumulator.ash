@@ -1,5 +1,5 @@
 // expect: 30000|777485456
-// CO-16: a `let m2 = match/if ... in loop(m2)` accumulator is now recognized as address-stable for
+// a `let m2 = match/if ... in loop(m2)` accumulator is now recognized as address-stable for
 // the loop arena reset, so the natural (bind-then-tail-call) fold shape is constant-memory instead
 // of leaking (117 MB -> 8.6 MB at 1M inserts before/after). The reset-safety check now traces a
 // let-bound accumulator back through its binding and requires every match/if leaf to be stable, with

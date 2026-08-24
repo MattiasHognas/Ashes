@@ -37,8 +37,8 @@ internal sealed class IrCfgBlock(int start, int end) : IHasCfgEdges
 /// IR itself into a block-structured or SSA representation (LLVM already builds real SSA from the
 /// alloca-based lowering once IR reaches it). Before this type existed, the one real block/dominator
 /// builder in the compiler was private to <see cref="PerceusLifetimePlacement"/>; every other pass
-/// needing predecessor/successor reasoning approximated it with a weaker per-pass heuristic (see
-/// OPT-001 through OPT-003's ad hoc `CountBranchRefsToLabels`-based predecessor counting). This type
+/// needing predecessor/successor reasoning approximated it with a weaker per-pass heuristic (an ad
+/// hoc `CountBranchRefsToLabels`-based predecessor counting used by several earlier passes). This type
 /// is the shared foundation those heuristics can be rebased onto incrementally.
 /// </summary>
 internal static class IrControlFlowGraph

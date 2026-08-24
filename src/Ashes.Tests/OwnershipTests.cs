@@ -1732,7 +1732,7 @@ public sealed class OwnershipTests
 
     // --- Self-recursive ADT: uniform arena-vs-RC representation across sibling constructors ---
 
-    // Regression for the binary-trees RC Perceus migration leak (CO-38): a self-recursive ADT's
+    // Regression for the binary-trees RC Perceus migration leak: a self-recursive ADT's
     // base-case arm (a bare nullary constructor like `Leaf`) must not be promoted to an RC cell while
     // a sibling arm (`Node`, built from recursive calls rather than nested constructor literals) stays
     // arena-managed. A mixed representation lets an arena-managed parent's no-op drop skip over its
@@ -1848,7 +1848,7 @@ public sealed class OwnershipTests
     // independently-RC-manageable recursive constructor tree on the strength of syntactic shape alone.
     // IsFreshConstructorTree correctly rejects it (the recursion into `l` fails, since a bare Var that
     // is not itself a constructor application is never top-cell-fresh), so this must resolve
-    // conservative (uniform, non-mixed) exactly like the CO-38 cases above -- confirming the new
+    // conservative (uniform, non-mixed) exactly like the cases above -- confirming the new
     // engine cannot be tricked into a false positive by a syntactically-constructor-shaped rewrap of an
     // aliased, non-fresh child.
     [Test]
@@ -1919,7 +1919,7 @@ public sealed class OwnershipTests
         runtimeManagedFlags.Count.ShouldBe(1,
             "a bare-Var passthrough arm (`existing`) sibling to a fresh `Full(flag)` construction must " +
             "not let the fresh arm's verdict win unopposed -- every AllocAdt in the program must share " +
-            "one representation, matching the CO-38 uniform-representation invariant.");
+            "one representation, matching the established uniform-representation invariant.");
     }
 
     // Tuple sibling of the above: ProducesFreshTuple had the identical null-group-key gap (an existence

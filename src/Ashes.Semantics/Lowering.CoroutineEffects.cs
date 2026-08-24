@@ -101,7 +101,7 @@ public sealed partial class Lowering
         IReadOnlyDictionary<FuncKey, HashSet<FuncKey>> calleesByCaller,
         IReadOnlySet<FuncKey> unknownDynamicCallers)
     {
-        // Least fixpoint (via WholeProgramFixpoint, OPT-010): grow _maFunctionsMayExecuteInsideCoroutine
+        // Least fixpoint (via WholeProgramFixpoint): grow _maFunctionsMayExecuteInsideCoroutine
         // until a full pass adds nothing further — the same shape as PropagateLiveHandlerEffects.
         WholeProgramFixpoint.RunToFixpoint(() =>
         {

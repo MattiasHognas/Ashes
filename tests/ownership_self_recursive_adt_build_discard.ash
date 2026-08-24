@@ -1,6 +1,6 @@
 // expect: 262112
-// Regression for the RC Perceus migration's binary-trees regression (documented CO-38 in
-// docs/md/internals/changelog.md): a self-recursive ADT whose base-case arm is a bare nullary
+// Regression for the RC Perceus migration's binary-trees regression (see the "Self-recursive ADT
+// representation consistency" entry in docs/md/internals/changelog.md): a self-recursive ADT whose base-case arm is a bare nullary
 // constructor (Leaf) and whose recursive arm builds a DIFFERENT constructor (Node) from ordinary
 // function calls (not nested constructor literals) used to get a MIXED representation. The escaping-
 // result analysis flagged the whole function "fresh" off the trivially-fresh Leaf arm alone, so Leaf

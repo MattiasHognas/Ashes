@@ -17,16 +17,8 @@ public sealed partial class Lowering
             && TryLowerConstructorExpression(match.Value, stackAllocate: true, out var loweredMatchValue)
                 ? loweredMatchValue
                 : LowerExpr(match.Value).AsPair();
-        // Destructuring a resource-bearing binding consumes it: any nested resource moves to the
-        // arm's pattern bindings, which take over its cleanup. Mark the binding moved so its own
-        // recursive drop is skipped — otherwise the same resource would be closed twice (once by
-        // the extracted binding, once by the aggregate's recursive Drop).
-        if (match.Value is Expr.Var scrutineeVar
-            && LookupOwnedValue(scrutineeVar.Name) is { IsDropped: false } scrutineeInfo
-            && (scrutineeInfo.IsResource || scrutineeInfo.IsResourceBearing))
-        {
-            scrutineeInfo.ReleaseKind = ResourceReleaseKind.Moved;
-        }
+
+        MarkDestructuredResourceScrutineeMoved(match.Value);
         var resultType = NewTypeVar();
         var resultSlot = NewLocal();
         var endLabel = NewLabel("match_end");
@@ -38,6 +30,15 @@ public sealed partial class Lowering
         ValidateSingleAdtMatch(diagnosticCases);
         ValidateReachableMatchArms(diagnosticCases);
         var hasAnyTuplePattern = diagnosticCases.Any(c => c.Pattern is Pattern.Tuple);
+
+        // Drop a trailing run of cases already proven unreachable by the cases
+        // before them, before anything below emits IR, publishes a reuse token, or even considers
+        // this match for reuse-scrutinee eligibility, for any of them — after the diagnostics
+        // above, which must still see and report on the original, unreachable-arm-and-all case
+        // list exactly as before (this is a pure lowering/codegen optimization, invisible to
+        // diagnostics: it only ever fires on a prefix already proven exhaustive, so the
+        // exhaustiveness diagnostic below sees the same "nothing missing" verdict either way).
+        match = match with { Cases = TrimProvablyUnreachableTrailingCases(match.Cases, valueType) };
 
         // In-place reuse (#2): if we're matching a linear (uniquely-owned, deep-copied-at-entry)
         // accumulator, its deconstructed node becomes a reuse token for same-arity constructions in
@@ -67,6 +68,22 @@ public sealed partial class Lowering
         int resultTemp = NewTemp();
         Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
         return CompleteMatchResult(resultTemp, resultType, runtimeManagedResultArms, match.Cases);
+    }
+
+    /// <summary>
+    /// Destructuring a resource-bearing binding consumes it: any nested resource moves to the
+    /// arm's pattern bindings, which take over its cleanup. Marks the binding moved so its own
+    /// recursive drop is skipped — otherwise the same resource would be closed twice (once by the
+    /// extracted binding, once by the aggregate's recursive Drop).
+    /// </summary>
+    private void MarkDestructuredResourceScrutineeMoved(Expr scrutinee)
+    {
+        if (scrutinee is Expr.Var scrutineeVar
+            && LookupOwnedValue(scrutineeVar.Name) is { IsDropped: false } scrutineeInfo
+            && (scrutineeInfo.IsResource || scrutineeInfo.IsResourceBearing))
+        {
+            scrutineeInfo.ReleaseKind = ResourceReleaseKind.Moved;
+        }
     }
 
     private (int Temp, TypeRef Type) CompleteMatchResult(
@@ -130,6 +147,10 @@ public sealed partial class Lowering
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
             LowerMatchArmsViaTagSwitch(match.Value, match.Cases, switchPlan, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
+        }
+        else if (TryPlanTagGroupSwitch(match.Cases, out var groups, out var defaultCaseIndex))
+        {
+            LowerMatchArmsViaTagGroupSwitch(match, groups, defaultCaseIndex, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
         }
         else
         {
@@ -999,12 +1020,12 @@ public sealed partial class Lowering
             EmitArenaWatermark();
             PushOwnershipScope();
 
-            EmitTagSwitchArmPattern(matchValue, cases, plan, i, valueTemp, valueType, noMatchLabel);
+            EmitTagSwitchArmPattern(matchValue, cases, i, plan[i].Ctor, valueTemp, valueType, noMatchLabel);
 
             ArmReuseContext reuseContext = PublishTagSwitchArmReuseToken(
                 cases,
-                plan,
                 i,
+                plan[i].Ctor,
                 valueTemp,
                 reuseScrutineeName,
                 runtimeReuseType);
@@ -1015,10 +1036,273 @@ public sealed partial class Lowering
         }
     }
 
+    // Tag-group switch
+    // A generalization of TryPlanTagSwitch/LowerMatchArmsViaTagSwitch for a match with a nested or
+    // repeated-tag sub-pattern (the exact shape that previously fell all the way back to fully
+    // linear lowering, e.g. `Leaf -> 0 | Node(Leaf,_,Leaf) -> 1 | Node(l,_,r) -> 2`): cases are
+    // grouped by their outer constructor tag (in first-seen order), sharing one GetAdtTag/SwitchTag
+    // test across every case with that tag — including more than one case per tag, unlike
+    // TryPlanTagSwitch — while a tag group with more than one case, or a single non-trivial case,
+    // falls back to linear per-case testing *within that group only*, reusing the exact same
+    // per-arm pattern-testing/binding/reuse-token machinery LowerMatchArmsLinear already uses for
+    // the whole match (EmitLinearArmPatternAndGuard/PublishLinearArmReuseToken/
+    // LowerMatchArmBodyIntoResult/EmitLinearArmCleanupPath, unmodified) — this pass only decides
+    // *grouping*, never re-implements pattern testing or RC/reuse bookkeeping itself. Cases are
+    // never reordered or duplicated across groups: each original case is lowered at exactly one
+    // site, in its original relative order, matching the reuse machinery's existing one-arm-one-
+    // emission-site assumption exactly. Column reordering, multi-level column selection beyond one
+    // outer tag, and guard interaction within a group are explicitly out of scope for now.
+    private sealed record TagGroup(ConstructorSymbol Ctor, long Tag)
+    {
+        public List<int> CaseIndices { get; } = [];
+
+        // True only while this group has exactly one case and that case's own sub-pattern is
+        // fully trivial — the exact shape TryPlanTagSwitch's dedicated per-arm fast path already
+        // handles with no redundant tag re-test. Set false the moment a second case joins, or the
+        // first case turns out non-trivial; never reset back to true afterward.
+        public bool IsTrivialSingleCase { get; set; } = true;
+    }
+
+    private bool TryPlanTagGroupSwitch(IReadOnlyList<MatchCase> cases, out List<TagGroup> groups, out int? defaultCaseIndex)
+    {
+        groups = null!;
+        defaultCaseIndex = null;
+        if (cases.Count == 0)
+        {
+            return false;
+        }
+
+        var orderedGroups = new List<TagGroup>();
+        var groupByTag = new Dictionary<long, TagGroup>();
+        string? adtName = null;
+        bool anyGroupNeedsLinearFallback = false;
+
+        for (int i = 0; i < cases.Count; i++)
+        {
+            var matchCase = cases[i];
+            if (matchCase.Guard is not null)
+            {
+                return false;
+            }
+
+            if (!TryGetConstructorSymbol(matchCase.Pattern, out var ctor))
+            {
+                // Not a resolvable constructor pattern — only safe as a single trailing default
+                // (a bare wildcard/var matches any tag); anything else, or one appearing before
+                // the end, declines to the existing, fully-conservative linear fallback.
+                if (i != cases.Count - 1 || matchCase.Pattern is not (Pattern.Wildcard or Pattern.Var))
+                {
+                    return false;
+                }
+
+                defaultCaseIndex = i;
+                break;
+            }
+
+            adtName ??= ctor.ParentType;
+            if (!string.Equals(adtName, ctor.ParentType, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (!AddCaseToTagGroup(matchCase, i, ctor, orderedGroups, groupByTag))
+            {
+                anyGroupNeedsLinearFallback = true;
+            }
+        }
+
+        if (!anyGroupNeedsLinearFallback)
+        {
+            // Every group has exactly one, fully-trivial case: exactly the shape TryPlanTagSwitch
+            // already handles (and, when it applies, more efficiently, via its dedicated fast
+            // per-arm path with no redundant tag re-test) — let that existing path take it.
+            return false;
+        }
+
+        groups = orderedGroups;
+        return true;
+    }
+
+    /// <summary>
+    /// Adds one case to its tag's group (creating the group on first sight, in first-seen order),
+    /// and returns whether this tag's group must fall back to linear per-case testing: either it
+    /// now has more than one case (the whole point of this pass over TryPlanTagSwitch, which only
+    /// ever allows one case per tag), or this case's own sub-pattern is not fully trivial.
+    /// </summary>
+    private bool AddCaseToTagGroup(
+        MatchCase matchCase, int caseIndex, ConstructorSymbol ctor,
+        List<TagGroup> orderedGroups, Dictionary<long, TagGroup> groupByTag)
+    {
+        long tag = GetConstructorTag(ctor);
+        bool isFirstCaseForTag = !groupByTag.TryGetValue(tag, out var group);
+        if (isFirstCaseForTag)
+        {
+            group = new TagGroup(ctor, tag);
+            groupByTag[tag] = group;
+            orderedGroups.Add(group);
+        }
+
+        bool caseIsTrivial = matchCase.Pattern is not Pattern.Constructor ctorPattern
+            || (ctorPattern.Patterns.Count == ctor.Arity && ctorPattern.Patterns.All(IsTrivialSubPattern));
+        bool isTrivialSingleCaseSoFar = isFirstCaseForTag && caseIsTrivial;
+
+        group!.CaseIndices.Add(caseIndex);
+        group.IsTrivialSingleCase = isTrivialSingleCaseSoFar;
+        return isTrivialSingleCaseSoFar;
+    }
+
+    private void LowerMatchArmsViaTagGroupSwitch(
+        Expr.Match match,
+        List<TagGroup> groups,
+        int? defaultCaseIndex,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
+    {
+        int tagTemp = NewTemp();
+        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+
+        var groupLabels = new string[groups.Count];
+        var switchCases = new List<(long Tag, string Label)>(groups.Count);
+        for (int g = 0; g < groups.Count; g++)
+        {
+            groupLabels[g] = NewLabel("match_group");
+            switchCases.Add((groups[g].Tag, groupLabels[g]));
+        }
+
+        string defaultLabel = defaultCaseIndex is not null ? NewLabel("match_group_default") : noMatchLabel;
+        Emit(new IrInst.SwitchTag(tagTemp, switchCases, defaultLabel));
+
+        for (int g = 0; g < groups.Count; g++)
+        {
+            Emit(new IrInst.Label(groupLabels[g]));
+            if (groups[g].IsTrivialSingleCase)
+            {
+                // No other case shares this tag and this one case's own sub-pattern is fully
+                // trivial: the switch above already proved the tag, so this can use the exact
+                // same no-redundant-retest fast path TryPlanTagSwitch's own per-arm emission
+                // uses, instead of LowerTagGroupCasesLinearly's general per-case pattern test
+                // (which would otherwise re-test this same, already-known tag for no reason).
+                LowerTrivialSingleCaseGroupArm(
+                    match, groups[g].CaseIndices[0], groups[g].Ctor, valueTemp, valueType, resultType, resultSlot,
+                    endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType,
+                    normalizeStaticStringArms, request);
+            }
+            else
+            {
+                LowerTagGroupCasesLinearly(
+                    match, groups[g].CaseIndices, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel,
+                    savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
+            }
+        }
+
+        if (defaultCaseIndex is int defaultIndex)
+        {
+            Emit(new IrInst.Label(defaultLabel));
+            LowerTagGroupCasesLinearly(
+                match, [defaultIndex], valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel,
+                savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
+        }
+    }
+
+    /// <summary>
+    /// Lowers a single case whose tag was already proven by the outer switch and whose own
+    /// sub-pattern is fully trivial, reusing the exact same no-redundant-retest per-arm emission
+    /// <see cref="LowerMatchArmsViaTagSwitch"/> uses (EmitTagSwitchArmPattern/
+    /// PublishTagSwitchArmReuseToken), unmodified.
+    /// </summary>
+    private void LowerTrivialSingleCaseGroupArm(
+        Expr.Match match,
+        int i,
+        ConstructorSymbol ctor,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
+    {
+        _scopes.Push(_scopes.Peek());
+        EmitArenaWatermark();
+        PushOwnershipScope();
+
+        EmitTagSwitchArmPattern(match.Value, match.Cases, i, ctor, valueTemp, valueType, noMatchLabel);
+
+        ArmReuseContext reuseContext = PublishTagSwitchArmReuseToken(
+            match.Cases, i, ctor, valueTemp, reuseScrutineeName, runtimeReuseType);
+
+        LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms, request);
+
+        _scopes.Pop();
+    }
+
+    /// <summary>
+    /// Lowers a subset of a match's cases (in their original relative order) as a linear chain,
+    /// reusing the exact per-arm testing/binding/reuse-token/cleanup machinery
+    /// <see cref="LowerMatchArmsLinear"/> uses for the whole match unmodified — the only
+    /// difference is the fail target for the group's last case, which falls through to the
+    /// group switch's own default (or the match's overall not-exhaustive path) rather than
+    /// testing every other arm of the whole match.
+    /// </summary>
+    private void LowerTagGroupCasesLinearly(
+        Expr.Match match,
+        IReadOnlyList<int> caseIndices,
+        int valueTemp,
+        TypeRef valueType,
+        TypeRef resultType,
+        int resultSlot,
+        string endLabel,
+        string noMatchLabel,
+        bool savedTailPos,
+        string? reuseScrutineeName,
+        TypeRef.TNamedType? runtimeReuseType,
+        bool normalizeStaticStringArms,
+        LoweredValueRequest request)
+    {
+        for (int k = 0; k < caseIndices.Count; k++)
+        {
+            int i = caseIndices[k];
+            var caseFailLabel = k == caseIndices.Count - 1 ? noMatchLabel : NewLabel("match_group_next");
+            var armCleanupLabel = NewLabel("match_arm_cleanup");
+            _scopes.Push(_scopes.Peek());
+            EmitArenaWatermark();
+            var (armCursorSlot, armEndSlot) = _arenaWatermarks.Peek();
+            PushOwnershipScope();
+
+            EmitLinearArmPatternAndGuard(match, i, valueTemp, valueType, armCleanupLabel);
+
+            ArmReuseContext reuseContext = PublishLinearArmReuseToken(
+                match, i, valueTemp, reuseScrutineeName, runtimeReuseType);
+
+            LowerMatchArmBodyIntoResult(match.Cases, i, resultType, resultSlot, endLabel, savedTailPos, reuseContext, normalizeStaticStringArms, request);
+
+            EmitLinearArmCleanupPath(armCleanupLabel, armCursorSlot, armEndSlot, caseFailLabel);
+
+            _scopes.Pop();
+            if (k < caseIndices.Count - 1)
+            {
+                Emit(new IrInst.Label(caseFailLabel));
+            }
+        }
+    }
+
     /// <summary>
     /// Infers one tag-switch arm's pattern type and binds its payload fields into the arm scope.
     /// </summary>
-    private void EmitTagSwitchArmPattern(Expr matchValue, IReadOnlyList<MatchCase> cases, List<(ConstructorSymbol Ctor, long Tag)> plan, int i, int valueTemp, TypeRef valueType, string noMatchLabel)
+    private void EmitTagSwitchArmPattern(Expr matchValue, IReadOnlyList<MatchCase> cases, int i, ConstructorSymbol ctor, int valueTemp, TypeRef valueType, string noMatchLabel)
     {
         var patternBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
         var patternType = InferPatternType(cases[i].Pattern, patternBindings);
@@ -1027,7 +1311,7 @@ public sealed partial class Lowering
         // The tag is already matched by the switch; only extract and bind payload fields.
         if (cases[i].Pattern is Pattern.Constructor ctorPattern)
         {
-            EmitConstructorFieldBindings(plan[i].Ctor, ctorPattern, valueTemp, noMatchLabel, patternBindings);
+            EmitConstructorFieldBindings(ctor, ctorPattern, valueTemp, noMatchLabel, patternBindings);
         }
 
         TrackOwnedBindingsInPattern(patternBindings);
@@ -1405,8 +1689,8 @@ public sealed partial class Lowering
     /// </summary>
     private ArmReuseContext PublishTagSwitchArmReuseToken(
         IReadOnlyList<MatchCase> cases,
-        List<(ConstructorSymbol Ctor, long Tag)> plan,
         int i,
+        ConstructorSymbol ctor,
         int valueTemp,
         string? reuseScrutineeName,
         TypeRef.TNamedType? runtimeReuseType)
@@ -1415,8 +1699,8 @@ public sealed partial class Lowering
         // for a same-arity constructor in the body. Only when the body doesn't reference the
         // accumulator again (cell is dead) — payload fields are already bound into temps above.
         int reuseTokensBefore = _reuseTokens.Count;
-        // Every arm here matched a constructor by tag (plan[i].Ctor is authoritative — a bare
-        // nullary pattern like `Leaf` parses as Pattern.Var, so don't gate on Pattern.Constructor).
+        // Every arm here matched a constructor by tag (ctor is authoritative — a bare nullary
+        // pattern like `Leaf` parses as Pattern.Var, so don't gate on Pattern.Constructor).
         // Nullary cells (Arity 0, e.g. Leaf) are reusable too, which keeps a recursive rebuild's
         // whole result below the watermark.
         if (reuseScrutineeName is not null
@@ -1426,18 +1710,18 @@ public sealed partial class Lowering
                 ? null
                 : CreateRuntimeReuseCleanup(
                     runtimeReuseType,
-                    plan[i].Ctor,
+                    ctor,
                     cases[i].Pattern);
             int tokenTemp = NewTemp();
             Emit(new IrInst.DropReuse(
                 tokenTemp,
                 valueTemp,
-                plan[i].Ctor.Arity,
+                ctor.Arity,
                 runtimeCleanup is not null));
             ReuseToken token = new(
                 tokenTemp,
                 valueTemp,
-                plan[i].Ctor.Arity,
+                ctor.Arity,
                 runtimeCleanup,
                 reuseScrutineeName,
                 ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern)));
@@ -2472,6 +2756,70 @@ public sealed partial class Lowering
         }
 
         return false;
+    }
+
+    // Dead-arm elimination
+    // Trims a trailing run of cases already proven unreachable by the guard-free cases before
+    // them, using the exact same sound, fully recursive per-field-position coverage engine
+    // EmitMatchExhaustivenessDiagnostics already uses for its "Missing case" diagnostic
+    // (TryGetMissingPattern/TryGetMissingPatternCore) — never a top-level-constructor-tag-only
+    // check, which is unsound here (`Ok(true) | Ok(false) | Error(_)` looks fully covered by tag
+    // alone after just two arms, even though Ok(true)/Ok(false) don't overlap). A prefix growing
+    // one case at a time is checked for exhaustiveness; the first exhaustive prefix found means
+    // every later case can never be reached and is dropped before any lowering happens for it —
+    // no IR, no reuse-token publish, nothing.
+    private IReadOnlyList<MatchCase> TrimProvablyUnreachableTrailingCases(IReadOnlyList<MatchCase> cases, TypeRef valueType)
+    {
+        if (cases.Count <= 1 || cases.Any(c => c.Guard is not null))
+        {
+            return cases;
+        }
+
+        var patterns = cases.Select(c => c.Pattern).ToList();
+        if (patterns.Any(ContainsUnknownConstructorPattern))
+        {
+            // TryGetMissingPattern itself treats an unresolvable constructor name as "nothing
+            // provably missing" (it can't analyze past it) — correct for a diagnostic (the
+            // unknown-constructor error is reported separately, elsewhere), but that same "false"
+            // would be indistinguishable from genuine exhaustiveness here. Decline outright rather
+            // than risk mistaking "couldn't analyze" for "proven exhaustive".
+            return cases;
+        }
+
+        // The scrutinee's type can still be an unresolved type variable here
+        // (e.g. a function's own parameter, whose type is only pinned down by unifying it against
+        // its patterns — ordinarily done arm-by-arm during LowerMatchArms below, which has not run
+        // yet at this point). Establish it the exact same way arm-by-arm lowering would anyway —
+        // unify the scrutinee against every guard-free pattern's own inferred type, one at a time
+        // — before deciding anything. Unify is idempotent (a type already resolved to itself is a
+        // same-representative no-op), so redoing the identical unification again during real arm
+        // lowering below changes nothing; this only *moves earlier* work that would happen
+        // regardless, never adds a new constraint a correct program wouldn't already require.
+        var scratchBindings = new Dictionary<string, TypeRef>(StringComparer.Ordinal);
+        foreach (Pattern pattern in patterns)
+        {
+            scratchBindings.Clear();
+            Unify(valueType, InferPatternType(pattern, scratchBindings));
+        }
+
+        // Require the now-established type to be a concrete domain this coverage engine
+        // recognizes before attempting a trim, rather than letting TryGetMissingPatternCore's own
+        // null-tolerant fallback paper over a type that, even after the unification above, is
+        // still unresolved (e.g. every pattern here is itself a bare wildcard/var).
+        if (Prune(valueType) is not (TypeRef.TNamedType or TypeRef.TBool or TypeRef.TList))
+        {
+            return cases;
+        }
+
+        for (int prefixLength = 1; prefixLength < cases.Count; prefixLength++)
+        {
+            if (!TryGetMissingPattern(valueType, patterns.Take(prefixLength).ToList(), out _))
+            {
+                return cases.Take(prefixLength).ToList();
+            }
+        }
+
+        return cases;
     }
 
     private bool TryGetMissingPattern(TypeRef valueType, IReadOnlyList<Pattern> patterns, out Pattern missingPattern)

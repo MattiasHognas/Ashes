@@ -1,5 +1,5 @@
 // expect: 200000|6813315380
-// CO-15: Ashes.Collection.HashMap.set is now in-place-reuse specialized like Ashes.Collection.Map.set. HashMap.set has
+// Ashes.Collection.HashMap.set is now in-place-reuse specialized like Ashes.Collection.Map.set. HashMap.set has
 // the eta-applied nested-recursive shape (`let target = hashKey(k) in let rec go tree = ... in
 // go(map)`) rather than Map.set's bare `... in go`, and its per-node composite-key descent inlines
 // strCompare's own `let rec go i = ... in go(0)` helper — a closure that is stored to a slot and

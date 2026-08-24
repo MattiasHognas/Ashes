@@ -1,6 +1,6 @@
 // tls-server: accept
 // skip-on: win-x64
-// Structured-parallelism + TLS coexistence (roadmap CO-6). The genuine
+// Structured-parallelism + TLS coexistence. The genuine
 // fork/join `both` per-thread arena (win-x64: TEB ArbitraryUserPointer, gs:0x28)
 // must not collide with the platform's own thread-local storage: heavy parallel
 // work runs both before and after a real TLS round-trip, and both results must

@@ -1,5 +1,5 @@
 // expect: 100 15 902
-// CO-2 move/linearity copy elision — soundness discriminator in one program.
+// Move/linearity copy elision — soundness discriminator in one program.
 //
 // `setFold` threads a Map accumulator into `Ashes.Collection.Map.set` (so `set` specializes to `set$reuse`).
 // Its entry deep-copy is ELIDED because the whole-program move analysis proves the accumulator is

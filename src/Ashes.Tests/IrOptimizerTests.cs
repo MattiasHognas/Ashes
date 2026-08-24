@@ -79,8 +79,8 @@ public sealed class IrOptimizerTests
     [Test]
     public void Constant_folding_folds_int_comparison()
     {
-        // 10 == 10 folds to a known-true bool (CmpIntEq eliminated); since OPT-002,
-        // that known-true condition also folds away the JumpIfFalse guarding the
+        // 10 == 10 folds to a known-true bool (CmpIntEq eliminated); the branch-folding pass
+        // also folds away the JumpIfFalse guarding the
         // if-expression, at which point the folded bool itself has no remaining
         // consumer and dead-code elimination removes it too — a stronger result than
         // this test originally checked for (a materialized LoadConstBool), not a
@@ -91,7 +91,7 @@ public sealed class IrOptimizerTests
             .ShouldBeFalse("CmpIntEq should be eliminated by constant folding.");
         ir.EntryFunction.Instructions
             .Any(i => i is IrInst.JumpIfFalse)
-            .ShouldBeFalse("The always-true condition should fold the branch away entirely (OPT-002).");
+            .ShouldBeFalse("The always-true condition should fold the branch away entirely.");
     }
 
     [Test]
@@ -446,7 +446,7 @@ public sealed class IrOptimizerTests
             "A direct tail jump cannot outlive the caller frame that owns its environment.");
     }
 
-    // OPT-013: closure environment scalarization
+    // closure environment scalarization
 
     private static (IrFunction Entry, IrFunction Callee) BuildSingleCaptureStackClosureProgram(int capturedValue, int argValue)
     {
@@ -781,7 +781,7 @@ public sealed class IrOptimizerTests
         // The branch condition is an RcIsUnique check (opaque to constant folding), not a
         // literal — matching the sibling test below (Runtime_dup_is_not_sunk_when_unused_
         // branch_observes_source)'s own established reasoning: a literal condition here would
-        // fold the JumpIfFalse to an unconditional Jump, which OPT-005's SimplifyControlFlow
+        // fold the JumpIfFalse to an unconditional Jump, which SimplifyControlFlow
         // then correctly recognizes as a fully redundant branch and removes the "else" label
         // entirely (nothing explicitly jumps to it any more) — a real, correct simplification
         // that just happens to break this test's own label-name-based lookup mechanism, not the
@@ -817,7 +817,7 @@ public sealed class IrOptimizerTests
         // The branch condition is an RcIsUnique check (opaque to constant folding), not
         // a literal — this test probes SinkRuntimeRcDupsIntoDiamonds' behavior at a
         // genuinely runtime-determined branch, so it must not be foldable away by
-        // OPT-002 (a literal `LoadConstBool(2, true)` condition here would collapse
+        // constant-condition branch folding (a literal `LoadConstBool(2, true)` condition here would collapse
         // the whole branch this test exists to exercise).
         List<IrInst> instructions = new()
         {
@@ -1235,7 +1235,7 @@ public sealed class IrOptimizerTests
     {
         // x + 0 reduces to a Borrow(target, x) in ReduceIdentitiesAndStrength (pass 6 of the
         // per-function sequence), which runs after ElideTrivialOwnershipCopies (pass 1) — so
-        // without OPT-003's second call to ElideTrivialOwnershipCopies, this newly introduced
+        // without the identity-reduction pass's second call to ElideTrivialOwnershipCopies, this newly introduced
         // Borrow would never be swept within the same Optimize() invocation, even though its
         // target has exactly one use (the eligibility condition ElideTrivialOwnershipCopies
         // already checks for any other single-use Borrow). x itself is deliberately NOT a
@@ -1670,7 +1670,7 @@ public sealed class IrOptimizerTests
     public void Branch_folding_drops_jumpiffalse_when_condition_known_true()
     {
         // cond is always true, so the false-branch (else_0) is never taken. Each arm
-        // returns directly (no post-branch join), isolating OPT-002's own claim from
+        // returns directly (no post-branch join), isolating this pass's own claim from
         // FoldConstants/ElideUnreachableCode's single-pass ordering (a join read via a
         // local slot wouldn't fold here regardless — FoldConstants runs before dead-arm
         // elimination, so it still conservatively sees both arms' writes as live).
@@ -1712,7 +1712,7 @@ public sealed class IrOptimizerTests
         // true-arm's body (now between two terminators with no label re-entry) should
         // be stripped. That unconditional Jump then falls immediately before its own
         // target label (else_0) with nothing left between them — a redundant fallthrough
-        // jump OPT-005's SimplifyControlFlow correctly elides too, so neither a
+        // jump SimplifyControlFlow correctly elides too, so neither a
         // JumpIfFalse nor a Jump to else_0 should survive; only the branch's own
         // conditional-vs-unconditional-vs-none shape has changed release over release,
         // never the correctness of what value reaches the return.
@@ -1734,7 +1734,7 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
             .ShouldBeFalse("No JumpIfFalse with a statically-known condition should survive.");
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.Jump { Target: "else_0" })
-            .ShouldBeFalse("The unconditional jump immediately precedes its own target label with nothing between — OPT-005 correctly elides this redundant fallthrough jump too.");
+            .ShouldBeFalse("The unconditional jump immediately precedes its own target label with nothing between — SimplifyControlFlow correctly elides this redundant fallthrough jump too.");
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadConstInt { Value: 10 })
             .ShouldBeFalse("The unreachable true-arm's body should be stripped, not just made dead.");
         optimized.EntryFunction.Instructions
@@ -1748,7 +1748,7 @@ public sealed class IrOptimizerTests
         // The condition itself arrives via a StoreLocal/LoadLocal round trip (the real
         // shape every let-bound value takes — see the local-slot meet-over-paths
         // tests above), not a raw literal feeding JumpIfFalse directly. This confirms
-        // OPT-002 composes with OPT-001's local-slot tracking rather than needing its
+        // Constant-condition branch folding composes with the constant propagation pass's local-slot tracking rather than needing its
         // own separate wiring: TryFoldLocalLoad already records the folded value in
         // state.Bools before HandleJumpIfFalse ever sees it.
         var instructions = new List<IrInst>
@@ -1772,7 +1772,7 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
             .ShouldBeFalse("The condition folds through the StoreLocal/LoadLocal round trip, so JumpIfFalse should still fold.");
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadLocal)
-            .ShouldBeFalse("The condition's own LoadLocal should fold to a constant (OPT-001), not survive.");
+            .ShouldBeFalse("The condition's own LoadLocal should fold to a constant, not survive.");
     }
 
     // Compile-time evaluation tests
@@ -1832,7 +1832,7 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("A call performing IO must stay runtime code, not be folded away.");
     }
 
-    // Local common-subexpression elimination tests (OPT-006)
+    // Local common-subexpression elimination tests
 
     [Test]
     public void Local_cse_merges_duplicate_pure_call_with_identical_operands()
@@ -1911,7 +1911,7 @@ public sealed class IrOptimizerTests
     public void Local_cse_merges_duplicate_adt_field_reads()
     {
         // Both reads are also each forwarded directly from their establishing SetAdtField
-        // (OPT-014, since the pointer is a fresh allocation) — a stronger result than plain
+        // (store-to-load forwarding, since the pointer is a fresh allocation) — a stronger result than plain
         // read-to-read CSE alone would give, so zero GetAdtField survive, not one.
         List<IrInst> instructions =
         [
@@ -1983,7 +1983,7 @@ public sealed class IrOptimizerTests
     {
         // The second read follows an in-place write to the exact same (pointer, field index) —
         // merging it with the first read's now-stale result would silently keep the old value.
-        // With store-to-load forwarding (OPT-014), both reads are now correctly forwarded from
+        // With store-to-load forwarding, both reads are now correctly forwarded from
         // their RESPECTIVE nearest write (5, then 7) rather than surviving as real GetAdtField
         // instructions — so the meaningful check is the actual computed value (12), not whether
         // any GetAdtField instructions remain.
@@ -2014,8 +2014,8 @@ public sealed class IrOptimizerTests
         // Scoped to a single straight-line block: a Label between the two reads (an extended
         // basic block boundary) must reset the cache, even with nothing else intervening. Reads
         // a function's own argument (slot 1, not a fresh allocation) so this specifically
-        // exercises read-to-read CSE's block-boundary reset, uncontaminated by OPT-014's
-        // store-forwarding (which never applies here — no SetAdtField at all).
+        // exercises read-to-read CSE's block-boundary reset, uncontaminated by
+        // store-to-load forwarding (which never applies here — no SetAdtField at all).
         IrFunction reader = new(
             "reader",
             [
@@ -2054,7 +2054,7 @@ public sealed class IrOptimizerTests
             .ShouldBe(2, "A block boundary must reset local CSE's cache.");
     }
 
-    // Store-to-load / projection forwarding tests (OPT-014)
+    // Store-to-load / projection forwarding tests
 
     [Test]
     public void Store_to_load_forwarding_forwards_the_swap_pattern()
@@ -2191,7 +2191,7 @@ public sealed class IrOptimizerTests
         stdout.Trim().ShouldBe("99", "The forwarded field read must see the argument's real value.");
     }
 
-    // Control-flow simplification tests (OPT-005)
+    // Control-flow simplification tests
 
     [Test]
     public void Simplify_control_flow_redirects_jump_through_a_three_hop_empty_label_chain()
@@ -2231,7 +2231,7 @@ public sealed class IrOptimizerTests
     {
         // L1 has real work (not just an unconditional Jump) before falling into "done" — a
         // negative test against over-eager chain-following. The condition is the function's own
-        // argument, not a constant, so the branch survives OPT-001/002's constant folding and
+        // argument, not a constant, so the branch survives the earlier passes' constant folding and
         // both arms remain real code for this pass to reason about. Execution correctness (not
         // instruction-shape matching) is the meaningful check here: if L1 were ever wrongly
         // treated as an empty hop and skipped, the branch would return the wrong value.

@@ -137,7 +137,7 @@ public sealed partial class Lowering
     // remain conservative when a duplicated name cannot identify one binding occurrence.
     private readonly HashSet<string> _maAmbiguous = new(StringComparer.Ordinal);
 
-    // Result-reachability (may-alias) summary (CO-2 result-alias elision): per registered function, a
+    // Result-reachability (may-alias) summary, for result-alias elision: per registered function, a
     // conservative OVER-APPROXIMATION of which of its own parameters the function's RESULT value may be
     // reachable-through / alias, as a per-parameter multiplicity, plus a "poison" flag meaning the
     // result is not provably confined to the parameters (it may alias a top-level/global binding, an
@@ -2557,7 +2557,7 @@ public sealed partial class Lowering
             return true;
         }
 
-        // (CO-2 result-alias) A saturated call to a registered function written inline at the call site
+        // (Result-alias) A saturated call to a registered function written inline at the call site
         // whose result is a move here: the callee's result-reach summary is not poisoned, and for every
         // parameter its result may alias, the argument bound to it is itself a move (recursively). A
         // result-fresh callee reaches {} and is admitted unconditionally (the empty-reach special case,
@@ -2605,7 +2605,7 @@ public sealed partial class Lowering
             return true;
         }
 
-        // (ii) Richer aliasing (CO-2 increment): a `Var` that is NOT syntactically fresh at the
+        // (ii) Richer aliasing: a `Var` that is NOT syntactically fresh at the
         // call site, but is bound by a `let` LOCAL to the enclosing scope to a fully-fresh
         // construction, and is move-linear here (used at most once on any path, never captured).
         // The `let` confines the name's scope to this body, so move-linearity there proves no
@@ -2623,7 +2623,7 @@ public sealed partial class Lowering
             && TryFindLocalLet(v.Name, encBody) is var (boundRhs, boundScope)
             && boundRhs is not null
             && boundScope is not null
-            // Fresh by construction, or (CO-2 result-alias) the result of a builder call that is a
+            // Fresh by construction, or (result-alias) the result of a builder call that is a
             // move here (result-reach not poisoned, and every reached parameter's argument is itself
             // a move) — both give a uniquely-owned, internally-unshared bound value.
             && (IsFullyFreshConstruction(boundRhs) || IsResultAliasMove(boundRhs, enclosing, scope))
