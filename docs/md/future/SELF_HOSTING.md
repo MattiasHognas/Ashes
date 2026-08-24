@@ -433,6 +433,27 @@ same public behavior.
   record's field set from a value that itself traces back to the enclosing function's own argument)
   is completely ordinary real code and was not exercised by any of this pass's own unit tests, only by
   compiling actual source and running the result.
+- [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
+  empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
+  chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed
+  by its own target label (a redundant fallthrough). Every rewrite is locally safe without reachability
+  analysis: redirecting a branch aims it at the same eventual destination; dropping a label with zero
+  remaining references removes only a marker, never the code around it; and a redundant fallthrough
+  Jump is a pure no-op (nothing can jump directly to a Jump instruction itself, only to a label, so it's
+  reached solely by fallthrough, which reaches the label just as well without it). **Requires iterating
+  jump-chain redirection together with unreachable-code elimination to a true fixed point, not a single
+  pass**: redirecting several distinct branches to the same final label, once the now-unreferenced
+  labels that used to separate them are dropped, stacks multiple unconditional Jumps directly
+  back-to-back — every one after the first is newly unreachable code, and removing it can in turn bring
+  a surviving Jump directly adjacent to its own target label, exposing a further redundant-fallthrough
+  opportunity. A single application of "simplify, then sweep unreachable code" is not enough to fully
+  collapse a real multi-arm `match` cascade (verified: a real compiled 4-constructor match left one
+  redundant Jump/Label pair per arm after one pass, cleared only once the pair is iterated to a fixed
+  point — the instruction count strictly decreasing each iteration bounds the loop). Primarily valuable
+  at `-O0`/`--debug` (LLVM's own `simplifycfg` already performs this at `-O1`+) and for
+  `--emit-ir`/`--explain` output quality; measured no meaningful hot-loop speed change at either `-O0`
+  or `-O2` on a representative match-heavy benchmark (within measurement noise at both), consistent with
+  removing well-predicted branches rather than real work.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and

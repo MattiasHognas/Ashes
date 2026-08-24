@@ -79,6 +79,27 @@ public static class IrOptimizer
         instructions = ElideTrivialOwnershipCopies(instructions);
 
         instructions = ElideUnreachableCode(instructions);
+
+        // SimplifyControlFlow and ElideUnreachableCode can each expose new opportunities for the
+        // other: redirecting a Jump through an empty-label chain can rewrite several distinct
+        // instructions to the same final target, and once the now-unreferenced labels that used
+        // to separate them are dropped, those become several unconditional Jumps stacked
+        // back-to-back — every one after the first is unreachable code only ElideUnreachableCode
+        // removes, which can in turn bring a surviving Jump directly adjacent to its own target
+        // label for SimplifyControlFlow to elide next. Both are pure functions of their input, so
+        // iterating them to a fixed point is safe; the instruction count strictly decreases each
+        // iteration that changes anything (the one edit that doesn't remove an instruction —
+        // redirecting a target — only ever fires once, since chains are already fully resolved to
+        // their final destination on the first pass), so this always terminates.
+        int simplifyPreviousCount;
+        do
+        {
+            simplifyPreviousCount = instructions.Count;
+            instructions = SimplifyControlFlow(instructions);
+            instructions = ElideUnreachableCode(instructions);
+        }
+        while (instructions.Count != simplifyPreviousCount);
+
         instructions = ElideDeadCode(instructions);
         instructions = ElideErasedRcDrops(instructions);
 
@@ -2900,6 +2921,163 @@ public static class IrOptimizer
             case IrInst.SwitchTag s: usedTemps.Add(s.TagTemp); break;
             case IrInst.Return r: usedTemps.Add(r.Source); break;
         }
+    }
+
+    // Control-flow simplification (OPT-005)
+    // Jump threading, redundant-jump elision, and unreferenced-label removal — the deterministic
+    // CFG cleanup LLVM's own simplifycfg performs at -O1+ but never runs at -O0/--debug, and
+    // which also improves --emit-ir/--explain output quality at every level. Every rewrite here
+    // is locally safe without reachability analysis: redirecting a branch through an empty-label
+    // chain aims it at the same eventual destination; dropping a label with zero remaining
+    // references removes only a marker, never the code around it; and a Jump immediately
+    // followed by its own target Label is a pure no-op (nothing can jump directly to the Jump
+    // instruction itself — only to a label — so it's reached solely by fallthrough from above,
+    // which reaches the Label just as well without it).
+
+    private static List<IrInst> SimplifyControlFlow(List<IrInst> instructions)
+    {
+        var redirect = BuildEmptyLabelRedirectMap(instructions);
+        var rewritten = redirect.Count == 0 ? instructions : RewriteBranchTargets(instructions, redirect);
+
+        // Dropping unreferenced labels first, then eliding redundant jumps, catches jump/label
+        // pairs the label removal itself brings into direct adjacency (a Jump immediately
+        // followed by an unreferenced Label immediately followed by the Jump's own target).
+        var withoutUnreferencedLabels = DropUnreferencedLabels(rewritten);
+        return ElideRedundantFallthroughJumps(withoutUnreferencedLabels);
+    }
+
+    // A label immediately followed by nothing but an unconditional Jump is an empty hop: any
+    // branch that targets it can be redirected straight to the jump's own target instead.
+    // Chains (L1 -> L2 -> L3) are followed to their final destination.
+    private static Dictionary<string, string> BuildEmptyLabelRedirectMap(List<IrInst> instructions)
+    {
+        var direct = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (int i = 0; i + 1 < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.Label label && instructions[i + 1] is IrInst.Jump jump
+                && !string.Equals(label.Name, jump.Target, StringComparison.Ordinal))
+            {
+                direct[label.Name] = jump.Target;
+            }
+        }
+
+        if (direct.Count == 0)
+        {
+            return direct;
+        }
+
+        var resolved = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var name in direct.Keys)
+        {
+            resolved[name] = ChaseRedirectChain(direct, name);
+        }
+
+        return resolved;
+    }
+
+    // Follows a chain of empty-label hops to its final destination, with cycle protection for a
+    // pathological Jump-only loop in the source program.
+    private static string ChaseRedirectChain(Dictionary<string, string> direct, string start)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal) { start };
+        string current = start;
+        while (direct.TryGetValue(current, out string? next))
+        {
+            if (!seen.Add(next))
+            {
+                break;
+            }
+
+            current = next;
+        }
+
+        return current;
+    }
+
+    private static List<IrInst> RewriteBranchTargets(List<IrInst> instructions, Dictionary<string, string> redirect)
+    {
+        var result = new List<IrInst>(instructions.Count);
+        foreach (var inst in instructions)
+        {
+            result.Add(inst switch
+            {
+                IrInst.Jump j when redirect.TryGetValue(j.Target, out string? t) => j with { Target = t },
+                IrInst.JumpIfFalse jf when redirect.TryGetValue(jf.Target, out string? t) => jf with { Target = t },
+                IrInst.SwitchTag sw => RewriteSwitchTagTargets(sw, redirect),
+                _ => inst,
+            });
+        }
+
+        return result;
+    }
+
+    private static IrInst.SwitchTag RewriteSwitchTagTargets(IrInst.SwitchTag sw, Dictionary<string, string> redirect)
+    {
+        bool changed = false;
+        var cases = new List<(long Tag, string Label)>(sw.Cases.Count);
+        foreach (var (tag, label) in sw.Cases)
+        {
+            if (redirect.TryGetValue(label, out string? t))
+            {
+                cases.Add((tag, t));
+                changed = true;
+            }
+            else
+            {
+                cases.Add((tag, label));
+            }
+        }
+
+        string defaultLabel = sw.DefaultLabel;
+        if (redirect.TryGetValue(sw.DefaultLabel, out string? newDefault))
+        {
+            defaultLabel = newDefault;
+            changed = true;
+        }
+
+        return changed ? sw with { Cases = cases, DefaultLabel = defaultLabel } : sw;
+    }
+
+    // A Label with zero remaining explicit-branch references is never a jump target any more —
+    // dropping just the marker instruction changes nothing about execution order, since any
+    // fallthrough from the preceding instruction reaches the same following code either way.
+    private static List<IrInst> DropUnreferencedLabels(List<IrInst> instructions)
+    {
+        var refs = CountBranchRefsToLabels(instructions);
+        var result = new List<IrInst>(instructions.Count);
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.Label label && refs.GetValueOrDefault(label.Name) == 0)
+            {
+                continue;
+            }
+
+            result.Add(inst);
+        }
+
+        return result;
+    }
+
+    // Jump L immediately followed by Label L is redundant: nothing can jump directly to the
+    // Jump instruction itself (only to a label), so it's reached solely by fallthrough from
+    // above, which reaches the Label just as well without the Jump in between.
+    private static List<IrInst> ElideRedundantFallthroughJumps(List<IrInst> instructions)
+    {
+        var result = new List<IrInst>(instructions.Count);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.Jump jump
+                && i + 1 < instructions.Count
+                && instructions[i + 1] is IrInst.Label label
+                && string.Equals(jump.Target, label.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            result.Add(instructions[i]);
+        }
+
+        return result;
     }
 
     /// <summary>

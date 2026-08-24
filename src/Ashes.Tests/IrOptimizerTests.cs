@@ -568,10 +568,18 @@ public sealed class IrOptimizerTests
     [Test]
     public void Runtime_dup_is_sunk_into_consuming_else_branch()
     {
+        // The branch condition is an RcIsUnique check (opaque to constant folding), not a
+        // literal — matching the sibling test below (Runtime_dup_is_not_sunk_when_unused_
+        // branch_observes_source)'s own established reasoning: a literal condition here would
+        // fold the JumpIfFalse to an unconditional Jump, which OPT-005's SimplifyControlFlow
+        // then correctly recognizes as a fully redundant branch and removes the "else" label
+        // entirely (nothing explicitly jumps to it any more) — a real, correct simplification
+        // that just happens to break this test's own label-name-based lookup mechanism, not the
+        // compiled program's behavior.
         List<IrInst> instructions = new()
         {
             new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
-            new IrInst.LoadConstBool(2, false),
+            new IrInst.RcIsUnique(2, 0),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
             new IrInst.JumpIfFalse(2, "else"),
             new IrInst.RcDrop(1, "Box", RuntimeManaged: true),
@@ -1492,7 +1500,12 @@ public sealed class IrOptimizerTests
         // returns directly, for the same reason as the known-true test above. The
         // JumpIfFalse should become an unconditional Jump, and the orphaned
         // true-arm's body (now between two terminators with no label re-entry) should
-        // be stripped.
+        // be stripped. That unconditional Jump then falls immediately before its own
+        // target label (else_0) with nothing left between them — a redundant fallthrough
+        // jump OPT-005's SimplifyControlFlow correctly elides too, so neither a
+        // JumpIfFalse nor a Jump to else_0 should survive; only the branch's own
+        // conditional-vs-unconditional-vs-none shape has changed release over release,
+        // never the correctness of what value reaches the return.
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstBool(0, false),
@@ -1511,7 +1524,7 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
             .ShouldBeFalse("No JumpIfFalse with a statically-known condition should survive.");
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.Jump { Target: "else_0" })
-            .ShouldBeTrue("The always-false condition should rewrite to an unconditional jump to else_0.");
+            .ShouldBeFalse("The unconditional jump immediately precedes its own target label with nothing between — OPT-005 correctly elides this redundant fallthrough jump too.");
         optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadConstInt { Value: 10 })
             .ShouldBeFalse("The unreachable true-arm's body should be stripped, not just made dead.");
         optimized.EntryFunction.Instructions
@@ -1966,6 +1979,159 @@ public sealed class IrOptimizerTests
 
         string stdout = await RunAsync(optimized).ConfigureAwait(false);
         stdout.Trim().ShouldBe("99", "The forwarded field read must see the argument's real value.");
+    }
+
+    // Control-flow simplification tests (OPT-005)
+
+    [Test]
+    public void Simplify_control_flow_redirects_jump_through_a_three_hop_empty_label_chain()
+    {
+        // L1 -> L2 -> L3, each an empty label (nothing but an unconditional Jump). Every jump
+        // that used to target L1 or L2, including the ones inside the chain itself, should end
+        // up pointing directly at L3, and L1/L2 should be dropped as unreferenced once nothing
+        // points at them any more. Rewriting the chain's own internal jumps to the same final
+        // target stacks several Jump L3 instructions back-to-back once the separating labels are
+        // dropped — a second ElideUnreachableCode pass must remove every one past the first.
+        List<IrInst> instructions =
+        [
+            new IrInst.Jump("L1"),
+            new IrInst.Label("L1"),
+            new IrInst.Jump("L2"),
+            new IrInst.Label("L2"),
+            new IrInst.Jump("L3"),
+            new IrInst.Label("L3"),
+            new IrInst.LoadConstInt(0, 42),
+            new IrInst.PrintInt(0),
+            new IrInst.Return(0),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 1, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.Jump>().ShouldBeEmpty(
+            "Every branch is redundant fallthrough once the final target's label sits right after it.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.Label>().Select(l => l.Name)
+            .ShouldNotContain("L1", "L1 should be dropped once nothing targets it any more.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.Label>().Select(l => l.Name)
+            .ShouldNotContain("L2", "L2 should be dropped once nothing targets it any more.");
+    }
+
+    [Test]
+    public async Task Simplify_control_flow_does_not_redirect_through_a_non_empty_label()
+    {
+        // L1 has real work (not just an unconditional Jump) before falling into "done" — a
+        // negative test against over-eager chain-following. The condition is the function's own
+        // argument, not a constant, so the branch survives OPT-001/002's constant folding and
+        // both arms remain real code for this pass to reason about. Execution correctness (not
+        // instruction-shape matching) is the meaningful check here: if L1 were ever wrongly
+        // treated as an empty hop and skipped, the branch would return the wrong value.
+        IrFunction worker = new(
+            "worker",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.CmpIntGt(2, 0, 1),
+                new IrInst.JumpIfFalse(2, "L1"),
+                new IrInst.LoadConstInt(3, 100),
+                new IrInst.Jump("done"),
+                new IrInst.Label("L1"),
+                new IrInst.LoadConstInt(3, 7),
+                new IrInst.Label("done"),
+                new IrInst.Return(3),
+            ],
+            2, 4, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, -5),
+                new IrInst.CallKnown(2, "worker", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0, 3, false);
+
+        IrProgram program = new(entry, [worker], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        string stdout = await RunAsync(optimized).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("7", "arg <= 0 takes the L1 branch — its real work (7) must actually execute, not be skipped as if L1 were an empty hop.");
+    }
+
+    [Test]
+    public void Simplify_control_flow_drops_an_unreferenced_label_left_by_an_earlier_pass()
+    {
+        // A label with zero remaining branch references (here, simply never targeted by
+        // anything) should be dropped — the marker alone, never the code around it.
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 1),
+            new IrInst.Label("never_targeted"),
+            new IrInst.LoadConstInt(1, 2),
+            new IrInst.AddInt(2, 0, 1),
+            new IrInst.PrintInt(2),
+            new IrInst.Return(2),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 3, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.Label>().Select(l => l.Name)
+            .ShouldNotContain("never_targeted");
+    }
+
+    [Test]
+    public void Simplify_control_flow_rewrites_switchtag_case_and_default_targets()
+    {
+        // Both a case label and the default label can independently be empty hops; both must be
+        // redirected, and SwitchTag's own structure (case count, tags) must survive unchanged.
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.SwitchTag(0, [(0, "case0"), (1, "case1")], "default_case"),
+            new IrInst.Label("case0"),
+            new IrInst.Jump("real_case0"),
+            new IrInst.Label("real_case0"),
+            new IrInst.LoadConstInt(1, 10),
+            new IrInst.Return(1),
+            new IrInst.Label("case1"),
+            new IrInst.LoadConstInt(2, 20),
+            new IrInst.Return(2),
+            new IrInst.Label("default_case"),
+            new IrInst.Jump("real_default"),
+            new IrInst.Label("real_default"),
+            new IrInst.LoadConstInt(3, 30),
+            new IrInst.Return(3),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 4, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrInst.SwitchTag sw = optimized.EntryFunction.Instructions.OfType<IrInst.SwitchTag>().ShouldHaveSingleItem();
+        sw.Cases.Count.ShouldBe(2);
+        sw.Cases.Any(c => string.Equals(c.Label, "case0", StringComparison.Ordinal))
+            .ShouldBeFalse("case0 was an empty hop to real_case0 and should be redirected.");
+        string.Equals(sw.DefaultLabel, "default_case", StringComparison.Ordinal)
+            .ShouldBeFalse("default_case was an empty hop to real_default and should be redirected.");
+    }
+
+    [Test]
+    public async Task Simplify_control_flow_preserves_correct_output_through_a_redirected_chain()
+    {
+        // A -O0 backend execution test (the tier where this task's win is real, per its own
+        // Testing requirement): correctness, not just instruction shape, through a redirected
+        // jump chain feeding a real conditional branch.
+        var source = """
+            let describe n =
+                if n > 0
+                then "positive"
+                else "non-positive"
+
+            in Ashes.IO.print(describe(5) + " " + describe(-3))
+            """;
+        var stdout = await CompileOptimizedAndRunAsync(source).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("positive non-positive");
     }
 
     // Helpers
