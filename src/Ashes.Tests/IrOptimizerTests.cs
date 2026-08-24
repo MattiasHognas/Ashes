@@ -1609,6 +1609,203 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("A call performing IO must stay runtime code, not be folded away.");
     }
 
+    // Local common-subexpression elimination tests (OPT-006)
+
+    [Test]
+    public void Local_cse_merges_duplicate_pure_call_with_identical_operands()
+    {
+        // makePair(arg) allocates a fresh cell and stores arg into it — every instruction is
+        // modeled-pure, so makePair lands in IrCompileTimeEval's evaluable-function set, but its
+        // result is a pointer (not Int/Bool/Float), so compile-time-eval can never embed it as a
+        // constant regardless of argument tracking — isolating this test to local CSE alone.
+        IrFunction makePair = new(
+            "makePair",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.AllocAdt(1, 0, 1),
+                new IrInst.SetAdtField(1, 0, 0),
+                new IrInst.Return(1),
+            ],
+            2, 2, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 99),
+                new IrInst.CallKnown(2, "makePair", 0, 1),
+                new IrInst.CallKnown(3, "makePair", 0, 1),
+                new IrInst.GetAdtField(4, 2, 0),
+                new IrInst.GetAdtField(5, 3, 0),
+                new IrInst.AddInt(6, 4, 5),
+                new IrInst.PrintInt(6),
+                new IrInst.Return(6),
+            ],
+            0, 7, false);
+
+        IrProgram program = new(entry, [makePair], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.CallKnown ck && string.Equals(ck.FuncLabel, "makePair", StringComparison.Ordinal))
+            .ShouldBe(1, "The second identical call to a pure function should be merged into the first.");
+    }
+
+    [Test]
+    public void Local_cse_does_not_merge_calls_to_non_pure_functions()
+    {
+        IrFunction printAndReturn = new(
+            "printAndReturn",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.PrintInt(0),
+                new IrInst.Return(0),
+            ],
+            2, 1, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 42),
+                new IrInst.CallKnown(2, "printAndReturn", 0, 1),
+                new IrInst.CallKnown(3, "printAndReturn", 0, 1),
+                new IrInst.AddInt(4, 2, 3),
+                new IrInst.PrintInt(4),
+                new IrInst.Return(4),
+            ],
+            0, 5, false);
+
+        IrProgram program = new(entry, [printAndReturn], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.CallKnown ck && string.Equals(ck.FuncLabel, "printAndReturn", StringComparison.Ordinal))
+            .ShouldBe(2, "Two calls to a side-effecting function must both survive, unmerged.");
+    }
+
+    [Test]
+    public void Local_cse_merges_duplicate_adt_field_reads()
+    {
+        List<IrInst> instructions =
+        [
+            new IrInst.AllocAdt(0, 0, 2),
+            new IrInst.LoadConstInt(1, 10),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.LoadConstInt(2, 20),
+            new IrInst.SetAdtField(0, 1, 2),
+            new IrInst.GetAdtField(3, 0, 0),
+            new IrInst.GetAdtField(4, 0, 0),
+            new IrInst.AddInt(5, 3, 4),
+            new IrInst.PrintInt(5),
+            new IrInst.Return(5),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 6, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.GetAdtField)
+            .ShouldBe(1, "The second identical field read should be merged into the first.");
+    }
+
+    [Test]
+    public void Local_cse_merges_field_reads_of_a_functions_own_argument()
+    {
+        // The exact `let x = p.x in let y = p.x in x + y` shape: p is the function's own
+        // argument (slot 1), reloaded via a fresh LoadLocal at each use. Slot 1 is populated by
+        // the backend's entry prologue, never by a visible IrInst.StoreLocal, so this only
+        // merges if EliminateLocalRedundantComputation seeds the function's own arg/env slots.
+        IrFunction describe = new(
+            "describe",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.GetAdtField(1, 0, 0),
+                new IrInst.LoadLocal(2, 1),
+                new IrInst.GetAdtField(3, 2, 0),
+                new IrInst.AddInt(4, 1, 3),
+                new IrInst.Return(4),
+            ],
+            2, 5, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 1),
+                new IrInst.AllocAdt(2, 0, 1),
+                new IrInst.SetAdtField(2, 0, 1),
+                new IrInst.CallKnown(3, "describe", 0, 2),
+                new IrInst.PrintInt(3),
+                new IrInst.Return(3),
+            ],
+            0, 4, false);
+
+        IrProgram program = new(entry, [describe], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrFunction? optimizedDescribe = optimized.Functions
+            .FirstOrDefault(f => string.Equals(f.Label, "describe", StringComparison.Ordinal));
+        optimizedDescribe.ShouldNotBeNull();
+        optimizedDescribe.Instructions
+            .Count(i => i is IrInst.GetAdtField)
+            .ShouldBe(1, "Two reads of the same field of the function's own argument should merge.");
+    }
+
+    [Test]
+    public void Local_cse_does_not_merge_field_reads_across_intervening_set_adt_field()
+    {
+        // The second read follows an in-place write to the exact same (pointer, field index) —
+        // merging it with the first read's now-stale result would silently keep the old value.
+        List<IrInst> instructions =
+        [
+            new IrInst.AllocAdt(0, 0, 1),
+            new IrInst.LoadConstInt(1, 5),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.GetAdtField(2, 0, 0),
+            new IrInst.LoadConstInt(3, 7),
+            new IrInst.SetAdtField(0, 0, 3),
+            new IrInst.GetAdtField(4, 0, 0),
+            new IrInst.AddInt(5, 2, 4),
+            new IrInst.PrintInt(5),
+            new IrInst.Return(5),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 6, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.GetAdtField)
+            .ShouldBe(2, "A field write between the two reads must invalidate the cache.");
+    }
+
+    [Test]
+    public void Local_cse_does_not_merge_field_reads_across_a_block_boundary()
+    {
+        // Scoped to a single straight-line block: a Label between the two reads (an extended
+        // basic block boundary) must reset the cache, even with nothing else intervening.
+        List<IrInst> instructions =
+        [
+            new IrInst.AllocAdt(0, 0, 1),
+            new IrInst.LoadConstInt(1, 3),
+            new IrInst.SetAdtField(0, 0, 1),
+            new IrInst.GetAdtField(2, 0, 0),
+            new IrInst.Jump("mid"),
+            new IrInst.Label("mid"),
+            new IrInst.GetAdtField(3, 0, 0),
+            new IrInst.AddInt(4, 2, 3),
+            new IrInst.PrintInt(4),
+            new IrInst.Return(4),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 5, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Count(i => i is IrInst.GetAdtField)
+            .ShouldBe(2, "A block boundary must reset local CSE's cache.");
+    }
+
     // Helpers
 
     private static IrProgram Lower(string source)

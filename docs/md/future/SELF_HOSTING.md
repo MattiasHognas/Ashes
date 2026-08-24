@@ -395,6 +395,26 @@ same public behavior.
   earlier and would otherwise erase it (an erasable copy is one whose source is a constant producer, or
   whose target has exactly one remaining use). Ownership-copy elision must be a pure function of its
   input (recomputing its use-def facts fresh each call) for a second call to be safe and effective.
+- [ ] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
+  at every label, never across control flow): forward a duplicate `GetAdtField` read or a duplicate
+  `CallKnown` call to a function proven pure by the compile-time-evaluation purity oracle (reused, not
+  reimplemented) to the first occurrence's result. Operands must be canonicalized through a
+  LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache — the same lesson meet-over-paths
+  above already learned: real Ashes IR round-trips almost every value through a local slot, so
+  raw-temp-identity-only keying folds nothing in real compiled programs (the ubiquitous `let x = p.x in
+  let y = p.x` shape never matches without it). A function's own env/arg slots (0/1) additionally need
+  a seeded identity: the backend's entry prologue populates them with a native store the IR-level
+  optimizer never sees as an explicit `StoreLocal`, so without seeding, every read of a function's own
+  argument looks like an unknown value. The cache must be invalidated on any instruction that could
+  write through an aliased pointer (`SetAdtField`, any allocation/reuse variant, a non-pure call) but
+  explicitly NOT on arena/stack bookkeeping (`SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`/
+  `SaveStackPointer`/`RestoreStackPointer`) — those move an allocator cursor, never write through an
+  existing pointer, and every `let` binding gets its own such bracket in practice, so treating them as
+  aliasing would silence this pass almost everywhere. Separately, note that `CallKnown`-based merging is
+  currently reachable only when the closure was already devirtualized from `CallClosure`, which itself
+  requires the closure temp to trace directly to a `MakeClosure`/`MakeClosureStack` with no intervening
+  local-slot round-trip — a condition essentially no `let`-bound function call satisfies today, a
+  separate, pre-existing devirtualization gap this task did not attempt to fix.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and

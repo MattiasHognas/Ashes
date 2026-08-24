@@ -790,6 +790,8 @@ add a **new** `[ ]` line next to the existing `[x]` one describing CFG simplific
 
 ### OPT-006: Local Common-Subexpression Elimination for Pure Calls and Field Loads
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** No hash-consing/expression-canonicalization exists anywhere in `IrOptimizer.cs`.
 
 **Why Ashes needs it, not just LLVM.** LLVM's GVN eliminates redundant *pure LLVM instructions*, but
@@ -848,6 +850,59 @@ the existing `[x]` bullet at `SELF_HOSTING.md:361-369` describing local CSE for 
 loads, and port it to `selfhost/` once landed in C#, reusing the equivalent self-hosted
 compile-time-evaluation purity check (`SELF_HOSTING.md:361-364` describes the self-hosted compile-time
 evaluator as already ported) as the oracle there too. Do not edit the existing `[x]` line's text.
+
+**Measured Outcome — done.** Implemented as `EliminateLocalRedundantComputation` in `IrOptimizer.cs`,
+run once per function after `FoldConstants`/`ReduceIdentitiesAndStrength` and before `ElideDeadCode`,
+reusing `IrCompileTimeEval`'s whole-program purity oracle (`ComputeEvaluableFunctions`, changed from
+`private` to `internal` for this reuse) as the `CallKnown` eligibility check. Two real gaps surfaced
+during implementation that the doc's literal proposal did not anticipate, both caught by testing against
+actual compiled `.ash` output before this reached measurement — not by the unit tests alone, which all
+passed even with these gaps present:
+
+1. **Raw temp-identity keying folds nothing in real code.** The doc's literal "keyed by
+   (opcode, operand-temps)" wording, tested naively, never fired on either of the doc's own worked
+   examples: `let x = p.x in let y = p.x` compiles to two *different* `LoadLocal` temps reading the same
+   local slot (`p`), since Ashes IR round-trips almost every bound value through a local slot rather than
+   reusing a raw temp — the exact same lesson `OPT-001` already learned for constant propagation. Fixed
+   by canonicalizing `GetAdtField`/`CallKnown` operands through a `LoadLocal`/`StoreLocal`/`Borrow`/`RcDup`
+   alias map before keying the cache, so two loads of an unwritten slot resolve to the same canonical
+   identity. A function's own env/arg slots (0/1) needed a further fix: the backend's entry prologue
+   populates them via a native LLVM store the IR-level optimizer never sees as an explicit `StoreLocal`
+   (`LlvmCodegen.cs:1623-1627`), so without seeding a synthetic identity for those two slots up front,
+   every read of a function's own argument looked like an unknown value and never matched a second read
+   of the same argument.
+2. **Arena/stack bookkeeping is not aliasing.** Even after fix (1), `let x = p.x in let y = p.x` still
+   didn't merge in real compiled output: every `let` binding brackets its scope with
+   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`, and the pass's conservative "any instruction
+   not proven safe invalidates the cache" policy treated these as potentially-aliasing, clearing the
+   field cache between the two reads. These instructions move an allocator cursor/watermark and never
+   write through an existing pointer — a value already copied into a temp is unaffected by a later
+   bracket closing over allocations made since. Added them (and `SaveStackPointer`/`RestoreStackPointer`)
+   to the pass's safe-instruction allowlist; without this, local CSE would be silently inert on almost
+   every real Ashes program, since essentially every `let` binding produces such a bracket.
+
+With both fixes, `--emit-ir final` on `tests/local_cse_duplicate_field_read.ash` (the doc's own
+`let x = p.x in let y = p.x in x + y` example) shows exactly one `GetAdtField` where two existed before —
+verified against the pre-task compiler via `git show <base-commit>:IrOptimizer.cs`. **`CallKnown`-based
+merging on the doc's `perimeter(r) + perimeter(r)` example does not fire**, and is honestly reported as
+such: that example compiles to `CallClosure`, not `CallKnown`, because `DevirtualizeKnownClosureCalls`
+only recognizes a closure temp defined directly by `MakeClosure`/`MakeClosureStack` with no intervening
+local-slot round-trip (`IrOptimizer.cs:507-548`) — a condition essentially no `let`-bound function call
+satisfies, since any named function value used more than once is, by construction, stored to and reloaded
+from a local slot. This is a separate, pre-existing gap in devirtualization, not something this task
+introduced or attempted to fix (deliberately, to avoid the kind of scope creep into unrelated,
+already-shipped machinery `OPT-008`'s investigation warned against) — `CallKnown` CSE is implemented and
+proven structurally correct (5 raw-IR unit tests, including two adversarial negative cases: an intervening
+`SetAdtField` must not merge, and calls to an impure function must not merge), but is currently reachable
+only in the narrow case devirtualization already handles today, documented above and in `SELF_HOSTING.md`
+so a future attempt (most naturally as part of fixing that devirtualization gap) doesn't have to
+re-discover it. Full suites green: C# 2348/2348, LSP 70/70, e2e `test --pipeline both` 641/0/54-skipped
+(both semantic pipelines, the RC-correctness differential this task's own Testing section requires).
+`--explain rc` on the field-read example shows no dup/drop imbalance. Measured: a 20M-iteration hot-loop
+built around the field-read example (four redundant field reads per iteration reduced to two) ran
+105.6ms -> 99.7ms at `-O0` (~6% faster, hyperfine, 15+ runs, non-overlapping confidence intervals);
+identical at `-O2` within noise (1.01x, LLVM's own optimizer already subsumes it there) — consistent with
+every other task in this arc so far.
 
 ---
 
@@ -1743,7 +1798,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
-| OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
+| OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Not started |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Attempted, reverted twice — see Measured Outcome; closes only via OPT-007 |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |

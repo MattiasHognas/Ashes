@@ -18,8 +18,21 @@ public static class IrOptimizer
         // argument/closure construction and the redundant arena brackets around the removed call.
         program = IrCompileTimeEval.Evaluate(program);
 
-        var optimizedEntry = OptimizeFunction(program.EntryFunction);
-        var optimizedFuncs = program.Functions.Select(OptimizeFunction).ToList();
+        // Local CSE (below) needs to know which CallKnown targets are provably pure; reuse the
+        // same whole-program purity oracle IrCompileTimeEval.Evaluate just computed for folding,
+        // rather than building a second one.
+        var functionsByLabel = new Dictionary<string, IrFunction>(StringComparer.Ordinal)
+        {
+            [program.EntryFunction.Label] = program.EntryFunction,
+        };
+        foreach (var f in program.Functions)
+        {
+            functionsByLabel[f.Label] = f;
+        }
+        var evaluableFunctions = IrCompileTimeEval.ComputeEvaluableFunctions(functionsByLabel);
+
+        var optimizedEntry = OptimizeFunction(program.EntryFunction, evaluableFunctions);
+        var optimizedFuncs = program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList();
 
         // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
         // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
@@ -36,7 +49,7 @@ public static class IrOptimizer
         };
     }
 
-    private static IrFunction OptimizeFunction(IrFunction function)
+    private static IrFunction OptimizeFunction(IrFunction function, HashSet<string> evaluableFunctions)
     {
         var instructions = function.Instructions;
 
@@ -55,6 +68,14 @@ public static class IrOptimizer
         // ElideTrivialOwnershipCopies is a pure function of its input (it recomputes its
         // use-def facts fresh each call), so re-running it here is safe and cheap — a single
         // linear pass, not a fixpoint.
+        instructions = ElideTrivialOwnershipCopies(instructions);
+
+        // Runs after calls are already in canonical direct (CallKnown) form and constants are
+        // folded, before ElideDeadCode sweeps the now-unused duplicate-call argument
+        // construction it can expose. Emits Borrow copies for cache hits (same idiom as
+        // ReduceIdentitiesAndStrength above), so re-run ElideTrivialOwnershipCopies once more to
+        // forward/erase them.
+        instructions = EliminateLocalRedundantComputation(instructions, evaluableFunctions, function.HasEnvAndArgParams);
         instructions = ElideTrivialOwnershipCopies(instructions);
 
         instructions = ElideUnreachableCode(instructions);
@@ -1906,6 +1927,215 @@ public static class IrOptimizer
                 result.Add(inst);
                 return inst is IrInst.Return;
         }
+    }
+
+    // Local common-subexpression elimination (OPT-006)
+    // Forwards a duplicate GetAdtField read or duplicate CallKnown call to a provably pure
+    // function to the first occurrence's result, scoped to a single straight-line block (reset
+    // at every Label), never across control flow. Operands are canonicalized through a
+    // LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache — without it, the
+    // ubiquitous `let x = p.x in let y = p.x` shape never matches, since each LoadLocal of the
+    // same never-rewritten slot produces a fresh temp for what is provably the same value (the
+    // same lesson OPT-001 learned: real Ashes IR round-trips almost everything through local
+    // slots, so raw-temp-identity-only tracking misses nearly every real occurrence).
+
+    private static readonly HashSet<Type> LocalCseSafeInstructionTypes =
+    [
+        typeof(IrInst.LoadConstInt), typeof(IrInst.LoadConstFloat), typeof(IrInst.LoadConstBool),
+        typeof(IrInst.LoadConstStr), typeof(IrInst.LoadLocal), typeof(IrInst.StoreLocal),
+        typeof(IrInst.RcDup), typeof(IrInst.Borrow),
+        typeof(IrInst.AddInt), typeof(IrInst.SubInt), typeof(IrInst.MulInt), typeof(IrInst.DivInt),
+        typeof(IrInst.DivUInt), typeof(IrInst.AndInt), typeof(IrInst.OrInt), typeof(IrInst.XorInt),
+        typeof(IrInst.ShlInt), typeof(IrInst.ShrInt),
+        typeof(IrInst.AddFloat), typeof(IrInst.SubFloat), typeof(IrInst.MulFloat), typeof(IrInst.DivFloat),
+        typeof(IrInst.IntToFloat), typeof(IrInst.FloatToInt),
+        typeof(IrInst.CmpIntGt), typeof(IrInst.CmpIntGe), typeof(IrInst.CmpIntLt), typeof(IrInst.CmpIntLe),
+        typeof(IrInst.CmpUIntGt), typeof(IrInst.CmpUIntGe), typeof(IrInst.CmpUIntLt), typeof(IrInst.CmpUIntLe),
+        typeof(IrInst.CmpIntEq), typeof(IrInst.CmpIntNe),
+        typeof(IrInst.CmpFloatGt), typeof(IrInst.CmpFloatGe), typeof(IrInst.CmpFloatLt), typeof(IrInst.CmpFloatLe),
+        typeof(IrInst.CmpFloatEq), typeof(IrInst.CmpFloatNe),
+        typeof(IrInst.CmpStrEq), typeof(IrInst.CmpStrNe),
+        typeof(IrInst.GetAdtTag), typeof(IrInst.LoadArgumentOwnership), typeof(IrInst.LoadFuncAddr),
+        // Arena/stack bookkeeping: these move an allocator cursor/watermark, never write through
+        // an existing pointer. A value already copied out into a temp (a cached field read or
+        // pure-call result) is not affected by a later bracket closing over allocations made
+        // since — every `let` binding gets its own such bracket in practice, so treating these as
+        // "could alias" would silence local CSE almost everywhere real Ashes code binds a value.
+        typeof(IrInst.SaveArenaState), typeof(IrInst.RestoreArenaState), typeof(IrInst.ReclaimArenaChunks),
+        typeof(IrInst.SaveStackPointer), typeof(IrInst.RestoreStackPointer),
+    ];
+
+    // Deny-by-default: only the instruction kinds explicitly listed above are known not to write
+    // through an existing pointer or call into code with unmodeled effects. Everything else —
+    // every allocation/reuse/SetAdtField/RcDrop variant, every non-pure call, and any instruction
+    // added to the IR in the future — conservatively invalidates both caches, since an in-place
+    // reuse write is exactly the kind of alias a raw temp-identity cache cannot see coming.
+    private static bool LocalCseNeverAliasesHeapMemory(IrInst inst) =>
+        LocalCseSafeInstructionTypes.Contains(inst.GetType());
+
+    private sealed class LocalCseState
+    {
+        public readonly Dictionary<(int Ptr, int FieldIndex), int> FieldCache = [];
+        public readonly Dictionary<(string FuncLabel, int EnvTemp, int ArgTemp, int FlagTemp, bool StackAllocated), int> CallCache = [];
+        public readonly Dictionary<int, int> ValueOf = []; // temp -> canonical earlier temp with the same value
+        public readonly Dictionary<int, int> SlotValue = []; // local slot -> canonical temp currently stored there
+        public bool HasEnvAndArgParams;
+
+        // Negative, so it can never collide with a real (always non-negative) temp number — the
+        // stable identity of the value the backend's entry prologue stores into env/arg slot 0/1
+        // before any IrInst the optimizer can see.
+        private static int EntrySlotIdentity(int slot) => -1 - slot;
+
+        public int Resolve(int temp)
+        {
+            while (ValueOf.TryGetValue(temp, out int alias))
+            {
+                temp = alias;
+            }
+
+            return temp;
+        }
+
+        public void ResetBlock()
+        {
+            FieldCache.Clear();
+            CallCache.Clear();
+            ValueOf.Clear();
+            SlotValue.Clear();
+            if (HasEnvAndArgParams)
+            {
+                SlotValue[0] = EntrySlotIdentity(0);
+                SlotValue[1] = EntrySlotIdentity(1);
+            }
+        }
+    }
+
+    // Tracks pure value-identity aliases (LoadLocal/StoreLocal/Borrow/RcDup) so the field/call
+    // caches below can be keyed by canonical value rather than raw temp. Returns true when the
+    // instruction was one of these alias producers (already fully handled by the caller).
+    private static bool TryTrackLocalCseAlias(IrInst inst, LocalCseState state)
+    {
+        switch (inst)
+        {
+            case IrInst.Borrow b: state.ValueOf[b.Target] = state.Resolve(b.SourceTemp); return true;
+            case IrInst.RcDup d: state.ValueOf[d.Target] = state.Resolve(d.SourceTemp); return true;
+            case IrInst.StoreLocal sl: state.SlotValue[sl.Slot] = state.Resolve(sl.Source); return true;
+            case IrInst.LoadLocal ll:
+                if (state.SlotValue.TryGetValue(ll.Slot, out int known))
+                {
+                    state.ValueOf[ll.Target] = known;
+                }
+                else
+                {
+                    state.ValueOf.Remove(ll.Target);
+                }
+
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryEliminateLocalCseField(IrInst inst, LocalCseState state, out IrInst rewritten)
+    {
+        if (inst is not IrInst.GetAdtField gaf)
+        {
+            rewritten = inst;
+            return false;
+        }
+
+        var key = (state.Resolve(gaf.Ptr), gaf.FieldIndex);
+        if (state.FieldCache.TryGetValue(key, out int cached))
+        {
+            rewritten = new IrInst.Borrow(gaf.Target, cached) { Location = inst.Location };
+            state.ValueOf[gaf.Target] = cached;
+        }
+        else
+        {
+            state.FieldCache[key] = gaf.Target;
+            rewritten = inst;
+        }
+
+        return true;
+    }
+
+    private static bool TryEliminateLocalCseCall(
+        IrInst inst, LocalCseState state, HashSet<string> evaluableFunctions, out IrInst rewritten)
+    {
+        if (inst is not IrInst.CallKnown ck || !evaluableFunctions.Contains(ck.FuncLabel))
+        {
+            rewritten = inst;
+            return false;
+        }
+
+        var key = (ck.FuncLabel, state.Resolve(ck.EnvTemp), state.Resolve(ck.ArgTemp),
+            state.Resolve(ck.RuntimeManagedArgumentFlagTemp), ck.EnvironmentIsStackAllocated);
+        if (state.CallCache.TryGetValue(key, out int cached))
+        {
+            rewritten = new IrInst.Borrow(ck.Target, cached) { Location = inst.Location };
+            state.ValueOf[ck.Target] = cached;
+        }
+        else
+        {
+            state.CallCache[key] = ck.Target;
+            rewritten = inst;
+        }
+
+        return true;
+    }
+
+    private static List<IrInst> EliminateLocalRedundantComputation(
+        List<IrInst> instructions,
+        HashSet<string> evaluableFunctions,
+        bool hasEnvAndArgParams)
+    {
+        var result = new List<IrInst>(instructions.Count);
+        var state = new LocalCseState { HasEnvAndArgParams = hasEnvAndArgParams };
+
+        // Slots 0 (env) and 1 (arg) are populated by the backend's function-entry prologue — a
+        // native store the caller never sees as an IrInst.StoreLocal — so without seeding them
+        // here, every LoadLocal of a function's own argument looks like an unknown value and two
+        // reads of the same argument field never canonicalize to the same key. Re-seeded by
+        // ResetBlock too: the slots stay stable for the whole function, not just its first block.
+        state.ResetBlock();
+
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.Label)
+            {
+                state.ResetBlock();
+                result.Add(inst);
+                continue;
+            }
+
+            if (TryTrackLocalCseAlias(inst, state))
+            {
+                result.Add(inst);
+                continue;
+            }
+
+            if (TryEliminateLocalCseField(inst, state, out var rewrittenField))
+            {
+                result.Add(rewrittenField);
+                continue;
+            }
+
+            if (TryEliminateLocalCseCall(inst, state, evaluableFunctions, out var rewrittenCall))
+            {
+                result.Add(rewrittenCall);
+                continue;
+            }
+
+            if (!LocalCseNeverAliasesHeapMemory(inst))
+            {
+                state.FieldCache.Clear();
+                state.CallCache.Clear();
+            }
+
+            result.Add(inst);
+        }
+
+        return result;
     }
 
     // Unreachable code elimination
