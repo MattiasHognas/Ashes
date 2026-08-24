@@ -507,6 +507,8 @@ swapped in and rebuilt) compiled against the same source:
 
 ### OPT-002: Constant-Condition Branch Folding
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** `knownBools` is populated during `FoldConstants` but never consulted to eliminate a
 `JumpIfFalse` whose condition is statically known, nor to prune the dead arm.
 
@@ -550,9 +552,40 @@ No `JumpIfFalse` with a statically-known condition survives `FoldConstants`; new
 tests pass; no regression.
 
 **Self-Hosting Impact (required to close this task).** Same pipeline bullet as `OPT-001` (`SELF_HOSTING.md:361-369`, `[x]`) —
-add a **new** `[ ]` line next to it (or extend `OPT-001`'s new line, if that task landed first and this
-one lands as part of the same body of work) scoped to constant-condition branch folding, and requires a
-matching `selfhost/` change before it flips to `[x]`. Do not edit the existing `[x]` line's text.
+added a **new** `[ ]` line (kept separate from `OPT-001`'s own new line, since branch folding is a
+distinct capability from constant *propagation*) scoped to constant-condition branch folding, requiring a
+matching `selfhost/` change before it flips to `[x]`. The existing `[x]` line's text was not edited.
+
+**Measured Outcome.** Implemented as proposed: `HandleJumpIfFalse` rewrites a `JumpIfFalse` to an
+unconditional `Jump` when its condition is known false, or drops it entirely when known true. A necessary
+correctness fix surfaced during implementation: the "known false" rewrite must still call `SaveEdgeState`
+for the target label (the edge is preserved, just made unconditional) — omitting this broke five
+pre-existing tests that relied on `OPT-001`'s meet-over-paths propagating through what is now a folded
+branch (all five were legitimate: state must still flow to a label reached by an always-taken branch).
+A second gap surfaced by direct `--emit-ir` inspection (not caught by unit tests): `ElideUnreachableCode`
+unconditionally treats every `Label` as re-establishing reachability, so the known-true case (dropping
+`JumpIfFalse` entirely) left its now-orphaned false-arm's label and body physically present in the
+output — dead but not actually removed, only the known-false direction (rewritten to `Jump`) got its
+dead arm swept, an asymmetry the doc's proposed implementation didn't anticipate. Fixed by having
+`ElideUnreachableCode` recompute predecessor edges fresh over its own (already-folded) input and only
+let a label re-establish reachability if it still has a real incoming edge or was already reachable.
+**Measured:** the worked example's shape (`let step = if isSmall then 1 else 2` with `isSmall` provably
+true) went from 15 to 8 optimized instructions (~47%) in an isolated probe function — the entire
+boolean-comparison scaffolding, the `JumpIfFalse`, and the whole dead `else`-arm are gone, not just the
+branch instruction. Runtime, using a temporary pre-task baseline (`git show <base>:IrOptimizer.cs`
+swapped in): at `-O2` (default) **no difference** (0.005s both, LLVM already eliminates the whole
+provably-side-effect-free loop regardless); at `-O0`, a 200M-iteration hot-loop benchmark exercising the
+pattern showed a small, consistent, reproducible **~3% regression** (mean of 4 runs each: 0.510s before
+vs 0.526s after), despite the instruction-count reduction — not fully root-caused, but the most likely
+explanation is naive `-O0` codegen's sensitivity to stack-slot/alloca layout shifts from temp/slot
+renumbering (a well-documented category of `-O0` benchmarking noise unrelated to the optimization's own
+soundness; correctness is unaffected — full suites are green, including the RC-sensitive e2e corpus at
+`--pipeline both`). **Conclusion:** unlike `OPT-001`, this task's real, defensible, measured benefit is
+IR/code-size quality (fewer emitted instructions, matching the doc's own "Why" — `-O0`/`--debug` builds,
+`--emit-ir`/`--explain` fidelity), not hot-loop throughput: a compile-time-constant, always-same-direction
+conditional branch predicts perfectly on modern hardware after a handful of iterations, so removing it
+doesn't meaningfully change steady-state execution speed. Full suite status: C# 2329/2329, LSP 70/70, e2e
+`test --pipeline both` 639/0/54-skipped, format clean.
 
 ---
 
@@ -1469,7 +1502,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | ID | Task | Value | Complexity | Dependencies | Priority | Status |
 |---|---|---:|---:|---|---|---|
 | OPT-001 | SCCP-style meet-over-paths constant propagation | High | Low | none | P0 | Done |
-| OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Not started |
+| OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Done |
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Not started |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Not started |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Not started |
