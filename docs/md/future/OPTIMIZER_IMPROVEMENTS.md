@@ -2038,6 +2038,8 @@ uncurrying, arity raising, contification of curried helpers — see each part be
 
 #### (a) Prune Captures the Closure Body Never Reads
 
+**Status: Done (narrowed scope — see Measured Outcome).**
+
 **Problem.** A closure's capture set is computed once, directly from the lambda body's syntactic free
 variables, and is never revisited after lowering. Nothing downstream can correct an over-approximation:
 `IsDeadInstruction` (Category 2.5/2.10's dead-code sweep) removes dead constant loads, dead `StoreLocal`s,
@@ -2099,6 +2101,69 @@ in optimized IR; declines are unaffected; no regression.
 **Self-Hosting Impact (required to close this task).** Lowering-stage change, like `OPT-015`; add a
 **new** `[ ]` line describing dead-capture pruning at closure-construction time, separate from `OPT-013`'s
 existing environment-scalarization line even though the two compose.
+
+**Measured Outcome.** Implemented in `Lowering.cs` largely as proposed, with one deliberate scope
+narrowing found during implementation. `LowerLambdaCoreBuildEnvAllocation` now records each capture's
+instruction range (from right before `LowerVar(captures[i])` through its `StoreMemOffset`), returned
+alongside the `Alloc`/`AllocStack` instruction's index. `LowerLambdaCoreFinishFunction` was changed to
+return the `IrFunction` it registers (its `Instructions` list is the same mutable list instance `AddFunction`
+stores, so it can still be edited after registration) so the new `LowerLambdaCorePruneDeadCaptures` can scan
+it for every `LoadEnv` once the body is fully lowered — this also catches a `LoadEnv` reached through the
+trait-dictionary reference path (`TryLowerActiveTraitDictionaryReference`), which turned out to emit the
+same instruction rather than a separate one, so no second oracle was needed to stay sound there. Dead fills
+are removed last-to-first (so earlier recorded ranges stay valid), survivors' `StoreMemOffset` offsets and
+the body's `LoadEnv` indices are renumbered to a compact `0..k-1` range, and the allocation's `SizeBytes`
+shrinks to match, before the (now pruned) `captures` list is handed to `LowerLambdaCoreMakeClosure` — every
+downstream consumer there (resource-capture tracking, the runtime-managed-closure dropper and normalizer)
+already recomputes its own offsets from `captures`' enumeration order, so nothing else needed patching. A
+capture that required a `Borrow` (an owned outer value) has its `ActiveBorrows` count decremented when its
+fill is deleted, matching the increment `LowerVarBound` performs when the `Borrow` was originally emitted —
+otherwise the outer scope's later drop/borrow-release placement would assume a borrow with no corresponding
+instruction, a real correctness hazard the doc's original "Proposed implementation" section did not call
+out.
+
+**Scope narrowed from the doc's proposal, found safe via direct investigation rather than by trial and
+error:** implemented declines are exactly two — a self-referential lambda (`selfName is not null`, which
+covers `Binding.Self` reconstruction) and a mutual-recursion group (`recursiveGroup is not null`). The
+doc's proposed "union of used-capture indices across every label in a mutual-recursion group" was **not**
+attempted; a recursive-group lambda is declined outright, identically to how coroutines are declined —
+correct and safe, just narrower than the doc's own proposal, deferred as a follow-up rather than attempted
+under time pressure on a genuinely RC-adjacent change. Coroutines needed no explicit decline check at all:
+tracing `Lowering.Builtins.cs` showed a coroutine's captures are built through an entirely separate
+`captureTemps`/`StateMachineTransform.Transform` mechanism that never routes through `LowerLambdaCore`'s
+`LowerLambdaCoreBuildEnv`/`LowerLambdaCoreMakeClosure` path at all — the decline is structural by
+construction, not a runtime check. `_topLevelFunctionRefs` and `RecordReturnedClosureLabel` also needed no
+special-case decline, contrary to the doc's original "Declines" list: `_topLevelFunctionRefs` registration
+is already gated on `_lastLoweredLambdaEmptyEnv` (only a function with zero captures to begin with is ever
+registered there), and `RecordReturnedClosureLabel`/`_functionReturnedClosureLabels` is purely informational
+bookkeeping (which label a function returns) consumed only for RC-representation decisions — no code path
+was found that reconstructs a closure of a known label elsewhere using a captures-count/layout assumption
+recorded before this pruning could run, the way `Binding.Self` does.
+
+**Measured**, against a temporary pre-task baseline (`git stash` of this change, rebuilt, compiled and run
+the same program, then restored): the `mutual_recursion` self-hosting parity fixture (`isEven`/`isOdd`
+mutually tail-recursive) exercises exactly this pattern for free — its mutual-recursion dispatch closure's
+environment shrank from 2 captures (16 bytes) to 1 (8 bytes) in `--emit-ir final`
+(`selfhost/parity/semantics/lowered-ir/mutual_recursion.ir`, regenerated via
+`ASHES_UPDATE_PARITY_FIXTURES=1` to match the new, correctly-pruned lowered shape). As a genuinely
+emergent side effect of nothing but a smaller, more accurate `captures` list — no new logic of this task's
+own — pruning that dead capture also unlocked the pre-existing `AttachRuntimeManagedClosureNormalizer`
+pass, previously blocked solely because the *other*, now-pruned capture wasn't itself runtime-normalizable
+(one non-normalizable capture disqualifies the whole closure); the pruned build synthesizes a new
+`lambda_3$env_normalize` helper that did not exist before. A hand-written 200,000,000-iteration driver
+(`let recursive driveLoop k acc = ... let result = isEven(4) in driveLoop(k - 1)(if result then acc + 1
+else acc)`, so the mutual-recursion group's dispatch closure is freshly entered every iteration, not
+looped-into-once) ran, 3 runs each side, <15ms spread: **1.02s -> 0.88s at the CLI's default `-O2` (~14%
+faster)**. Unlike most tasks in this arc, this `-O2` win is real rather than subsumed by LLVM: it removes
+a genuine allocation, and LLVM has no way to invent the removal of an allocation Ashes chose to make before
+LLVM ever sees the program. New `LowerLambdaCoreCapturePruningTests.cs` adds two regression tests: one
+asserting the exact pruned shape (single 8-byte capture, `LoadEnv` renumbered to index 0) on the
+mutual-recursion example above, and one compiling and running a self-referential lambda that legitimately
+captures and uses an outer value, confirming `Binding.Self` reconstruction still produces the correct
+answer — a true "the decline never fires" unit test isn't constructible from surface syntax, since any
+textual reference to a capture emits a real `LoadEnv` and is therefore never a pruning candidate to begin
+with, so this is a correctness guard on the decline path instead. Full suite status: C# 2373/2373, LSP
+70/70, e2e `test tests --pipeline both` 645/0/54-skipped, `dotnet format` clean.
 
 #### (b) Devirtualize Past a Single Definition
 
@@ -2651,7 +2716,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
-| OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Not started |
+| OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Done (narrowed scope) — see Measured Outcome |
 | OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Not started |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
