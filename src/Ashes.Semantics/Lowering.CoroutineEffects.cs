@@ -101,10 +101,11 @@ public sealed partial class Lowering
         IReadOnlyDictionary<FuncKey, HashSet<FuncKey>> calleesByCaller,
         IReadOnlySet<FuncKey> unknownDynamicCallers)
     {
-        bool changed;
-        do
+        // Least fixpoint (via WholeProgramFixpoint, OPT-010): grow _maFunctionsMayExecuteInsideCoroutine
+        // until a full pass adds nothing further — the same shape as PropagateLiveHandlerEffects.
+        WholeProgramFixpoint.RunToFixpoint(() =>
         {
-            changed = false;
+            bool changed = false;
             foreach (FuncKey caller in _maFunctionsMayExecuteInsideCoroutine.ToArray())
             {
                 if (calleesByCaller.TryGetValue(caller, out HashSet<FuncKey>? callees))
@@ -117,7 +118,8 @@ public sealed partial class Lowering
                     changed |= AddFunctions(_maFunctionsMayExecuteInsideCoroutine, _maEscaped);
                 }
             }
-        }
-        while (changed);
+
+            return changed;
+        });
     }
 }

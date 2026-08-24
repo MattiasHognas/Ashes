@@ -123,10 +123,11 @@ public sealed partial class Lowering
         IReadOnlySet<FuncKey> unknownDynamicCallers,
         bool entryHasUnknownDynamicCall)
     {
-        bool changed;
-        do
+        // Least fixpoint (via WholeProgramFixpoint, OPT-010): grow _maFunctionsMayExecuteUnderLiveHandlerPost
+        // until a full pass adds nothing further.
+        WholeProgramFixpoint.RunToFixpoint(() =>
         {
-            changed = false;
+            bool changed = false;
             if (_maEntryMayExecuteUnderLiveHandlerPost)
             {
                 changed |= AddFunctions(
@@ -156,8 +157,9 @@ public sealed partial class Lowering
                         _maEscaped);
                 }
             }
-        }
-        while (changed);
+
+            return changed;
+        });
     }
 
     private static bool AddFunctions(HashSet<FuncKey> target, IEnumerable<FuncKey> functions)

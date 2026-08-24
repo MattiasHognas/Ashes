@@ -1034,6 +1034,8 @@ rather than porting the current uniform-layout C# behavior and unboxing it later
 
 ### OPT-010: Unified Interprocedural Function-Summary Framework
 
+**Status: Done, with a narrower scope than proposed.** See **Measured Outcome** below.
+
 **Problem.** `FunctionOwnershipSummary` is the one genuinely unified, multi-consumer interprocedural
 summary. Several other interprocedural analyses exist as independent, single-purpose, ad hoc registries
 with their own dictionaries and fixpoint machinery: `Lowering.DirectCalleeAnalysis.cs`,
@@ -1091,7 +1093,48 @@ moves, borrows, forwarding, and whole-program SCC provenance summaries"). **This
 this document for building the self-hosted version directly to the target architecture**: the self-host
 implementer should build one unified summary framework from day one, not the C# compiler's
 historically-fragmented set of independent analyses (`ComputeNonAllocatingFunctions`,
-`DirectCalleeAnalysis`, etc.) that this task consolidates after the fact.
+`DirectCalleeAnalysis`, etc.) that this task consolidates after the fact. No `SELF_HOSTING.md` line
+change: nothing in this task's actual scope (below) flips a not-yet-ported item to done, and this
+pointer to future self-host work was already accurate before this task landed.
+
+**Measured Outcome — scope was narrowed from the proposal, deliberately.** Investigating
+`FunctionOwnershipSummary`'s own computation (the "good example" the proposal points at) found it is
+**not** an SCC-ordered fixpoint over a shared node type with `HandlerEffects`/`ComputeNonAllocatingFunctions`
+— those two run in genuinely different compiler phases (`HandlerEffects` during AST-to-IR lowering, over
+AST-level `FuncKey` nodes it builds its own call graph for; `ComputeNonAllocatingFunctions` post-lowering
+in `IrOptimizer`, over IR-level string labels, with no explicit call graph at all — every iteration
+re-scans every function's instructions). Neither is actually SCC-ordered either: both are a naive
+"iterate the whole node set repeatedly until a full pass changes nothing" — correct, but not the
+compile-time win an SCC topological order would give. Forcing genuinely different node types
+(`FuncKey` vs `string`), propagation directions (`HandlerEffects` grows a live-set from a seed;
+`ComputeNonAllocatingFunctions` shrinks a candidate-set from "everyone"), and per-iteration shapes
+(`HandlerEffects` special-cases an "entry" pseudo-node every pass; `ComputeNonAllocatingFunctions`
+doesn't have one) into one generic `FunctionSummary`/node-graph abstraction would have meant inventing a
+sentinel node identity and forcing an AST-phase analysis and an IR-phase analysis to share infrastructure
+across a phase boundary that doesn't naturally invite it — real risk (this is exactly the class of
+interprocedural-analysis code this project's history shows produces multi-session debugging efforts) for
+a benefit (a generic fact-record framework) neither of this task's two concrete completion-criteria
+consumers needs yet. **What shipped instead**: extracted exactly the piece all these analyses provably
+*do* share — the `bool changed = ...; while (changed) { changed = false; ...; }` control structure
+itself — as `WholeProgramFixpoint.RunToFixpoint(Func<bool> iteration)`. This is honest about being a
+narrower "shared skeleton, not a shared node/graph model" than the proposal's `FunctionSummary` vision;
+`DirectCalleeAnalysis`'s generalization and a true SCC-ordered/pluggable-fact-slot framework remain
+future work if a future task's own needs (e.g. `OPT-011`) actually require them, rather than building
+that machinery speculatively now. **Migrated four fixpoints onto it** — the two the completion criteria
+named (`ComputeNonAllocatingFunctions` in `IrOptimizer.cs`, `PropagateLiveHandlerEffects` in
+`Lowering.HandlerEffects.cs`) plus two more found with the exact same shape while auditing
+(`PropagateCoroutineEffects` in `Lowering.CoroutineEffects.cs`, `ComputeEvaluableFunctions` in
+`IrCompileTimeEval.cs`, the doc's own cited "whole-program least-fixpoint evaluable-function set") — all
+pure mechanical substitutions (the loop body is unchanged, just wrapped), so risk stayed low despite
+touching four independent analyses. 4 new unit tests directly on `WholeProgramFixpoint` (stops on first
+no-change iteration, keeps iterating while changes are reported, a shrinking-candidate-set case
+mirroring `ComputeNonAllocatingFunctions`/`ComputeEvaluableFunctions`, a growing-live-set case mirroring
+`PropagateLiveHandlerEffects`/`PropagateCoroutineEffects`). **Measured**, since — like `OPT-004` — this
+task's own bar is zero behavior change: full suites unaffected (C# 2342/2342, LSP 70/70, e2e
+639/0/54-skipped), and beyond trusting the test suite, `--emit-ir final` output and the compiled binary
+for two representative programs (an async/coroutine/handler-heavy fixture exercising the AST-level
+migration, and a recursive/branching program exercising the IR-level migrations) are byte-for-byte
+identical before and after, against a temporary pre-task baseline.
 
 ---
 
@@ -1553,7 +1596,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Done |
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
-| OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Not started |
+| OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
 | OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 | Not started |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 | Not started |
