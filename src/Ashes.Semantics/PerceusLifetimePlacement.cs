@@ -488,144 +488,35 @@ internal static class PerceusLifetimePlacement
         return reachable;
     }
 
+    // Block graph construction and dominators are shared infrastructure (IrControlFlowGraph) —
+    // this pass builds its own Block wrapper only to carry its liveness-specific mutable state
+    // (OwnerLoads/OwnerUses/HasUse/LiveIn/LiveOut) alongside the shared graph shape. Wrapping,
+    // rather than reimplementing, keeps this pass's block graph and its Successors/Predecessors
+    // edges byte-for-byte identical to what IrControlFlowGraph.Build produces.
+
     private static IReadOnlyList<HashSet<int>> ComputeDominators(List<Block> blocks)
-    {
-        var reachable = new HashSet<int>();
-        var pending = new Stack<int>();
-        pending.Push(0);
-        while (pending.Count > 0)
-        {
-            int current = pending.Pop();
-            if (!reachable.Add(current))
-            {
-                continue;
-            }
-
-            foreach (int successor in blocks[current].Successors)
-            {
-                pending.Push(successor);
-            }
-        }
-
-        var dominators = new List<HashSet<int>>(blocks.Count);
-        for (int index = 0; index < blocks.Count; index++)
-        {
-            dominators.Add(index == 0
-                ? [0]
-                : reachable.Contains(index)
-                    ? new HashSet<int>(reachable)
-                    : [index]);
-        }
-
-        bool changed;
-        do
-        {
-            changed = false;
-            foreach (int blockIndex in reachable.Where(index => index != 0).OrderBy(index => index))
-            {
-                int[] predecessors = blocks[blockIndex].Predecessors
-                    .Where(reachable.Contains)
-                    .ToArray();
-                var next = predecessors.Length == 0
-                    ? new HashSet<int>()
-                    : new HashSet<int>(dominators[predecessors[0]]);
-                foreach (int predecessor in predecessors.Skip(1))
-                {
-                    next.IntersectWith(dominators[predecessor]);
-                }
-                next.Add(blockIndex);
-                if (!dominators[blockIndex].SetEquals(next))
-                {
-                    dominators[blockIndex] = next;
-                    changed = true;
-                }
-            }
-        }
-        while (changed);
-
-        return dominators;
-    }
+        => IrControlFlowGraph.ComputeDominators(blocks);
 
     private static List<Block> BuildBlocks(List<IrInst> instructions)
-    {
-        var starts = new SortedSet<int> { 0 };
-        for (int i = 0; i < instructions.Count; i++)
-        {
-            if (instructions[i] is IrInst.Label)
-            {
-                starts.Add(i);
-            }
-
-            if (IsTerminator(instructions[i]) && i + 1 < instructions.Count)
-            {
-                starts.Add(i + 1);
-            }
-        }
-
-        int[] startArray = [.. starts];
-        var blocks = new List<Block>(startArray.Length);
-        for (int i = 0; i < startArray.Length; i++)
-        {
-            blocks.Add(new Block(startArray[i], i + 1 < startArray.Length ? startArray[i + 1] : instructions.Count));
-        }
-
-        var labels = new Dictionary<string, int>(StringComparer.Ordinal);
-        for (int i = 0; i < blocks.Count; i++)
-        {
-            if (instructions[blocks[i].Start] is IrInst.Label label)
-            {
-                labels[label.Name] = i;
-            }
-        }
-
-        for (int i = 0; i < blocks.Count; i++)
-        {
-            IrInst last = instructions[blocks[i].End - 1];
-            switch (last)
-            {
-                case IrInst.Jump jump:
-                    AddSuccessor(blocks, i, labels[jump.Target]);
-                    break;
-                case IrInst.JumpIfFalse jumpIfFalse:
-                    AddSuccessor(blocks, i, labels[jumpIfFalse.Target]);
-                    if (i + 1 < blocks.Count) AddSuccessor(blocks, i, i + 1);
-                    break;
-                case IrInst.SwitchTag switchTag:
-                    foreach ((_, string label) in switchTag.Cases) AddSuccessor(blocks, i, labels[label]);
-                    AddSuccessor(blocks, i, labels[switchTag.DefaultLabel]);
-                    break;
-                case IrInst.Return:
-                    break;
-                default:
-                    if (i + 1 < blocks.Count) AddSuccessor(blocks, i, i + 1);
-                    break;
-            }
-        }
-
-        return blocks;
-    }
-
-    private static void AddSuccessor(List<Block> blocks, int from, int to)
-    {
-        if (!blocks[from].Successors.Contains(to))
-        {
-            blocks[from].Successors.Add(to);
-            blocks[to].Predecessors.Add(from);
-        }
-    }
+        => [.. IrControlFlowGraph.Build(instructions).Select(b => new Block(b))];
 
     private static int FindBlock(List<Block> blocks, int instructionIndex)
         => blocks.FindIndex(block => instructionIndex >= block.Start && instructionIndex < block.End);
 
-    private static bool IsTerminator(IrInst instruction)
-        => instruction is IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag or IrInst.Return;
-
-    private sealed class Block(int start, int end)
+    private sealed class Block : IHasCfgEdges
     {
-        public int Start { get; } = start;
-        public int End { get; } = end;
-        public List<int> Successors { get; } = [];
-        public List<int> Predecessors { get; } = [];
+        public Block(IrCfgBlock cfgBlock)
+        {
+            Start = cfgBlock.Start;
+            End = cfgBlock.End;
+            Successors = cfgBlock.Successors;
+            Predecessors = cfgBlock.Predecessors;
+        }
+
+        public int Start { get; }
+        public int End { get; }
+        public List<int> Successors { get; }
+        public List<int> Predecessors { get; }
         public List<int> OwnerLoads { get; set; } = [];
         public List<int> OwnerUses { get; set; } = [];
         public bool HasUse { get; set; }
