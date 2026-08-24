@@ -79,13 +79,19 @@ public sealed class IrOptimizerTests
     [Test]
     public void Constant_folding_folds_int_comparison()
     {
+        // 10 == 10 folds to a known-true bool (CmpIntEq eliminated); since OPT-002,
+        // that known-true condition also folds away the JumpIfFalse guarding the
+        // if-expression, at which point the folded bool itself has no remaining
+        // consumer and dead-code elimination removes it too — a stronger result than
+        // this test originally checked for (a materialized LoadConstBool), not a
+        // regression: the whole conditional collapses to the always-taken arm.
         var ir = LowerAndOptimize("if 10 == 10 then Ashes.IO.print(1) else Ashes.IO.print(0)");
-        ir.EntryFunction.Instructions
-            .Any(i => i is IrInst.LoadConstBool { Value: true })
-            .ShouldBeTrue("Expected constant-folded comparison result true.");
         ir.EntryFunction.Instructions
             .Any(i => i is IrInst.CmpIntEq)
             .ShouldBeFalse("CmpIntEq should be eliminated by constant folding.");
+        ir.EntryFunction.Instructions
+            .Any(i => i is IrInst.JumpIfFalse)
+            .ShouldBeFalse("The always-true condition should fold the branch away entirely (OPT-002).");
     }
 
     [Test]
@@ -590,10 +596,15 @@ public sealed class IrOptimizerTests
     [Test]
     public void Runtime_dup_is_not_sunk_when_unused_branch_observes_source()
     {
+        // The branch condition is an RcIsUnique check (opaque to constant folding), not
+        // a literal — this test probes SinkRuntimeRcDupsIntoDiamonds' behavior at a
+        // genuinely runtime-determined branch, so it must not be foldable away by
+        // OPT-002 (a literal `LoadConstBool(2, true)` condition here would collapse
+        // the whole branch this test exists to exercise).
         List<IrInst> instructions = new()
         {
             new IrInst.AllocAdt(0, 0, 0, RuntimeManaged: true),
-            new IrInst.LoadConstBool(2, true),
+            new IrInst.RcIsUnique(2, 0),
             new IrInst.RcDup(1, 0, RuntimeManaged: true),
             new IrInst.JumpIfFalse(2, "else"),
             new IrInst.RcIsUnique(3, 1),
@@ -1400,6 +1411,110 @@ public sealed class IrOptimizerTests
         optimized.EntryFunction.Instructions
             .Any(i => i is IrInst.LoadConstInt { Target: 3 })
             .ShouldBeFalse("No stale constant should survive a store of an unknown value to the same slot.");
+    }
+
+    [Test]
+    public void Branch_folding_drops_jumpiffalse_when_condition_known_true()
+    {
+        // cond is always true, so the false-branch (else_0) is never taken. Each arm
+        // returns directly (no post-branch join), isolating OPT-002's own claim from
+        // FoldConstants/ElideUnreachableCode's single-pass ordering (a join read via a
+        // local slot wouldn't fold here regardless — FoldConstants runs before dead-arm
+        // elimination, so it still conservatively sees both arms' writes as live).
+        // The JumpIfFalse should disappear entirely, and — since nothing branches to
+        // else_0 anymore — its now-orphaned body should be stripped too, not just
+        // become inert dead code the compiler still emits.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, true),
+            new IrInst.JumpIfFalse(0, "else_0"),
+            new IrInst.LoadConstInt(1, 10),
+            new IrInst.Return(1),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(2, 20),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
+            .ShouldBeFalse("No JumpIfFalse with a statically-known condition should survive.");
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.Label { Name: "else_0" })
+            .ShouldBeFalse("The orphaned else_0 label (zero remaining predecessors) should be dropped.");
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadConstInt { Value: 20 })
+            .ShouldBeFalse("The unreachable false-arm's body should be stripped, not just made dead.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 1, Value: 10 } && optimized.EntryFunction.Instructions.Any(r => r is IrInst.Return { Source: 1 }))
+            .ShouldBeTrue("The always-taken true-arm's value (10) should still reach the return.");
+    }
+
+    [Test]
+    public void Branch_folding_rewrites_jumpiffalse_to_jump_when_condition_known_false()
+    {
+        // cond is always false, so the false-branch (else_0) is always taken. Each arm
+        // returns directly, for the same reason as the known-true test above. The
+        // JumpIfFalse should become an unconditional Jump, and the orphaned
+        // true-arm's body (now between two terminators with no label re-entry) should
+        // be stripped.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, false),
+            new IrInst.JumpIfFalse(0, "else_0"),
+            new IrInst.LoadConstInt(1, 10),
+            new IrInst.Return(1),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(2, 20),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 0, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
+            .ShouldBeFalse("No JumpIfFalse with a statically-known condition should survive.");
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.Jump { Target: "else_0" })
+            .ShouldBeTrue("The always-false condition should rewrite to an unconditional jump to else_0.");
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadConstInt { Value: 10 })
+            .ShouldBeFalse("The unreachable true-arm's body should be stripped, not just made dead.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.LoadConstInt { Target: 2, Value: 20 } && optimized.EntryFunction.Instructions.Any(r => r is IrInst.Return { Source: 2 }))
+            .ShouldBeTrue("The always-taken false-arm's value (20) should still reach the return.");
+    }
+
+    [Test]
+    public void Branch_folding_applies_to_a_condition_known_via_local_slot_propagation()
+    {
+        // The condition itself arrives via a StoreLocal/LoadLocal round trip (the real
+        // shape every let-bound value takes — see the local-slot meet-over-paths
+        // tests above), not a raw literal feeding JumpIfFalse directly. This confirms
+        // OPT-002 composes with OPT-001's local-slot tracking rather than needing its
+        // own separate wiring: TryFoldLocalLoad already records the folded value in
+        // state.Bools before HandleJumpIfFalse ever sees it.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadConstBool(0, true),
+            new IrInst.StoreLocal(0, 0),
+            new IrInst.LoadLocal(1, 0),
+            new IrInst.JumpIfFalse(1, "else_0"),
+            new IrInst.LoadConstInt(2, 10),
+            new IrInst.Jump("end_0"),
+            new IrInst.Label("else_0"),
+            new IrInst.LoadConstInt(3, 20),
+            new IrInst.Label("end_0"),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 4, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.JumpIfFalse)
+            .ShouldBeFalse("The condition folds through the StoreLocal/LoadLocal round trip, so JumpIfFalse should still fold.");
+        optimized.EntryFunction.Instructions.Any(i => i is IrInst.LoadLocal)
+            .ShouldBeFalse("The condition's own LoadLocal should fold to a constant (OPT-001), not survive.");
     }
 
     // Compile-time evaluation tests
