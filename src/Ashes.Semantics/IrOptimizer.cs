@@ -47,6 +47,16 @@ public static class IrOptimizer
         instructions = DevirtualizeKnownClosureCalls(instructions);
         instructions = FoldConstants(instructions);
         instructions = ReduceIdentitiesAndStrength(instructions);
+
+        // ReduceIdentitiesAndStrength rewrites an algebraic identity (x+0, x-0, ...) into a
+        // Borrow copy rather than retargeting downstream uses directly, but it runs after
+        // ElideTrivialOwnershipCopies (the pass that would otherwise erase such a copy), so
+        // without this second call those copies would never be swept within this invocation.
+        // ElideTrivialOwnershipCopies is a pure function of its input (it recomputes its
+        // use-def facts fresh each call), so re-running it here is safe and cheap — a single
+        // linear pass, not a fixpoint.
+        instructions = ElideTrivialOwnershipCopies(instructions);
+
         instructions = ElideUnreachableCode(instructions);
         instructions = ElideDeadCode(instructions);
         instructions = ElideErasedRcDrops(instructions);

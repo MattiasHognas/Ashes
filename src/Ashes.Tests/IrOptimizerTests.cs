@@ -1012,6 +1012,41 @@ public sealed class IrOptimizerTests
             .ShouldBeTrue("TextUncons should be remapped to the original source temp when the borrow is elided.");
     }
 
+    [Test]
+    public void Identity_reduction_borrow_is_swept_by_a_second_ownership_copy_elision_pass()
+    {
+        // x + 0 reduces to a Borrow(target, x) in ReduceIdentitiesAndStrength (pass 6 of the
+        // per-function sequence), which runs after ElideTrivialOwnershipCopies (pass 1) — so
+        // without OPT-003's second call to ElideTrivialOwnershipCopies, this newly introduced
+        // Borrow would never be swept within the same Optimize() invocation, even though its
+        // target has exactly one use (the eligibility condition ElideTrivialOwnershipCopies
+        // already checks for any other single-use Borrow). x itself is deliberately NOT a
+        // copy-type-constant producer (it comes from LoadLocal, not LoadConstInt/Float/Bool),
+        // so this specifically exercises the single-use elision path, not the already-covered
+        // copy-type-source path from the tests above.
+        var instructions = new List<IrInst>
+        {
+            new IrInst.LoadLocal(0, 0),
+            new IrInst.LoadConstInt(1, 0),
+            new IrInst.AddInt(2, 0, 1),
+            new IrInst.Return(2),
+        };
+
+        var fn = new IrFunction("entry", instructions, 1, 3, false);
+        var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
+        var optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Borrow)
+            .ShouldBeFalse("The identity-reduction Borrow (x + 0 -> x) should be swept by the re-run ownership-copy elision pass.");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.AddInt)
+            .ShouldBeFalse("The original AddInt should not survive either (replaced by the now-elided Borrow).");
+        optimized.EntryFunction.Instructions
+            .Any(i => i is IrInst.Return { Source: 0 })
+            .ShouldBeTrue("Return should be remapped directly to the original source temp (x), with no leftover copy.");
+    }
+
     // End-to-end optimization correctness
 
     [Test]
