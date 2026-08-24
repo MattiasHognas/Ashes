@@ -736,6 +736,8 @@ format clean.
 
 ### OPT-005: CFG Simplification Suite (Jump Threading, Block Merging, Empty-Block/Redundant-Jump Elimination)
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** None of jump threading, block merging, empty-block elimination, or redundant-fallthrough-jump
 elimination exist at the Ashes IR level.
 
@@ -785,6 +787,56 @@ instruction-count reduction on a match/if-heavy stdlib module compiled at `-O0`.
 (`SELF_HOSTING.md:361-369`, currently `[x]` for the *existing* pipeline only) — once implemented in C#,
 add a **new** `[ ]` line next to the existing `[x]` one describing CFG simplification, and port it to
 `selfhost/`'s optimizer before flipping that new line to `[x]`. Do not edit the existing `[x]` line's text.
+
+**Measured Outcome — done.** Implemented as `SimplifyControlFlow` in `IrOptimizer.cs`, positioned after
+`ElideUnreachableCode` as proposed: (1) build a redirect map from any label immediately followed by
+nothing but an unconditional `Jump` (chased through chains to their final destination), (2) rewrite
+every `Jump`/`JumpIfFalse`/`SwitchTag` (case and default) target through it, (3) drop labels with zero
+remaining references, (4) elide a `Jump` immediately followed by its own target label. Every individual
+rewrite is locally safe without reachability analysis (see the pass's own header comment for why).
+
+**One real gap surfaced only by testing against actual compiled output, not the unit tests written
+first**: a single application of "simplify, then sweep unreachable code" does not reach a full fixed
+point. Redirecting several distinct branches to the same final label — the exact shape of a real
+`match` compiled to a cascading `match_arm_cleanup_N -> match_next_M` chain, one hop per non-matching
+arm — rewrites each arm's own internal jump to the same final target; once the now-unreferenced labels
+that used to separate them are dropped, those become several unconditional Jumps stacked directly
+back-to-back. Every one after the first is unreachable code neither the first `ElideUnreachableCode`
+call (it already ran) nor the redundant-fallthrough-jump elision (not adjacent to a label yet) removes.
+Sweeping that unreachable code can then bring a *surviving* Jump directly adjacent to its own target
+label — a further redundant-fallthrough opportunity `SimplifyControlFlow` only sees on a *subsequent*
+pass. A hand-built 3-hop empty-label-chain unit test caught this directly (one `Jump` survived where
+zero were expected); a real 4-constructor `match` compiled through the normal pipeline confirmed it at
+scale (one redundant `Jump`/`Label` pair survived per arm after a single pass). **Fixed** by iterating
+`SimplifyControlFlow` and `ElideUnreachableCode` together to a genuine fixed point — safe and bounded,
+since both are pure functions of their input and the instruction count strictly decreases on every
+iteration that changes anything (the one edit that doesn't remove an instruction, redirecting a jump
+target, only ever fires meaningfully once, since chains are already fully resolved to their final
+destination on the first pass).
+
+Two pre-existing tests needed updating, not as regressions but because this task correctly strengthens
+what earlier passes' own output collapses to once genuinely redundant: `OPT-002`'s known-false-branch
+test asserted a `Jump` to the surviving arm's label would remain, which is itself a redundant fallthrough
+once the dead arm is stripped — updated to expect neither the `JumpIfFalse` nor the `Jump` to survive.
+A `SinkRuntimeRcDupsIntoDiamonds` test used a *literal* branch condition (unlike its own sibling test,
+whose comment already explains why a literal would be unsafe to use there) purely to give the test a
+deterministic shape; once the resulting always-taken branch's `Jump`/`Label` pair collapses under
+`OPT-005`, the test's own label-name-based lookup mechanism broke even though the compiled program's
+behavior stayed correct — fixed by switching to the same non-foldable `RcIsUnique`-based condition its
+sibling already uses.
+
+**Measured**: a real 4-constructor `match` cascade (`type Shape = Circle(Int) | Square(Int) |
+Rectangle(Int,Int) | Triangle(Int,Int)`, compiled through the normal pipeline) shows **zero** occurrences
+of either target pattern in `--emit-ir final` output at `-O0`, verified by a scripted scan of the emitted
+instruction stream; the pre-task compiler emitted exactly 4 empty-hop labels and 4 redundant fallthrough
+jumps on the same program (one pair per non-matching arm), for a 208 -> 200 instruction reduction.
+Runtime, against a temporary pre-task baseline on a 5M-iteration hot-loop built around the same
+match-cascade shape: **no meaningful difference at either `-O0` (1.01x, within noise) or `-O2` (1.00x,
+within noise)** — honestly reported as a code-size/IR-quality win, not a hot-loop speed win, matching
+this task's own doc prediction ("primarily valuable for -O0/--debug builds... this task's payoff is real
+but narrower than most others here") and `OPT-002`'s precedent (a well-predicted branch costs little on
+real hardware regardless of whether it's physically present). Full suites green: C# 2357/2357, LSP
+70/70, e2e `test --pipeline both` 642/0/54-skipped.
 
 ---
 
@@ -1854,7 +1906,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Attempted, reverted twice — see Measured Outcome; closes only via OPT-007 |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Not started |
-| OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Not started |
+| OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Not started |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
