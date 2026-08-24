@@ -415,6 +415,24 @@ same public behavior.
   requires the closure temp to trace directly to a `MakeClosure`/`MakeClosureStack` with no intervening
   local-slot round-trip — a condition essentially no `let`-bound function call satisfies today, a
   separate, pre-existing devirtualization gap this task did not attempt to fix.
+- [ ] Extend the local common-subexpression pass above with store-to-load/projection forwarding:
+  when a `SetAdtField` writes through a pointer proven fresh in the same block (an `AllocAdt`/
+  `AllocAdtStack` target — nothing that existed before it could hold or derive a reference to memory
+  that didn't exist yet), record the field cache entry directly from the write instead of only from a
+  subsequent read, so an immediately-following `GetAdtField` of the same (pointer, field) forwards the
+  stored value without round-tripping through memory (the `Point(p.y, p.x)`-style construct-then-
+  destructure shape, matching Ashes' allocation-tier recognition for the same pattern). A write
+  through a not-known-fresh pointer keeps the existing fully-conservative invalidate-everything
+  behavior, since it could alias any entry already cached. **Sharp edge, found only by compiling and
+  running real `.ash` source, not by hand-built raw-IR unit tests**: the cached value must be the
+  write's raw, unresolved source temp, never its alias-canonicalized identity — canonicalization can
+  resolve down to a synthetic, negative sentinel (the seeded identity for a function's own env/arg
+  slot with no real defining instruction visible to this pass), and a sentinel is only ever safe as a
+  cache *key* for matching two operands as the same value, never as a forwarded, *emitted* value —
+  emitting one produces an out-of-range temp reference that crashes at codegen. This pattern (a fresh
+  record's field set from a value that itself traces back to the enclosing function's own argument)
+  is completely ordinary real code and was not exercised by any of this pass's own unit tests, only by
+  compiling actual source and running the result.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
