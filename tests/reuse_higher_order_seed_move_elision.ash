@@ -1,5 +1,5 @@
 // expect: 15 23 3 7
-// CO-2 higher-order seed copy elision + result-freshness summary — soundness discriminator.
+// Higher-order seed copy elision + result-freshness summary — soundness discriminator.
 //
 // A "higher-order seed" is a reuse-fold accumulator produced by a FUNCTION RESULT rather than a
 // syntactic constructor tree (which is all `IsFullyFreshConstruction` can see through). `build` is a

@@ -830,7 +830,7 @@ static bool TryParseExplainOption(string[] a, ref int i, CompilerReportOptions r
 }
 
 // --debug defaults to -O0 (readable single-stepping); an explicit -O1/-O2/-O3 is honored so a
-// profiled debug build matches the optimized binary's inlining (CO-21).
+// profiled debug build matches the optimized binary's inlining.
 static BackendOptimizationLevel ResolveDebugOptimizationLevel(
     BackendOptimizationLevel requested,
     bool debugMode,

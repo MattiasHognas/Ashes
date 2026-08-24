@@ -476,6 +476,32 @@ same public behavior.
   `--emit-ir`/`--explain` output quality; measured no meaningful hot-loop speed change at either `-O0`
   or `-O2` on a representative match-heavy benchmark (within measurement noise at both), consistent with
   removing well-predicted branches rather than real work.
+- [ ] Extend match compilation to group arms by their outer constructor tag (not just emit one tag
+  switch for an already-fully-trivial flat match): more than one arm may share a tag, sharing one tag
+  test across all of them, with a group of more than one case (or a single non-trivial nested
+  sub-pattern) falling back to linear per-case testing scoped to that group only — never reordering or
+  duplicating an arm across leaves, so this stays a pure grouping decision layered on top of already-
+  correct per-arm testing/binding/reuse-token logic rather than a new pattern-matching engine. Also
+  eliminate a redundant top-level-constructor-tag-only "exhaustive" check for dead-arm elimination in
+  favor of a fully recursive, per-field-position coverage query (`Ok(true) | Ok(false) | Error(_)` must
+  be provably exhaustive without needing a trailing wildcard, unlike naive tag-set coverage, which
+  wrongly treats it as exhaustive after just two arms and can silently drop a live arm). **Sharp edge,
+  confirmed twice**: the scrutinee's type can still be an unresolved type variable at the point this
+  decision must be made — not just for a recursive function's own parameter, but for any function's own
+  parameter whose type is pinned down only by unifying it against this same match's own patterns, which
+  has not happened yet this early. The fix is not to decline until some later point (arm emission itself
+  needs the trimmed case list first) but to perform that unification explicitly, one pattern at a time,
+  before deciding — unification is idempotent, so doing it slightly earlier than it would otherwise
+  happen adds no new constraint a correct program would not already require. Measured on two
+  representative shapes against a temporary pre-task baseline: a repeated-tag match with two genuinely
+  divergent nested cases (the outer tag shared, but each case still needing its own test) ran **~1.06x
+  faster at `-O0`, ~1.04x faster at `-O2`**; five distinct-tag arms where only one has a non-trivial
+  nested sub-pattern (previously disqualifying the *entire* match from tag-switch dispatch, not just
+  that one arm) ran **~1.46x faster at `-O0`, ~1.03x faster at `-O2`** — the more representative,
+  larger win, since disqualifying an entire match over one nested arm was the dominant real-world cost.
+  Not yet closed: a multi-case group's own cases still each re-test the already-proven-by-the-outer-
+  switch tag via general pattern testing, rather than a tag-already-known field-extraction variant;
+  column reordering and cross-arm frequency heuristics remain unexplored.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and

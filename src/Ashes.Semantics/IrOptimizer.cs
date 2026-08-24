@@ -35,7 +35,7 @@ public static class IrOptimizer
         var optimizedFuncs = program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList();
 
         // Interprocedural: skip the environment allocation entirely for a single-scalar-capture
-        // stack closure whose only use is already a devirtualized CallKnown (OPT-013). Runs after
+        // stack closure whose only use is already a devirtualized CallKnown. Runs after
         // the per-function passes so devirtualization has already resolved CallClosure -> CallKnown
         // and dead-code elimination has already swept the now-unused MakeClosureStack, leaving the
         // residual AllocStack/StoreMemOffset/CallKnown shape this pass looks for. May append newly
@@ -58,7 +58,7 @@ public static class IrOptimizer
         };
     }
 
-    // Closure environment scalarization (OPT-013)
+    // Closure environment scalarization
     // A stack-allocated closure with exactly one 8-byte scalar capture, whose only use is already a
     // devirtualized CallKnown (EnvironmentIsStackAllocated: true), packs that single value through
     // an AllocStack + StoreMemOffset + LoadMemOffset round trip even though the value never needs
@@ -649,7 +649,7 @@ public static class IrOptimizer
 
     private static HashSet<string> ComputeNonAllocatingFunctions(IrFunction entry, IReadOnlyList<IrFunction> functions)
     {
-        // Least fixpoint (via WholeProgramFixpoint, OPT-010): start from "every function might be
+        // Least fixpoint (via WholeProgramFixpoint): start from "every function might be
         // non-allocating", knock out any whose body contains a non-whitelisted instruction or a
         // known call to a knocked-out callee, and iterate until stable. The entry function is
         // never a callee, so it is not in the candidate set.
@@ -1665,8 +1665,8 @@ public static class IrOptimizer
     }
 
     /// <summary>
-    /// Folds a JumpIfFalse whose condition is statically known (via OPT-001's constant
-    /// propagation, including through a folded LoadLocal): a known-true condition means
+    /// Folds a JumpIfFalse whose condition is statically known (via FoldConstants' meet-over-paths
+    /// constant propagation, including through a folded LoadLocal): a known-true condition means
     /// the false-branch (this instruction's target) is never taken, so the instruction
     /// is dropped and execution falls through to the true-branch body unchanged; a
     /// known-false condition means the false-branch is always taken, so the instruction
@@ -2209,7 +2209,7 @@ public static class IrOptimizer
         }
     }
 
-    // Local common-subexpression elimination (OPT-006) and store-to-load forwarding (OPT-014)
+    // Local common-subexpression elimination and store-to-load forwarding
     // Forwards a duplicate GetAdtField read, a duplicate CallKnown call to a provably pure
     // function, or a GetAdtField immediately following the SetAdtField that established the same
     // (pointer, field)'s value (through a pointer proven fresh in this block — e.g. a record
@@ -2218,7 +2218,7 @@ public static class IrOptimizer
     // canonicalized through a LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache —
     // without it, the ubiquitous `let x = p.x in let y = p.x` shape never matches, since each
     // LoadLocal of the same never-rewritten slot produces a fresh temp for what is provably the
-    // same value (the same lesson OPT-001 learned: real Ashes IR round-trips almost everything
+    // same value (the same lesson the constant-propagation pass above learned: real Ashes IR round-trips almost everything
     // through local slots, so raw-temp-identity-only tracking misses nearly every real occurrence).
 
     private static readonly HashSet<Type> LocalCseSafeInstructionTypes =
@@ -2262,7 +2262,7 @@ public static class IrOptimizer
         public readonly Dictionary<int, int> ValueOf = []; // temp -> canonical earlier temp with the same value
         public readonly Dictionary<int, int> SlotValue = []; // local slot -> canonical temp currently stored there
 
-        // Pointers known to be a fresh allocation from this same straight-line block (OPT-014):
+        // Pointers known to be a fresh allocation from this same straight-line block:
         // nothing that existed before this instruction could hold or derive a reference to memory
         // that didn't exist yet, so a SetAdtField through one of these can populate FieldCache
         // precisely (just this one (ptr, field) entry) instead of falling back to a full clear —
@@ -2351,7 +2351,7 @@ public static class IrOptimizer
         return true;
     }
 
-    // Fresh allocations (OPT-014): the target can't alias anything that existed before it, so a
+    // Fresh allocations: the target can't alias anything that existed before it, so a
     // later SetAdtField through it can update FieldCache precisely instead of invalidating it.
     private static bool TryTrackFreshAllocation(IrInst inst, LocalCseState state)
     {
@@ -2363,7 +2363,7 @@ public static class IrOptimizer
         }
     }
 
-    // Store-to-load forwarding (OPT-014): a SetAdtField through a pointer already proven fresh in
+    // Store-to-load forwarding: a SetAdtField through a pointer already proven fresh in
     // this block populates FieldCache directly, so an immediately-following GetAdtField of the
     // same (ptr, field) forwards the stored value instead of round-tripping through memory (the
     // `Point(p.y, p.x)`-style construct-then-destructure shape). Writing through a NOT-known-fresh
@@ -2492,10 +2492,10 @@ public static class IrOptimizer
     private static List<IrInst> ElideUnreachableCode(List<IrInst> instructions)
     {
         // Built fresh over this pass's own input (not shared with FoldConstants' pre-fold
-        // count): OPT-002's branch folding can remove the only edge that used to target a
+        // count): the constant-condition branch folding above can remove the only edge that used to target a
         // label (e.g. a JumpIfFalse dropped because its condition is statically true), so a
         // label's real predecessor count can differ from what it was before folding. Uses the
-        // shared IrControlFlowGraph (OPT-004) rather than an ad hoc explicit-branch-only count:
+        // shared IrControlFlowGraph rather than an ad hoc explicit-branch-only count:
         // gated by `unreachable`, which only becomes true right after a Jump/Return/SwitchTag —
         // the same three instruction kinds IrControlFlowGraph never adds a fall-through edge
         // after — a block's CFG predecessor count in that state is exactly its explicit-branch
@@ -3182,7 +3182,7 @@ public static class IrOptimizer
         }
     }
 
-    // Control-flow simplification (OPT-005)
+    // Control-flow simplification
     // Jump threading, redundant-jump elision, and unreferenced-label removal — the deterministic
     // CFG cleanup LLVM's own simplifycfg performs at -O1+ but never runs at -O0/--debug, and
     // which also improves --emit-ir/--explain output quality at every level. Every rewrite here

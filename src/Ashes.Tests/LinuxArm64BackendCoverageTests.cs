@@ -92,7 +92,7 @@ public sealed class LinuxArm64BackendCoverageTests
     [Test]
     public async Task Linux_arm64_backend_llvm_should_run_both_and_https_in_one_image_coexisting()
     {
-        // CO-3: an arm64 image that carries the `both` parallel runtime (PT_TLS + local-exec arena)
+        // an arm64 image that carries the `both` parallel runtime (PT_TLS + local-exec arena)
         // AND performs a real TLS handshake. The main-thread arena resolves through the
         // loader-reserved PT_TLS slot (the entry prologue must not clobber the loader's TPIDR_EL0),
         // and `both`'s deterministic fork/join computes correctly alongside the live TLS session.
@@ -128,7 +128,7 @@ public sealed class LinuxArm64BackendCoverageTests
     [Test]
     public async Task Linux_arm64_backend_llvm_should_run_queued_parallel_reduce_in_list_order()
     {
-        // CO-25: the queued Parallel.reduce runtime on arm64 (TPIDR_EL0 worker TLS blocks, ldaxr/stlxr
+        // the queued Parallel.reduce runtime on arm64 (TPIDR_EL0 worker TLS blocks, ldaxr/stlxr
         // atomics, futex publish/await). The combine is order-sensitive (string join), so the output
         // proves the fixed list-order merge regardless of which worker computed which element; the
         // odd element count exercises the pairwise merge tree's promotion rounds.

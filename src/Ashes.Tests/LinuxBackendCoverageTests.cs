@@ -93,7 +93,7 @@ public sealed class LinuxBackendCoverageTests
     [Test]
     public async Task Linux_backend_llvm_musttail_keeps_a_deep_mutual_tail_chain_stack_bounded()
     {
-        // OPT-012(b): a non-self-recursive tail call between two distinct functions (unlike
+        // A non-self-recursive tail call between two distinct functions (unlike
         // loop-recognized self-recursion, which already gets an explicit IR back-edge) previously
         // got only LLVM's advisory `tail` marker — a hint, not a guarantee. ping/pong here mimic
         // a heterogeneous mutually-tail-recursive group (the doc's own motivating example: a

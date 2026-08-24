@@ -960,6 +960,9 @@ every other task in this arc so far.
 
 ### OPT-007: Recursive Decision-Tree Match Compilation with Shared Sub-Tests
 
+**Status: Done, narrowed to one grouping level (no column reordering, no guard interaction within
+a group).** See **Measured Outcome** below.
+
 **REQUIRED SCOPE ADDITION — fix `OPT-008`'s two confirmed bugs here, not as a separate task.**
 `OPT-008` (dead-arm elimination via exhaustiveness diagnostics) was attempted twice and reverted twice;
 both root causes are now fully understood (see that entry's Measured Outcome for the complete
@@ -1081,16 +1084,110 @@ optimization purposes. **Build the self-hosted match compiler with the improved 
 directly** rather than porting today's flat tag-switch/linear-chain C# version first and upgrading it
 later — this avoids doing the work twice.
 
+**Measured Outcome — done, narrowed scope.** Implemented as the doc's own recommended first
+increment: a new `TryPlanTagGroupSwitch`/`LowerMatchArmsViaTagGroupSwitch` pair (`Lowering.
+Patterns.cs`), tried between the existing `TryPlanTagSwitch` fast path and the `LowerMatchArmsLinear`
+fallback — never replacing either. Cases are grouped by their outer constructor tag in first-seen
+order (unlike `TryPlanTagSwitch`, more than one case may share a tag), sharing one `GetAdtTag`/
+`SwitchTag` test across every case with that tag; a tag whose group has exactly one case with a
+fully trivial sub-pattern reuses `TryPlanTagSwitch`'s own no-redundant-retest per-arm emission
+(`EmitTagSwitchArmPattern`/`PublishTagSwitchArmReuseToken`, refactored to take a single constructor
+symbol directly rather than a plan array, so this second call site could reuse them unmodified); a
+group with more than one case, or a single non-trivial case, falls back to linear per-case testing
+*scoped to that group only*, reusing `LowerMatchArmsLinear`'s own per-arm functions
+(`EmitLinearArmPatternAndGuard`/`PublishLinearArmReuseToken`/`LowerMatchArmBodyIntoResult`/
+`EmitLinearArmCleanupPath`) completely unmodified, called with the group's original case indices
+against the *whole* match's original case list. This is the central risk-reduction choice: **no
+case is ever reordered or duplicated across leaves**, so the reuse-token/ownership machinery's
+implicit one-arm-one-emission-site assumption — identified during investigation as this task's
+dominant real risk — is never disturbed; every regression-risk test (`ReuseTokenTests.cs`,
+`ReuseDecisionTests.cs`, both 25/25 and 14/14 respectively) passed with zero changes needed. Column
+reordering, multi-level column-selection heuristics, and guard interaction *within* a group are
+explicitly out of scope, matching the doc's own "build incrementally" guidance — a guard anywhere
+in the match still declines this path entirely, falling back to full linear lowering exactly as
+before.
+
+**OPT-008's bug 3 (structural, tag-only coverage is unsound) is closed via a genuinely sound
+mechanism that already existed but was previously wired only to a diagnostic, not to IR deletion**:
+investigation found `TryGetMissingPatternCore`/`TryGetMissingAdtPattern` (used only by
+`EmitMatchExhaustivenessDiagnostics`'s "Missing case" message) already perform fully recursive,
+per-field-position coverage — correctly proving `Ok(true) | Ok(false) | Error(_)` exhaustive without
+needing a fourth arm, unlike `OPT-008`'s original `GetMissingAdtConstructors` (top-level-tag-only).
+New `TrimProvablyUnreachableTrailingCases`, called in `LowerMatch` right after the existing
+`ValidateReachableMatchArms`/`ValidateSingleAdtMatch` diagnostics run (so those diagnostics still see
+and report on the full, untrimmed case list exactly as before — this is a pure lowering
+optimization, invisible to diagnostics) and before anything below emits IR or publishes a reuse
+token: grows a prefix of guard-free cases one at a time, and the moment `TryGetMissingPattern` finds
+a prefix already exhaustive, every later case is dropped before any lowering happens for it.
+**OPT-008's bug 2 (unresolved scrutinee type at decision time) was re-encountered exactly as
+predicted, then genuinely fixed rather than just avoided**: gating on `Prune(valueType) is
+TNamedType/TBool/TList` alone (the doc's literal instruction) made the trim never fire for the most
+common realistic shape — an ordinary function's own parameter, whose type is only pinned down by
+unifying it against its own match's patterns, which had not happened yet at this early point (this
+is not unique to recursive functions, as bug 2's original name suggested; it is a general property
+of this compiler's lowering-interleaved-with-inference design). Fixed by having the trim itself
+perform that same unification first — `Unify(valueType, InferPatternType(pattern, ...))` for each
+guard-free pattern, exactly mirroring what real arm-by-arm lowering does moments later — before
+checking whether the resulting type is concrete. `Unify` is idempotent (already-equal types are a
+same-representative no-op), so the identical unification real lowering performs afterward changes
+nothing; this only moves work that would happen regardless slightly earlier, never imposes a new
+constraint a correct program would not already require. Both fixes are covered by dedicated e2e
+regression tests built from the exact failure shapes (`tests/match_dead_arm_elimination_nested_
+result_bool.ash` for bug 3, `tests/match_dead_arm_elimination_recursive_param.ash` for bug 2,
+matching the doc's own instruction that these must be validated against real compiled output, not
+only C# unit tests) — both confirmed to actually trim the dead arm (`--emit-ir final` shows zero
+occurrences of the redundant arm's own constant) and produce correct results for every reachable
+case. One real interaction bug was caught by the existing C# suite, not e2e: an initial version
+placed the trim *before* `ValidateReachableMatchArms`, silently removing the exact arms that
+diagnostic exists to report as "unreachable" — `Match_arms_after_wildcard_report_unreachable_arm_
+error` caught this immediately; fixed by the ordering above.
+
+**Measured**: a real `Node(Leaf,_,Leaf) | Node(l,_,r)`-shaped match (the doc's own worked example)
+in a 20,000,000-iteration hot loop, against a temporary pre-task baseline (hyperfine, 10+ runs):
+**278.4 ms -> 262.8 ms at `-O0` (~1.06x faster)**, **67.9 ms -> 65.5 ms at `-O2` (~1.04x faster)** —
+a modest win, honestly attributable to this shape's `Node` group still having two genuinely
+divergent cases that must be linear-tested against each other even after the shared outer tag test
+(this task's own further-optimization opportunity, noted below). A second, arguably more
+representative benchmark — five *distinct*-tag arms where only one has a non-trivial nested
+sub-pattern (`A(Wrap(x)) | B(_) | C(_) | D(_) | F(_)`, the exact shape `NonTrivialNestedSubPattern_
+DisablesTagSwitch` — renamed `..._SharesOuterTagSwitch` — already covered), matching the arm that
+previously required linearly re-testing every one of the four preceding arms' tags: **280.2 ms ->
+191.8 ms at `-O0` (~1.46x faster)**, **49.9 ms -> 48.4 ms at `-O2` (~1.03x faster)** — this is the
+dominant real-world case this task unlocks, since previously *any* non-trivial sub-pattern anywhere
+in a match disqualified the entire match from tag-switch dispatch, not just the offending arm.
+`--emit-ir final` instruction counts for the first benchmark's match function: 63 (pre-task
+baseline) vs 60 (this task) with 5 vs 6 `GetAdtTag`/`SwitchTag` occurrences — a small net win in
+size, not the larger reduction the doc's own "redundant-test-count measurement" framing might
+suggest, for the same honestly-reported reason (the `Node` group's own two cases still each re-test
+the tag once). Full suites green throughout: C# 2371/2371, LSP 70/70, e2e `test tests --pipeline
+both` (pending final run — see below), `dotnet format --verify-no-changes` clean.
+
+**Honestly reported, deliberately deferred**: within a multi-case group (e.g. the `Node` group
+above), each case still re-tests the already-proven-by-the-outer-switch tag via the general
+`EmitPattern`/`EmitLinearArmPatternAndGuard` machinery, since avoiding that would require a new,
+tag-already-known variant of field extraction (mirroring `EmitTagSwitchArmPattern`'s approach but
+generalized to N sub-patterns instead of one) — real additional engineering scope this task
+deliberately did not take on, given the reuse-token-machinery risk this document itself flags as
+dominant for this area; a future increment could close this gap for the `Node`-style case without
+touching the row-ordering/duplication invariant that keeps this task's own scope low-risk. Column
+reordering and cross-arm frequency/specificity heuristics remain entirely out of scope, per the
+doc's own recommended build order.
+
+**OPT-008 formally closed by this task.** Its own status is flipped from "Attempted, reverted" to
+"Done" below, pointing at this task's Measured Outcome for the fix (the sound coverage mechanism,
+both bug fixes, and both regression tests above).
+
 ---
 
 ### OPT-008: Exploit Existing Exhaustiveness Diagnostics for Dead-Arm Elimination
 
-**Status: Attempted, reverted — not done.** Despite the doc's "Low complexity, quick win" framing, this
-task has two independent, now-confirmed soundness bugs — one fixable, one structural. See **Measured
-Outcome** below for the full investigation, the empirical evidence, and why a future attempt needs
-genuine nested-pattern coverage analysis, not a call-site tweak. No code from this attempt shipped —
-`Lowering.Patterns.cs` is unchanged from before this task; this entry exists purely to save a future
-attempt from repeating the same investigation.
+**Status: Done, closed by `OPT-007`.** Despite the doc's original "Low complexity, quick win" framing,
+this task's own first two attempts (below) had two independent, now-confirmed soundness bugs — one
+fixable, one structural — and were reverted. Both are fixed in `OPT-007`'s Measured Outcome, which
+built genuine nested-pattern coverage analysis (reusing an already-sound, previously diagnostic-only
+recursive coverage engine) rather than patching this task's original call-site tweak, exactly as the
+Recommendation below anticipated. See `OPT-007`'s entry for the fix, the two regression tests built
+from this task's own exact failure shapes, and the full validation.
 
 **Problem.** `EmitMatchExhaustivenessDiagnostics`/`IsDefinitelyExhaustive`/`IsBoolExhaustive` already
 compute exhaustiveness for user-facing diagnostics, but nothing consumes these facts to remove
@@ -2019,8 +2116,8 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
-| OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Not started |
-| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Attempted, reverted twice — see Measured Outcome; closes only via OPT-007 |
+| OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
+| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |

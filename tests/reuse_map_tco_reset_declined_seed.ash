@@ -1,5 +1,5 @@
 // expect: 7
-// CO-8 regression: a TCO back-edge plain arena reset must not free a RELOCATED accumulator.
+// Regression: a TCO back-edge plain arena reset must not free a RELOCATED accumulator.
 //
 // `rounds` is an outer TCO loop threading a map `m`. Its `m` gets marked reset-safe because the seed
 // `w = Ashes.Collection.Map.setWith(cmp)(0)(0)(m)` is a fully-reusing (in-place) specialization. But `w` is RETAINED

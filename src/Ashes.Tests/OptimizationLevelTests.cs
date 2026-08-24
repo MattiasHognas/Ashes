@@ -230,7 +230,7 @@ public sealed class OptimizationLevelTests
         bytes[1].ShouldBe((byte)'Z');
     }
 
-    // Debug info at every optimization level (CO-21)
+    // Debug info at every optimization level
 
     [Test]
     [Arguments(BackendOptimizationLevel.O0)]
@@ -241,7 +241,7 @@ public sealed class OptimizationLevelTests
     {
         if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64) return;
 
-        // CO-21: --debug combines with any -O level so a profiled debug build matches the optimized
+        // --debug combines with any -O level so a profiled debug build matches the optimized
         // binary's inlining. This program's helper/recursive calls drive the O2/O3 inliner, which
         // stitches every inlined instruction's !dbg location into an inlined-at chain; the backend
         // re-verifies the module after optimization when debug info is emitted, so a call left without

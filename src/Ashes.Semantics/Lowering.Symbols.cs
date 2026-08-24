@@ -2078,7 +2078,7 @@ public sealed partial class Lowering
         return new TypeRef.TNamedType(typeSym, freshArgs);
     }
 
-    /// <summary>CO-23: true when the reuse token's field can no longer be referenced on the current
+    /// <summary>True when the reuse token's field can no longer be referenced on the current
     /// path — unbound (wildcard) or every arm reference already lowered/credited.</summary>
     private bool ReuseTokenFieldIsDead(int tokenTemp, int fieldIndex)
     {

@@ -105,7 +105,7 @@ public static class IrCompileTimeEval
     /// </summary>
     internal static HashSet<string> ComputeEvaluableFunctions(Dictionary<string, IrFunction> functions)
     {
-        // Least fixpoint (via WholeProgramFixpoint, OPT-010) — same shape as
+        // Least fixpoint (via WholeProgramFixpoint) — same shape as
         // IrOptimizer.ComputeNonAllocatingFunctions: start from "every function might be
         // evaluable", knock out any whose body contains a non-modeled-pure instruction or a
         // known call to a knocked-out callee, and iterate until stable.

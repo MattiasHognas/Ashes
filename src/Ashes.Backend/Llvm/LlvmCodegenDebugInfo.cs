@@ -364,7 +364,7 @@ internal static partial class LlvmCodegen
             // CallKnown, arena/runtime helper calls, deep-copy emission) have no source location, so
             // give every unlocated instruction an artificial line-0 location in the enclosing scope
             // rather than clearing — line 0 is the DWARF convention for compiler-generated code and
-            // keeps optimized debug builds (CO-21) verifier- and inliner-clean.
+            // keeps optimized debug builds verifier- and inliner-clean.
             dbg.SetDebugLocation(builder, new SourceLocation("", 0, 0), scope.Value);
         }
         else

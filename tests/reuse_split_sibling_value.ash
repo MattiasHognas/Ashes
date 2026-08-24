@@ -1,4 +1,4 @@
-// CO-23 regression: a reuse-spec arm that rebuilds the matched cell AND creates a fresh
+// Regression: a reuse-spec arm that rebuilds the matched cell AND creates a fresh
 // same-arity sibling (Ashes.Collection.HashTrie's natural-order leaf split). The fresh-value constructor
 // consumes the matched cell's reuse token; without the liveness gate its in-place value
 // materialization clobbered the old leaf's blob while the sibling rebuild still referenced it

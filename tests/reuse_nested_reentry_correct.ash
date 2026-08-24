@@ -1,5 +1,5 @@
 // expect: 100 150
-// Nested re-entry of an in-place-reuse fold (roadmap CO-2). `setFold` is a flat loop that threads a
+// Nested re-entry of an in-place-reuse fold. `setFold` is a flat loop that threads a
 // Map accumulator (last arg to `Ashes.Collection.Map.set`, so `set` specializes to `set$reuse` and the fold's
 // accumulator is deep-copied once at the fold's entry to make it uniquely owned). `outer` then calls
 // `setFold` once per batch, threading the *same* growing map through each call. This guards

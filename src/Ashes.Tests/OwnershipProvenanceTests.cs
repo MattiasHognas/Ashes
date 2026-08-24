@@ -484,7 +484,7 @@ public sealed class OwnershipProvenanceTests
     [Test]
     public void Self_recursive_arm_never_conflicts_with_a_fresh_base_case()
     {
-        // Mirrors the CO-38 precedent ("a recursive call... never conflicts"): without excluding the
+        // Mirrors the established precedent ("a recursive call... never conflicts"): without excluding the
         // self-recursive arm from the agreement requirement, resolving it recurses back into this very
         // function's own in-progress classification, hits the cycle guard, and would wrongly poison an
         // otherwise-fresh base case.

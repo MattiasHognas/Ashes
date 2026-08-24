@@ -1,5 +1,5 @@
 // expect: 4|9|27
-// CO-18: Ashes.Task.Parallel.splitChunks(bytes)(sep)(n) splits a byte buffer into up to n contiguous
+// Ashes.Task.Parallel.splitChunks(bytes)(sep)(n) splits a byte buffer into up to n contiguous
 // (bytes, lo, hi) chunks at record-separator (here newline = 10) boundaries, so no record straddles
 // a chunk. Fed straight to Ashes.Task.Parallel.reduce it keeps the parallel fold at the caller's concrete
 // type. Here 9 lines each contain one 'z' (byte 122); counting 'z' per chunk and summing must total 9

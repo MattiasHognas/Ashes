@@ -1,5 +1,5 @@
 // expect: 12 1 201
-// CO-2 direct-reuse copy elision + fresh-construction move seed — soundness discriminator.
+// Direct-reuse copy elision + fresh-construction move seed — soundness discriminator.
 //
 // `grow` is a DIRECT-reuse fold: its own loop body matches the recursive-ADT accumulator `t` and
 // rebuilds it with the same `Node` constructor in place. `outer` threads its accumulator `t` into

@@ -1,5 +1,5 @@
 // expect: 12 9
-// CO-2 result-alias elision — internal-sharing soundness guard (fresh cell embedded twice).
+// Result-alias elision — internal-sharing soundness guard (fresh cell embedded twice).
 //
 // `share` builds a FRESH cell `x` and embeds it into TWO heap fields of the returned node:
 // `let x = Node(Leaf)(k)(Leaf) in Node(x)(0)(x)`. The result has two heap paths to the same fresh
