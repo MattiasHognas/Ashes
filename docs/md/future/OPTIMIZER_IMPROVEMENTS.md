@@ -853,10 +853,36 @@ evaluator as already ported) as the oracle there too. Do not edit the existing `
 
 ### OPT-007: Recursive Decision-Tree Match Compilation with Shared Sub-Tests
 
+**REQUIRED SCOPE ADDITION — fix `OPT-008`'s two confirmed bugs here, not as a separate task.**
+`OPT-008` (dead-arm elimination via exhaustiveness diagnostics) was attempted twice and reverted twice;
+both root causes are now fully understood (see that entry's Measured Outcome for the complete
+investigation) and **this task must fix both as part of its own completion criteria**:
+- **Bug 3 (structural, the reason OPT-008 stays reverted): constructor-tag-only coverage is unsound for
+  dead-arm elimination.** `GetMissingAdtConstructors` proves "exhaustive" by top-level constructor tag
+  alone, so `Error(msg) | Ok(true) | Ok(false)` wrongly looks fully covered after just the first two
+  arms (both `Error` and `Ok` tags "seen"), even though `Ok(true)`/`Ok(false)` don't overlap — this
+  produced a real segfault (`tests/host_tool_installed_layout.ash`). The column-based decision tree this
+  task builds tracks per-arm pattern coverage properly (including nested constructors/literals), so once
+  it exists, dead-arm elimination (removing an arm whose pattern is proven unreachable given the
+  already-covered columns) must be implemented as a direct consumer of that structure — do not ship this
+  task's decision-tree compiler without also closing out `OPT-008` this way.
+- **Bug 2 (narrower, must not be silently reintroduced): the scrutinee's type can still be an unresolved
+  type variable** at the point pattern/column analysis runs on a value whose type isn't pinned down yet
+  (e.g. a recursive function's own parameter — type resolution completes only as arms are unified against
+  it). Any column-selection or coverage logic here must gate on the scrutinee's pruned type being
+  *already* concretely resolved (an explicit check, e.g. `Prune(...) is TypeRef.TNamedType` /
+  `TypeRef.TBool`) and safely decline to specialize that column rather than guessing — mirroring the
+  fix verified during `OPT-008`'s investigation.
+Both bugs must have regression tests built from their exact failure shapes (a `Result`/`Bool`-nested-arm
+program for bug 3; a match on a recursive function's own parameter for bug 2), not just flat-enum cases —
+flat-enum tests are what let both bugs through undetected the first two times.
+
 **Problem.** `TryPlanTagSwitch` only fires for a flat, single-level, guard-free, trivial-sub-pattern,
 single-ADT match with more than 4 arms. Anything with nested/non-trivial sub-patterns, guards, or fewer
 than 4 arms falls back to `LowerMatchArmsLinear`, a naive sequential if-else chain with no sharing of
-common sub-pattern tests across arms and no reordering by specificity/frequency.
+common sub-pattern tests across arms and no reordering by specificity/frequency. Additionally, no code
+path removes an arm the coverage analysis proves unreachable (`OPT-008`'s goal) — see the required scope
+addition above.
 
 **Why Ashes needs it.** Match is the single most heavily used control construct in idiomatic Ashes
 ("Iteration is recursion + match... Never collapse `match` into if-chains" per `CLAUDE.md`), including
@@ -895,7 +921,18 @@ outcome, falling back to linear/guard-checked code only at leaves where a guard 
 decision node via the existing `SwitchTag` IR instruction — no new IR needed, only smarter compilation.
 Recommend building incrementally: first extend tag-switch-style dispatch to recurse into
 `IsTrivialSubPattern`-failing nested constructor sub-patterns (the exact gap `NonTrivialNestedSubPattern_
-DisablesTagSwitch` names), before tackling guard interaction and column-reordering heuristics.
+DisablesTagSwitch` names), before tackling guard interaction and column-reordering heuristics. **Once the
+matrix/column structure exists, a leaf reachable by zero remaining rows is a proven-dead arm — emit no
+code for it (`OPT-008`'s bug 3 fix); before specializing any column, confirm its scrutinee type is
+already `Prune`d to a concrete `TNamedType`/`TBool` and skip specializing on it otherwise (`OPT-008`'s
+bug 2 fix) rather than assuming resolution has happened.**
+
+**IMPORTANT — do not scope this task down to only redundant-test sharing.** `OPT-008` exists as a
+separate doc entry only because two earlier attempts at dead-arm elimination were built as a narrow,
+standalone patch instead of on top of real decision-tree coverage, and both attempts broke real programs
+(one silently truncated a live arm, one segfaulted a real e2e test). Building this task's decision tree
+without also using it to eliminate provably-unreachable arms would reproduce the exact trap `OPT-008`
+fell into a third time. Treat `OPT-008`'s closure as part of this task's own deliverable, not a follow-up.
 
 **Dependencies.** None blocking. **Explicit required co-change:** the reuse machinery currently keys
 match-shape recognition off the exact tag-switch/linear-chain structure that exists today
@@ -911,12 +948,24 @@ extend, not break, existing reuse behavior.
 full `ReuseTokenTests.cs`/`ReuseDecisionTests.cs` suites must stay green (this is the change in this
 document most likely to interact badly with the ownership/reuse machinery — treat as real regression
 risk, not a formality); nested-pattern-heavy stdlib modules (e.g. `Collection.List.ash`) as natural
-regression fixtures; redundant-test-count measurement before/after.
+regression fixtures; redundant-test-count measurement before/after. **Required, from `OPT-008`'s two
+confirmed bugs — build both as regression tests before considering dead-arm elimination safe, not after:**
+(a) a `Result`/nested-literal program shaped exactly like `Ok(true) | Ok(false) | Error(_)` (bug 3 — must
+NOT drop a reachable nested-pattern arm); (b) a match on a recursive function's own parameter, shaped
+exactly like `OPT-008`'s `ReuseTokenTests.Recursive_adt_accumulator_routes_alloc_reusing_through_drop_reuse`
+(bug 2 — must not misfire before the scrutinee's type is resolved). Both must also be validated against
+real compiled `.ash` output / `test tests`, not only C# unit tests — bug 3 was invisible to unit tests
+and was only caught by the e2e suite.
 
 **Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.)
 The `NonTrivialNestedSubPattern_DisablesTagSwitch` scenario now shares the outer
 tag test across arms (test updated to assert sharing); no regression in reuse test suites; measurable
-reduction in redundant tag/field tests on a representative fixture.
+reduction in redundant tag/field tests on a representative fixture. **Additionally, and non-negotiably:**
+`OPT-008` is formally closed out as part of this task — a provably-unreachable arm (per full nested-pattern
+coverage, not constructor-tag coverage) emits no IR, the bug-2 and bug-3 regression tests above both pass,
+and `OPT-008`'s own doc entry above is updated from "Attempted, reverted" to "Done", pointing at this
+task's PR/commit for the fix (no PR number inside the status text itself, per this doc's own convention —
+just flip the status and add this task's Measured Outcome reference).
 
 **Self-Hosting Impact (required to close this task).** The self-hosted port's "IR, optimizer, ownership, backend, linker" row lists
 "structural values and patterns" as already lowered (`SELF_HOSTING.md:26`) but this refers to basic
@@ -1497,8 +1546,8 @@ graph TD
     OPT005["OPT-005<br/>CFG simplification"]
     OPT006["OPT-006<br/>Local CSE"]
     OPT014["OPT-014<br/>Store/load forwarding"]
-    OPT007["OPT-007<br/>Decision-tree match"]
-    OPT008["OPT-008<br/>Dead-arm elimination"]
+    OPT007["OPT-007<br/>Decision-tree match<br/>+ dead-arm elimination"]
+    OPT008["OPT-008<br/>Dead-arm elimination<br/>(reverted — see OPT-007)"]
     OPT009["OPT-009<br/>Single-ctor unboxing"]
     OPT010["OPT-010<br/>Unified summary framework"]
     OPT011["OPT-011<br/>Open-world reuse"]
@@ -1524,9 +1573,13 @@ graph TD
   `OPT-005`.
 - **OPT-006 -> OPT-014**: share a tracking-map shape; implement together for efficiency, not because one
   blocks the other.
-- **OPT-007 -> OPT-008**: `OPT-008`'s dead-arm elimination is far more valuable once `OPT-007`'s
-  decision-tree compilation exists to expose more provably-dead arms, though it is independently useful
-  today.
+- **OPT-007 absorbs OPT-008**: `OPT-008` was attempted twice as a standalone task and reverted twice —
+  both times because top-level constructor-tag coverage (what's available without a real decision tree)
+  is unsound for dead-arm elimination on any match with nested sub-patterns, and because the scrutinee's
+  type can still be unresolved at analysis time. `OPT-007`'s column-based decision tree is what makes
+  dead-arm elimination provably safe (full per-arm coverage, not tag coverage), so `OPT-007`'s own
+  completion criteria now formally include closing out `OPT-008` — see `OPT-007`'s "REQUIRED SCOPE
+  ADDITION" callout. Do not attempt `OPT-008` again as an independent task.
 - **OPT-010 -> OPT-011 -> OPT-009**: `OPT-011` should be built on `OPT-010`'s framework rather than a new
   bespoke fixpoint; `OPT-009` shares `ReuseDecision.cs` churn with `OPT-011` and should follow it to avoid
   two rounds of changes to the same reuse-compatibility logic.
@@ -1545,8 +1598,6 @@ Low infrastructure, low risk, clear tests, measurable benefit:
   already tracked, just unused for this.
 - **OPT-003** — Re-forward algebraic-identity copies. A one-line pass-ordering fix at minimum (re-run
   `ElideTrivialOwnershipCopies`).
-- **OPT-008** — Exploit existing exhaustiveness diagnostics for dead-arm elimination. The analysis
-  already exists; this only wires it into codegen.
 
 ---
 
@@ -1554,8 +1605,9 @@ Low infrastructure, low risk, clear tests, measurable benefit:
 
 - **OPT-004** — Generalize CFG infrastructure. Foundational; touches how every future control-flow pass
   is built.
-- **OPT-007** — Recursive decision-tree match compilation. A substantial rewrite of the match-lowering
-  path with real regression risk against the reuse machinery.
+- **OPT-007** — Recursive decision-tree match compilation, **including closing out `OPT-008`'s dead-arm
+  elimination as part of this task** (see `OPT-007`'s "REQUIRED SCOPE ADDITION"). A substantial rewrite of
+  the match-lowering path with real regression risk against the reuse machinery.
 - **OPT-009** — Single-constructor ADT unboxing. Conceptually simple, wide blast radius (every consumer
   of `HeapLayouts`).
 - **OPT-010** — Unified interprocedural function-summary framework. A refactor of three independent
@@ -1670,8 +1722,8 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
-| OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 | Not started |
-| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 | Attempted, reverted — see Measured Outcome |
+| OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Not started |
+| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Attempted, reverted twice — see Measured Outcome; closes only via OPT-007 |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Not started |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Not started |
