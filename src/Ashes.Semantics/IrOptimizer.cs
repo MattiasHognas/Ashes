@@ -1353,6 +1353,53 @@ public static class IrOptimizer
     }
 
     /// <summary>
+    /// Folds a JumpIfFalse whose condition is statically known (via OPT-001's constant
+    /// propagation, including through a folded LoadLocal): a known-true condition means
+    /// the false-branch (this instruction's target) is never taken, so the instruction
+    /// is dropped and execution falls through to the true-branch body unchanged; a
+    /// known-false condition means the false-branch is always taken, so the instruction
+    /// is rewritten to an unconditional jump — ElideUnreachableCode (later in the same
+    /// per-function pass sequence) strips the now-dead true-branch body up to the next
+    /// label. Returns the new "previous instruction was an unconditional terminator"
+    /// flag, matching <see cref="HandleConstantControlFlow"/>'s other branches.
+    /// </summary>
+    private static bool HandleJumpIfFalse(
+        IrInst.JumpIfFalse jif,
+        SourceLocation? location,
+        ConstantFoldingState state,
+        Dictionary<string, List<ConstantFoldingState>> savedStates,
+        List<IrInst> result,
+        ref bool changed)
+    {
+        if (state.Bools.TryGetValue(jif.CondTemp, out bool condKnown))
+        {
+            changed = true;
+            if (condKnown)
+            {
+                // Always true: the edge to jif.Target is genuinely eliminated (never
+                // taken), so no edge state is saved for it — a real predecessor is
+                // gone, which is exactly what lets ElideUnreachableCode's fresh
+                // predecessor count later recognize an orphaned label as dead.
+                return false;
+            }
+
+            // Always false: the edge to jif.Target still exists — only the branch's
+            // conditionality is gone, not the edge itself — so it must still
+            // contribute its state snapshot, exactly as the unconditional Jump case
+            // below always does.
+            SaveEdgeState(jif.Target, state, savedStates);
+            result.Add(new IrInst.Jump(jif.Target) { Location = location });
+            return true;
+        }
+
+        // Record this edge's state snapshot for the target label — one of potentially
+        // several predecessor edges that will be met together.
+        SaveEdgeState(jif.Target, state, savedStates);
+        result.Add(jif);
+        return false; // JumpIfFalse is conditional, not a terminator
+    }
+
+    /// <summary>
     /// Handles the control-flow and local-slot instructions of the constant-folding
     /// pass (labels, jumps, switch, StoreLocal/LoadLocal, and every unhandled
     /// instruction), appending the resulting instruction to <paramref name="result"/>.
@@ -1377,11 +1424,7 @@ public static class IrOptimizer
                 return false;
 
             case IrInst.JumpIfFalse jif:
-                // Record this edge's state snapshot for the target label — one of
-                // potentially several predecessor edges that will be met together.
-                SaveEdgeState(jif.Target, state, savedStates);
-                result.Add(inst);
-                return false; // JumpIfFalse is conditional, not a terminator
+                return HandleJumpIfFalse(jif, inst.Location, state, savedStates, result, ref changed);
 
             case IrInst.Jump jmp:
                 SaveEdgeState(jmp.Target, state, savedStates);
@@ -1860,15 +1903,33 @@ public static class IrOptimizer
 
     private static List<IrInst> ElideUnreachableCode(List<IrInst> instructions)
     {
+        // Recomputed fresh over this pass's own input (not shared with FoldConstants'
+        // pre-fold count): OPT-002's branch folding can remove the only edge that used
+        // to target a label (e.g. a JumpIfFalse dropped because its condition is
+        // statically true), so a label's real predecessor count can differ from what it
+        // was before folding.
+        var branchRefs = CountBranchRefsToLabels(instructions);
         var result = new List<IrInst>(instructions.Count);
         bool unreachable = false;
         bool changed = false;
 
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.Label)
+            if (inst is IrInst.Label lbl)
             {
-                // Labels re-establish reachability.
+                // A label re-establishes reachability only if something can actually
+                // reach it: either it wasn't unreachable to begin with, or an explicit
+                // branch still targets it. A label with zero incoming edges while
+                // already in an unreachable region has no way to be entered, so it and
+                // its body stay dead and are dropped together — this is what makes a
+                // statically-true JumpIfFalse's now-orphaned false-arm actually vanish,
+                // not just become unreachable code the compiler still emits.
+                if (unreachable && branchRefs.GetValueOrDefault(lbl.Name) == 0)
+                {
+                    changed = true;
+                    continue;
+                }
+
                 unreachable = false;
                 result.Add(inst);
                 continue;

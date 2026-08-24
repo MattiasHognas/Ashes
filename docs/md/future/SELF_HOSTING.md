@@ -381,6 +381,13 @@ same public behavior.
   directly across a branch, a shape that doesn't occur in real lowered output). A slot holds at most one
   of Int/Float/Bool at a time; a store of an unknown or non-scalar value kills stale knowledge for that
   slot, since a slot is ordinary mutable storage, not single-assignment like a temp.
+- [ ] Fold a conditional branch whose condition is statically known (via the constant propagation above):
+  rewrite `JumpIfFalse` to an unconditional jump when the condition is known false, or drop it entirely
+  when known true, leaving execution to fall through to the surviving arm. Recompute predecessor edges
+  fresh from the post-fold instruction list (not reused from before folding) when deciding whether a label
+  still re-establishes reachability after a terminator, so a branch whose only remaining edge was just
+  folded away is recognized as genuinely dead — including the label instruction itself and its body —
+  rather than only losing its guarding jump while its now-unreachable body silently survives.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
