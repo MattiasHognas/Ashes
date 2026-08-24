@@ -91,6 +91,212 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_musttail_keeps_a_deep_mutual_tail_chain_stack_bounded()
+    {
+        // OPT-012(b): a non-self-recursive tail call between two distinct functions (unlike
+        // loop-recognized self-recursion, which already gets an explicit IR back-edge) previously
+        // got only LLVM's advisory `tail` marker — a hint, not a guarantee. ping/pong here mimic
+        // a heterogeneous mutually-tail-recursive group (the doc's own motivating example: a
+        // descent parser whose members differ in shape) that would never qualify for loop-merge
+        // TCO. 10M mutual calls at ~tens of bytes of frame each would exceed the default 8 MB
+        // stack by orders of magnitude if each call actually consumed a frame.
+        //
+        // Compiled explicitly at -O0: `tail` alone is not enough here — LLVM's own TailCallElim
+        // pass, the thing that actually turns an advisory `tail` marker into a real sibling call,
+        // only runs at -O1+. At the default -O2 this task's own fix and the pre-fix advisory-only
+        // code are observably identical (both pass, since TailCallElim already does the work) —
+        // -O0 is the level where `musttail`'s hard, codegen-level guarantee (independent of
+        // whether any optimization pass runs at all) actually diverges from `tail`'s advisory
+        // one, exactly matching this task's own doc prediction ("primarily valuable for -O0").
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 10_000_000),
+                new IrInst.CallKnown(2, "ping", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0,
+            3,
+            false);
+        IrFunction ping = BuildMutualTailCallFunction("ping", "pong");
+        IrFunction pong = BuildMutualTailCallFunction("pong", "ping");
+        IrProgram program = new(entry, [ping, pong], [], true, false, false, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+            program,
+            compileOptions: new BackendCompileOptions(BackendOptimizationLevel.O0)).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(0, $"A deep mutual tail chain must not stack-overflow at -O0. stderr: {result.Stderr}");
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_does_not_musttail_a_call_in_a_function_that_allocates_stack_memory()
+    {
+        // Safety gate found during this task's own investigation, beyond what the doc's proposal
+        // named: `AllocStack` is also used for a capability/effect handler frame (Lowering.
+        // Capabilities.cs), whose pointer is installed into a dynamically-scoped global for the
+        // whole `handle` body's extent — which can span a tail call later in the same function.
+        // musttail is free to let LLVM reuse the caller's frame immediately, which would leave
+        // that global pointing at overwritten memory. This function allocates stack memory (the
+        // AllocStack below stands in for that frame) and then makes an otherwise fully
+        // tail-position-eligible call — it must still compile and run correctly via the ordinary
+        // advisory `tail` path, not attempt (and have LLVM's verifier reject, or worse, silently
+        // miscompile) a musttail here. A shallow depth is enough: this test is about the gate
+        // firing, not about stack-boundedness (which the function is NOT expected to guarantee
+        // once it allocates stack memory of its own).
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 1000),
+                new IrInst.CallKnown(2, "hop", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0,
+            3,
+            false);
+        IrFunction hop = new(
+            "hop",
+            [
+                new IrInst.AllocStack(0, 8),
+                new IrInst.LoadConstInt(1, 7),
+                new IrInst.StoreMemOffset(0, 0, 1),
+                new IrInst.LoadLocal(2, 1),
+                new IrInst.LoadConstInt(3, 0),
+                new IrInst.CmpIntLe(4, 2, 3),
+                new IrInst.JumpIfFalse(4, "hop_recurse"),
+                new IrInst.Return(2),
+                new IrInst.Label("hop_recurse"),
+                new IrInst.LoadLocal(5, 1),
+                new IrInst.LoadConstInt(6, 1),
+                new IrInst.SubInt(7, 5, 6),
+                new IrInst.LoadConstInt(8, 0),
+                new IrInst.CallKnown(9, "hop", 8, 7),
+                new IrInst.Return(9),
+            ],
+            2,
+            10,
+            true);
+        IrProgram program = new(entry, [hop], [], true, false, false, false, false, false);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+            program,
+            compileOptions: new BackendCompileOptions(BackendOptimizationLevel.O0)).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.Stdout.ShouldBe("0\n");
+    }
+
+    [Test]
+    public async Task Linux_backend_llvm_preserves_a_capability_handler_frame_across_a_non_musttail_call()
+    {
+        // A direct reproduction of the specific hazard the AllocStack gate exists for: `hop`
+        // installs a capability handler frame (StoreCapabilityHandler, exactly what
+        // Lowering.Capabilities.cs's LowerHandleInstallFrames emits) — its pointer into a
+        // stack-allocated frame — into the dynamically-scoped global, then makes an otherwise
+        // fully tail-eligible call to `reader`, which reads back through that same global. If the
+        // gate did not hold this call to advisory `tail`, `hop`'s stack-allocated frame — still
+        // referenced by the global `reader` reads through — could be overwritten before `reader`
+        // runs. Expected output is the marker value written into the frame, proving it survived.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = BuildCapabilityFrameSurvivalProgram();
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+            program,
+            compileOptions: new BackendCompileOptions(BackendOptimizationLevel.O0)).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(0, $"stderr: {result.Stderr}");
+        result.Stdout.ShouldBe("777\n", "The caller's stack-allocated handler frame must survive the tail call intact.");
+    }
+
+    private static IrProgram BuildCapabilityFrameSurvivalProgram()
+    {
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.CallKnown(2, "hop", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0,
+            3,
+            false);
+        IrFunction hop = new(
+            "hop",
+            [
+                new IrInst.AllocStack(0, 8),
+                new IrInst.LoadConstInt(1, 777),
+                new IrInst.StoreMemOffset(0, 0, 1),
+                new IrInst.StoreCapabilityHandler(0, 0),
+                new IrInst.LoadConstInt(2, 0),
+                new IrInst.CallKnown(3, "reader", 2, 2),
+                new IrInst.Return(3),
+            ],
+            2,
+            4,
+            true);
+        IrFunction reader = new(
+            "reader",
+            [
+                new IrInst.LoadCapabilityHandler(0, 0),
+                new IrInst.LoadMemOffset(1, 0, 0),
+                new IrInst.Return(1),
+            ],
+            2,
+            2,
+            true);
+        return new IrProgram(entry, [hop, reader], [], true, false, false, false, false, false)
+        {
+            CapabilityHandlerGlobals = 1,
+        };
+    }
+
+    // if arg <= 0, return it directly; otherwise tail-call `otherLabel` with arg - 1.
+    private static IrFunction BuildMutualTailCallFunction(string ownLabel, string otherLabel)
+    {
+        string recurseLabel = ownLabel + "_recurse";
+        return new IrFunction(
+            ownLabel,
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.CmpIntLe(2, 0, 1),
+                new IrInst.JumpIfFalse(2, recurseLabel),
+                new IrInst.Return(0),
+                new IrInst.Label(recurseLabel),
+                new IrInst.LoadLocal(3, 1),
+                new IrInst.LoadConstInt(4, 1),
+                new IrInst.SubInt(5, 3, 4),
+                new IrInst.LoadConstInt(6, 0),
+                new IrInst.CallKnown(7, otherLabel, 6, 5),
+                new IrInst.Return(7),
+            ],
+            2,
+            8,
+            true);
+    }
+
+    [Test]
     public async Task Linux_backend_runs_runtime_managed_adt_dup_and_drop()
     {
         if (!OperatingSystem.IsLinux())
@@ -5504,9 +5710,10 @@ public sealed class LinuxBackendCoverageTests
         string? stdin = null,
         string? workingDirectory = null,
         int expectedExitCode = 0,
-        IReadOnlyDictionary<string, string>? environmentVariables = null)
+        IReadOnlyDictionary<string, string>? environmentVariables = null,
+        BackendCompileOptions? compileOptions = null)
     {
-        var elfBytes = new LinuxX64LlvmBackend().Compile(ir);
+        var elfBytes = new LinuxX64LlvmBackend().Compile(ir, compileOptions);
 
         var tmpDir = CreateTempDirectory();
         var exePath = Path.Combine(tmpDir, $"llvm_{Guid.NewGuid():N}");

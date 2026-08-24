@@ -156,7 +156,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle envValue,
         LlvmValueHandle argValue,
         LlvmValueHandle runtimeManagedArgumentFlag,
-        bool isTailCall = false)
+        LlvmTailCallKind tailCallKind = LlvmTailCallKind.NoTail)
     {
         LlvmTypeHandle closureFunctionType = LlvmApi.FunctionType(state.I64, [state.I64, state.I64, state.I64]);
         LlvmValueHandle callee = state.LiftedFunctions[funcLabel];
@@ -169,9 +169,7 @@ internal static partial class LlvmCodegen
                 runtimeManagedArgumentFlag
             ],
             "known_call");
-        LlvmApi.SetTailCallKind(
-            callInst,
-            isTailCall ? LlvmTailCallKind.Tail : LlvmTailCallKind.NoTail);
+        LlvmApi.SetTailCallKind(callInst, tailCallKind);
 
         return callInst;
     }

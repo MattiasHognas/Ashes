@@ -461,6 +461,12 @@ same public behavior.
   and cost signals analyze parameter RC-eligibility, allocation and borrow blockers, and threshold-based
   profitability verdicts without violating strict evaluation semantics. Fully validated with pure-Ashes
   test suite in `selfhost/tests/semantics/TcoTests.ash`.
+- [ ] Upgrade LLVM's advisory `tail` marker to the hard-guarantee `musttail` marker for a non-loop tail
+  call already proven `CanEmitNativeTailCall`-eligible (exact `CallKnown`-immediately-followed-by-
+  matching-`Return` adjacency), gated by a whole-function scan for any native stack allocation
+  (closure environments and capability/effect-handler frames both use the same stack-allocation
+  mechanism, and a handler frame's pointer can outlive a tail call later in the same function via a
+  dynamically-scoped global). Blocked on LLVM code generation existing in `selfhost/` first (see below).
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
   and whole-program SCC provenance summaries.
 - [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with

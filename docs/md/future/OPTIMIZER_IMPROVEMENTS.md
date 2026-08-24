@@ -1466,6 +1466,8 @@ would repeat the exact soak-testing risk called out above a second time, in a se
 
 ### OPT-012: Guarantee Stack-Bounded Behavior for General (Non-Loop-Recognized) Tail Calls
 
+**Status: Done (part (b) only; part (a) not attempted).** See **Measured Outcome** below.
+
 **Problem.** Loop-based TCO (self-recursion, eligible mutual-recursion groups) guarantees O(1) native
 stack growth via an explicit IR back-edge, independent of LLVM. Any other tail call — including a tail
 call within a mutually-recursive group that fails `TryLowerMutualRecursionTco`'s eligibility gate (e.g.
@@ -1539,6 +1541,60 @@ delta, once implemented in C# — do not edit the existing `[x]` line's text. No
 port is naturally sequenced *after* the self-hosted backend/codegen work, which per `SELF_HOSTING.md:396`
 ("LLVM code generation and runtime integration") has **not started** — (b) specifically cannot be ported
 to `selfhost/` (and its new checklist line cannot flip to `[x]`) until LLVM emission exists there.
+
+**Measured Outcome — done (b only).** Implemented exactly as proposed: `DetermineTailCallKind`
+(`LlvmCodegen.cs`) returns `MustTail` instead of `Tail` for a call already proven
+`CanEmitNativeTailCall`-eligible (exact `CallKnown`-immediately-followed-by-matching-`Return`
+adjacency), gated by a new whole-function scan, `FunctionAllocatesNativeStackMemory`, for any
+`AllocStack` instruction in the enclosing function. That gate is *stricter* than the doc's own
+`EnvironmentIsStackAllocated` proposal: reading the lowering code confirmed `AllocStack`-backed values
+can only ever be used as an immediate match scrutinee or a direct callee, so the only real hazard
+`EnvironmentIsStackAllocated` doesn't already cover is a capability/effect-handler frame
+(`Lowering.Capabilities.cs`), whose pointer is installed into a dynamically-scoped global for the whole
+`handle` body's extent — a span that can include a later tail call in the same function. `musttail`
+lets LLVM reuse the caller's frame immediately, which would leave that global dangling; the whole-
+function scan closes this off conservatively. Emitting a `musttail` call also required bypassing
+Ashes' universal `StoreTemp`/`LoadTemp` round-trip (every temp, even one immediately consumed, is
+normally routed through an LLVM `alloca`+store+load) for the fused call+return pair specifically,
+since LLVM's verifier requires the `musttail call` to syntactically precede its `ret` with nothing in
+between — `TryEmitMustTailCallAndReturn` emits the call and the `ret` directly from the raw SSA value,
+then the caller loop skips the now-redundant `Return` instruction.
+
+Validated against real compiled output, not just unit assertions: `--emit-ir final` on
+`let recursive pingD n = if n <= 0 then n else pongD(n - 1) and pongD n = pingD(n - 1)` confirms
+`CanEmitNativeTailCall`'s narrow adjacency requirement — direct-`CallKnown`-then-`Return`, no
+intervening join — does fire on realistic source (a mutually-recursive member whose entire body is one
+unconditional tail call, not merge-eligible into a loop since the group's members differ in shape). The
+crash-vs-fix distinction itself was demonstrated with an intentionally minimal raw-IR fixture rather
+than that source example: at the CLI's default `-O2`, LLVM's own `TailCallElim` IR pass already
+promotes the advisory `tail` marker to a real sibling call, making pre-fix and post-fix output
+identical — the doc's own prediction that this is "primarily valuable for `-O0`/`--debug` builds" holds
+exactly. At `-O0`, where `TailCallElim` never runs, a 10,000,000-deep raw-IR mutual `ping`/`pong` chain
+segfaults (exit 139) without the fix and completes correctly with it (`Linux_backend_llvm_musttail_
+keeps_a_deep_mutual_tail_chain_stack_bounded`, `LinuxBackendCoverageTests.cs`) — reconfirmed reproducible
+on the true pre-task baseline after an earlier stale-worktree-base scare invalidated an initial round of
+testing (see `feedback_measure_against_real_compiled_output` and the worktree-freshness lesson in
+memory). Surprisingly, the equivalent *source-compiled* `pingD`/`pongD` chain did **not** crash on the
+unfixed baseline even at 100,000,000 deep at `-O0` — LLVM's sibling-call codegen apparently already
+succeeds for this simple, uniform-ABI, single-basic-block shape from just the advisory `tail` marker
+(the pre-existing baseline behavior for anything `CanEmitNativeTailCall`-eligible), with no register-
+pressure or frame-shape condition in this particular case causing the heuristic to silently decline.
+The raw-IR fixture was deliberately engineered to hit a case where it does decline; the value of
+`musttail` is the hard guarantee against exactly that class of silent heuristic bail-out, which is real
+per LLVM's own semantics even though this investigation didn't need to (and didn't try to) find a
+*minimal* real `.ash` program that reproduces it — the reproduction burden fell to a raw-IR fixture
+instead, deliberately so, since chasing a naturally-occurring failing source example past this point
+was diminishing-returns exploration, not further evidence of correctness. Two additional tests close
+the newly-discovered capability-handler-frame hazard: one confirms the safety gate correctly declines
+`musttail` for a function that itself allocates stack memory (compiles and runs correctly via ordinary
+advisory `tail`); one directly exercises a capability-handler frame surviving across a non-`musttail`
+call via raw `StoreCapabilityHandler`/`LoadCapabilityHandler` IR (both pass with the gate active; an
+honest note: neither test empirically demonstrates corruption with the gate removed on this specific
+reproduction, so the gate is kept as a defensive measure matching LLVM's documented contract, not
+because a corruption was directly observed). Full suites green: C# 2360/2360, LSP 70/70, e2e 643/0/54
+skipped, `dotnet format --verify-no-changes` clean. Part (a) (widening mutual-TCO loop-merge
+eligibility to heterogeneous parameter shapes) was not attempted — out of scope for this task, tracked
+separately if picked up later.
 
 ---
 
@@ -1905,7 +1961,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Not started |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Attempted, reverted twice — see Measured Outcome; closes only via OPT-007 |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
-| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Not started |
+| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Not started |
