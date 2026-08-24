@@ -1929,15 +1929,17 @@ public static class IrOptimizer
         }
     }
 
-    // Local common-subexpression elimination (OPT-006)
-    // Forwards a duplicate GetAdtField read or duplicate CallKnown call to a provably pure
-    // function to the first occurrence's result, scoped to a single straight-line block (reset
-    // at every Label), never across control flow. Operands are canonicalized through a
-    // LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache — without it, the
-    // ubiquitous `let x = p.x in let y = p.x` shape never matches, since each LoadLocal of the
-    // same never-rewritten slot produces a fresh temp for what is provably the same value (the
-    // same lesson OPT-001 learned: real Ashes IR round-trips almost everything through local
-    // slots, so raw-temp-identity-only tracking misses nearly every real occurrence).
+    // Local common-subexpression elimination (OPT-006) and store-to-load forwarding (OPT-014)
+    // Forwards a duplicate GetAdtField read, a duplicate CallKnown call to a provably pure
+    // function, or a GetAdtField immediately following the SetAdtField that established the same
+    // (pointer, field)'s value (through a pointer proven fresh in this block — e.g. a record
+    // constructed and immediately destructured) to the first occurrence's/write's value, scoped to
+    // a single straight-line block (reset at every Label), never across control flow. Operands are
+    // canonicalized through a LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache —
+    // without it, the ubiquitous `let x = p.x in let y = p.x` shape never matches, since each
+    // LoadLocal of the same never-rewritten slot produces a fresh temp for what is provably the
+    // same value (the same lesson OPT-001 learned: real Ashes IR round-trips almost everything
+    // through local slots, so raw-temp-identity-only tracking misses nearly every real occurrence).
 
     private static readonly HashSet<Type> LocalCseSafeInstructionTypes =
     [
@@ -1979,6 +1981,15 @@ public static class IrOptimizer
         public readonly Dictionary<(string FuncLabel, int EnvTemp, int ArgTemp, int FlagTemp, bool StackAllocated), int> CallCache = [];
         public readonly Dictionary<int, int> ValueOf = []; // temp -> canonical earlier temp with the same value
         public readonly Dictionary<int, int> SlotValue = []; // local slot -> canonical temp currently stored there
+
+        // Pointers known to be a fresh allocation from this same straight-line block (OPT-014):
+        // nothing that existed before this instruction could hold or derive a reference to memory
+        // that didn't exist yet, so a SetAdtField through one of these can populate FieldCache
+        // precisely (just this one (ptr, field) entry) instead of falling back to a full clear —
+        // unlike a SetAdtField through an arbitrary (possibly-aliased) pointer, which still forces
+        // the conservative full invalidation below.
+        public readonly HashSet<int> FreshPointers = [];
+
         public bool HasEnvAndArgParams;
 
         // Negative, so it can never collide with a real (always non-negative) temp number — the
@@ -2002,6 +2013,7 @@ public static class IrOptimizer
             CallCache.Clear();
             ValueOf.Clear();
             SlotValue.Clear();
+            FreshPointers.Clear();
             if (HasEnvAndArgParams)
             {
                 SlotValue[0] = EntrySlotIdentity(0);
@@ -2056,6 +2068,49 @@ public static class IrOptimizer
             rewritten = inst;
         }
 
+        return true;
+    }
+
+    // Fresh allocations (OPT-014): the target can't alias anything that existed before it, so a
+    // later SetAdtField through it can update FieldCache precisely instead of invalidating it.
+    private static bool TryTrackFreshAllocation(IrInst inst, LocalCseState state)
+    {
+        switch (inst)
+        {
+            case IrInst.AllocAdt allocAdt: state.FreshPointers.Add(allocAdt.Target); return true;
+            case IrInst.AllocAdtStack allocAdtStack: state.FreshPointers.Add(allocAdtStack.Target); return true;
+            default: return false;
+        }
+    }
+
+    // Store-to-load forwarding (OPT-014): a SetAdtField through a pointer already proven fresh in
+    // this block populates FieldCache directly, so an immediately-following GetAdtField of the
+    // same (ptr, field) forwards the stored value instead of round-tripping through memory (the
+    // `Point(p.y, p.x)`-style construct-then-destructure shape). Writing through a NOT-known-fresh
+    // pointer keeps the existing fully-conservative behavior (handled by the caller's fallback),
+    // since it could alias any entry already in the cache.
+    private static bool TryForwardSetAdtField(IrInst inst, LocalCseState state)
+    {
+        if (inst is not IrInst.SetAdtField saf)
+        {
+            return false;
+        }
+
+        int resolvedPtr = state.Resolve(saf.Ptr);
+        if (!state.FreshPointers.Contains(resolvedPtr))
+        {
+            return false;
+        }
+
+        // The cached value must be a real, already-emitted temp — never Resolve(saf.Source):
+        // Resolve can return a synthetic, negative sentinel identity (see LocalCseState's
+        // EntrySlotIdentity) when the source traces back to a function's own env/arg slot with
+        // no real defining instruction visible to this pass. A sentinel is only ever safe as a
+        // cache KEY (for matching two operands as "the same value"); emitting it as a Borrow's
+        // source temp would reference a temp that doesn't exist. saf.Source itself is always a
+        // real, live temp at this point, exactly like gaf.Target/ck.Target are in the read-side
+        // caches above.
+        state.FieldCache[(resolvedPtr, saf.FieldIndex)] = saf.Source;
         return true;
     }
 
@@ -2114,9 +2169,21 @@ public static class IrOptimizer
                 continue;
             }
 
+            if (TryTrackFreshAllocation(inst, state))
+            {
+                result.Add(inst);
+                continue;
+            }
+
             if (TryEliminateLocalCseField(inst, state, out var rewrittenField))
             {
                 result.Add(rewrittenField);
+                continue;
+            }
+
+            if (TryForwardSetAdtField(inst, state))
+            {
+                result.Add(inst);
                 continue;
             }
 

@@ -1557,6 +1557,8 @@ that extension to `selfhost/` once it lands in C#, flipping the new line (not th
 
 ### OPT-014: Store-to-Load and Projection Forwarding Beyond Ownership Copies
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** Distinct from `ElideTrivialOwnershipCopies` (which erases RC/ownership *markers*, not
 general aliasing): no pass forwards a value from a `SetAdtField` directly to an immediately-following
 `GetAdtField` of the same pointer/field with no intervening write.
@@ -1607,6 +1609,55 @@ The `swap` example and equivalent record-projection patterns show no round-trip
 add a **new** `[ ]` line (or fold into `OPT-006`'s new line, given the shared implementation) describing
 store-to-load/projection forwarding, and port alongside `OPT-006`. Do not edit the existing `[x]` line's
 text.
+
+**Measured Outcome — done.** Implemented exactly as proposed: co-located with `OPT-006`'s CSE pass
+(same `EliminateLocalRedundantComputation`, same `LocalCseState`/`FieldCache`), since the doc's own
+"natural to co-locate" suggestion turned out to be correct — no separate pass or tracking map needed.
+A `SetAdtField` through a pointer proven fresh in the same block (an `AllocAdt`/`AllocAdtStack` target,
+tracked in a new `FreshPointers` set — nothing that existed before such an instruction could hold or
+derive a reference to memory that didn't exist yet) populates `FieldCache` directly from the write; a
+write through any other pointer keeps the existing fully-conservative "invalidate everything" fallback,
+since it could alias any entry already cached.
+
+**A real, serious bug was found — not by any of this task's own unit tests, only by compiling and
+running actual `.ash` source (`describe n = let p = Point(x = n, y = n + 1) in let a = p.x in let b =
+p.y in a + b`, exactly the doc's own construct-then-destructure shape with a non-constant field value):**
+the first implementation cached `Resolve(saf.Source)` — the write's alias-*canonicalized* identity —
+as the forwarded value. `Resolve` can return a synthetic, negative sentinel (see `OPT-006`'s
+`EntrySlotIdentity`) when the source traces back to a function's own env/arg slot with no real defining
+instruction visible to this pass (exactly the case here: the field's value is `n`, the function's own
+parameter). A sentinel is safe only as a cache *key* (for matching two operands as "the same value");
+using it as the forwarded, *emitted* value produced `Borrow(target, -2)` — a reference to a temp that
+doesn't exist — which crashed at codegen with `IndexOutOfRangeException` (verified: reverting the fix
+reproduces the crash immediately). **Fixed** by caching the write's raw, unresolved source temp
+(`saf.Source` itself — always real and live at that point, exactly like `gaf.Target`/`ck.Target` are in
+the existing read-side caches) instead of its resolved identity. Added a raw-IR unit test that
+reproduces this exact shape via compile-and-run (not instruction counting, since the crash only
+manifests at codegen) — confirmed it fails with the original `Resolve`-based code and passes with the
+fix.
+
+Three of `OPT-006`'s own existing negative tests needed updating as a result of this task correctly
+strengthening what the pass eliminates (not a regression — a stronger, still-correct result): the
+`let x = p.x in let y = p.x` case run through a fresh pointer with an intervening `SetAdtField` now
+forwards *both* reads from their respective writes rather than leaving either as a real `GetAdtField`,
+so instruction-count assertions were replaced with execution-correctness checks (compile, run, verify
+the printed value) where the specific mechanism could legitimately vary; one test was rebuilt around a
+non-fresh pointer to keep isolating the block-boundary-reset property it was meant to test.
+
+**Measured**: `--emit-ir final` on the doc's own construct-then-destructure shape (real function
+parameter, not a literal) goes from 2 `GetAdtField` to 0, verified against a temporary pre-task
+baseline; the literal `swap`-style example from the doc (`given swap = given p: Point -> Point(p.y,
+p.x)`) does **not** benefit as written, because the allocation happens inside `swap` and the
+destructuring happens in a *different* function at the call site — this pass is intra-procedural, so a
+cross-function-boundary version of the pattern is out of reach here (the within-one-function shape,
+which is the far more common real occurrence and the one `IsImmediateSingleArmAdtDestructuringMatch`
+already recognizes for the allocation-tier decision, works). A 20M-iteration hot-loop built around the
+same in-function pattern ran **128.9 ms -> 119.3 ms at `-O0` (~7% faster, hyperfine 15+ runs,
+non-overlapping confidence intervals)**; identical at `-O2` within noise (1.00x, LLVM's own optimizer
+already subsumes it there), consistent with every other task in this arc. Full suites green: C#
+2352/2352, LSP 70/70, e2e `test --pipeline both` 642/0/54-skipped — especially meaningful here given the
+bug found would have been a hard crash, not a silent miscompile, so a clean full-suite pass is strong
+evidence, not just a formality.
 
 ---
 
@@ -1806,7 +1857,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Not started |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Not started |
-| OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Not started |
+| OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick
 wins or foundational infrastructure other `P1`/`P2` tasks build on; `P1` tasks are the highest-value

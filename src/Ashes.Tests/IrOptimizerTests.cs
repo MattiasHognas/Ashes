@@ -1687,6 +1687,9 @@ public sealed class IrOptimizerTests
     [Test]
     public void Local_cse_merges_duplicate_adt_field_reads()
     {
+        // Both reads are also each forwarded directly from their establishing SetAdtField
+        // (OPT-014, since the pointer is a fresh allocation) — a stronger result than plain
+        // read-to-read CSE alone would give, so zero GetAdtField survive, not one.
         List<IrInst> instructions =
         [
             new IrInst.AllocAdt(0, 0, 2),
@@ -1706,7 +1709,7 @@ public sealed class IrOptimizerTests
 
         optimized.EntryFunction.Instructions
             .Count(i => i is IrInst.GetAdtField)
-            .ShouldBe(1, "The second identical field read should be merged into the first.");
+            .ShouldBe(0, "Both field reads should be forwarded, either from each other or from the store that established the value.");
     }
 
     [Test]
@@ -1753,10 +1756,14 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
-    public void Local_cse_does_not_merge_field_reads_across_intervening_set_adt_field()
+    public async Task Local_cse_does_not_merge_field_reads_across_intervening_set_adt_field()
     {
         // The second read follows an in-place write to the exact same (pointer, field index) —
         // merging it with the first read's now-stale result would silently keep the old value.
+        // With store-to-load forwarding (OPT-014), both reads are now correctly forwarded from
+        // their RESPECTIVE nearest write (5, then 7) rather than surviving as real GetAdtField
+        // instructions — so the meaningful check is the actual computed value (12), not whether
+        // any GetAdtField instructions remain.
         List<IrInst> instructions =
         [
             new IrInst.AllocAdt(0, 0, 1),
@@ -1774,28 +1781,76 @@ public sealed class IrOptimizerTests
         IrProgram program = new(entry, [], [], true, false, false, false, false, false);
         IrProgram optimized = IrOptimizer.Optimize(program);
 
-        optimized.EntryFunction.Instructions
-            .Count(i => i is IrInst.GetAdtField)
-            .ShouldBe(2, "A field write between the two reads must invalidate the cache.");
+        string stdout = await RunAsync(optimized).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("12", "The second read must see the second write's value (7), not the first (5) — 5 + 7, not 5 + 5 or 7 + 7.");
     }
 
     [Test]
     public void Local_cse_does_not_merge_field_reads_across_a_block_boundary()
     {
         // Scoped to a single straight-line block: a Label between the two reads (an extended
-        // basic block boundary) must reset the cache, even with nothing else intervening.
+        // basic block boundary) must reset the cache, even with nothing else intervening. Reads
+        // a function's own argument (slot 1, not a fresh allocation) so this specifically
+        // exercises read-to-read CSE's block-boundary reset, uncontaminated by OPT-014's
+        // store-forwarding (which never applies here — no SetAdtField at all).
+        IrFunction reader = new(
+            "reader",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.GetAdtField(1, 0, 0),
+                new IrInst.Jump("mid"),
+                new IrInst.Label("mid"),
+                new IrInst.LoadLocal(2, 1),
+                new IrInst.GetAdtField(3, 2, 0),
+                new IrInst.AddInt(4, 1, 3),
+                new IrInst.Return(4),
+            ],
+            2, 5, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 3),
+                new IrInst.AllocAdt(2, 0, 1),
+                new IrInst.SetAdtField(2, 0, 1),
+                new IrInst.CallKnown(3, "reader", 0, 2),
+                new IrInst.PrintInt(3),
+                new IrInst.Return(3),
+            ],
+            0, 4, false);
+
+        IrProgram program = new(entry, [reader], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrFunction? optimizedReader = optimized.Functions
+            .FirstOrDefault(f => string.Equals(f.Label, "reader", StringComparison.Ordinal));
+        optimizedReader.ShouldNotBeNull();
+        optimizedReader.Instructions
+            .Count(i => i is IrInst.GetAdtField)
+            .ShouldBe(2, "A block boundary must reset local CSE's cache.");
+    }
+
+    // Store-to-load / projection forwarding tests (OPT-014)
+
+    [Test]
+    public void Store_to_load_forwarding_forwards_the_swap_pattern()
+    {
+        // The doc's own motivating example: `given swap = given p: Point -> Point(p.y, p.x)`.
+        // A fresh record is constructed, its fields set, then immediately read back — the read
+        // should forward directly from the store instead of round-tripping through memory.
         List<IrInst> instructions =
         [
-            new IrInst.AllocAdt(0, 0, 1),
-            new IrInst.LoadConstInt(1, 3),
-            new IrInst.SetAdtField(0, 0, 1),
-            new IrInst.GetAdtField(2, 0, 0),
-            new IrInst.Jump("mid"),
-            new IrInst.Label("mid"),
-            new IrInst.GetAdtField(3, 0, 0),
-            new IrInst.AddInt(4, 2, 3),
+            new IrInst.LoadConstInt(0, 7),
+            new IrInst.LoadConstInt(1, 9),
+            new IrInst.AllocAdt(2, 0, 2),
+            new IrInst.SetAdtField(2, 0, 0),
+            new IrInst.SetAdtField(2, 1, 1),
+            new IrInst.GetAdtField(3, 2, 0),
+            new IrInst.GetAdtField(4, 2, 1),
+            new IrInst.PrintInt(3),
             new IrInst.PrintInt(4),
-            new IrInst.Return(4),
+            new IrInst.Return(3),
         ];
         IrFunction entry = new("entry", instructions, 0, 5, false);
         IrProgram program = new(entry, [], [], true, false, false, false, false, false);
@@ -1803,7 +1858,114 @@ public sealed class IrOptimizerTests
 
         optimized.EntryFunction.Instructions
             .Count(i => i is IrInst.GetAdtField)
-            .ShouldBe(2, "A block boundary must reset local CSE's cache.");
+            .ShouldBe(0, "Both reads should forward directly from the SetAdtField that established them.");
+    }
+
+    [Test]
+    public async Task Store_to_load_forwarding_forwards_distinct_field_indices_correctly()
+    {
+        // A negative-adjacent check: forwarding field 0 must not leak into a read of field 1 on
+        // the same fresh pointer — each (pointer, field index) key must stay independent.
+        List<IrInst> instructions =
+        [
+            new IrInst.LoadConstInt(0, 100),
+            new IrInst.LoadConstInt(1, 200),
+            new IrInst.AllocAdt(2, 0, 2),
+            new IrInst.SetAdtField(2, 0, 0),
+            new IrInst.SetAdtField(2, 1, 1),
+            new IrInst.GetAdtField(3, 2, 1),
+            new IrInst.GetAdtField(4, 2, 0),
+            new IrInst.SubInt(5, 3, 4),
+            new IrInst.PrintInt(5),
+            new IrInst.Return(5),
+        ];
+        IrFunction entry = new("entry", instructions, 0, 6, false);
+        IrProgram program = new(entry, [], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        string stdout = await RunAsync(optimized).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("100", "Field 1 (200) minus field 0 (100) must not be confused by sharing the same pointer.");
+    }
+
+    [Test]
+    public async Task Store_to_load_forwarding_does_not_forward_through_a_non_fresh_pointer()
+    {
+        // The pointer here is the function's own argument (not a fresh allocation in this
+        // block) — forwarding a write through it would be unsound in general, since the caller
+        // could hold another reference to the same cell. Correctness (not instruction count) is
+        // the meaningful check: the read must see the write's new value, proving the write was
+        // neither skipped nor silently miscompiled by the conservative fallback.
+        IrFunction writer = new(
+            "writer",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.LoadConstInt(1, 42),
+                new IrInst.SetAdtField(0, 0, 1),
+                new IrInst.LoadLocal(2, 1),
+                new IrInst.GetAdtField(3, 2, 0),
+                new IrInst.Return(3),
+            ],
+            2, 4, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.AllocAdt(2, 0, 1),
+                new IrInst.SetAdtField(2, 0, 1),
+                new IrInst.CallKnown(3, "writer", 0, 2),
+                new IrInst.PrintInt(3),
+                new IrInst.Return(3),
+            ],
+            0, 4, false);
+
+        IrProgram program = new(entry, [writer], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        string stdout = await RunAsync(optimized).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("42", "The read must see the value just written through the function's own argument.");
+    }
+
+    [Test]
+    public async Task Store_to_load_forwarding_forwards_a_value_sourced_from_the_functions_own_argument()
+    {
+        // Regression for a real bug caught only by compiling and running actual .ash source (the
+        // doc's own `let p = Point(x = n, ...) in ... p.x` shape, with n a function parameter):
+        // the stored value's source temp aliases the function's own arg slot, whose canonical
+        // identity (LocalCseState.EntrySlotIdentity) is a synthetic, negative sentinel that must
+        // never be used as the cache's forwarded VALUE — only as a key for matching. The fix
+        // caches the store's raw, unresolved source temp instead of its resolved identity; the
+        // first fixture version emitted `Borrow(target, -2)`, an unemittable reference to a temp
+        // that doesn't exist, and this test's compile-and-run would have caught it (a raw
+        // GetAdtField/CallKnown-count unit test would not, since it doesn't run the result).
+        IrFunction reader = new(
+            "reader",
+            [
+                new IrInst.LoadLocal(0, 1), // n (the function's own argument, slot 1)
+                new IrInst.AllocAdt(1, 0, 1),
+                new IrInst.SetAdtField(1, 0, 0), // field 0 := n, sourced from the arg slot alias
+                new IrInst.GetAdtField(2, 1, 0), // must forward to n's value (99), not a sentinel
+                new IrInst.Return(2),
+            ],
+            2, 3, true);
+
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.LoadConstInt(1, 99),
+                new IrInst.CallKnown(2, "reader", 0, 1),
+                new IrInst.PrintInt(2),
+                new IrInst.Return(2),
+            ],
+            0, 3, false);
+
+        IrProgram program = new(entry, [reader], [], true, false, false, false, false, false);
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        string stdout = await RunAsync(optimized).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("99", "The forwarded field read must see the argument's real value.");
     }
 
     // Helpers
@@ -1870,7 +2032,16 @@ public sealed class IrOptimizerTests
 
     private static async Task<string> CompileOptimizedAndRunAsync(string source)
     {
-        var ir = LowerAndOptimize(source);
+        return await RunAsync(LowerAndOptimize(source)).ConfigureAwait(false);
+    }
+
+    // For raw-IR-constructed programs (already optimized via IrOptimizer.Optimize) rather than
+    // ones lowered from .ash source, to verify the actual printed output of a compiled-and-run
+    // program — a stronger check than counting surviving instructions when several equally-valid
+    // optimization outcomes (e.g. read-to-read forwarding vs. store-to-load forwarding) could
+    // legitimately produce different instruction shapes for the same correct result.
+    private static async Task<string> RunAsync(IrProgram ir)
+    {
         var elfBytes = new Ashes.Backend.Backends.LinuxX64LlvmBackend().Compile(ir);
 
         var tmpDir = Path.Combine(Path.GetTempPath(), "ashes-tests");
