@@ -388,6 +388,13 @@ same public behavior.
   still re-establishes reachability after a terminator, so a branch whose only remaining edge was just
   folded away is recognized as genuinely dead — including the label instruction itself and its body —
   rather than only losing its guarding jump while its now-unreachable body silently survives.
+- [ ] Re-run ownership-copy elision after identity elimination/strength reduction within the same
+  optimization invocation: identity reduction (`x+0`, `0+x`, `x-0` -> `x`) rewrites the identity into a
+  copy instruction rather than retargeting downstream uses directly, and — because a single-pass pipeline
+  runs each stage once — that new copy is never revisited by the copy-elision stage that already ran
+  earlier and would otherwise erase it (an erasable copy is one whose source is a constant producer, or
+  whose target has exactly one remaining use). Ownership-copy elision must be a pure function of its
+  input (recomputing its use-def facts fresh each call) for a second call to be safe and effective.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and

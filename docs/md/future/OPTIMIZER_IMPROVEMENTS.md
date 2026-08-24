@@ -591,6 +591,8 @@ doesn't meaningfully change steady-state execution speed. Full suite status: C# 
 
 ### OPT-003: Re-forward Algebraic-Identity Copies
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** `ReduceIdentitiesAndStrength` (pass 6 of 9) rewrites `x+0`/`x-0`/etc. into a
 `Borrow(target, source)` copy rather than retargeting downstream uses directly, and because the 9-pass
 sequence runs exactly once per function, these new copies are never revisited by
@@ -622,9 +624,26 @@ No optimized IR contains a `Borrow` introduced purely by identity reduction with
 no remaining independent use of its source; full suites green.
 
 **Self-Hosting Impact (required to close this task).** Same pipeline bullet as `OPT-001`/`OPT-002` (`SELF_HOSTING.md:361-369`, `[x]`) —
-add a **new** `[ ]` line (or extend `OPT-001`'s/`OPT-002`'s new line if landing together) scoped to the
-pass-ordering fix, requiring a matching `selfhost/` change before it flips to `[x]`. Do not edit the
-existing `[x]` line's text.
+added a **new** `[ ]` line (kept separate from `OPT-001`'s/`OPT-002`'s new lines) scoped to the
+pass-ordering fix, requiring a matching `selfhost/` change before it flips to `[x]`. The existing `[x]`
+line's text was not edited.
+
+**Measured Outcome.** Implemented exactly as proposed (the minimal fix, not the fixed-point-loop stretch
+goal): a second call to `ElideTrivialOwnershipCopies` immediately after `ReduceIdentitiesAndStrength`.
+Safe because `ElideTrivialOwnershipCopies` is a pure function of its input (it recomputes its use-def
+facts fresh every call), so a second call needs no special interaction handling with the first. Unlike
+`OPT-001`/`OPT-002`, this one needed no follow-up correction — the doc's proposed implementation worked
+as described on the first attempt, and no pre-existing tests broke. **Measured** with a real compiled
+probe (`n + 0` in a standalone function) against a temporary pre-task baseline: 3 optimized instructions
+(`LoadLocal`, `Borrow`, `Return`) collapsed to 2 (`LoadLocal`, `Return`) — the `Borrow` (a real
+load+store pair at codegen, confirmed via `LlvmCodegen.cs`'s `IrInst.Borrow` case) is fully erased, not
+just marked dead. Runtime, using a 200M-iteration hot-loop benchmark with a per-iteration `(acc + n) + 0`
+identity (the base-case-only version of this pattern doesn't recur per iteration and shows no loop
+signal, so the probe deliberately puts the identity inside the loop body): **`-O0` 0.491s -> 0.424s
+(~14% faster)**, mean of 2 runs each, tightly clustered; **`-O2` identical (0.045s both)** — LLVM already
+folds the whole provably-side-effect-free loop away regardless, matching this optimization's expected
+`-O0`/debug-tier value. Full suite status: C# 2330/2330, LSP 70/70, e2e `test --pipeline both`
+639/0/54-skipped, format clean; no pre-existing test needed updating.
 
 ---
 
@@ -1503,7 +1522,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 |---|---|---:|---:|---|---|---|
 | OPT-001 | SCCP-style meet-over-paths constant propagation | High | Low | none | P0 | Done |
 | OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Done |
-| OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Not started |
+| OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Not started |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Not started |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
