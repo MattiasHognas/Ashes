@@ -930,10 +930,11 @@ later — this avoids doing the work twice.
 ### OPT-008: Exploit Existing Exhaustiveness Diagnostics for Dead-Arm Elimination
 
 **Status: Attempted, reverted — not done.** Despite the doc's "Low complexity, quick win" framing, this
-turned out to interact with the reuse machinery in a way not yet safely understood. See **Measured
-Outcome** below for the full investigation, the empirical evidence, and what a future attempt needs to
-do differently. No code from this attempt shipped — `Lowering.Patterns.cs` is unchanged from before this
-task; this entry exists purely to save a future attempt from repeating the same investigation.
+task has two independent, now-confirmed soundness bugs — one fixable, one structural. See **Measured
+Outcome** below for the full investigation, the empirical evidence, and why a future attempt needs
+genuine nested-pattern coverage analysis, not a call-site tweak. No code from this attempt shipped —
+`Lowering.Patterns.cs` is unchanged from before this task; this entry exists purely to save a future
+attempt from repeating the same investigation.
 
 **Problem.** `EmitMatchExhaustivenessDiagnostics`/`IsDefinitelyExhaustive`/`IsBoolExhaustive` already
 compute exhaustiveness for user-facing diagnostics, but nothing consumes these facts to remove
@@ -996,49 +997,70 @@ before merging" stage:
    program's actual behavior. Fixed by mirroring the original code's mutually-exclusive gating exactly
    (the ADT check for an ADT scrutinee, `IsBoolExhaustive` only otherwise, never both) — verified via a
    unit test built from the exact failure shape, and via `--emit-ir`/execution on a real compiled probe.
-2. **A deeper, unresolved problem that caused the revert**: even after fix (1), `ReuseTokenTests.
+2. **A second real bug, root-caused in a follow-up debugging session (initially misdiagnosed as an
+   "unexplained side effect" — see correction below)**: even after fix (1), `ReuseTokenTests.
    Recursive_adt_accumulator_routes_alloc_reusing_through_drop_reuse` (a `Tree = Leaf | Node(...)` fold
-   with in-place reuse) started failing — asserting "reusingAllocations > 0" but observing 0, i.e.,
-   in-place reuse silently stopped firing. The critical, and deeply concerning, detail: this match has
-   exactly 2 arms for a 2-constructor type with **no trailing dead arm at all** — `FindReachableMatchCasePrefixLength`
-   correctly returns `cases.Count` unchanged, and `TrimUnreachableTrailingMatchArms`'s ternary means
-   `matchForLowering` is *the same object reference* as `match` (no `with` clone happens; the `<`
-   comparison is false). `GetMatchReuseScrutinee(matchForLowering, ...)` therefore receives an input
-   byte-for-byt identical to the pre-task `GetMatchReuseScrutinee(match, ...)` call. Reuse broke anyway —
-   meaning **merely calling `Prune`/`ExpandPatternAlternatives`/`GetMissingAdtConstructors` earlier in
-   `LowerMatch` than their historically-only call site (after `LowerMatchArms`, inside
-   `EmitMatchExhaustivenessDiagnostics`) has an observable side effect on later reuse-eligibility
-   decisions, independent of what this task's own decision output is.** The exact mechanism was not
-   identified — candidates include: `Prune`'s interaction with in-flight Hindley-Milner unification
-   (documented elsewhere in this file, `Lowering.Patterns.cs`, as capable of still being an unresolved
-   type variable during match lowering — "inference is interleaved with lowering"); some form of
-   memoization or ordering assumption inside `TryGetConstructorSymbol`/constructor resolution; or
-   `GetMatchReuseScrutinee`'s own downstream `Prune` call behaving differently once the type has already
-   been pruned once earlier in the same `LowerMatch` invocation. 14 C# tests failed in total across
-   unrelated-looking areas (FFI marshaling, trait evidence, backend memory-bound tests, project fixtures
-   for `Maybe`) — all plausibly explained by the same class of hazard, since ADT matches with bare
-   nullary-constructor arms are pervasive throughout the stdlib.
+   with in-place reuse, matched on `tree` — a parameter of the recursive function `loop`) started
+   failing. The original write-up claimed this match's truncation decision was a provable no-op (same
+   `Expr.Match` object reference passed onward) and concluded the mere act of calling the exhaustiveness
+   functions earlier had an unexplained side effect on reuse eligibility. **That claim was itself a
+   measurement error**: the debug instrumentation used to observe it printed output from two different
+   `match` expressions in the test program (`match tree with ...` inside `loop`, and `match result with
+   ...` afterward) without correlating which line belonged to which, and the no-op conclusion was drawn
+   from the wrong one. Re-instrumented with each debug line tagged by scrutinee identity, the actual
+   behavior is: the `tree` match's decision is **not** a no-op — it gets truncated from 2 arms down to 1,
+   silently dropping the `Node` arm. Root cause: `tree` is a parameter of a recursive function, so at the
+   point `LowerMatch` calls `Prune(valueType)` — before `LowerMatchArms` has run its arm-by-arm pattern
+   unification — the type is still an unresolved inference variable, not yet `TNamedType`. This codebase's
+   own comments elsewhere in `Lowering.Patterns.cs` already document this: "the scrutinee's inferred type
+   is often an unresolved type variable here (inference is interleaved with lowering)." Fix (1)'s gating
+   (`if (isAdtScrutinee) {...} else if (IsBoolExhaustive) {...}`) computes `isAdtScrutinee` from this
+   unresolved `Prune` result, so it comes out `false` for `tree` — not because the type isn't an ADT, but
+   because it isn't *known* to be one yet — and control falls through to `IsBoolExhaustive`, which
+   (per fix (1)'s own finding) misreads the bare `Leaf` pattern as a catch-all and truncates a genuinely
+   live `Node` arm. **This is fixable**: gate `IsBoolExhaustive` behind an *explicit*
+   `prunedValueType is TypeRef.TBool` check instead of the implicit `!isAdtScrutinee`, so an
+   unresolved-type scrutinee safely declines to truncate (matching neither branch) rather than being
+   misread as "must be bool." Verified directly: with this gate, the reuse test passes, and the full C#
+   (2341/2342, one failure being an unrelated pre-existing HTTP-streaming network flake — see below) and
+   LSP (70/70) suites are green.
+3. **A third, independent, and fatal bug found only by e2e/`--emit-ir` testing (unit tests never caught
+   it)**: with fixes (1) and (2) both applied, `tests/host_tool_installed_layout.ash` started segfaulting
+   (exit 139). Its `match Ashes.IO.File.exists(manifest) with | Error(message) -> ... | Ok(true) -> ...
+   | Ok(false) -> ...` has its `Ok(false)` arm truncated away after just the first two arms. Cause:
+   `GetMissingAdtConstructors` (`Lowering.Patterns.cs:2398`) tracks coverage purely by **top-level
+   constructor name** (`ctor.Name`) — after seeing one `Error` arm and one `Ok` arm (`Ok(true)`), both
+   `Result`'s constructor tags are "seen," and the function reports nothing missing, even though
+   `Ok(true)` and `Ok(false)` are non-overlapping patterns under the same tag and the match is not
+   actually exhaustive. At runtime, `Ok(false)` falls through every arm to the no-match path and crashes.
+   This is a structural limitation, not an off-by-one: **top-level constructor-tag coverage cannot prove
+   exhaustiveness for any match with nested constructor/literal sub-patterns** (`Option<Bool>`,
+   `Result<_, _>` matched against literal booleans, nested ADTs, etc.) — a pattern shape used constantly
+   in real code, exactly the kind unit tests built around simple flat enums (`Color = Red | Green | Blue`)
+   don't exercise.
 
-**Why reverted rather than patched further.** Finding 2 means the *side effect of computing the fact*,
-not just the fact's correctness, is unsafe at the point in `LowerMatch` this task's proposed
-implementation calls for. This is exactly the class of interaction this project's history shows can cost
-multiple sessions to root-cause safely (RC/reuse-machinery ordering hazards) — see `OPT-007`'s explicit
-callout of the same risk category for a related task, and this document's own repeated "measure, don't
-trust tests alone" lesson from `OPT-001`/`OPT-002`. Given a "Low complexity, quick win" task had already
-produced two rounds of subtle, hard-to-predict correctness bugs, continuing to patch reactively without
-understanding the root cause was judged higher-risk than reverting and documenting the finding for a
-future, better-resourced attempt. All code changes were reverted; `Lowering.Patterns.cs` is unchanged.
+**Why reverted rather than patched further.** Finding 3 is fatal to this task's premise, independent of
+finding 2 being fixable. The existing exhaustiveness helpers (`GetMissingAdtConstructors`/
+`IsBoolExhaustive`) were designed and have only ever been used for **diagnostics** — a false negative
+there just means a slightly less helpful warning message. Reusing them to drive **IR deletion** turns
+that same false negative into silent, wrong-output/crashing code deletion. Making arm truncation sound
+requires genuine decision-tree usefulness/coverage analysis over the *full* pattern, including nested
+constructors and literals — not the constructor-tag-set coverage the existing diagnostic machinery
+computes. That is a substantially larger undertaking than "reuse an existing diagnostic helper," and
+overlaps with `OPT-007`'s scope (recursive decision-tree match compilation), which is the more
+appropriate place to build it. Continuing to patch this task's narrower approach reactively was judged
+lower-value than reverting and documenting the confirmed structural blocker. All code changes were
+reverted; `Lowering.Patterns.cs` is unchanged.
 
-**Recommendation for a future attempt.** Do not call the exhaustiveness-proof functions
-(`Prune`/`GetMissingAdtConstructors`/`IsBoolExhaustive`) earlier than their proven-safe existing call
-site inside `EmitMatchExhaustivenessDiagnostics` (i.e., after `LowerMatchArms` has already run). Instead,
-consider computing the exhaustiveness fact in its existing position (unchanged), and finding a way to
-retroactively strip the now-provably-dead arm's *already-emitted* IR (label-bounded removal, similar to
-how `ElideUnreachableCode`/`OPT-004`'s `IrControlFlowGraph` reason about dead blocks) rather than
-preventing its emission by mutating `Expr.Match.Cases` before lowering. Alternatively, root-cause exactly
-*why* an early `Prune`/`GetMissingAdtConstructors` call perturbs `GetMatchReuseScrutinee`'s later
-decision (instrument `TryGetRuntimeManagedReuseScrutinee`'s exact rejection point on the failing
-Leaf/Node test) before attempting any fix that touches `LowerMatch`'s call ordering again.
+**Recommendation for a future attempt.** Do not attempt dead-arm elimination from top-level
+constructor-tag coverage alone. Build it as part of (or after) `OPT-007`'s decision-tree match
+compilation, where per-arm reachability falls out of genuine full-pattern usefulness analysis rather than
+needing to be bolted on separately. If a future attempt does reuse `GetMissingAdtConstructors`-shaped
+tag coverage as a partial heuristic, it must (a) also gate on the scrutinee's type being *already*
+concretely resolved (`Prune(valueType) is TypeRef.TNamedType` / `TypeRef.TBool` via an explicit check, not
+an "otherwise" fallback — see finding 2) and (b) only trust the "fully covered" verdict when every seen
+pattern under a given constructor tag is itself a bare catch-all (no nested literal/constructor
+sub-pattern that could leave part of that tag's space uncovered) — see finding 3.
 
 ---
 
