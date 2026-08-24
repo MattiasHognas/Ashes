@@ -929,6 +929,12 @@ later — this avoids doing the work twice.
 
 ### OPT-008: Exploit Existing Exhaustiveness Diagnostics for Dead-Arm Elimination
 
+**Status: Attempted, reverted — not done.** Despite the doc's "Low complexity, quick win" framing, this
+turned out to interact with the reuse machinery in a way not yet safely understood. See **Measured
+Outcome** below for the full investigation, the empirical evidence, and what a future attempt needs to
+do differently. No code from this attempt shipped — `Lowering.Patterns.cs` is unchanged from before this
+task; this entry exists purely to save a future attempt from repeating the same investigation.
+
 **Problem.** `EmitMatchExhaustivenessDiagnostics`/`IsDefinitelyExhaustive`/`IsBoolExhaustive` already
 compute exhaustiveness for user-facing diagnostics, but nothing consumes these facts to remove
 unreachable arms from emitted code.
@@ -966,7 +972,73 @@ unaffected; full suites green.
 
 **Self-Hosting Impact (required to close this task).** Ties to match/pattern lowering, listed as in-progress in the self-hosted port
 (`SELF_HOSTING.md:26`) — implement the elimination directly in the self-hosted match lowering once that
-work reaches optimization, rather than as a later retrofit.
+work reaches optimization, rather than as a later retrofit. Not applicable yet: this task is not done
+(see Measured Outcome), so there is nothing to port.
+
+**Measured Outcome — attempted, reverted, not done.** Implemented as proposed: a
+`FindReachableMatchCasePrefixLength` helper computes, by incrementally growing a prefix of
+`match.Cases`, the point at which `IsBoolExhaustive`/`GetMissingAdtConstructors` (the exact functions
+`EmitMatchExhaustivenessDiagnostics` already uses) prove full coverage; a `TrimUnreachableTrailingMatchArms`
+wrapper truncates `Expr.Match.Cases` to that prefix, called in `LowerMatch` *before* `GetMatchReuseScrutinee`/
+`LowerMatchArms`, so a provably-dead trailing arm is never lowered at all.
+
+Two genuine bugs surfaced during implementation, both caught by testing before this reached the "measure
+before merging" stage:
+
+1. **A real bug, found and fixed**: `IsBoolExhaustive` treats any guard-free `Pattern.Wildcard`/`Pattern.Var`
+   as a catch-all — correct at its original call site only because that call is gated by
+   `!hasConstructorPatterns`, so it's never reached for an ADT match. A bare (unparenthesized) nullary
+   constructor pattern (`Red`, not `Red()`) parses as the same `Pattern.Var` node an ordinary variable
+   binding would — the constructor-vs-binding distinction is resolved later, semantically, not by the
+   parser. Calling `IsBoolExhaustive` unconditionally (not gated the way the original diagnostic call
+   is) misidentified a single-arm ADT prefix (`match c with | Red -> 1 | Green -> 2 | Blue -> 3 | _ -> 999`,
+   just `[Red]`) as already-exhaustive, truncating away `Green`/`Blue` and corrupting the compiled
+   program's actual behavior. Fixed by mirroring the original code's mutually-exclusive gating exactly
+   (the ADT check for an ADT scrutinee, `IsBoolExhaustive` only otherwise, never both) — verified via a
+   unit test built from the exact failure shape, and via `--emit-ir`/execution on a real compiled probe.
+2. **A deeper, unresolved problem that caused the revert**: even after fix (1), `ReuseTokenTests.
+   Recursive_adt_accumulator_routes_alloc_reusing_through_drop_reuse` (a `Tree = Leaf | Node(...)` fold
+   with in-place reuse) started failing — asserting "reusingAllocations > 0" but observing 0, i.e.,
+   in-place reuse silently stopped firing. The critical, and deeply concerning, detail: this match has
+   exactly 2 arms for a 2-constructor type with **no trailing dead arm at all** — `FindReachableMatchCasePrefixLength`
+   correctly returns `cases.Count` unchanged, and `TrimUnreachableTrailingMatchArms`'s ternary means
+   `matchForLowering` is *the same object reference* as `match` (no `with` clone happens; the `<`
+   comparison is false). `GetMatchReuseScrutinee(matchForLowering, ...)` therefore receives an input
+   byte-for-byt identical to the pre-task `GetMatchReuseScrutinee(match, ...)` call. Reuse broke anyway —
+   meaning **merely calling `Prune`/`ExpandPatternAlternatives`/`GetMissingAdtConstructors` earlier in
+   `LowerMatch` than their historically-only call site (after `LowerMatchArms`, inside
+   `EmitMatchExhaustivenessDiagnostics`) has an observable side effect on later reuse-eligibility
+   decisions, independent of what this task's own decision output is.** The exact mechanism was not
+   identified — candidates include: `Prune`'s interaction with in-flight Hindley-Milner unification
+   (documented elsewhere in this file, `Lowering.Patterns.cs`, as capable of still being an unresolved
+   type variable during match lowering — "inference is interleaved with lowering"); some form of
+   memoization or ordering assumption inside `TryGetConstructorSymbol`/constructor resolution; or
+   `GetMatchReuseScrutinee`'s own downstream `Prune` call behaving differently once the type has already
+   been pruned once earlier in the same `LowerMatch` invocation. 14 C# tests failed in total across
+   unrelated-looking areas (FFI marshaling, trait evidence, backend memory-bound tests, project fixtures
+   for `Maybe`) — all plausibly explained by the same class of hazard, since ADT matches with bare
+   nullary-constructor arms are pervasive throughout the stdlib.
+
+**Why reverted rather than patched further.** Finding 2 means the *side effect of computing the fact*,
+not just the fact's correctness, is unsafe at the point in `LowerMatch` this task's proposed
+implementation calls for. This is exactly the class of interaction this project's history shows can cost
+multiple sessions to root-cause safely (RC/reuse-machinery ordering hazards) — see `OPT-007`'s explicit
+callout of the same risk category for a related task, and this document's own repeated "measure, don't
+trust tests alone" lesson from `OPT-001`/`OPT-002`. Given a "Low complexity, quick win" task had already
+produced two rounds of subtle, hard-to-predict correctness bugs, continuing to patch reactively without
+understanding the root cause was judged higher-risk than reverting and documenting the finding for a
+future, better-resourced attempt. All code changes were reverted; `Lowering.Patterns.cs` is unchanged.
+
+**Recommendation for a future attempt.** Do not call the exhaustiveness-proof functions
+(`Prune`/`GetMissingAdtConstructors`/`IsBoolExhaustive`) earlier than their proven-safe existing call
+site inside `EmitMatchExhaustivenessDiagnostics` (i.e., after `LowerMatchArms` has already run). Instead,
+consider computing the exhaustiveness fact in its existing position (unchanged), and finding a way to
+retroactively strip the now-provably-dead arm's *already-emitted* IR (label-bounded removal, similar to
+how `ElideUnreachableCode`/`OPT-004`'s `IrControlFlowGraph` reason about dead blocks) rather than
+preventing its emission by mutating `Expr.Match.Cases` before lowering. Alternatively, root-cause exactly
+*why* an early `Prune`/`GetMissingAdtConstructors` call perturbs `GetMatchReuseScrutinee`'s later
+decision (instrument `TryGetRuntimeManagedReuseScrutinee`'s exact rejection point on the failing
+Leaf/Node test) before attempting any fix that touches `LowerMatch`'s call ordering again.
 
 ---
 
@@ -1599,7 +1671,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
 | OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 | Not started |
-| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 | Not started |
+| OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | none | P1 | Attempted, reverted — see Measured Outcome |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Not started |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Not started |
