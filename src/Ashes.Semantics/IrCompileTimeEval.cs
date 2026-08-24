@@ -99,11 +99,14 @@ public static class IrCompileTimeEval
     // (CallClosure) are checked dynamically at evaluation time against this same set.
     private static HashSet<string> ComputeEvaluableFunctions(Dictionary<string, IrFunction> functions)
     {
+        // Least fixpoint (via WholeProgramFixpoint, OPT-010) — same shape as
+        // IrOptimizer.ComputeNonAllocatingFunctions: start from "every function might be
+        // evaluable", knock out any whose body contains a non-modeled-pure instruction or a
+        // known call to a knocked-out callee, and iterate until stable.
         var candidates = new HashSet<string>(functions.Keys, StringComparer.Ordinal);
-        bool changed = true;
-        while (changed)
+        WholeProgramFixpoint.RunToFixpoint(() =>
         {
-            changed = false;
+            bool changed = false;
             foreach (var (label, fn) in functions)
             {
                 if (!candidates.Contains(label))
@@ -121,7 +124,9 @@ public static class IrCompileTimeEval
                     }
                 }
             }
-        }
+
+            return changed;
+        });
 
         return candidates;
     }

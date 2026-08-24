@@ -348,15 +348,14 @@ public static class IrOptimizer
 
     private static HashSet<string> ComputeNonAllocatingFunctions(IrFunction entry, IReadOnlyList<IrFunction> functions)
     {
-        // Least fixpoint: start from "every function might be non-allocating", knock out any
-        // whose body contains a non-whitelisted instruction or a known call to a knocked-out
-        // callee, and iterate until stable. The entry function is never a callee, so it is not
-        // in the candidate set.
+        // Least fixpoint (via WholeProgramFixpoint, OPT-010): start from "every function might be
+        // non-allocating", knock out any whose body contains a non-whitelisted instruction or a
+        // known call to a knocked-out callee, and iterate until stable. The entry function is
+        // never a callee, so it is not in the candidate set.
         var candidates = new HashSet<string>(functions.Select(f => f.Label), StringComparer.Ordinal);
-        bool changed = true;
-        while (changed)
+        WholeProgramFixpoint.RunToFixpoint(() =>
         {
-            changed = false;
+            bool changed = false;
             foreach (var f in functions)
             {
                 if (!candidates.Contains(f.Label))
@@ -374,7 +373,9 @@ public static class IrOptimizer
                     }
                 }
             }
-        }
+
+            return changed;
+        });
 
         return candidates;
     }
