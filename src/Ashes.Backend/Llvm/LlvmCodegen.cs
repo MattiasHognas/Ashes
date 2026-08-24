@@ -1721,29 +1721,47 @@ internal static partial class LlvmCodegen
                 terminated = false;
             }
 
+            if (instruction is IrInst.CallKnown callKnown
+                && TryEmitMustTailCallAndReturn(state, callKnown, index, function.Instructions, debugContext, function.Label))
+            {
+                // musttail requires the call to syntactically precede its ret with nothing in
+                // between (LLVM's verifier rejects even a store+load of the same value) — the
+                // ordinary StoreTemp/LoadTemp round-trip every other temp goes through would
+                // violate that, so this pair is emitted together and the now-redundant Return
+                // instruction (already fused into the ret above) is skipped.
+                terminated = true;
+                index++;
+                continue;
+            }
+
             EmitInstructionDebugLocation(debugContext, target.Builder, instruction, function.Label);
             terminated = EmitInstruction(state, instruction, index, function.Instructions);
         }
 
         if (!terminated)
         {
-            if (state.IsEntry)
+            EmitImplicitFunctionEnd(state, i64);
+        }
+    }
+
+    private static void EmitImplicitFunctionEnd(LlvmCodegenState state, LlvmTypeHandle i64)
+    {
+        LlvmTargetContext target = state.Target;
+        if (state.IsEntry)
+        {
+            EmitFlushStdout(state);
+            if (IsLinuxFlavor(state.Flavor))
             {
-                if (IsLinuxFlavor(state.Flavor))
-                {
-                    EmitFlushStdout(state);
-                    EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));
-                }
-                else
-                {
-                    EmitFlushStdout(state);
-                    LlvmApi.BuildRetVoid(target.Builder);
-                }
+                EmitExit(state, LlvmApi.ConstInt(i64, 0, 0));
             }
             else
             {
-                LlvmApi.BuildRet(target.Builder, LlvmApi.ConstInt(i64, 0, 0));
+                LlvmApi.BuildRetVoid(target.Builder);
             }
+        }
+        else
+        {
+            LlvmApi.BuildRet(target.Builder, LlvmApi.ConstInt(i64, 0, 0));
         }
     }
 
@@ -2294,7 +2312,7 @@ internal static partial class LlvmCodegen
                 LoadRuntimeManagedArgumentFlag(state, callClosure.RuntimeManagedArgumentFlagTemp))),
             IrInst.CallKnown callKnown => StoreTemp(state, callKnown.Target, EmitCallKnown(state, callKnown.FuncLabel, LoadTemp(state, callKnown.EnvTemp), LoadTemp(state, callKnown.ArgTemp),
                 LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
-                isTailCall: CanEmitNativeTailCall(callKnown, index, instructions))),
+                tailCallKind: DetermineTailCallKind(callKnown, index, instructions))),
             IrInst.LoadArgumentOwnership loadOwnership => StoreTemp(
                 state,
                 loadOwnership.Target,
@@ -2327,6 +2345,79 @@ internal static partial class LlvmCodegen
             && index + 1 < instructions.Count
             && instructions[index + 1] is IrInst.Return ret
             && ret.Source == call.Target;
+
+    // musttail is a hard guarantee (unlike the advisory `tail`), so it additionally requires
+    // proving nothing reachable from the callee can read stack memory this function allocated —
+    // not just this call's own (already excluded above) stack-allocated closure environment, but
+    // also a capability/effect handler frame this function may have installed earlier in its own
+    // body (AllocStack, Lowering.Capabilities.cs: LowerHandleInstallFrames). That frame's pointer
+    // is stored into a dynamically-scoped global for the entire `handle` body's extent, which can
+    // span a later tail call in the same function — a true tail call is free to reuse the
+    // caller's frame immediately, which would leave that global pointing at overwritten memory.
+    // AllocStack is the only instruction that allocates native stack memory reachable outside
+    // this function (local slots are read/written only by value via LoadLocal/StoreLocal, never
+    // by address, so a pointer to one can never escape), so a whole-function scan for it is a
+    // simple, conservative, and complete safety gate — not just the doc's own narrower
+    // per-call EnvironmentIsStackAllocated check.
+    private static bool FunctionAllocatesNativeStackMemory(IReadOnlyList<IrInst> instructions)
+    {
+        foreach (var inst in instructions)
+        {
+            if (inst is IrInst.AllocStack)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static LlvmTailCallKind DetermineTailCallKind(
+        IrInst.CallKnown call,
+        int index,
+        IReadOnlyList<IrInst> instructions)
+    {
+        if (!CanEmitNativeTailCall(call, index, instructions))
+        {
+            return LlvmTailCallKind.NoTail;
+        }
+
+        return FunctionAllocatesNativeStackMemory(instructions)
+            ? LlvmTailCallKind.Tail
+            : LlvmTailCallKind.MustTail;
+    }
+
+    // A musttail call must syntactically precede its ret directly — LLVM's verifier rejects even
+    // a same-value store+load in between, which is exactly what the ordinary StoreTemp/LoadTemp
+    // round-trip every other temp goes through would insert. When this call is musttail-eligible,
+    // emit the call and its ret together here (using the call's own SSA result directly, never
+    // routed through the target temp's slot at all — nothing can read it afterward anyway, since
+    // Return unconditionally ends the block) and report the pair as handled, so the caller can
+    // skip the now-redundant Return instruction that follows.
+    private static bool TryEmitMustTailCallAndReturn(
+        LlvmCodegenState state,
+        IrInst.CallKnown callKnown,
+        int index,
+        IReadOnlyList<IrInst> instructions,
+        DebugInfoContext? debugContext,
+        string functionLabel)
+    {
+        if (DetermineTailCallKind(callKnown, index, instructions) != LlvmTailCallKind.MustTail)
+        {
+            return false;
+        }
+
+        EmitInstructionDebugLocation(debugContext, state.Target.Builder, callKnown, functionLabel);
+        LlvmValueHandle callResult = EmitCallKnown(
+            state,
+            callKnown.FuncLabel,
+            LoadTemp(state, callKnown.EnvTemp),
+            LoadTemp(state, callKnown.ArgTemp),
+            LoadRuntimeManagedArgumentFlag(state, callKnown.RuntimeManagedArgumentFlagTemp),
+            LlvmTailCallKind.MustTail);
+        LlvmApi.BuildRet(state.Target.Builder, callResult);
+        return true;
+    }
 
     private static bool? EmitInstructionGroup7(LlvmCodegenState state, IrInst instruction, int index)
     {
