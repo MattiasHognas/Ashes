@@ -97,7 +97,13 @@ public static class IrCompileTimeEval
     // MakeClosure / CallKnown / LoadFuncAddr) is itself evaluable. Start optimistic and knock
     // out any function that fails, iterating to stability. Closures called through a value
     // (CallClosure) are checked dynamically at evaluation time against this same set.
-    private static HashSet<string> ComputeEvaluableFunctions(Dictionary<string, IrFunction> functions)
+    /// <summary>
+    /// The set of function labels provably pure and fully modeled by this interpreter — reused by
+    /// <see cref="IrOptimizer"/>'s local common-subexpression elimination as the eligibility oracle for
+    /// merging duplicate <see cref="IrInst.CallKnown"/> calls, since a function only ends up in this set
+    /// when it (transitively) performs no observable side effect.
+    /// </summary>
+    internal static HashSet<string> ComputeEvaluableFunctions(Dictionary<string, IrFunction> functions)
     {
         // Least fixpoint (via WholeProgramFixpoint, OPT-010) — same shape as
         // IrOptimizer.ComputeNonAllocatingFunctions: start from "every function might be
