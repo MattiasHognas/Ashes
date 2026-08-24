@@ -964,7 +964,7 @@ public static class StateMachineTransform
     /// continuation helpers chained via the default arm) and in GetDefinedTemps to ensure
     /// correct liveness analysis across await points.
     /// </summary>
-    private static IEnumerable<int> GetUsedTemps(IrInst inst)
+    internal static IEnumerable<int> GetUsedTemps(IrInst inst)
     {
         return inst switch
         {

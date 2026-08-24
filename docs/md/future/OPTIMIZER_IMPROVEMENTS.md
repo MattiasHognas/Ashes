@@ -1600,6 +1600,8 @@ separately if picked up later.
 
 ### OPT-013: Closure Environment Scalarization for Small, Fully-Known Captures
 
+**Status: Done, narrowed to a single scalar capture (N=1).** See **Measured Outcome** below.
+
 **Problem.** Every closure uses a fixed packed-pointer environment layout (`Ir.cs:646-670`) even after
 `DevirtualizeKnownClosureCalls` has proven a call site's closure has a single, statically-known origin —
 the environment is still passed as a packed struct pointer rather than individual scalar arguments.
@@ -1660,6 +1662,65 @@ closure-devirtualization tests (`IrOptimizerTests.cs:411` and similar).
 (`[x]`, "known closure devirtualization (CallClosure -> CallKnown)"). This task extends that already-
 ported capability — add a **new** `[ ]` line next to it describing environment scalarization, and port
 that extension to `selfhost/` once it lands in C#, flipping the new line (not the existing one) to `[x]`.
+
+**Measured Outcome — done, narrowed scope.** Implemented as a new whole-program pass,
+`ScalarizeSingleCaptureStackClosures` (`IrOptimizer.cs`), sequenced after the per-function pipeline
+(so devirtualization has already turned an eligible `CallClosure` into `CallKnown`, and dead-code
+elimination has already swept the now-unused `MakeClosureStack`) and before the arena-bracket
+stripping pass (so a scalarized call's now-gone `AllocStack` lets that pass also strip the bracket
+around it — a real, measured synergy, not a hypothetical one; see below). Scope was narrowed to
+exactly one scalar capture (`AllocStack`/`MakeClosureStack` `SizeBytes: 8`) rather than the doc's
+proposed general N-capture form: every Ashes-callable function shares one fixed 3-word LLVM call
+signature so that `CallClosure`'s indirect dispatch stays uniform across every closure regardless of
+its capture count; a genuinely N-ary direct-call-only variant needs a new calling convention and a
+new IR call-instruction shape (the same class of change OPT-012 deferred as its own part (a)) — out
+of scope here. For N=1, the existing `CallKnown` ABI already has a free slot: the "env" argument can
+simply carry the scalar value directly instead of a pointer to it, with zero ABI change. Eligibility
+generates a new callee variant per target label (memoized across call sites) rather than rewriting
+the original in place — the same label can still be used elsewhere in a way that needs the
+pointer-based form, and safety here never depends on proving there is no such other use; the original
+callee is always left completely untouched.
+
+**A real, significant gap was found only by testing against actual compiled `.ash` output, not this
+task's own unit tests (which all passed regardless, since they were built around the wrong shape)**:
+the design was originally built around a hand-constructed `LoadLocal(_, 0)` + `LoadMemOffset(_, _,
+0)` dereference pair, since that is the shape a raw-IR test naturally produces. `--emit-ir final` on
+a real closure showed this pattern **never occurs** in actual lowered (non-coroutine) code — real
+closures read a capture via the dedicated `LoadEnv(Target, Index)` instruction, which dereferences
+local slot 0 *implicitly* inside its own codegen, never through an explicit `LoadLocal`/`LoadMemOffset`
+pair. Rewritten to match `LoadEnv` instead (simpler than the original design: no separate
+env-pointer-temp use-count bookkeeping needed, and — since each `LoadEnv` site becomes an independent
+`LoadLocal(_, 0)` reading the same scalar-in-a-slot value — a capture referenced more than once in the
+body, e.g. `n + n`, is handled for free rather than declined). A coroutine's state-machine transform
+rewrites `LoadEnv` into a `LoadMemOffset` against its own frame/state-struct temp instead
+(`StateMachineTransform.AdjustLoadEnvForStateStruct`), a materially different and riskier shape;
+scope is explicitly restricted to `callee.Coroutine is null`. A callee that reads the env slot as a
+raw value anywhere outside of `LoadEnv` (e.g. passes it on as a genuine pointer) is conservatively
+declined.
+
+Validated against real compiled output: `given outer = given n -> (given x -> x + n)(10)` (an
+immediately-invoked lambda capturing its enclosing parameter — the shape `DevirtualizeKnownClosureCalls`
+already requires, since the closure must be constructed and called within the same function) goes
+from `AllocStack` + `StoreMemOffset` + a `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`
+bracket + `CallKnown(..., EnvironmentIsStackAllocated: true)` in `--emit-ir final` to a bare
+`CallKnown(FuncLabel=lambda_1__scalarenv0, EnvTemp=<n's own temp>, ..., EnvironmentIsStackAllocated:
+false)` with no allocation and no arena bracket at all — the bracket disappears as a free consequence
+of the pre-existing `StripRedundantArenaBrackets` pass now seeing a non-allocating call, not something
+this task's own code touches. Execution: `outer(5)` still prints `15`. A 20,000,000-iteration
+tail-recursive hot loop building and immediately calling a single-capture closure each iteration
+(`let step = (given x -> x + acc)(1) in loop(n - 1)(step)`), measured against a temporary pre-task
+baseline (hyperfine, 10+ runs): **104.1 ms -> 69.1 ms at `-O0` (~1.51x faster)**, and, unlike every
+prior task in this arc, **9.8 ms -> 3.7 ms at `-O2` (~2.65x faster)** — LLVM's own SROA/mem2reg
+already eliminates the trivial stack allocation itself at `-O1`+, matching this document's own
+"post-hoc, stack-tier-only" framing, but does **not** eliminate the arena-bracket bookkeeping
+(`SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`) around it, since that is genuine runtime
+work behind an arena-cursor pointer LLVM cannot prove dead — removing that bracket, a side effect of
+this task's own change rather than something LLVM's optimizer can reach on its own, is what makes the
+`-O2` win real rather than subsumed. All four binaries (baseline/fixed × `-O0`/`-O2`) produce
+identical, correct output. Full suites green: C# 2366/2366, LSP 70/70, e2e `test tests --pipeline
+both` 643/0/54-skipped, `dotnet format --verify-no-changes` clean. 6 new unit tests (positive
+execution test, two-capture and env-pointer-escape and raw-env-read negative tests, a repeated-capture
+positive execution test).
 
 ---
 
@@ -1964,7 +2025,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
-| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Not started |
+| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick

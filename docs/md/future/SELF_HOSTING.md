@@ -433,6 +433,28 @@ same public behavior.
   record's field set from a value that itself traces back to the enclosing function's own argument)
   is completely ordinary real code and was not exercised by any of this pass's own unit tests, only by
   compiling actual source and running the result.
+- [ ] Add closure environment scalarization for a single scalar capture: when a stack-allocated
+  closure's environment holds exactly one 8-byte value and its only use is already a devirtualized
+  `CallKnown`, skip the environment allocation entirely and pass the captured value directly as the
+  call's existing "env" argument, generating a scalar-reading callee variant (memoized per target
+  label, original left untouched) rather than rewriting the callee in place. **Sharp edge, found only
+  by compiling and running real `.ash` source, not by this pass's own hand-built raw-IR unit tests**:
+  a real (non-coroutine) lowered closure reads a capture via the dedicated `LoadEnv(Target, Index)`
+  instruction, which dereferences local slot 0 implicitly inside its own codegen — never via an
+  explicit `LoadLocal(_, 0)` + `LoadMemOffset` pair, the shape a hand-built raw-IR test naturally
+  produces and this pass was originally built around, and which essentially never occurs in real
+  lowered output. Scope stays to exactly one capture: every Ashes-callable function shares one fixed
+  3-word LLVM call signature so `CallClosure`'s indirect dispatch stays uniform regardless of capture
+  count; an N-ary direct-call-only variant would need a new calling convention and a new IR
+  call-instruction shape, out of scope here. Also excludes a coroutine callee (its state-machine
+  transform rewrites `LoadEnv` into a `LoadMemOffset` against its own frame/state-struct temp instead
+  — materially different and riskier) and a callee that reads the env slot as a raw value anywhere
+  outside of `LoadEnv`. Removing the environment allocation lets the existing arena-bracket-stripping
+  pass also strip the now-redundant bracket around the call as a free consequence, not something this
+  pass touches directly — measured **1.51x faster at `-O0` and 2.65x faster at `-O2`** on a
+  20,000,000-iteration hot loop building and calling a single-capture closure per iteration; unlike
+  most passes in this pipeline, the `-O2` win is real (not subsumed by LLVM) because it comes from
+  removing genuine arena-cursor runtime bookkeeping, not the allocation itself.
 - [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
   empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
   chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed
