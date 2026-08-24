@@ -1913,12 +1913,17 @@ public static class IrOptimizer
 
     private static List<IrInst> ElideUnreachableCode(List<IrInst> instructions)
     {
-        // Recomputed fresh over this pass's own input (not shared with FoldConstants'
-        // pre-fold count): OPT-002's branch folding can remove the only edge that used
-        // to target a label (e.g. a JumpIfFalse dropped because its condition is
-        // statically true), so a label's real predecessor count can differ from what it
-        // was before folding.
-        var branchRefs = CountBranchRefsToLabels(instructions);
+        // Built fresh over this pass's own input (not shared with FoldConstants' pre-fold
+        // count): OPT-002's branch folding can remove the only edge that used to target a
+        // label (e.g. a JumpIfFalse dropped because its condition is statically true), so a
+        // label's real predecessor count can differ from what it was before folding. Uses the
+        // shared IrControlFlowGraph (OPT-004) rather than an ad hoc explicit-branch-only count:
+        // gated by `unreachable`, which only becomes true right after a Jump/Return/SwitchTag —
+        // the same three instruction kinds IrControlFlowGraph never adds a fall-through edge
+        // after — a block's CFG predecessor count in that state is exactly its explicit-branch
+        // count, so this is equivalent to (not just an approximation of) the earlier check.
+        var cfgBlocks = IrControlFlowGraph.Build(instructions);
+        var labelBlocks = IrControlFlowGraph.IndexLabels(instructions, cfgBlocks);
         var result = new List<IrInst>(instructions.Count);
         bool unreachable = false;
         bool changed = false;
@@ -1934,7 +1939,7 @@ public static class IrOptimizer
                 // its body stay dead and are dropped together — this is what makes a
                 // statically-true JumpIfFalse's now-orphaned false-arm actually vanish,
                 // not just become unreachable code the compiler still emits.
-                if (unreachable && branchRefs.GetValueOrDefault(lbl.Name) == 0)
+                if (unreachable && cfgBlocks[labelBlocks[lbl.Name]].Predecessors.Count == 0)
                 {
                     changed = true;
                     continue;

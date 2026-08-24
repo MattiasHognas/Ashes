@@ -649,6 +649,8 @@ folds the whole provably-side-effect-free loop away regardless, matching this op
 
 ### OPT-004: Generalize CFG Infrastructure
 
+**Status: Done.** See **Measured Outcome** below.
+
 **Problem.** No reusable `Block`/CFG abstraction exists; the only real one is a private nested class
 inside `PerceusLifetimePlacement.cs`. Every `IrOptimizer.cs` pass approximates control flow with weaker
 per-pass heuristics instead.
@@ -702,6 +704,33 @@ reached** ownership/RC/reuse porting (`SELF_HOSTING.md:377-393`, all `[ ]`). The
 should be pointed at this task's design when that work begins, so the self-hosted compiler builds one
 reusable CFG/dominator/liveness module from the start instead of re-deriving `PerceusLifetimePlacement`'s
 private `Block` builder a second time in a different language.
+
+**Measured Outcome.** Implemented as proposed: a new `IrControlFlowGraph.cs` exposes `IrCfgBlock`
+(Start/End/Successors/Predecessors), `Build`, `IndexLabels`, `ComputeDominators`, and — the one addition
+beyond what `PerceusLifetimePlacement` already had — `ComputePostDominators` (reverse-CFG technique with
+a virtual exit node connected from every no-successor block), all generic over an `IHasCfgEdges`
+interface so both the shared `IrCfgBlock` and `PerceusLifetimePlacement`'s own liveness-augmented block
+type can share the exact same algorithms. `PerceusLifetimePlacement.Block` now wraps an `IrCfgBlock`
+(sharing its `Successors`/`Predecessors` list references directly, so its own block graph is
+byte-for-byte the shared builder's output) while keeping its liveness-specific mutable fields
+(`OwnerLoads`/`OwnerUses`/`HasUse`/`LiveIn`/`LiveOut`) local to itself, per the proposed design.
+`ElideUnreachableCode` (`IrOptimizer.cs`) was ported to consult the shared CFG's predecessor count
+instead of the ad hoc fresh-`CountBranchRefsToLabels` recompute `OPT-002` had added — provably
+equivalent for that specific use (gated by `unreachable`, which only becomes true right after a
+Jump/Return/SwitchTag, the same three kinds `IrControlFlowGraph` never adds a fall-through edge after,
+so a block's CFG predecessor count in that state exactly equals its explicit-branch count). 7 new unit
+tests directly on `IrControlFlowGraph` (straight-line, if/else diamond successors/predecessors,
+dominators, post-dominators, a loop back-edge, a switch, `FindBlock`, `IndexLabels`) — including a
+correction mid-writing: `HashSet<int>.ShouldBe(HashSet<int>)` in Shouldly is sequence-order-sensitive,
+not set-equality, so one test failed on non-deterministic enumeration order until rewritten with an
+explicit sorted-comparison helper (a second test had been passing only by coincidental ordering).
+**Measured**, since this task's own completion bar is zero behavior change rather than a performance
+win: `PerceusLifetimePlacement`'s full existing RC/reuse test suite and the full e2e `--pipeline both`
+corpus (639 tests) are unaffected, and — beyond trusting the test suite — `--emit-ir final` output and
+the compiled binary for a representative recursive/branching program (the `OPT-003` benchmark) are
+**byte-for-byte identical** before and after (`diff`/`cmp` both exit 0), confirmed against a temporary
+pre-task baseline. Full suite status: C# 2338/2338 (2330 + 8 new), LSP 70/70, e2e 639/0/54-skipped,
+format clean.
 
 ---
 
@@ -1523,7 +1552,7 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-001 | SCCP-style meet-over-paths constant propagation | High | Low | none | P0 | Done |
 | OPT-002 | Constant-condition branch folding | High | Low | OPT-001 | P0 | Done |
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
-| OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Not started |
+| OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Not started |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Not started |
 | OPT-007 | Recursive decision-tree match compilation | High | High | none (high regression risk vs. reuse) | P1 | Not started |
