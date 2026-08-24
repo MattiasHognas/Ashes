@@ -364,10 +364,15 @@ optimizer's transformations themselves.
 
 ## 5. Genuine Gaps
 
-Fourteen tasks, `OPT-001` through `OPT-014`. Every task below satisfies the "not implemented, not
+Seventeen tasks, `OPT-001` through `OPT-017`. Every task below satisfies the "not implemented, not
 implemented under another name, not implicit in an earlier phase, not intentionally LLVM-delegated, not
 a side effect of an existing optimization, no existing test demonstrates it" checklist from the research
 brief — see the cited evidence in Section 2 for how each was ruled in.
+
+`OPT-015` through `OPT-017` were added in a follow-up trace of the code (not the original research
+brief) focused specifically on closures and the two known-open residues in the memory model
+(`PerceusLifetimePlacement.cs:75`'s single-anchor restriction, `ConcatStr`'s always-allocates path). Same
+evidentiary bar as the original fourteen; same hard gate below applies.
 
 > **Hard gate — read before closing any `OPT-XXX` task.** Each task below ends with two subsections:
 > **Completion Criteria** and **Self-Hosting Impact**. Both must be satisfied before the task is
@@ -1927,6 +1932,475 @@ evidence, not just a formality.
 
 ---
 
+### OPT-015: Tail Contification of Local Helpers
+
+**Problem.** Every locally-defined `let`-bound lambda that is only ever called becomes a heap- or
+stack-allocated closure object (`MakeClosure`/`MakeClosureStack`), with a per-call arena bracket and
+boundary copy-out, even when every call to it is a direct, tail-position call from within the same
+enclosing function. `TcoContext` already lowers exactly this shape — parameter slots, a body label, a
+call protocol that evaluates arguments into temps, assigns them into slots, and jumps — but only for the
+single name the function itself is defining; a sibling `let`-bound helper called only in tail position
+gets no equivalent treatment and pays the full closure-call cost on every invocation.
+
+**Why Ashes needs it.** This is the single highest-leverage gap identified against the closure/helper
+path: a `let tag = given code -> … in if … then tag(0) else tag(2)`-shaped dispatch helper — an
+idiomatic pattern once `match`-lowered branches converge on shared follow-up logic — allocates a closure,
+pays a per-call arena bracket, and pays a full `TryEmitScopeCopyOut`/`ArenaCallBoundary` deep copy of the
+result on every call, none of which is necessary: the helper's body could instead be lowered once, in the
+caller's own frame, as a jump target.
+
+**Current state.** `DirectCalleeAnalysis` (`Lowering.DirectCalleeAnalysis.cs`) already proves "every use
+of this let-bound name is in callee position" (with binder-shadowing awareness, `handle`-poisoning, and
+recursive-binding conservatism), but nothing downstream consumes that fact to avoid materializing a
+closure — it is used today only for the narrower stack-vs-heap allocation-tier decision at 3 call sites
+(`Lowering.cs:3676,4053,4312`). No pass turns a direct-callee-only local helper into a join point;
+`grep -ri "contif\|join.?point"` across `src/Ashes.Semantics` returns no hits outside this document.
+
+**Evidence.** `Lowering.DirectCalleeAnalysis.cs` (existing "direct callee only" proof, not currently
+tied to closure elision); `Lowering.cs:7593-7594,8720` and `Lowering.TopLevel.cs:895` (`TcoContext`'s
+existing single-name join-point machinery, Category 2.7); `Lowering.cs:6766` and `IrOptimizer.cs:2615`
+(closures are always materialized as `MakeClosure`/`MakeClosureStack` objects with captures as raw
+syntactic free variables — no code path skips this for a direct-callee-only helper).
+
+**Example.**
+```ash
+given classify = given n: Int ->
+    let tag = given code -> …
+    in if n < 0 then tag(0)
+       else if n == 0 then tag(1)
+       else tag(2)
+```
+Today: `tag` is lifted to its own function (`lambda_7`), a `MakeClosureStack` allocates its environment,
+and each of the three call sites is a per-call arena bracket around a `CallKnown` (post-devirtualization)
+plus a boundary copy-out of the result. Desired: `tag`'s body is lowered once as a label in `classify`'s
+own frame (`join_0:`); each call site becomes a parallel-assignment store into `tag`'s parameter slot(s)
+followed by `Jump join_0` — no closure, no environment, no arena bracket, no copy-out. Because the body
+now lives in the caller's frame, its free variables (if any) need no capture at all — they are still live
+locals at the jump site.
+
+**Proposed implementation.** In lowering (not `IrOptimizer` — by the time a helper's body reaches the
+optimizer it has already been lifted into a separate function with its own temps/slots, which is exactly
+the wrong point to undo), extend `DirectCalleeAnalysis`'s existing walk with one more bit: *and every one
+of those calls is in tail position*, reusing the tail-position predicate `HasTailSelfCalls` already
+computes for self-tail-call detection. When a `let`-bound lambda satisfies both direct-callee-only and
+all-tail-position, lower its body inline in the caller's frame as a fresh label (a `TcoContext`-shaped
+join point keyed to that binding, not to the enclosing function), and lower each call site as
+argument-evaluation-into-temps, parallel slot assignment, `Jump` to the join label — the same call
+protocol `TcoContext` already implements for self-tail-calls, generalized to a second, sibling join point
+per contified helper. A contified helper that tail-calls itself falls out for free: its join label becomes
+a loop header, exactly as for the enclosing function's own self-tail-calls, giving local helpers the same
+guaranteed TCO today's design gives only the function that directly defines them.
+
+**Declines** (each cheap to detect from analysis already in place): coroutine bodies — the state-machine
+transform rewrites `LoadEnv` and live-variable save/restore across suspension points, which a
+caller-frame-inlined body would not participate in correctly; anything under a `handle` — already
+poisoned by `DirectCalleeAnalysis`'s existing conservatism; recursive-binding groups — already `null` in
+the analysis; curried lambdas — blocked on the same shared-`FunctionType(i64,[i64,i64,i64])` calling
+convention `OPT-013`'s scope note already identifies (see `OPT-016(c)`'s worker/wrapper ABI, which would
+unblock this too).
+
+**Dependencies.** None strictly. Benefits from landing after `OPT-016(a)` (capture pruning) so helpers
+that remain closures (declined cases) are already the cheaper, pruned kind before this task's measurement
+baseline is taken — see Section 6's build-order note.
+
+**Interaction with existing optimizer.** Strictly reduces what later passes have to clean up: no
+`MakeClosure`/`MakeClosureStack`, no arena bracket, no `ArenaCallBoundary` copy-out is ever emitted for a
+contified call site, so `ElideDeadCode`/`ComputeNonAllocatingFunctions`/`StripRedundantArenaBrackets` see
+less work, not more. Contrast with `InlineCall` (`Lowering.Reuse.cs:581`), which duplicates a helper's
+body at every call site — contification lowers the body exactly once and reuses it via jumps, so it does
+not trade code size for allocation count the way inlining does.
+
+**Testing.** A raw-IR test on the worked example asserting no `MakeClosure`/`MakeClosureStack` and no
+`ArenaCallBoundary` copy-out is emitted for `tag`'s call sites; a negative test for each decline case
+(coroutine body, under `handle`, recursive-binding group, curried helper) confirming the existing
+closure-based lowering is unchanged; a self-tail-calling contified helper test confirming its join label
+becomes a loop (same shape assertion `HasTailSelfCalls`'s existing tests use); full C#/e2e/LSP suites.
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.)
+The worked example's `tag` helper lowers to a single join label with no closure allocation and no
+per-call arena bracket/copy-out; all decline cases fall back to today's closure-based lowering unchanged;
+no regression elsewhere.
+
+**Self-Hosting Impact (required to close this task).** `SELF_HOSTING.md:361-376` marks the deterministic
+IR-optimization pipeline (which includes closure devirtualization) as ported (`[x]`); contification is a
+*lowering*-stage change, not an `IrOptimizer` pass, so it does not extend that existing `[x]` bullet.
+Add a **new** `[ ]` line describing tail contification of direct-callee-only, all-tail-position local
+helpers, scoped to lowering rather than the optimizer pipeline section. It flips to `[x]` only once the
+self-hosted `selfhost/` lowering implements the equivalent transform.
+
+---
+
+### OPT-016: Capture Pruning, Closure Devirtualization Past a Single Definition, and the Worker/Wrapper Calling Convention
+
+Three parts, increasing in scope and blast radius; (a) and (b) are independently shippable, (c) is a
+prerequisite for the highest-leverage follow-on work in this document (N-capture scalarization,
+uncurrying, arity raising, contification of curried helpers — see each part below).
+
+#### (a) Prune Captures the Closure Body Never Reads
+
+**Problem.** A closure's capture set is computed once, directly from the lambda body's syntactic free
+variables, and is never revisited after lowering. Nothing downstream can correct an over-approximation:
+`IsDeadInstruction` (Category 2.5/2.10's dead-code sweep) removes dead constant loads, dead `StoreLocal`s,
+and dead `MakeClosure`s, but never `Alloc`, `AllocStack`, or `StoreMemOffset` — so a capture slot's
+allocation and fill instructions are structurally immune to dead-code elimination even when the body
+never reads that slot via `LoadEnv`.
+
+**Why Ashes needs it.** Every capture is real allocation-size and real fill-instruction cost paid on
+every closure creation, for a variable the body may never use — most commonly after inlining or
+specialization has already deleted the reads a capture was created for, or when a lambda originally
+closed over a wider scope than its final body ends up needing. It also directly raises the hit rate of
+`OPT-013`'s existing N=1 single-scalar-capture stack-closure scalarization (Category 2.11): a two-capture
+closure where one capture is dead becomes, after pruning, a one-capture closure eligible for the
+scalarization `OPT-013` already implements.
+
+**Current state.** `LowerLambdaCore` (`Lowering.cs`) builds the environment allocation and fills each
+capture slot *before* lowering the body, so the used-capture set is not known at the point the fill
+instructions are emitted, and nothing patches them afterward.
+
+**Evidence.** `Lowering.cs:6766` (syntactic free-variable capture set, no later revision);
+`IrOptimizer.cs:2615` (`IsDeadInstruction`'s coverage, which excludes `Alloc`/`AllocStack`/
+`StoreMemOffset`); `Lowering.cs`'s `LowerLambdaCoreSpliceReuseCopies` (existing precedent for patching an
+earlier point in the already-emitted instruction stream by recorded index — the mechanism this task
+reuses).
+
+**Proposed implementation.** Record the `Alloc`/`AllocStack` and each `StoreMemOffset` capture-fill
+instruction's index at env-construction time (before lowering the body, as today), then lower the body as
+today and collect which `LoadEnv` indices it actually emitted. After the body is lowered, delete the fill
+instructions for captures with no corresponding `LoadEnv`, renumber the survivors, and shrink the
+environment's `SizeBytes` accordingly before the function is finished — using the same splice-at-recorded-
+index mechanism `LowerLambdaCoreSpliceReuseCopies` already establishes as safe within this file. Because
+there is exactly one creation site per label at the point this runs, no cloning across call sites is
+needed.
+
+**Declines:** any label that can be reconstructed from a different scope against the same environment
+layout — `Binding.Self` reconstruction, `_topLevelFunctionRefs`, a label returned from another function
+(`RecordReturnedClosureLabel`, see part (b) below) — since pruning would desynchronize the layout those
+reconstructions assume. A mutual-recursion group sharing one environment layout across several labels
+must take the *union* of used-capture indices across every label in the group, not prune per-label.
+Coroutines decline outright, matching `OPT-013`'s existing precedent (a coroutine's env is read across
+suspension boundaries the state-machine transform manages separately).
+
+**Dependencies.** None. Independently shippable; a natural pre-step for `OPT-015` (contification declines
+on curried lambdas and a few other shapes, but for the closures that remain, pruning shrinks them first).
+
+**Interaction with existing optimizer.** Directly raises `OPT-013`'s N=1 scalarization hit rate (a
+two-capture closure with one dead capture becomes eligible after pruning); reduces per-call allocation
+size for every closure creation.
+
+**Testing.** A raw-IR test with a two-capture lambda where the body only reads one, asserting the dead
+capture's `StoreMemOffset` and its share of `SizeBytes` are gone from optimized output; a mutual-recursion
+group test asserting the union-of-used-indices rule (no label in the group loses a capture another label
+in the same group still reads); a negative test for each decline case; full suites.
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.) A
+closure whose body does not read a given capture emits no allocation or fill instruction for that capture
+in optimized IR; declines are unaffected; no regression.
+
+**Self-Hosting Impact (required to close this task).** Lowering-stage change, like `OPT-015`; add a
+**new** `[ ]` line describing dead-capture pruning at closure-construction time, separate from `OPT-013`'s
+existing environment-scalarization line even though the two compose.
+
+#### (b) Devirtualize Past a Single Definition
+
+**Problem.** `DevirtualizeKnownClosureCalls` (`IrOptimizer.cs:464-522`, Category 2.11) requires
+`defCount[closureTemp] == 1` — the closure temp being called must have exactly one static definition
+site. This is exactly why a curried call like `add(10)(32)` leaves its second call (`CallClosure` on the
+result of `add(10)`) indirect forever: that temp is itself defined by a `CallClosure` (the first
+application), not a single known `MakeClosure`, so the single-definition test never fires past the first
+argument.
+
+**Why Ashes needs it.** Devirtualization is the explicit bridge that lets LLVM's own inliner see through
+an Ashes closure call (Category 2.6); every indirect call left behind is invisible to LLVM's inliner too.
+Curried application — an idiomatic pattern for partial application in an ML-family language — is exactly
+the shape the current single-definition test cannot reach.
+
+**Current state.** `defCount[closureTemp] == 1` is the sole eligibility test; any closure temp with a
+non-`MakeClosure` definition, or more than one definition, is left as `CallClosure` unconditionally.
+
+**Evidence.** `IrOptimizer.cs:464-522` (`DevirtualizeKnownClosureCalls`'s single-definition-count gate);
+`IrOptimizer.cs`'s `FoldConstants` (Category 2.3, `OPT-001`'s meet-over-predecessors machinery — the
+dataflow skeleton this task reuses, per-edge state snapshots and per-slot tracking already implemented
+and tested); `RecordReturnedClosureLabel` (existing bookkeeping that records which label a function
+returns — computed today and never read by the optimizer, which alone resolves the curried case once
+consumed).
+
+**Example.**
+```ash
+given add = given x: Int -> given y: Int -> x + y
+in add(10)(32)
+```
+`add(10)`'s result temp is defined by a `CallKnown`/`CallClosure` to `add`, not a `MakeClosure` — even
+though `add`'s body provably always returns the same inner lambda label (`RecordReturnedClosureLabel`
+already knows this), the outer `add(10)(32)` call stays indirect today because
+`DevirtualizeKnownClosureCalls` only looks at `MakeClosure` definitions, never at what a called function
+is known to return.
+
+**Proposed implementation.** Replace the single-definition-count test with a small reaching-definitions
+lattice over closure temps *and* local slots, whose elements are sets of possible origin labels (a
+`MakeClosure`'s own label, or — this is the new source of facts — a called function's recorded
+`RecordReturnedClosureLabel` result propagated to the call's result temp). Instantiate this over the same
+per-edge-snapshot, meet-at-join dataflow shape `FoldConstants` already implements and tests (Category
+2.3), rather than building new join/dataflow machinery from scratch. At a `CallClosure` site: if every
+reaching definition agrees on one label, rewrite to `CallKnown` as today; if two-to-four labels reach with
+mutually compatible environment shapes, emit a small dispatch with a direct call per arm (lambda-set
+specialization, the standard technique for a small closed set of possible closure shapes); otherwise
+decline, exactly as today.
+
+**Dependencies.** Reuses `FoldConstants`'s dataflow skeleton (no hard dependency on `OPT-001` itself, just
+shares its established shape). Independent of part (a).
+
+**Interaction with existing optimizer.** Strictly extends `DevirtualizeKnownClosureCalls`'s existing
+eligibility; every call newly devirtualized becomes visible to `FoldConstants` and to LLVM's own inliner
+the same way an already-devirtualized call is today.
+
+**Testing.** The curried `add(10)(32)` example as a raw-IR test asserting both calls become `CallKnown`
+(today only the first does); a 2-4-label dispatch test confirming the lambda-set-specialization arm;
+a disagreeing/unresolvable-origin negative test confirming the existing conservative decline is preserved;
+full suites.
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.) The
+curried-call worked example devirtualizes both call sites; a 2-4-way known-label set gets per-arm direct
+dispatch; anything less determinate keeps today's `CallClosure`; no regression.
+
+**Self-Hosting Impact (required to close this task).** `SELF_HOSTING.md:361-376` marks closure
+devirtualization as ported (`[x]`) under the existing single-definition rule — that claim stays true and
+is not edited. Add a **new** `[ ]` line scoped to exactly this delta: devirtualization via a
+reaching-definitions lattice (including consuming `RecordReturnedClosureLabel` facts) rather than a raw
+single-definition count.
+
+#### (c) The Worker/Wrapper Calling Convention (deferred, highest leverage)
+
+**Problem.** Every Ashes-callable function shares one fixed LLVM signature —
+`FunctionType(i64, [i64, i64, i64])` — so that indirect closure dispatch stays uniform regardless of the
+callee's real arity or capture shape. `OPT-013`'s own scope note (Category 2.11) already names this as
+the reason N-capture (N>1) environment scalarization is out of reach: there is nowhere in the shared
+3-`i64`-argument signature to place more than one scalarized capture without an environment pointer.
+
+**Why Ashes needs it.** This single ABI constraint is the shared blocker behind several otherwise-
+independent gaps in this document and in `OPT-013`'s existing scope note: N-capture environment
+scalarization (blocked exactly as `OPT-013` describes), uncurrying and arity raising (an
+n-argument curried call today costs n closures and n indirect calls — see part (b)'s `add(10)(32)`
+example, which still pays two indirect-shaped calls even after devirtualization, just no longer through a
+vtable), and contification of curried helpers (`OPT-015` explicitly declines curried lambdas for exactly
+this reason).
+
+**Current state.** One shared function type for every Ashes-level callable, enforced at LLVM
+`AddFunction` call sites in the backend, so a direct call and an indirect call are structurally
+indistinguishable in the generated function signature.
+
+**Evidence.** `OPT-013`'s own scope note (Category 2.11, closure environment scalarization) naming this
+exact constraint as its own boundary; the backend's uniform `AddFunction`/`FunctionType(i64, [i64, i64,
+i64])` construction (`Ashes.Backend`, LLVM codegen).
+
+**Proposed implementation.** Keep the existing shared 3-`i64` signature for a closure-callable *wrapper*
+— the entry point any indirect `CallClosure` still needs to target uniformly — and add a second, direct-
+call-only *worker* per function with its own arity-matched, per-function LLVM `FunctionType` (no shared
+signature constraint), reachable only via a new `CallWorker` IR instruction emitted wherever the callee is
+already statically known (post-devirtualization, post-contification-decline). This requires: an arity
+field on `IrFunction`; the new `CallWorker` instruction; and, in the backend, constructing a per-function
+LLVM type at the relevant `AddFunction` call site instead of the currently-shared one, plus a small
+wrapper function per closure-callable target that unpacks the uniform 3-`i64` calling convention and
+tail-calls into the worker. Two call sites in the backend change; every existing indirect-call path is
+unaffected (it keeps calling wrappers exactly as today).
+
+**Dependencies.** None strictly, but this task's value is realized only once other tasks consume the new
+`CallWorker` path — parts (a)/(b) above, `OPT-013`'s N>1 case, and `OPT-015`'s curried-helper decline all
+become addressable afterward, not automatically; each would need a small follow-up change to actually
+target `CallWorker` where eligible.
+
+**Interaction with existing optimizer.** Purely additive at the IR/ABI level — no existing `CallClosure`
+path is removed or altered; `CallWorker` is a new, narrower instruction alongside it. The blast radius is
+in the backend's function-construction code, which every compiled function passes through, so this is the
+largest-surface-area task in this document despite being conceptually a single ABI addition.
+
+**Testing.** A statically-known direct-call test asserting `CallWorker` is emitted and the worker's LLVM
+signature matches its real arity (not the shared 3-`i64` shape); an indirect-call test confirming the
+wrapper path and its unpack-then-tail-call-into-worker shape are unchanged in observable behavior; a
+mixed test where the same function is called both directly (worker) and indirectly (wrapper) in the same
+program, asserting both produce identical results; full C#/e2e/LSP suites, with particular attention to
+every backend target (`linux-x64`, `linux-arm64`, `win-x64`, `win-arm64` — a calling-convention change is
+exactly the kind of change where per-target ABI differences could silently diverge).
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.) A
+statically-known callee is reachable via a per-function-arity `CallWorker` with no shared-signature
+padding; indirect calls are bitwise-unaffected in behavior; all four backend targets validated (native
+execution on `linux-x64`/`linux-arm64` via the existing qemu coverage helper per
+[development.md](../guide/development.md)'s non-native-target guidance, structural PE validation for
+`win-x64`/`win-arm64` at minimum, `win-x64` execution via the existing `wine64` coverage where available);
+no regression.
+
+**Self-Hosting Impact (required to close this task).** This is an ABI-level change to the not-yet-ported
+ownership/reuse portion of the pipeline's surrounding machinery, but it also affects the *already-ported*
+call-lowering the self-hosted compiler currently targets. Add a **new** `[ ]` line describing the
+worker/wrapper calling convention as a distinct, separate capability from ordinary call lowering — the
+self-hosted port should not attempt to retrofit this after building a single-signature call path; per this
+document's general self-hosting guidance (see the introduction to Section 5), the self-host implementer
+should target the worker/wrapper design from the start once this lands in C#, rather than porting a
+single-signature version first and upgrading it twice.
+
+---
+
+### OPT-017: The Two Residues in the Memory Model — Multi-Anchor Drop Placement and Allocation-Free String Building
+
+Two independent parts; both extend infrastructure that is already implemented and tested rather than
+introducing a new analysis.
+
+#### (a) Multi-Anchor Drop Placement
+
+**Problem.** One line in the Perceus lifetime-placement pass restricts it to the single-anchor case:
+```
+if (anchors.Length != 1) continue;   // PerceusLifetimePlacement.cs:75
+```
+A value whose last use is followed by drops on more than one control-flow path — the ordinary outcome of
+an `if` or a multi-arm `match` where each arm independently ends the owner's life — keeps its original
+lexical scope-exit placement instead of the true-last-use placement this pass otherwise achieves, holding
+a reference count live across the whole join unnecessarily.
+
+**Why Ashes needs it.** This is precisely the branchy-code case `PerceusLifetimePlacement` was built to
+handle well (Category 2.10 already documents it as "real per-block liveness and dominance," not lexical
+scope exit) — the single-anchor restriction is a gap inside an otherwise-strong pass, not a missing
+capability. Every value dropped differently across `if`/`match` arms today pays for the conservative
+lexical-scope-exit fallback instead.
+
+**Current state.** `PlaceOwner` (`PerceusLifetimePlacement.cs`) computes real liveness and dominance and
+places a single drop at true last use only when there is exactly one anchor (drop point) for the value;
+any value with more than one anchor is skipped entirely by this pass and falls back to whatever
+lexical-scope-exit placement produced it in the first place.
+
+**Evidence.** `PerceusLifetimePlacement.cs:75` (`if (anchors.Length != 1 || …) continue;`); Category 2.10
+(`PerceusLifetimePlacement.PlaceOwner` builds blocks, computes liveness `:176-196`, and inserts `RcDrop`
+at true last use via `CollectInsertions`, `:198-234` — all machinery this task reuses, not replaces).
+
+**Example.**
+```ash
+given describe = given t: Tree ->
+    match t with
+    | Leaf -> "leaf"
+    | Node(l, v, r) -> formatNode(l, v, r)
+```
+If `t` (or a locally-bound intermediate) is used for the last time inside each arm independently rather
+than after the `match`, today's single-anchor restriction means the drop stays at the match's lexical
+scope exit — holding the count live through both arms' bodies — rather than being placed once inside each
+arm at that arm's own true last use.
+
+**Proposed implementation.** Generalize `PlaceOwner` to accept an anchor *set* rather than requiring
+exactly one: union the liveness regions implied by each anchor, run the existing `ComputeLiveness` over
+that union (no new liveness algorithm needed), delete the value's original (lexical) drop anchor, and
+insert one drop per block where `HasUse && !LiveOut` holds — the same `CollectInsertions` selection rule
+the single-anchor case already uses, just evaluated per block in the multi-anchor union rather than
+around one designated point. The one genuinely new case is a block that is live-out on one successor edge
+and dead on another (a value used on one branch of a later conditional but not the other, downstream of
+the original multi-anchor join) — handle it by splitting that edge with a fresh label and jump, which the
+existing CFG-building machinery this pass already depends on (dominators from the pass's own block
+builder) already supports for other purposes. Everything needed — dominators, per-block liveness,
+insertion selection — is already implemented in this file; this task is a generalization of an existing
+loop, not new analysis infrastructure.
+
+**Dependencies.** None. Independent of `OPT-015`/`OPT-016`, though it should land ahead of any future
+work that fuses or relocates RC operations relative to drop placement — the current single-anchor
+placement point already implies drops must be resolved before adjacency-fusion passes run, and a
+multi-anchor version inherits the same ordering constraint.
+
+**Interaction with existing optimizer.** Extends `PerceusLifetimePlacement` in place; does not change
+anything about the RC dup/drop fusion passes downstream (`SinkRuntimeRcDupsIntoDiamonds`,
+`FuseAdjacentRuntimeRcPairs`) — those continue to operate on whatever drops this pass places, now placed
+more precisely for the multi-anchor case.
+
+**Testing.** A raw-IR test on the worked `match`-with-independent-last-uses example asserting a drop is
+placed inside each arm at true last use rather than at the lexical scope exit; an edge-split test for the
+live-out-on-one-successor-dead-on-another case; a differential RC-count comparison (`--explain rc`)
+before/after on a representative branchy program; full suites, with particular attention to the
+RC-sensitive e2e corpus given this pass's history (Category 2.10, `PerceusLifetimePlacement` is the
+deepest and most correctness-sensitive area of the compiler).
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.) A
+value dropped on multiple independent control-flow paths gets one drop per path at that path's true last
+use rather than one drop at lexical scope exit; the new edge-split case is exercised and correct; no
+regression, with particular attention to RC-count correctness (an over-eager or misplaced drop is a
+use-after-free, not a performance regression) verified via differential testing against the pre-task
+behavior, not just unit-test assertions.
+
+**Self-Hosting Impact (required to close this task).** `SELF_HOSTING.md:377-393` marks Perceus dup/drop
+insertion as **not yet ported** (`[ ]`) — this task's outcome becomes part of what the self-hosted port
+must build directly, per this document's general guidance (Section 5 introduction) for not-yet-ported
+work: target the multi-anchor design from the start rather than porting the single-anchor version first
+and upgrading it twice.
+
+#### (b) Allocation-Free String Building Beyond the TCO Back Edge
+
+**Problem.** Ashes already has a genuinely allocation-free string append path — `ConcatStrTip`, with a
+geometric-growth reservation and an in-place extend — but it is armed only at a TCO loop's back edge.
+Ordinary, non-loop string concatenation always takes `ConcatStr`'s always-allocates path
+(`LlvmCodegenMemory.cs:608`): one allocation and one full copy per `+`, so `"user " + name + " has " + n
++ " items"` costs four allocations and copies the leftmost, growing prefix four separate times.
+
+**Why Ashes needs it.** String-building-by-concatenation is an idiomatic, common pattern with no loop in
+sight — the existing `ConcatStrTip` machinery already solves the general problem but is gated to a narrow
+trigger condition (a TCO back edge) that most string-building code never hits.
+
+**Current state.** `ConcatStr` (`LlvmCodegenMemory.cs:608`) is the only path reached by ordinary `+` on
+strings; `ConcatStrTip`'s reservation/in-place-extend codegen exists and is correct, but is armed
+exclusively by the TCO-parameter-at-a-back-edge condition.
+
+**Evidence.** `LlvmCodegenMemory.cs:608` (`ConcatStr`'s always-allocates path); the existing
+`ConcatStrTip` codegen and its narrow TCO-back-edge arming condition (Category 2.9's affine-self-append
+move-analysis fact, also referenced by memory's own note on affine string growth — see
+`docs/md/internals/architecture.md`'s memory model section for the reservation contract this task reuses
+unchanged).
+
+**Example.** `"user " + name + " has " + n + " items"` lowers today to three left-nested `ConcatStr`
+calls, each a fresh allocation and a full copy of everything concatenated so far — `n-1` allocations and
+`O(n^2)` total bytes copied for `n` concatenated parts.
+
+**Proposed implementation, staged:**
+
+1. **Cheap fix first — a peephole over left-nested `ConcatStr` chains.** When a chain of `ConcatStr`
+   calls is left-nested with single-use intermediates (each intermediate result feeds exactly one more
+   `ConcatStr` and nothing else), fold the whole chain into one new `ConcatStrN` instruction that sums the
+   input lengths, allocates exactly once, and copies each part exactly once directly into its final
+   position — turning `n-1` allocations and `O(n^2)` bytes copied into 1 allocation and `O(n)` bytes
+   copied. This needs no new aliasing analysis: reuse the local-CSE deny-list this document's `OPT-006`
+   already establishes for the same single-use/no-intervening-write safety question, rather than building
+   a second oracle for the same fact. Destination-passing style in its most local, single-instruction
+   form.
+2. **Analysis-backed version afterward — extend `ConcatStrTip` arming beyond the TCO back edge.** Arm the
+   existing reservation path for any `let`-bound accumulator that move analysis already proves
+   affine-self-append (the same fact `Lowering.MoveAnalysis.cs` computes and stores today for the
+   TCO-parameter case), not only a TCO parameter specifically at a back edge. The reservation slots and
+   the entire `ConcatStrTip` codegen path are reused completely unchanged — only the eligibility check
+   that decides when to arm it changes.
+
+**Dependencies.** Stage 1 (`ConcatStrN`) is independent and can land first, giving an immediate,
+measurable, low-risk baseline. Stage 2 depends on `Lowering.MoveAnalysis.cs`'s existing affine-self-append
+fact being reachable at the point `ConcatStrTip` arming is decided — no new analysis, but a wiring change
+to consult an existing one from a new call site.
+
+**Interaction with existing optimizer.** Purely additive: `ConcatStrN` is a new instruction alongside
+`ConcatStr`, and stage 2 only widens `ConcatStrTip`'s existing eligibility condition — no existing string
+codegen path changes behavior for cases outside this task's new eligibility.
+
+**Testing.** A multi-part left-nested concatenation raw-IR test asserting a single `ConcatStrN` with one
+allocation replaces the chain; a negative test where an intermediate result has a second use (e.g. it is
+also printed separately), confirming the peephole correctly declines to fold across a real second use; for
+stage 2, a non-TCO `let`-bound accumulator loop (if any non-TCO-loop-shaped affine-append pattern exists
+in idiomatic Ashes code — otherwise this stage's test surface is narrower and should say so explicitly)
+exercising the widened `ConcatStrTip` arming; full suites.
+
+**Completion criteria.** (This task is not done until Self-Hosting Impact, below, is also satisfied.) The
+worked multi-part concatenation example allocates once instead of `n-1` times in optimized IR/codegen; the
+single-use-intermediate safety check correctly declines when an intermediate has another use; stage 2's
+widened arming does not regress the existing TCO-back-edge case; no regression.
+
+**Self-Hosting Impact (required to close this task).** `SELF_HOSTING.md:361-376` marks the deterministic
+optimization pipeline as ported (`[x]`); `ConcatStrN` is a new `IrOptimizer`-level peephole within that
+same pipeline area, so add a **new** `[ ]` line describing it there rather than editing the existing
+bullet. Stage 2 (widened `ConcatStrTip` arming) touches the not-yet-ported ownership/reuse side
+(`SELF_HOSTING.md:377-393`, `[ ]`) since it consumes a move-analysis fact from that not-yet-ported area —
+note this dependency explicitly in whichever `[ ]` line is added for it, so a future self-hosting
+implementer porting move analysis knows this consumer exists.
+
+---
+
 ## 6. Recommended Implementation Order
 
 Dependencies are as discovered in the repository, not assumed from general compiler-construction lore.
@@ -1947,6 +2421,12 @@ graph TD
     OPT011["OPT-011<br/>Open-world reuse"]
     OPT012["OPT-012<br/>Tail-call guarantees"]
     OPT013["OPT-013<br/>Closure scalarization"]
+    OPT015["OPT-015<br/>Tail contification"]
+    OPT016a["OPT-016(a)<br/>Capture pruning"]
+    OPT016b["OPT-016(b)<br/>Devirtualize past<br/>single definition"]
+    OPT016c["OPT-016(c)<br/>Worker/wrapper ABI"]
+    OPT017a["OPT-017(a)<br/>Multi-anchor drops"]
+    OPT017b["OPT-017(b)<br/>ConcatStrN"]
 
     OPT001 --> OPT002
     OPT002 --> OPT003
@@ -1958,6 +2438,14 @@ graph TD
     OPT011 --> OPT009
     OPT010 -.eases.-> OPT013
     OPT012
+    OPT016a -.raises hit rate.-> OPT013
+    OPT016a -.raises hit rate.-> OPT015
+    OPT016b -.shares dataflow shape.-> OPT001
+    OPT016c -.unblocks.-> OPT015
+    OPT016c -.unblocks N&gt;1.-> OPT013
+    OPT016c -.unblocks.-> OPT016b
+    OPT017a
+    OPT017b -.shares deny-list.-> OPT006
 ```
 
 - **OPT-001 -> OPT-002 -> OPT-003**: strictly sequential — each extends the same `knownBools`/copy state
@@ -1979,6 +2467,21 @@ graph TD
   two rounds of changes to the same reuse-compatibility logic.
 - **OPT-012, OPT-013** are largely independent of the rest; `OPT-013` benefits from but does not require
   `OPT-010`.
+- **`OPT-016(a)` -> `OPT-017(b1)` -> `OPT-015` -> `OPT-017(a)` -> `OPT-016(b)` -> `OPT-016(c)`**: the
+  recommended build order for the closure/memory-model follow-up arc, in this sequence and for these
+  reasons — `OPT-016(a)` (capture pruning) first because it is the smallest blast radius and immediately
+  raises `OPT-013`'s existing N=1 scalarization hit rate by turning some two-capture closures into
+  one-capture closures; `OPT-017(b)`'s stage 1 (`ConcatStrN`) next because it is one instruction, one
+  codegen helper, one peephole, fully independent of the closure work, and gives an early measurable
+  baseline; `OPT-015` (tail contification) third, after `OPT-016(a)` so the closures it declines to
+  contify are already the cheaper pruned kind, keeping its own measurement isolated to the contification
+  effect specifically; `OPT-017(a)` (multi-anchor drops) fourth, and must stay ahead of any future work
+  that fuses or relocates RC operations relative to drop placement, matching the ordering constraint
+  already implied by the pass's current single-anchor placement point; `OPT-016(b)`
+  (label-set devirtualization) fifth, reusing `FoldConstants`'s dataflow skeleton and cleaner once
+  `OPT-004`'s generalized CFG work has landed, though implementable directly without it; `OPT-016(c)` (the
+  worker/wrapper ABI) last, since it has the largest blast radius and the biggest unlock, best attempted
+  once the baseline from steps 1-5 is in hand.
 
 ---
 
@@ -1992,6 +2495,10 @@ Low infrastructure, low risk, clear tests, measurable benefit:
   already tracked, just unused for this.
 - **OPT-003** — Re-forward algebraic-identity copies. A one-line pass-ordering fix at minimum (re-run
   `ElideTrivialOwnershipCopies`).
+- **OPT-016(a)** — Prune dead closure captures. Smallest blast radius in the closure/memory-model arc;
+  reuses `LowerLambdaCoreSpliceReuseCopies`'s existing splice-at-recorded-index precedent.
+- **OPT-017(b)**, stage 1 (`ConcatStrN`) — One new instruction, one codegen helper, one peephole over
+  left-nested `ConcatStr` chains; independent of everything else in the arc.
 
 ---
 
@@ -2010,6 +2517,16 @@ Low infrastructure, low risk, clear tests, measurable benefit:
   requires the soak-testing discipline this codebase has historically needed for RC/reuse changes.
 - **OPT-005, OPT-006, OPT-012, OPT-013, OPT-014** are medium-scope work — each is a single new pass or
   targeted extension, smaller than the five above but larger than the quick wins in Section 7.
+- **OPT-015** — Tail contification of local helpers. The structural win of the closure/memory-model
+  follow-up arc; a lowering-stage change (not an `IrOptimizer` pass) that reuses `TcoContext`'s existing
+  join-point machinery but generalizes it to a second, sibling join point per contified helper.
+- **OPT-016(c)** — The worker/wrapper calling convention. The largest blast radius and biggest unlock in
+  the follow-on arc — a per-function LLVM type at every `AddFunction` call site instead of the currently
+  shared one, plus a new `CallWorker` instruction. Do last, once `OPT-016(a)`/`(b)`, `OPT-015`, and
+  `OPT-017(a)`/`(b)` have established a baseline (see Section 6's build-order note).
+- **OPT-017(a)** — Multi-anchor drop placement. Generalizes `PerceusLifetimePlacement.PlaceOwner` from a
+  single anchor to an anchor set; correctness-sensitive (an over-eager or misplaced drop is a
+  use-after-free, not a slowdown), so treat with the same soak-testing discipline as `OPT-011`.
 
 ---
 
@@ -2043,6 +2560,16 @@ comparative advantage, and where implementation effort should concentrate.
 - `OPT-012`(b) (`musttail` upgrade for provably-safe tail calls) — exploits the same
   `EnvironmentIsStackAllocated` ownership fact Ashes already computes for the `Tail`/`NoTail` decision;
   LLVM cannot independently prove a callee doesn't need the caller's frame.
+- `OPT-015` (tail contification) — lowers a local helper's body directly into the caller's frame using
+  `DirectCalleeAnalysis`'s existing escape proof plus a new all-tail-position bit; LLVM's inliner can only
+  ever duplicate a callee's body after the fact, never eliminate the closure/environment construction that
+  never gets created in the first place.
+- `OPT-016(a)` (capture pruning) — deletes a dead capture's allocation and fill instructions at
+  closure-construction time; LLVM's DCE never sees the syntactic free-variable set Ashes lowering used to
+  decide what to capture, so it cannot make this call.
+- `OPT-017(a)` (multi-anchor drop placement) — a direct extension of `PerceusLifetimePlacement`'s existing
+  liveness/dominance machinery to true last-use placement across multiple control-flow paths; RC drop
+  placement is pure Ashes semantics LLVM has no representation for at all.
 
 **Not proposed, and why:** general escape analysis (Category 9) is not proposed as a new pass because
 Ashes' ownership/freshness machinery already proves the equivalent property — adding a separate,
@@ -2066,6 +2593,12 @@ functionality" constraint.
 | Match decision-tree compilation (`OPT-007`) | Ashes must | Original pattern structure is gone by the time LLVM sees the expanded test chain. |
 | Single-constructor unboxing (`OPT-009`) | Ashes must | Requires knowledge of Ashes' own ADT layout scheme. |
 | Closure environment scalarization (`OPT-013`) | Ashes must | Requires the ownership-proven capture-safety fact; must act before the struct exists, which is before LLVM sees it. |
+| Tail contification of local helpers (`OPT-015`) | Ashes must | Eliminates closure/environment construction before it exists, using a lowering-stage escape proof (`DirectCalleeAnalysis`) LLVM has no equivalent source for; LLVM's inliner can only duplicate an already-materialized callee body. |
+| Capture pruning (`OPT-016(a)`) | Ashes must | Requires the syntactic free-variable capture set Ashes lowering computed; LLVM's DCE never reaches `Alloc`/`StoreMemOffset` capture-fill instructions the way it reaches ordinary dead stores. |
+| Closure devirtualization past a single definition (`OPT-016(b)`) | Ashes must | Reaching-definitions over Ashes closure temps and `RecordReturnedClosureLabel` facts — erased Ashes-level provenance LLVM cannot reconstruct from an opaque call. |
+| Worker/wrapper calling convention (`OPT-016(c)`) | Ashes must | Ashes' own calling-convention design (shared vs. per-function LLVM `FunctionType`); LLVM has no say in which ABI Ashes chooses to emit. |
+| Multi-anchor Perceus drop placement (`OPT-017(a)`) | Ashes must | RC drop placement is pure Ashes ownership semantics with no LLVM representation at all — identical justification to the other Perceus rows above. |
+| `ConcatStrN` peephole / affine string-append arming (`OPT-017(b)`) | Ashes must | Depends on Ashes' own string representation and the move-analysis affine-self-append fact; LLVM sees only the allocator calls this instruction sequence already produces. |
 | Meet-over-paths constant propagation at joins (`OPT-001`) | Ashes should probably do it | Improves pre-LLVM IR quality/`--explain` fidelity and `-O0` behavior; LLVM's SCCP recovers much of this at `-O1`+ but not at `-O0`. |
 | Known-closure devirtualization | Ashes should probably do it | Improves inlinability for LLVM's own inliner; LLVM can further fold what Ashes exposes once devirtualized (`architecture.md:1128`). |
 | Generic dead-code / unreachable-code elimination | Either is reasonable | LLVM's `-O1`+ DCE/`simplifycfg` would redundantly re-derive most of this; Ashes doing it mainly aids `-O0`/`--emit-ir`/`--explain` quality. |
@@ -2088,21 +2621,24 @@ For each task category, measure:
 
 | Signal | How to measure | Applies to |
 |---|---|---|
-| Allocation count | `--explain memory` / `--explain reuse` (compiler reports to stderr without changing generated code, per `docs/md/reference/cli.md#compiler-reports`) | `OPT-009`, `OPT-011`, `OPT-013` |
-| RC operation count (dup/drop) | `--explain rc` | `OPT-001`, `OPT-003`, `OPT-006`, `OPT-011` |
+| Allocation count | `--explain memory` / `--explain reuse` (compiler reports to stderr without changing generated code, per `docs/md/reference/cli.md#compiler-reports`) | `OPT-009`, `OPT-011`, `OPT-013`, `OPT-015`, `OPT-016(a)`, `OPT-017(b)` |
+| RC operation count (dup/drop) | `--explain rc` | `OPT-001`, `OPT-003`, `OPT-006`, `OPT-011`, `OPT-017(a)` |
 | Reuse-token hit rate | `--explain reuse` | `OPT-011`, `OPT-009` |
-| Generated instruction count | `--emit-ir final` diff (lowered vs. optimized) | All `IrOptimizer.cs`-level tasks (`OPT-001`, `OPT-002`, `OPT-003`, `OPT-005`, `OPT-006`, `OPT-014`) |
+| Generated instruction count | `--emit-ir final` diff (lowered vs. optimized) | All `IrOptimizer.cs`-level tasks (`OPT-001`, `OPT-002`, `OPT-003`, `OPT-005`, `OPT-006`, `OPT-014`, `OPT-016(b)`, `OPT-017(b)`) |
 | Redundant test count in match compilation | Manual `--emit-ir` inspection of `SwitchTag`/branch count per arm | `OPT-007`, `OPT-008` |
+| Closure/environment construction count | Manual `--emit-ir` inspection for `MakeClosure`/`MakeClosureStack` and arena-bracket/copy-out presence per call site | `OPT-015`, `OPT-016(a)`, `OPT-016(b)` |
 | Runtime | Execution timing on representative programs, one benchmark at a time (hyperfine masks segfaults when batched — a known pitfall in this codebase's benchmark history) | All tasks with a runtime-visible effect |
-| Peak RSS | Existing benchmark harness used for `fannkuch-redux`/`binary-trees` RSS regression tracking | `OPT-009`, `OPT-011` especially — this exact area has produced multi-GB RSS regressions historically |
-| Binary size | `ls -la` on the compiled artifact, before/after | `OPT-009` (layout change), `OPT-005` (dead-code shrinkage) |
+| Peak RSS | Existing benchmark harness used for `fannkuch-redux`/`binary-trees` RSS regression tracking | `OPT-009`, `OPT-011` especially — this exact area has produced multi-GB RSS regressions historically; also relevant to `OPT-017(a)` given RC-drop-placement's own correctness-sensitive history |
+| Binary size | `ls -la` on the compiled artifact, before/after | `OPT-009` (layout change), `OPT-005` (dead-code shrinkage), `OPT-016(c)` (per-function worker signatures) |
 | Compile time | Wall-clock `ashes compile` timing | `OPT-004`, `OPT-010` (consolidating fixpoint passes should improve this, not regress it) |
 
 Recommended representative programs, in order of relevance to this document's tasks: a nested-pattern-
 match-heavy stdlib module (e.g. `Collection.List.ash` or `Collection.Tree`-equivalent) for `OPT-007`/
 `OPT-008`; a recursive-ADT traversal program for `OPT-011`/`OPT-009` (binary-trees-shaped); a
-higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across distinct functions for
-`OPT-012`; `1BRC` or an equivalent RC-heavy hot-loop program for `OPT-001`/`OPT-003`/`OPT-006`.
+higher-order/closure-heavy program for `OPT-013`, `OPT-015`, and `OPT-016`; a deep tail-call chain across
+distinct functions for `OPT-012`; `1BRC` or an equivalent RC-heavy hot-loop program for `OPT-001`/
+`OPT-003`/`OPT-006`; a branchy `if`/`match`-heavy program (independent last-use per arm) for `OPT-017(a)`;
+a multi-part string-concatenation-heavy program (e.g. a formatting/reporting workload) for `OPT-017(b)`.
 
 ---
 
@@ -2115,15 +2651,21 @@ higher-order/closure-heavy program for `OPT-013`; a deep tail-call chain across 
 | OPT-003 | Re-forward algebraic-identity copies | Medium | Low | none | P0 | Done |
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
+| OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Not started |
+| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Not started |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
+| OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Not started |
+| OPT-017(a) | Multi-anchor Perceus drop placement | Medium | Medium | none (correctness-sensitive, soak-test) | P1 | Not started |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
+| OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Not started |
+| OPT-016(c) | Worker/wrapper calling convention | High | High (largest blast radius) | eases OPT-015, OPT-016(b), OPT-013's N>1 case | P2 | Not started |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick
 wins or foundational infrastructure other `P1`/`P2` tasks build on; `P1` tasks are the highest-value
