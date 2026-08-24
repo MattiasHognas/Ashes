@@ -147,15 +147,21 @@ function lambda_3  [ClosureHelper]
     LoadLocal             Target=32 Slot=9
     Return                Source=32
 
+function lambda_3$env_normalize  [ClosureEnvironmentNormalizer]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0
+    LoadLocal             Target=1 Slot=1
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2
+    LoadConstInt          Target=3 Value=0
+    Return                Source=3
+
 function __recgroup_dispatch_2  [MutualRecursionDispatch]
   locals=2 temps=5
-    Alloc                 Target=0 SizeBytes=16
+    Alloc                 Target=0 SizeBytes=8
     LoadLocal             Target=1 Slot=1
     StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1
-    LoadLocal             Target=3 Slot=0
-    MakeClosure           Target=2 FuncLabel=__recgroup_dispatch_2 EnvPtrTemp=3 EnvSizeBytes=0
-    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2
-    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=16
+    MakeClosure           Target=4 FuncLabel=lambda_3 EnvPtrTemp=0 EnvSizeBytes=8
     Return                Source=4
 
 function lambda_4  [MutualRecursionWrapper from isEven]

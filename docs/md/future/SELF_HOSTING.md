@@ -455,6 +455,29 @@ same public behavior.
   20,000,000-iteration hot loop building and calling a single-capture closure per iteration; unlike
   most passes in this pipeline, the `-O2` win is real (not subsumed by LLVM) because it comes from
   removing genuine arena-cursor runtime bookkeeping, not the allocation itself.
+- [ ] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
+  not part of the `IrOptimizer` pipeline above, since a capture's environment is built at the
+  creation site *before* the body is lowered and its used-set is known): record each capture's fill
+  instruction range at construction time, then once the body's own instructions are available, delete
+  the fills for indices with no corresponding `LoadEnv` read, renumber the survivors to a compact
+  `0..k-1` range in both the fill offsets and the body's `LoadEnv` indices, and shrink the environment
+  allocation's size to match — so every downstream consumer that recomputes its own offsets from the
+  capture list's enumeration order (resource-capture tracking, the runtime-managed-closure dropper and
+  normalizer) needs no separate patching. A capture that required retaining an owned outer value has
+  that retain's accounting explicitly undone when its fill is deleted, not just the instruction
+  removed. Declines a self-referential lambda (it reconstructs a closure over this same environment
+  from inside its own body using a size recorded before pruning could run) and a mutual-recursion
+  group (the environment is shared and filled once at the group site, not per member); a coroutine
+  body is unaffected by construction, since it never goes through this capture/environment path at
+  all. Composes with, but is a separate capability from, the single-scalar-capture environment
+  scalarization above — a two-capture closure with one dead capture becomes eligible for that
+  optimization only once this pass has pruned it down to one. **Measured**: pruning a mutual-recursion
+  dispatch closure's env from two captures (16 bytes) to one (8 bytes) also unlocked the
+  runtime-managed-closure normalizer above as a purely emergent side effect (that pass had been
+  blocked only because the *other*, now-pruned capture wasn't itself runtime-normalizable). A
+  200,000,000-iteration driver repeatedly entering the same mutual-recursion group ran **14% faster at
+  the CLI's default `-O2`** — unlike most passes in this pipeline, this `-O2` win is real because it
+  removes an allocation LLVM has no way to reconstruct once Ashes has already chosen to omit it.
 - [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
   empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
   chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed

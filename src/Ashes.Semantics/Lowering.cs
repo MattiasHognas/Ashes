@@ -6021,7 +6021,7 @@ public sealed partial class Lowering
         LowerLambdaCoreSeedParamType(lam, paramTy);
 
         // Compute free variables for capture, then allocate and fill the env at the creation site.
-        var (free, captures, envPtrTemp, knownCaptureLabels) =
+        var (free, captures, envPtrTemp, knownCaptureLabels, captureAllocIndex, captureFillRanges) =
             LowerLambdaCoreBuildEnv(lam, selfName, recursiveGroup, stackAllocateClosure, request);
 
         string label = forcedLabel ?? $"lambda_{_nextLambdaId++}";
@@ -6062,14 +6062,166 @@ public sealed partial class Lowering
         LowerLambdaCoreEmitRuntimeManagedTcoExitDrops(savedTcoCtx, bodyTemp);
         Emit(new IrInst.Return(bodyTemp));
 
-        LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
+        IrFunction loweredFunction = LowerLambdaCoreFinishFunction(label, placementFrame.Origin);
         LowerLambdaCoreRestoreFrame(savedFrame);
         LowerLambdaCoreLeaveFunctionPlacement(placementFrame);
+
+        return LowerLambdaCoreFinalize(
+            selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction,
+            label, envPtrTemp, stackAllocateClosure, bodyRuntimeManaged, request, funTy);
+    }
+
+    private (int, TypeRef) LowerLambdaCoreFinalize(
+        string? selfName,
+        IReadOnlyList<string> captures,
+        int captureAllocIndex,
+        List<CaptureFillRange>? captureFillRanges,
+        IrFunction loweredFunction,
+        string label,
+        int envPtrTemp,
+        bool stackAllocateClosure,
+        bool bodyRuntimeManaged,
+        LoweredValueRequest request,
+        TypeRef funTy)
+    {
+        captures = LowerLambdaCorePruneDeadCaptures(
+            selfName, captures, captureAllocIndex, captureFillRanges, loweredFunction);
 
         return (
             LowerLambdaCoreMakeClosure(
                 label, envPtrTemp, captures, stackAllocateClosure, bodyRuntimeManaged, request),
             funTy);
+    }
+
+    // A capture's instruction range at the creation site: from right before the value is produced
+    // (LowerVar(captures[i])) through right after its StoreMemOffset fill, recorded so a capture the
+    // body never reads (no LoadEnv at its index) can be excised once the body's own usage is known —
+    // it isn't known yet when the fill is emitted, since the env is built before the body is lowered.
+    private readonly record struct CaptureFillRange(int Start, int End);
+
+    // Deletes the fill for any capture the lowered body never reads via LoadEnv (including a
+    // LoadEnv emitted through the trait-dictionary reference path, which uses the same instruction),
+    // shrinks the env allocation, and renumbers the survivors to a compact 0..k-1 range so
+    // MakeClosure/resource-capture/runtime-managed-dropper bookkeeping — all of which recompute their
+    // own env offsets from `captures`' enumeration order — stay self-consistent with no further
+    // patching. Declines a self-referential lambda (its own Binding.Self reconstructs a closure over
+    // this exact env using a size recorded before pruning could run) and a mutual-recursion group
+    // (the env is shared and filled once at the group site, not per-member).
+    private IReadOnlyList<string> LowerLambdaCorePruneDeadCaptures(
+        string? selfName,
+        IReadOnlyList<string> captures,
+        int captureAllocIndex,
+        List<CaptureFillRange>? fillRanges,
+        IrFunction loweredFunction)
+    {
+        if (selfName is not null
+            || fillRanges is null
+            || captureAllocIndex < 0
+            || _collectInferredTraitElaboration)
+        {
+            return captures;
+        }
+
+        var usedIndices = new HashSet<int>();
+        foreach (IrInst inst in loweredFunction.Instructions)
+        {
+            if (inst is IrInst.LoadEnv loadEnv)
+            {
+                usedIndices.Add(loadEnv.Index);
+            }
+        }
+
+        if (usedIndices.Count >= captures.Count)
+        {
+            return captures;
+        }
+
+        List<int> survivors = [.. Enumerable.Range(0, captures.Count).Where(usedIndices.Contains)];
+        var remap = new Dictionary<int, int>(survivors.Count);
+        for (int k = 0; k < survivors.Count; k++)
+        {
+            remap[survivors[k]] = k;
+        }
+
+        LowerLambdaCoreRenumberSurvivingFills(captures.Count, fillRanges, remap);
+        LowerLambdaCoreRemoveDeadFills(captures, fillRanges, remap);
+
+        // The env alloc always precedes every capture-fill range, so captureAllocIndex is unaffected
+        // by the removals above.
+        _inst[captureAllocIndex] = _inst[captureAllocIndex] switch
+        {
+            IrInst.Alloc alloc => alloc with { SizeBytes = survivors.Count * 8 },
+            IrInst.AllocStack allocStack => allocStack with { SizeBytes = survivors.Count * 8 },
+            var other => other,
+        };
+        LowerLambdaCoreRenumberLoadEnv(loweredFunction, remap);
+
+        return [.. survivors.Select(i => captures[i])];
+    }
+
+    // Renumbers surviving fills' StoreMemOffset targets first, while the original recorded indices
+    // into _inst are still valid (before LowerLambdaCoreRemoveDeadFills shifts the list).
+    private void LowerLambdaCoreRenumberSurvivingFills(
+        int captureCount, List<CaptureFillRange> fillRanges, Dictionary<int, int> remap)
+    {
+        for (int i = 0; i < captureCount; i++)
+        {
+            if (!remap.TryGetValue(i, out int newIndex) || newIndex == i)
+            {
+                continue;
+            }
+
+            CaptureFillRange range = fillRanges[i];
+            if (_inst[range.End - 1] is IrInst.StoreMemOffset store)
+            {
+                _inst[range.End - 1] = store with { OffsetBytes = newIndex * 8 };
+            }
+        }
+    }
+
+    // Removes dead fills last-to-first so earlier ranges' recorded indices stay valid. A capture that
+    // required a Borrow (an owned outer value) needs its ActiveBorrows accounting undone — otherwise
+    // the outer scope's later drop/borrow-release placement would assume a borrow that no longer has
+    // a corresponding instruction.
+    private void LowerLambdaCoreRemoveDeadFills(
+        IReadOnlyList<string> captures, List<CaptureFillRange> fillRanges, Dictionary<int, int> remap)
+    {
+        for (int i = captures.Count - 1; i >= 0; i--)
+        {
+            if (remap.ContainsKey(i))
+            {
+                continue;
+            }
+
+            CaptureFillRange range = fillRanges[i];
+            bool hadBorrow = false;
+            for (int j = range.Start; j < range.End; j++)
+            {
+                if (_inst[j] is IrInst.Borrow)
+                {
+                    hadBorrow = true;
+                    break;
+                }
+            }
+            if (hadBorrow && LookupOwnedValue(captures[i]) is { } owner)
+            {
+                owner.ActiveBorrows--;
+            }
+            _inst.RemoveRange(range.Start, range.End - range.Start);
+        }
+    }
+
+    private static void LowerLambdaCoreRenumberLoadEnv(IrFunction loweredFunction, Dictionary<int, int> remap)
+    {
+        for (int i = 0; i < loweredFunction.Instructions.Count; i++)
+        {
+            if (loweredFunction.Instructions[i] is IrInst.LoadEnv loadEnv
+                && remap.TryGetValue(loadEnv.Index, out int newIndex)
+                && newIndex != loadEnv.Index)
+            {
+                loweredFunction.Instructions[i] = loadEnv with { Index = newIndex };
+            }
+        }
     }
 
     private void LowerLambdaCoreNormalizeAlwaysReturnedStringParameter(
@@ -6763,7 +6915,7 @@ public sealed partial class Lowering
         }
     }
 
-    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels) LowerLambdaCoreBuildEnv(
+    private (HashSet<string> Free, IReadOnlyList<string> Captures, int EnvPtrTemp, Dictionary<int, string> KnownCaptureLabels, int CaptureAllocIndex, List<CaptureFillRange>? CaptureFillRanges) LowerLambdaCoreBuildEnv(
         Expr.Lambda lam,
         string? selfName,
         RecursiveGroupContext? recursiveGroup,
@@ -6788,12 +6940,12 @@ public sealed partial class Lowering
             }
         }
 
-        int envPtrTemp = LowerLambdaCoreBuildEnvAllocation(
+        var (envPtrTemp, captureAllocIndex, captureFillRanges) = LowerLambdaCoreBuildEnvAllocation(
             captures,
             recursiveGroup,
             stackAllocateClosure,
             request);
-        return (free, captures, envPtrTemp, knownCaptureLabels);
+        return (free, captures, envPtrTemp, knownCaptureLabels, captureAllocIndex, captureFillRanges);
     }
 
     private HashSet<string> LowerLambdaCoreCollectFreeVariables(Expr.Lambda lam, string? selfName)
@@ -6824,13 +6976,15 @@ public sealed partial class Lowering
         return free;
     }
 
-    private int LowerLambdaCoreBuildEnvAllocation(
+    private (int EnvPtrTemp, int CaptureAllocIndex, List<CaptureFillRange>? CaptureFillRanges) LowerLambdaCoreBuildEnvAllocation(
         IReadOnlyList<string> captures,
         RecursiveGroupContext? recursiveGroup,
         bool stackAllocateClosure,
         LoweredValueRequest request)
     {
         int envPtrTemp;
+        int captureAllocIndex = -1;
+        List<CaptureFillRange>? fillRanges = null;
         if (recursiveGroup is not null)
         {
             // The group's shared env was already allocated and filled once at the group site.
@@ -6845,6 +6999,7 @@ public sealed partial class Lowering
         {
             // alloc env: captures.Count * 8
             envPtrTemp = NewTemp();
+            captureAllocIndex = _inst.Count;
             if (stackAllocateClosure)
             {
                 Emit(new IrInst.AllocStack(envPtrTemp, captures.Count * 8));
@@ -6858,8 +7013,10 @@ public sealed partial class Lowering
                         LoweredValueRuntimeRepresentation.Closure)));
             }
 
+            fillRanges = new List<CaptureFillRange>(captures.Count);
             for (int i = 0; i < captures.Count; i++)
             {
+                int rangeStart = _inst.Count;
                 bool wasSuppressingTraitConstraints = _suppressTraitConstraintCollection;
                 _suppressTraitConstraintCollection = true;
                 _suppressActiveTraitDictionaryReferenceDepth++;
@@ -6876,10 +7033,11 @@ public sealed partial class Lowering
                 // store capTemp into [envPtr + i*8]
                 Emit(new IrInst.StoreMemOffset(envPtrTemp, i * 8, capture.capTemp));
                 // Constrain types: the captured binding type should match capTy; already does.
+                fillRanges.Add(new CaptureFillRange(rangeStart, _inst.Count));
             }
         }
 
-        return envPtrTemp;
+        return (envPtrTemp, captureAllocIndex, fillRanges);
     }
 
     private void ExpandFreshInlinableCaptures(HashSet<string> free, IReadOnlySet<string> outerBound)
@@ -8045,7 +8203,7 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreFinishFunction(string label, IrFunctionOrigin origin)
+    private IrFunction LowerLambdaCoreFinishFunction(string label, IrFunctionOrigin origin)
     {
         var func = new IrFunction(
             Label: label,
@@ -8062,6 +8220,7 @@ public sealed partial class Lowering
         );
 
         AddFunction(func, origin);
+        return func;
     }
 
     // restore state
