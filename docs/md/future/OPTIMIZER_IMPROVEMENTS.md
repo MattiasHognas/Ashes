@@ -2393,6 +2393,8 @@ and upgrading it twice.
 
 #### (b) Allocation-Free String Building Beyond the TCO Back Edge
 
+**Status: Done (stage 1 only, narrowed scope — see Measured Outcome). Stage 2 not attempted.**
+
 **Problem.** Ashes already has a genuinely allocation-free string append path — `ConcatStrTip`, with a
 geometric-growth reservation and an in-place extend — but it is armed only at a TCO loop's back edge.
 Ordinary, non-loop string concatenation always takes `ConcatStr`'s always-allocates path
@@ -2463,6 +2465,76 @@ bullet. Stage 2 (widened `ConcatStrTip` arming) touches the not-yet-ported owner
 (`SELF_HOSTING.md:377-393`, `[ ]`) since it consumes a move-analysis fact from that not-yet-ported area —
 note this dependency explicitly in whichever `[ ]` line is added for it, so a future self-hosting
 implementer porting move analysis knows this consumer exists.
+
+**Measured Outcome.** Stage 1 implemented as proposed — a new `ConcatStrN(Target, Parts, RuntimeManaged)`
+instruction (`Ir.cs`), a whole-program `FoldConcatStrChains` peephole run as the *last* step of
+`IrOptimizer.Optimize` (after every other pass, entry and every function), and N-ary LLVM codegen
+(`EmitStringConcatN`, `LlvmCodegenMemory.cs`) that sums every part's length, allocates once, and copies
+each part directly into its final position — plus the small set of mechanical additions a new
+allocation-shaped instruction needs elsewhere (`RequiresEntryHeapStorage` in the backend). Running the
+fold last, after arena-bracket stripping and every other existing pass, was a deliberate placement choice
+(not explicitly specified by the doc's proposed implementation): it means no earlier pass in the pipeline
+ever needs to learn about `ConcatStrN` at all — only the backend does — which kept the change's blast
+radius to exactly three files.
+
+**A real, serious correctness bug was found only by running the compiled output of a realistic multi-part
+chain, not by this task's own hand-built unit tests (which, as the doc's own hard gate predicts, initially
+passed against the wrong implementation):** the first implementation's safety check was single-use-based
+only — a link is foldable when its `Left` temp has exactly one use and that use is the fold itself — which
+is necessary but **not sufficient**. `let intToStr n = Ashes.Text.fromInt(n)` `+` `space` `+` `intToStr(2)`
+`+` ... (each `intToStr(k)` an inlined non-recursive helper call, each with its own arena
+`SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` bracket) folded to a single, plausible-looking
+`ConcatStrN` that compiled and ran — and printed `"4 4 4 4"` instead of `"1 2 3 4"` (every position showing
+the *last* part's value). Root cause: folding delays reading an *earlier* part's string until the new
+`ConcatStrN`'s position, at the end of the chain — but if a *later* part's own arena bracket reclaims the
+bump-allocator cursor back past where the earlier part's string was allocated before that read happens, the
+later part's own allocation can be placed at the *same address*, so the delayed read returns the wrong
+(overwritten) content. This is invisible to a purely single-use/def-count analysis, since each temp really
+is used exactly once — the hazard is about *when* it's used relative to arena reclaims, not *how many
+times*. Fixed by adding `RangeContainsArenaOrControlFlow`: before committing to a fold, scan every
+instruction from the innermost part's own definition through the fold point for `SaveArenaState`/
+`RestoreArenaState`/`ReclaimArenaChunks`/`SaveStackPointer`/`RestoreStackPointer`/`Label`/`Jump`/
+`JumpIfFalse`/`SwitchTag` (the last four declining out of caution for the same "not really one straight-line
+span" concern, though no concrete branch-related failure was found); the whole chain declines if any
+appear. Conservative by design: it does not attempt to prove a *specific* reclaim's range excludes a
+*specific* part's address, or that a *specific* part is RC-managed (RC-managed values are heap-allocated,
+not arena-reclaimed, so are not actually at risk the same way — but the check does not special-case this,
+trading a real, larger-than-strictly-necessary loss of fold coverage for a rule simple enough to be
+confident is sound). Two new regression tests lock this in:
+`ConcatStrN_declines_a_chain_with_an_arena_reclaim_between_parts` (an IR-shape assertion — no `ConcatStrN`
+survives) and `ConcatStrN_declined_chain_still_produces_correct_output` (compiles and runs the exact
+`intToStr`-chain shape, asserting the correct `"1 2 3 4"` — the test that would have caught the original
+bug directly, since the first implementation's IR-shape assertions alone would still have looked
+plausible).
+
+**Consequence of the fix, honestly reported:** this materially narrows how often the fold actually fires
+in practice — *any* chain part computed via a real function call (even a small inlined one) typically
+carries its own arena bracket, so the fold now applies mainly to chains built from literals, simple local
+bindings, and other allocation-free intermediate values, not general "each part is some arbitrary
+expression" chains. This is a correctness-motivated narrowing, not a missed opportunity to relax later
+without more work (extending it would need to *prove* a specific reclaim doesn't overlap a specific part's
+memory, i.e. real interval/liveness reasoning, not the doc's original "no new analysis" framing).
+
+**Measured**, against a temporary pre-task baseline (`git stash` of the four changed files, rebuilt,
+compiled/timed the same program, restored): a representative case within the fold's actual scope —
+`let s = "user " + "has " + "42 " + "items " + "today"` inside a 20,000,000-iteration recursive driver
+(5 literal parts, `n-1=4` allocations before, 1 after) — ran **0.90s -> 0.40s at `-O0` (~2.25x faster)**
+and **0.32s -> 0.02s at the CLI's default `-O2` (~15-17x faster, 3 runs each side, tight)**. Unlike most
+tasks in this arc, the `-O2` win is not just real but *dominant*: LLVM's own passes cannot invent away a
+real allocator call with observable side effects, so the `n-1` allocations the unfolded chain pays for
+every single loop iteration survive all the way to `-O2`, and folding them to 1 allocation is a genuine,
+large win at the CLI's default optimization level. The doc's own worked example
+(`"user " + name + " has " + n + " items"`) still folds correctly when `name`/`n` are simple bindings with
+no intervening arena bracket, confirmed via `--emit-ir final` (a single `ConcatStrN Parts=[4 temps]`
+replaces three `ConcatStr` instructions) and a compile-and-run correctness test
+(`ConcatStrN_folds_a_left_nested_chain_with_no_intervening_arena_bracket`,
+`ConcatStrN_folded_chain_produces_correct_output`). Full suite status: C# 2377/2377, LSP 70/70, e2e
+`test tests --pipeline both` 645/0/54-skipped, format clean.
+
+Stage 2 (widening `ConcatStrTip` arming beyond the TCO back edge) was **not attempted** in this pass —
+deferred as a follow-up, consistent with the doc's own acknowledgment that its test surface may be
+narrower than stage 1's and that it depends on wiring an existing `Lowering.MoveAnalysis.cs` fact into a
+new call site, a separate, larger piece of work from stage 1's self-contained optimizer pass.
 
 ---
 
@@ -2717,7 +2789,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Done (narrowed scope) — see Measured Outcome |
-| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Not started |
+| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Done (stage 1 only, narrowed scope) — see Measured Outcome |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |

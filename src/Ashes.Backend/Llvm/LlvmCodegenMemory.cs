@@ -630,6 +630,44 @@ internal static partial class LlvmCodegen
         return destRef;
     }
 
+    // N-ary string concatenation folded from a left-nested ConcatStr chain (IrOptimizer's
+    // FoldConcatStrChains). Unlike the pairwise helper above, this is emitted inline per call site
+    // rather than through a shared module-level function, since the part count varies per site; N is
+    // small in practice (idiomatic string-building chains), so this does not meaningfully bloat code
+    // size. One allocation for the sum of every part's length, then each part's bytes copied directly
+    // into its final position — O(n) total bytes copied instead of the O(n^2) a left-nested chain of
+    // pairwise ConcatStr calls would pay.
+    private static LlvmValueHandle EmitStringConcatN(
+        LlvmCodegenState state,
+        IReadOnlyList<LlvmValueHandle> partRefs,
+        bool runtimeManaged)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        var lengths = new LlvmValueHandle[partRefs.Count];
+        LlvmValueHandle totalLen = LlvmApi.ConstInt(state.I64, 0, 0);
+        for (int i = 0; i < partRefs.Count; i++)
+        {
+            lengths[i] = LoadStringLength(state, partRefs[i], $"str_cat_n_len_{i}");
+            totalLen = LlvmApi.BuildAdd(builder, totalLen, lengths[i], $"str_cat_n_total_len_{i}");
+        }
+        LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "str_cat_n_total_bytes");
+        LlvmValueHandle destRef = runtimeManaged
+            ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_str_cat_n")
+            : EmitAllocDynamic(state, totalBytes);
+        StoreMemory(state, destRef, 0, totalLen, "str_cat_n_len");
+
+        LlvmValueHandle destBytes = GetStringBytesPointer(state, destRef, "str_cat_n_dest_bytes");
+        LlvmValueHandle offset = LlvmApi.ConstInt(state.I64, 0, 0);
+        for (int i = 0; i < partRefs.Count; i++)
+        {
+            LlvmValueHandle partBytes = GetStringBytesPointer(state, partRefs[i], $"str_cat_n_part_bytes_{i}");
+            LlvmValueHandle destAt = LlvmApi.BuildGEP2(builder, state.I8, destBytes, [offset], $"str_cat_n_dest_at_{i}");
+            EmitCopyBytes(state, destAt, partBytes, lengths[i], $"str_cat_n_copy_{i}");
+            offset = LlvmApi.BuildAdd(builder, offset, lengths[i], $"str_cat_n_offset_{i}");
+        }
+        return destRef;
+    }
+
     private static void EmitCopyBytes(LlvmCodegenState state, LlvmValueHandle destBytes, LlvmValueHandle sourceBytes, LlvmValueHandle length, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;

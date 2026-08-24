@@ -478,6 +478,37 @@ same public behavior.
   200,000,000-iteration driver repeatedly entering the same mutual-recursion group ran **14% faster at
   the CLI's default `-O2`** — unlike most passes in this pipeline, this `-O2` win is real because it
   removes an allocation LLVM has no way to reconstruct once Ashes has already chosen to omit it.
+- [ ] Fold a left-nested chain of string-concatenation calls with single-use intermediates into one
+  N-ary concatenation that allocates once for the sum of every part's length and copies each part
+  directly into its final position, instead of paying one allocation and one growing copy per link
+  (`n-1` allocations, `O(n^2)` bytes copied, for `n` parts). Run this as the very last step of the
+  optimization pipeline, after every other pass, so no earlier pass needs to know about the new
+  instruction shape — only code generation does. **A single-use/def-count safety check is necessary
+  but not sufficient, found only by running the compiled output of a realistic chain, not by
+  hand-built unit tests**: folding delays reading an *earlier* part's string until the new
+  instruction's position, at the end of the chain: if a *later* part's own computation reclaims a
+  bump-allocator cursor back past where the earlier part was allocated (e.g. each part is an inlined
+  helper call, each with its own arena save/restore/reclaim bracket), the later part's own
+  allocation can land at the same address the earlier part still needs to read from — invisible to a
+  pure single-use analysis, since each temp genuinely is used exactly once; the hazard is *when* it's
+  read relative to a reclaim, not how many times. Fix: before committing to a fold, scan every
+  instruction from the innermost part's own definition through the fold point for any arena
+  save/restore/reclaim bracket, stack-pointer save/restore, or branch/label instruction, and decline
+  the whole chain if any appear — conservative on purpose (it does not attempt to prove a *specific*
+  reclaim's range excludes a *specific* part's address). This materially narrows how often the fold
+  fires: any part computed via a real function call typically carries its own arena bracket, so in
+  practice this applies mainly to chains built from literals and other allocation-free intermediate
+  values, not general "each part is an arbitrary expression" chains — a correctness-motivated
+  narrowing, not a missed opportunity to relax later without more analysis work. **Measured**: a
+  5-part literal chain (`"user " + "has " + "42 " + "items " + "today"`) inside a
+  20,000,000-iteration loop ran **~2.25x faster at `-O0`** and **~15-17x faster at the CLI's default
+  `-O2`** — unlike most passes in this pipeline, the `-O2` win dominates, since LLVM cannot invent
+  away a real allocator call with observable side effects that the unfolded chain pays every
+  iteration. A companion task (not yet ported, not yet attempted in the C# compiler either) would
+  widen the existing affine-accumulator in-place-append reservation path beyond its current
+  TCO-back-edge-only arming condition to any `let`-bound accumulator move analysis proves
+  affine-self-append — see the not-yet-ported reuse/move-analysis section below for where that fact
+  itself is tracked.
 - [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
   empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
   chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed

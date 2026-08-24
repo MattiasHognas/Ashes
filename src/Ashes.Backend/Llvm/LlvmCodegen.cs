@@ -1444,7 +1444,7 @@ internal static partial class LlvmCodegen
 
     private static bool RequiresEntryHeapStorage(IrInst instruction)
     {
-        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.AllocAdtToSpace or IrInst.ConcatStr or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutArenaToSpace or IrInst.CopyOutList or IrInst.CopyOutClosure or IrInst.CopyOutTcoListCell;
+        return instruction is IrInst.Alloc or IrInst.AllocAdt or IrInst.AllocAdtToSpace or IrInst.ConcatStr or IrInst.ConcatStrN or IrInst.MakeClosure or IrInst.LoadProgramArgs or IrInst.CopyOutArena or IrInst.CopyOutArenaToSpace or IrInst.CopyOutList or IrInst.CopyOutClosure or IrInst.CopyOutTcoListCell;
     }
 
     private static void EmitFunctionBody(
@@ -2294,6 +2294,7 @@ internal static partial class LlvmCodegen
                 LoadTemp(state, concatStr.Left),
                 LoadTemp(state, concatStr.Right),
                 concatStr.RuntimeManaged)),
+            IrInst.ConcatStrN concatStrN => StoreTemp(state, concatStrN.Target, EmitStringConcatN(state, concatStrN.Parts.Select(part => LoadTemp(state, part)).ToArray(), concatStrN.RuntimeManaged)),
             IrInst.ConcatStrTip concatStrTip => StoreTemp(state, concatStrTip.Target, EmitConcatStrTip(state, LoadTemp(state, concatStrTip.Left), LoadTemp(state, concatStrTip.Right), concatStrTip.ResvStartSlot, concatStrTip.ResvEndSlot, concatStrTip.RuntimeManaged)),
             IrInst.MakeClosure makeClosure => StoreTemp(state, makeClosure.Target, EmitMakeClosure(
                 state,
