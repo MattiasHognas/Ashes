@@ -446,6 +446,216 @@ public sealed class IrOptimizerTests
             "A direct tail jump cannot outlive the caller frame that owns its environment.");
     }
 
+    // OPT-013: closure environment scalarization
+
+    private static (IrFunction Entry, IrFunction Callee) BuildSingleCaptureStackClosureProgram(int capturedValue, int argValue)
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 8),
+            new IrInst.LoadConstInt(1, capturedValue),
+            new IrInst.StoreMemOffset(0, 0, 1),
+            new IrInst.MakeClosureStack(2, "callee", 0, 8),
+            new IrInst.LoadConstInt(3, argValue),
+            new IrInst.CallClosure(4, 2, 3),
+            new IrInst.PrintInt(4),
+            new IrInst.Return(4),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 5, false);
+        // Real (non-coroutine) lowered closures read a capture via the dedicated LoadEnv
+        // instruction, never via an explicit LoadLocal(_, 0) + LoadMemOffset dereference pair —
+        // confirmed via --emit-ir final on an actual .ash closure.
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadLocal(1, 1),
+                new IrInst.AddInt(2, 0, 1),
+                new IrInst.Return(2),
+            ],
+            2,
+            3,
+            true);
+        return (entry, callee);
+    }
+
+    [Test]
+    public void Scalarize_single_capture_stack_closure_removes_environment_allocation()
+    {
+        (IrFunction entry, IrFunction callee) = BuildSingleCaptureStackClosureProgram(capturedValue: 7, argValue: 3);
+        // A non-evaluable outer PrintInt keeps IrCompileTimeEval from folding the whole program to
+        // a constant, so the scalarization pattern actually reaches this new pass.
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldBeEmpty(
+            "The stack environment allocation should be skipped entirely.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.StoreMemOffset>().ShouldBeEmpty(
+            "There is no environment buffer left to populate.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.MakeClosureStack>().ShouldBeEmpty(
+            "MakeClosureStack should already be dead-code-eliminated once devirtualized.");
+
+        IrInst.CallKnown call = optimized.EntryFunction.Instructions
+            .OfType<IrInst.CallKnown>()
+            .ShouldHaveSingleItem();
+        call.EnvironmentIsStackAllocated.ShouldBeFalse("No allocation remains to protect.");
+        call.FuncLabel.ShouldNotBe("callee", "The original callee must be left untouched; a new scalar-env variant is generated instead.");
+
+        optimized.Functions.ShouldContain(f => string.Equals(f.Label, "callee", StringComparison.Ordinal),
+            "The original callee is left completely untouched, in case it is still used elsewhere.");
+        IrFunction variant = optimized.Functions
+            .Where(f => string.Equals(f.Label, call.FuncLabel, StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+        variant.Instructions.OfType<IrInst.LoadEnv>().ShouldBeEmpty(
+            "The variant must read the captured value directly from its own local slot 0 instead of an implicit env dereference.");
+        variant.Instructions.OfType<IrInst.LoadLocal>().ShouldContain(l => l.Slot == 0,
+            "The captured value now arrives as the raw env argument, read directly.");
+    }
+
+    [Test]
+    public async Task Scalarize_single_capture_stack_closure_preserves_execution_semantics()
+    {
+        (IrFunction entry, IrFunction callee) = BuildSingleCaptureStackClosureProgram(capturedValue: 7, argValue: 3);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        string output = await RunAsync(IrOptimizer.Optimize(program)).ConfigureAwait(false);
+
+        output.ShouldBe("10\n");
+    }
+
+    [Test]
+    public void Scalarize_declines_a_two_capture_stack_closure()
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 16),
+            new IrInst.LoadConstInt(1, 7),
+            new IrInst.StoreMemOffset(0, 0, 1),
+            new IrInst.LoadConstInt(2, 9),
+            new IrInst.StoreMemOffset(0, 8, 2),
+            new IrInst.MakeClosureStack(3, "callee2", 0, 16),
+            new IrInst.LoadConstInt(4, 3),
+            new IrInst.CallClosure(5, 3, 4),
+            new IrInst.PrintInt(5),
+            new IrInst.Return(5),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 6, false);
+        IrFunction callee = new(
+            "callee2",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadEnv(1, 1),
+                new IrInst.AddInt(2, 0, 1),
+                new IrInst.LoadLocal(3, 1),
+                new IrInst.AddInt(4, 2, 3),
+                new IrInst.Return(4),
+            ],
+            2,
+            5,
+            true);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
+            "A two-field environment is out of this task's single-capture scope and must be left alone.");
+        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee2");
+    }
+
+    [Test]
+    public void Scalarize_declines_a_capture_that_escapes_the_environment_pointer()
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 8),
+            new IrInst.LoadConstInt(1, 7),
+            new IrInst.StoreMemOffset(0, 0, 1),
+            new IrInst.MakeClosureStack(2, "callee", 0, 8),
+            new IrInst.LoadConstInt(3, 3),
+            new IrInst.CallClosure(4, 2, 3),
+            // The env pointer also escapes to an unrelated print, so it is not eligible: something
+            // else in the function still needs it to be a real pointer.
+            new IrInst.PrintInt(0),
+            new IrInst.PrintInt(4),
+            new IrInst.Return(4),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 5, false);
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadLocal(1, 1),
+                new IrInst.AddInt(2, 0, 1),
+                new IrInst.Return(2),
+            ],
+            2,
+            3,
+            true);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
+            "The env pointer escapes to a use besides the store/call pair, so scalarization is unsafe.");
+        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee");
+    }
+
+    [Test]
+    public void Scalarize_declines_a_callee_that_reads_the_env_pointer_as_a_raw_value()
+    {
+        (IrFunction entry, _) = BuildSingleCaptureStackClosureProgram(capturedValue: 7, argValue: 3);
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadLocal(1, 1),
+                new IrInst.AddInt(2, 0, 1),
+                // A raw read of the env slot outside of LoadEnv — e.g. passed on as a genuine
+                // pointer for some other purpose this task does not attempt to reason about.
+                new IrInst.LoadLocal(3, 0),
+                new IrInst.PrintInt(3),
+                new IrInst.Return(2),
+            ],
+            2,
+            4,
+            true);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
+            "A callee that reads its env slot as a raw value outside of LoadEnv must not be scalarized.");
+        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee");
+    }
+
+    [Test]
+    public async Task Scalarize_handles_a_capture_read_more_than_once_via_separate_LoadEnv_instructions()
+    {
+        (IrFunction entry, _) = BuildSingleCaptureStackClosureProgram(capturedValue: 7, argValue: 3);
+        IrFunction callee = new(
+            "callee",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadEnv(1, 0),
+                new IrInst.LoadLocal(2, 1),
+                new IrInst.AddInt(3, 0, 1),
+                new IrInst.AddInt(4, 3, 2),
+                new IrInst.Return(4),
+            ],
+            2,
+            5,
+            true);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldBeEmpty(
+            "Two separate LoadEnv reads of the same sole capture are still eligible.");
+
+        string output = await RunAsync(optimized).ConfigureAwait(false);
+        output.ShouldBe("17\n");
+    }
+
     // Erased RC marker and resource-cleanup tests
 
     [Test]

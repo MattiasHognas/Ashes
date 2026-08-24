@@ -34,6 +34,15 @@ public static class IrOptimizer
         var optimizedEntry = OptimizeFunction(program.EntryFunction, evaluableFunctions);
         var optimizedFuncs = program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList();
 
+        // Interprocedural: skip the environment allocation entirely for a single-scalar-capture
+        // stack closure whose only use is already a devirtualized CallKnown (OPT-013). Runs after
+        // the per-function passes so devirtualization has already resolved CallClosure -> CallKnown
+        // and dead-code elimination has already swept the now-unused MakeClosureStack, leaving the
+        // residual AllocStack/StoreMemOffset/CallKnown shape this pass looks for. May append newly
+        // generated scalar-parameter callee variants to the function list, so it runs before the
+        // non-allocation summary below (a scalarized callee is strictly less allocating, never more).
+        (optimizedEntry, optimizedFuncs) = ScalarizeSingleCaptureStackClosures(optimizedEntry, optimizedFuncs);
+
         // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
         // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
         // dead MakeClosures are already resolved, and needs whole-program non-allocation
@@ -47,6 +56,256 @@ public static class IrOptimizer
             EntryFunction = optimizedEntry,
             Functions = optimizedFuncs,
         };
+    }
+
+    // Closure environment scalarization (OPT-013)
+    // A stack-allocated closure with exactly one 8-byte scalar capture, whose only use is already a
+    // devirtualized CallKnown (EnvironmentIsStackAllocated: true), packs that single value through
+    // an AllocStack + StoreMemOffset + LoadMemOffset round trip even though the value never needs
+    // to leave a register. When the callee's only access to its environment parameter is exactly
+    // one such dereference, the round trip is unnecessary: the captured value can be passed
+    // directly as the "env" argument (reusing the existing CallKnown ABI unchanged — env, arg, and
+    // an optional runtime-managed-argument flag) and the callee rewritten to use it directly
+    // instead of dereferencing it.
+    //
+    // A new callee variant is generated per eligible target label (memoized across call sites)
+    // rather than rewriting the original callee in place: the same label may still be used
+    // elsewhere in a way that needs the pointer-based form (a different capture count, or an
+    // escaping/non-devirtualized use), and safety here does not depend on proving there is no such
+    // other use — the original function is always left completely untouched.
+    //
+    // Scope: exactly one scalar capture only (N=1). A general N-capture variant would need a new
+    // calling convention (every Ashes-callable function shares one fixed 3-word LLVM signature so
+    // that CallClosure's indirect dispatch stays uniform; a direct-call-only variant with N+2
+    // parameters is a materially larger change than reusing the existing "env" slot for a single
+    // scalar) — left as future work, matching this document's own part (a)/(b) split precedent.
+    private static (IrFunction Entry, List<IrFunction> Functions) ScalarizeSingleCaptureStackClosures(
+        IrFunction entry, List<IrFunction> functions)
+    {
+        var functionsByLabel = new Dictionary<string, IrFunction>(StringComparer.Ordinal);
+        foreach (IrFunction f in functions)
+        {
+            functionsByLabel[f.Label] = f;
+        }
+
+        var cloneLabelByOriginal = new Dictionary<string, string?>(StringComparer.Ordinal);
+        var newFunctions = new List<IrFunction>();
+        int cloneCounter = 0;
+
+        IrFunction RewriteCaller(IrFunction caller)
+        {
+            IrFunction? rewritten = TryScalarizeCallSites(
+                caller, functionsByLabel, cloneLabelByOriginal, newFunctions, ref cloneCounter);
+            return rewritten ?? caller;
+        }
+
+        IrFunction newEntry = RewriteCaller(entry);
+        var newFuncs = functions.Select(RewriteCaller).ToList();
+        newFuncs.AddRange(newFunctions);
+
+        return (newEntry, newFuncs);
+    }
+
+    private static IrFunction? TryScalarizeCallSites(
+        IrFunction caller,
+        Dictionary<string, IrFunction> functionsByLabel,
+        Dictionary<string, string?> cloneLabelByOriginal,
+        List<IrFunction> newFunctions,
+        ref int cloneCounter)
+    {
+        List<IrInst> instructions = caller.Instructions;
+        (HashSet<int> toRemove, Dictionary<int, IrInst> rewrites) = FindEligibleScalarEnvCallSites(
+            instructions, functionsByLabel, cloneLabelByOriginal, newFunctions, ref cloneCounter);
+
+        if (rewrites.Count == 0)
+        {
+            return null;
+        }
+
+        var result = new List<IrInst>(instructions.Count - toRemove.Count);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (toRemove.Contains(i))
+            {
+                continue;
+            }
+
+            result.Add(rewrites.TryGetValue(i, out IrInst? replacement) ? replacement : instructions[i]);
+        }
+
+        return caller with { Instructions = result };
+    }
+
+    private static (HashSet<int> ToRemove, Dictionary<int, IrInst> Rewrites) FindEligibleScalarEnvCallSites(
+        List<IrInst> instructions,
+        Dictionary<string, IrFunction> functionsByLabel,
+        Dictionary<string, string?> cloneLabelByOriginal,
+        List<IrFunction> newFunctions,
+        ref int cloneCounter)
+    {
+        (var defCount, var defIndex, var useCount) = ComputeTempDefUseFacts(instructions);
+
+        var storeIndexByEnvPtr = new Dictionary<int, int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.StoreMemOffset { OffsetBytes: 0 } store)
+            {
+                storeIndexByEnvPtr[store.BasePtr] = i;
+            }
+        }
+
+        var toRemove = new HashSet<int>();
+        var rewrites = new Dictionary<int, IrInst>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.CallKnown { EnvironmentIsStackAllocated: true } call)
+            {
+                continue;
+            }
+
+            // Exactly two uses of the env pointer total (the store below, and this call) proves
+            // there is no third consumer anywhere in the function — no other read, no escape.
+            if (defCount.GetValueOrDefault(call.EnvTemp) != 1
+                || useCount.GetValueOrDefault(call.EnvTemp) != 2
+                || !defIndex.TryGetValue(call.EnvTemp, out int allocIndex)
+                || instructions[allocIndex] is not IrInst.AllocStack { SizeBytes: 8 } alloc
+                || alloc.Target != call.EnvTemp
+                || !storeIndexByEnvPtr.TryGetValue(call.EnvTemp, out int storeIndex)
+                || instructions[storeIndex] is not IrInst.StoreMemOffset store)
+            {
+                continue;
+            }
+
+            if (!functionsByLabel.TryGetValue(call.FuncLabel, out IrFunction? callee))
+            {
+                continue;
+            }
+
+            string? cloneLabel = GetOrCreateScalarEnvVariant(
+                callee, functionsByLabel, cloneLabelByOriginal, newFunctions, ref cloneCounter);
+            if (cloneLabel is null)
+            {
+                continue;
+            }
+
+            toRemove.Add(allocIndex);
+            toRemove.Add(storeIndex);
+            rewrites[i] = call with
+            {
+                FuncLabel = cloneLabel,
+                EnvTemp = store.Source,
+                EnvironmentIsStackAllocated = false,
+            };
+        }
+
+        return (toRemove, rewrites);
+    }
+
+    private static (Dictionary<int, int> DefCount, Dictionary<int, int> DefIndex, Dictionary<int, int> UseCount)
+        ComputeTempDefUseFacts(List<IrInst> instructions)
+    {
+        var defCount = new Dictionary<int, int>();
+        var defIndex = new Dictionary<int, int>();
+        var useCount = new Dictionary<int, int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            foreach (int d in StateMachineTransform.GetDefinedTemps(instructions[i]))
+            {
+                defCount[d] = defCount.GetValueOrDefault(d) + 1;
+                defIndex[d] = i;
+            }
+
+            foreach (int u in StateMachineTransform.GetUsedTemps(instructions[i]))
+            {
+                useCount[u] = useCount.GetValueOrDefault(u) + 1;
+            }
+        }
+
+        return (defCount, defIndex, useCount);
+    }
+
+    private static string? GetOrCreateScalarEnvVariant(
+        IrFunction callee,
+        Dictionary<string, IrFunction> functionsByLabel,
+        Dictionary<string, string?> cloneLabelByOriginal,
+        List<IrFunction> newFunctions,
+        ref int cloneCounter)
+    {
+        if (cloneLabelByOriginal.TryGetValue(callee.Label, out string? cached))
+        {
+            return cached;
+        }
+
+        IrFunction? clone = TryBuildScalarEnvVariant(callee, cloneCounter);
+        string? cloneLabel = clone?.Label;
+        cloneLabelByOriginal[callee.Label] = cloneLabel;
+        if (clone is not null)
+        {
+            cloneCounter++;
+            newFunctions.Add(clone);
+            functionsByLabel[clone.Label] = clone;
+        }
+
+        return cloneLabel;
+    }
+
+    // Builds a scalar-env variant of a devirtualizable callee, or returns null when the callee's
+    // body does not match the narrow single-dereference shape this task recognizes. Eligible shape:
+    // local slot 0 (the env parameter) is read exactly once anywhere in the function, that read's
+    // result is used exactly once, and that one use is exactly one LoadMemOffset at offset 0 — i.e.
+    // the entire function touches its environment through exactly one pointer dereference of the
+    // sole capture, nothing else (no null check, no second field, no passing the env pointer on).
+    private static IrFunction? TryBuildScalarEnvVariant(IrFunction callee, int cloneCounter)
+    {
+        // Real (non-coroutine) lowered closures read a capture via the dedicated LoadEnv
+        // instruction, which implicitly dereferences local slot 0 — never via an explicit
+        // LoadLocal(_, 0) of the env pointer. A coroutine's state-machine transform rewrites
+        // LoadEnv into a LoadMemOffset against its own frame/state-struct temp instead (see
+        // StateMachineTransform.AdjustLoadEnvForStateStruct), a materially different and riskier
+        // shape this narrow task does not attempt.
+        if (!callee.HasEnvAndArgParams || callee.Coroutine is not null)
+        {
+            return null;
+        }
+
+        List<IrInst> body = callee.Instructions;
+        if (body.Any(inst => inst is IrInst.LoadLocal { Slot: 0 }))
+        {
+            // The env pointer is read as a raw value somewhere outside of LoadEnv — it is treated
+            // as a genuine pointer for some other purpose this task does not attempt to reason about.
+            return null;
+        }
+
+        var loadEnvIndices = new List<int>();
+        for (int i = 0; i < body.Count; i++)
+        {
+            if (body[i] is not IrInst.LoadEnv loadEnv)
+            {
+                continue;
+            }
+
+            if (loadEnv.Index != 0)
+            {
+                // A single 8-byte capture only ever has offset 0 — an unexpected index means this
+                // callee's shape is not what this task's caller-side gate assumed.
+                return null;
+            }
+
+            loadEnvIndices.Add(i);
+        }
+
+        if (loadEnvIndices.Count == 0)
+        {
+            return null;
+        }
+
+        var newBody = new List<IrInst>(body);
+        foreach (int i in loadEnvIndices)
+        {
+            newBody[i] = new IrInst.LoadLocal(((IrInst.LoadEnv)body[i]).Target, 0);
+        }
+
+        return callee with { Label = $"{callee.Label}__scalarenv{cloneCounter}", Instructions = newBody };
     }
 
     private static IrFunction OptimizeFunction(IrFunction function, HashSet<string> evaluableFunctions)
