@@ -51,11 +51,171 @@ public static class IrOptimizer
         optimizedEntry = StripRedundantArenaBrackets(optimizedEntry, nonAllocating);
         optimizedFuncs = optimizedFuncs.Select(f => StripRedundantArenaBrackets(f, nonAllocating)).ToList();
 
+        // Last: folds a left-nested ConcatStr chain into one ConcatStrN. Placed after every pass
+        // above (rather than in the per-function pipeline) so ComputeNonAllocatingFunctions/
+        // StripRedundantArenaBrackets — and every other pass — only ever see plain ConcatStr, the
+        // one instruction shape they already know how to reason about; only the backend needs to
+        // learn ConcatStrN, not the rest of this pipeline.
+        optimizedEntry = FoldConcatStrChains(optimizedEntry);
+        optimizedFuncs = optimizedFuncs.Select(FoldConcatStrChains).ToList();
+
         return program with
         {
             EntryFunction = optimizedEntry,
             Functions = optimizedFuncs,
         };
+    }
+
+    // String-concatenation chain folding (OPT-017(b))
+    // A left-nested chain of ConcatStr calls (`((a ++ b) ++ c) ++ d`) pays one allocation and one
+    // growing copy per link — n-1 allocations and O(n^2) total bytes copied for n parts. When every
+    // intermediate result is used exactly once, and that one use is as the Left operand of the next
+    // link in the chain, the whole chain can be folded into a single ConcatStrN that allocates once
+    // for the sum of every part's length and copies each part directly into its final position.
+    private static IrFunction FoldConcatStrChains(IrFunction function)
+    {
+        List<IrInst>? rewritten = TryFoldConcatStrChains(function.Instructions);
+        return rewritten is null ? function : function with { Instructions = rewritten };
+    }
+
+    private static List<IrInst>? TryFoldConcatStrChains(List<IrInst> instructions)
+    {
+        (var defCount, var defIndex, var useCount) = ComputeTempDefUseFacts(instructions);
+
+        // A temp used exactly once as the Left operand of a ConcatStr is an inner link of some
+        // chain, never a fold root on its own — it will be absorbed when its consumer is processed.
+        var consumedAsConcatLeft = new HashSet<int>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is IrInst.ConcatStr c && useCount.GetValueOrDefault(c.Left) == 1)
+            {
+                consumedAsConcatLeft.Add(c.Left);
+            }
+        }
+
+        var toRemove = new HashSet<int>();
+        var rewrites = new Dictionary<int, IrInst>();
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (instructions[i] is not IrInst.ConcatStr root || consumedAsConcatLeft.Contains(root.Target))
+            {
+                continue;
+            }
+
+            TryFoldConcatChainAt(instructions, defCount, defIndex, useCount, i, root, toRemove, rewrites);
+        }
+
+        if (rewrites.Count == 0)
+        {
+            return null;
+        }
+
+        var result = new List<IrInst>(instructions.Count - toRemove.Count);
+        for (int i = 0; i < instructions.Count; i++)
+        {
+            if (toRemove.Contains(i))
+            {
+                continue;
+            }
+            result.Add(rewrites.TryGetValue(i, out IrInst? replacement) ? replacement : instructions[i]);
+        }
+        return result;
+    }
+
+    // Attempts to fold the chain rooted at `root` (index `rootIndex`) into rewrites[rootIndex],
+    // marking every absorbed inner link's index in toRemove. Leaves both untouched when the chain
+    // is too short to be worth folding, or when the arena/control-flow safety check declines it.
+    private static void TryFoldConcatChainAt(
+        List<IrInst> instructions,
+        Dictionary<int, int> defCount,
+        Dictionary<int, int> defIndex,
+        Dictionary<int, int> useCount,
+        int rootIndex,
+        IrInst.ConcatStr root,
+        HashSet<int> toRemove,
+        Dictionary<int, IrInst> rewrites)
+    {
+        List<int> chainIndices = CollectConcatChainIndices(instructions, defCount, defIndex, useCount, rootIndex, root);
+        if (chainIndices.Count < 2)
+        {
+            return;
+        }
+
+        int innermostLeft = ((IrInst.ConcatStr)instructions[chainIndices[^1]]).Left;
+        int scanStart = defIndex.GetValueOrDefault(innermostLeft, chainIndices[^1]);
+        if (RangeContainsArenaOrControlFlow(instructions, scanStart, rootIndex))
+        {
+            // Folding would delay reading an earlier part past a later part's arena
+            // save/restore/reclaim bracket (each inlined helper call scopes its own), which can
+            // reclaim and overwrite the earlier part's still-unread memory before this instruction
+            // gets to read it — found only by running the compiled output of a multi-part chain
+            // built from inlined helper calls, not by this pass's own hand-built raw-IR unit
+            // tests. Decline rather than risk reading reclaimed memory.
+            return;
+        }
+
+        var parts = new List<int> { innermostLeft };
+        for (int k = chainIndices.Count - 1; k >= 0; k--)
+        {
+            parts.Add(((IrInst.ConcatStr)instructions[chainIndices[k]]).Right);
+        }
+        for (int k = 1; k < chainIndices.Count; k++)
+        {
+            toRemove.Add(chainIndices[k]);
+        }
+        rewrites[rootIndex] = new IrInst.ConcatStrN(root.Target, parts, root.RuntimeManaged);
+    }
+
+    // A part read this instruction's position (rather than immediately after it was computed, as
+    // in the original unfolded chain) is unsafe if an arena bracket between the two could have
+    // reclaimed the bump-allocator memory that part's string lives in, or if a branch/label makes
+    // "between the two" not a genuine straight-line span. Conservative on purpose: this does not
+    // attempt to prove a specific part is RC-managed (never arena-reclaimed) or that a specific
+    // reclaim's range excludes a specific part's address — it declines the whole fold instead.
+    private static bool RangeContainsArenaOrControlFlow(List<IrInst> instructions, int fromIndex, int toIndex)
+    {
+        for (int i = fromIndex; i <= toIndex; i++)
+        {
+            if (instructions[i] is IrInst.Label or IrInst.Jump or IrInst.JumpIfFalse or IrInst.SwitchTag
+                or IrInst.SaveArenaState or IrInst.RestoreArenaState or IrInst.ReclaimArenaChunks
+                or IrInst.SaveStackPointer or IrInst.RestoreStackPointer)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Walks backward from a chain's outermost ConcatStr (`root`, at index `rootIndex`) via each
+    // link's Left operand, for as long as that operand is itself defined by exactly one ConcatStr
+    // with a single use (this same link) and a matching RuntimeManaged flag. Returns the visited
+    // instruction indices in outermost-to-innermost order.
+    private static List<int> CollectConcatChainIndices(
+        List<IrInst> instructions,
+        Dictionary<int, int> defCount,
+        Dictionary<int, int> defIndex,
+        Dictionary<int, int> useCount,
+        int rootIndex,
+        IrInst.ConcatStr root)
+    {
+        var chainIndices = new List<int>();
+        int current = rootIndex;
+        IrInst.ConcatStr link = root;
+        while (true)
+        {
+            chainIndices.Add(current);
+            if (defCount.GetValueOrDefault(link.Left) == 1
+                && useCount.GetValueOrDefault(link.Left) == 1
+                && defIndex.TryGetValue(link.Left, out int leftDefIndex)
+                && instructions[leftDefIndex] is IrInst.ConcatStr innerLink
+                && innerLink.RuntimeManaged == link.RuntimeManaged)
+            {
+                current = leftDefIndex;
+                link = innerLink;
+                continue;
+            }
+            return chainIndices;
+        }
     }
 
     // Closure environment scalarization

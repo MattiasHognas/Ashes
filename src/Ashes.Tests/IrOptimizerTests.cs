@@ -2438,4 +2438,67 @@ public sealed class IrOptimizerTests
         await proc.WaitForExitAsync().ConfigureAwait(false);
         return stdout;
     }
+
+    // ConcatStrN chain folding (OPT-017(b))
+
+    [Test]
+    public void ConcatStrN_folds_a_left_nested_chain_with_no_intervening_arena_bracket()
+    {
+        var ir = IrOptimizer.Optimize(LowerProgram(
+            """
+            let name = "user "
+            let n = 42
+            Ashes.IO.print(name + "has " + Ashes.Text.fromInt(n) + " items")
+            """));
+
+        var folded = ir.EntryFunction.Instructions.OfType<IrInst.ConcatStrN>().ShouldHaveSingleItem();
+        folded.Parts.Count.ShouldBe(4);
+        ir.EntryFunction.Instructions.OfType<IrInst.ConcatStr>().ShouldBeEmpty(
+            "every link in the chain should have been absorbed into the single ConcatStrN.");
+    }
+
+    [Test]
+    public async Task ConcatStrN_folded_chain_produces_correct_output()
+    {
+        string stdout = await RunAsync(IrOptimizer.Optimize(LowerProgram(
+            """
+            let name = "user "
+            let n = 42
+            Ashes.IO.print(name + "has " + Ashes.Text.fromInt(n) + " items")
+            """))).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("user has 42 items");
+    }
+
+    [Test]
+    public void ConcatStrN_declines_a_chain_with_an_arena_reclaim_between_parts()
+    {
+        // Each intToStr(k) call site is a separate inlined instantiation with its own arena
+        // scope; folding this chain would delay reading an earlier part's string past a later
+        // part's RestoreArenaState/ReclaimArenaChunks, which can reclaim and overwrite that
+        // earlier part's memory before ConcatStrN ever reads it (the bug this test guards
+        // against — found only by running the compiled output, not by an instruction-count
+        // assertion, since the original, wrong implementation produced a plausible-looking
+        // single ConcatStrN here too).
+        var ir = IrOptimizer.Optimize(LowerProgram(
+            """
+            let intToStr n = Ashes.Text.fromInt(n)
+            let space = " "
+            Ashes.IO.print(intToStr(1) + space + intToStr(2) + space + intToStr(3) + space + intToStr(4))
+            """));
+
+        ir.EntryFunction.Instructions.OfType<IrInst.ConcatStrN>().ShouldBeEmpty(
+            "an arena reclaim sits between at least one pair of parts, so the whole chain must decline.");
+    }
+
+    [Test]
+    public async Task ConcatStrN_declined_chain_still_produces_correct_output()
+    {
+        string stdout = await RunAsync(IrOptimizer.Optimize(LowerProgram(
+            """
+            let intToStr n = Ashes.Text.fromInt(n)
+            let space = " "
+            Ashes.IO.print(intToStr(1) + space + intToStr(2) + space + intToStr(3) + space + intToStr(4))
+            """))).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("1 2 3 4");
+    }
 }

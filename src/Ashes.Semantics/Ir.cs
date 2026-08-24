@@ -568,6 +568,16 @@ public abstract record IrInst
     /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
     public sealed record ConcatStr(int Target, int Left, int Right, bool RuntimeManaged = false)
         : IrInst, IRuntimeManagedTargetResult;
+    /// <summary>N-ary string concatenation, folded from a left-nested chain of <see cref="ConcatStr"/>
+    /// instructions with single-use intermediates (<c>IrOptimizer.FoldConcatStrChains</c>): allocates
+    /// once for the sum of every part's length and copies each part's bytes directly into its final
+    /// position, instead of paying one allocation and one growing copy per link in the original chain.
+    /// Never emitted by lowering directly.</summary>
+    /// <param name="Target">Temp receiving the concatenated string.</param>
+    /// <param name="Parts">Temps holding each part's string, in left-to-right order (at least 3).</param>
+    /// <param name="RuntimeManaged">True when the result participates in reference-counted ownership.</param>
+    public sealed record ConcatStrN(int Target, IReadOnlyList<int> Parts, bool RuntimeManaged = false)
+        : IrInst, IRuntimeManagedTargetResult;
     // Affine-accumulator string append: semantically identical to ConcatStr, but the accumulator
     // grows inside a RESERVATION instead of being copied per append. The loop keeps two local
     // slots (zeroed at loop entry): the reservation's start and end. When Left == *ResvStartSlot
