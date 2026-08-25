@@ -303,10 +303,13 @@ public sealed partial class Lowering
             label,
             cacheKey);
 
+    // slotCount is the dispatch function's parameter-slot count (the shared arity for a group of
+    // identical signatures); the discriminator keeps its historical "arity:" spelling so the
+    // stable origin identity of every previously merged group is unchanged.
     private IrFunctionOriginSeed CreateMutualRecursionDispatchOriginSeed(
         RecursiveGroupExpr group,
         IReadOnlyList<(string Name, Expr Value)> bindings,
-        int arity)
+        int slotCount)
     {
         string ownerName = string.Join(
             ",",
@@ -321,7 +324,7 @@ public sealed partial class Lowering
             IrFunctionOriginKind.MutualRecursionDispatch,
             CompilerFunctionOwnerKind.MutualRecursionGroup,
             ownerName,
-            stableDiscriminator: $"arity:{arity}");
+            stableDiscriminator: $"arity:{slotCount}");
     }
 
     private IrFunctionOrigin CreateClosureNormalizerOrigin(

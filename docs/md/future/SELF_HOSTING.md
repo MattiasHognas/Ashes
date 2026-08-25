@@ -604,6 +604,16 @@ same public behavior.
   (closure environments and capability/effect-handler frames both use the same stack-allocation
   mechanism, and a handler frame's pointer can outlive a tail call later in the same function via a
   dynamically-scoped global). Blocked on LLVM code generation existing in `selfhost/` first (see below).
+- [ ] Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups with the
+  dispatch slot layout: one dispatch slot per parameter position where every member's (structurally
+  compared) parameter type agrees, and one slot per distinct type where they differ or where only some
+  members have that position at all, so members of differing arity merge too. A tail call or wrapper
+  entry fills the callee's slots with its arguments and every other slot with that slot type's default
+  literal (`0`, `false`, `0.0`, `""`, the zero rune, the zero fixed-width unsigned, `[]`); a non-shared
+  slot whose type has no constructible default (a user-declared type, tuple, function, or unresolved
+  type variable) declines the group, and so do members whose result types differ (every member body
+  becomes one arm of the dispatch match). Groups that merged under the old gate must lower to the
+  identical shared-slot layout.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
   and whole-program SCC provenance summaries.
 - [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
