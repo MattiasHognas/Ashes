@@ -1861,7 +1861,9 @@ gate; a new `[ ]` line records the slot layout and default-fill contract.
 
 ### OPT-013: Closure Environment Scalarization for Small, Fully-Known Captures
 
-**Status: Done, narrowed to a single scalar capture (N=1).** See **Measured Outcome** below.
+**Status: Done for one scalar capture (N=1); extended to N=2 via the free ownership-flag word, and
+made reachable from let-bound local helpers, under `OPT-016(c)`'s Measured Outcome (2026-08-25).**
+See **Measured Outcome** below.
 
 **Problem.** Every closure uses a fixed packed-pointer environment layout (`Ir.cs:646-670`) even after
 `DevirtualizeKnownClosureCalls` has proven a call site's closure has a single, statically-known origin —
@@ -2532,6 +2534,11 @@ this was not separately constructed and measured. Full suite status: C# 2381/238
 
 #### (c) The Worker/Wrapper Calling Convention (deferred, highest leverage)
 
+**Status: Investigated and deliberately not implemented as an ABI change (2026-08-25); its only
+measurable consumer — N>1 capture scalarization — was delivered for N=2 inside the existing
+three-word signature instead, together with the let-bound-helper devirtualization that makes any
+scalarization reachable from real code. See Measured Outcome.**
+
 **Problem.** Every Ashes-callable function shares one fixed LLVM signature —
 `FunctionType(i64, [i64, i64, i64])` — so that indirect closure dispatch stays uniform regardless of the
 callee's real arity or capture shape. `OPT-013`'s own scope note (Category 2.11) already names this as
@@ -2599,6 +2606,58 @@ self-hosted port should not attempt to retrofit this after building a single-sig
 document's general self-hosting guidance (see the introduction to Section 5), the self-host implementer
 should target the worker/wrapper design from the start once this lands in C#, rather than porting a
 single-signature version first and upgrading it twice.
+
+**Measured Outcome — investigated; ABI change not implemented, N=2 consumer delivered without it.**
+Premise confirmed first: `LlvmCodegen.cs` gives every `IrFunction` the same `closureFunctionType`
+(`(i64 env, i64 arg, i64 ownershipFlag) -> i64`), and every IR function is unary (a multi-parameter
+source function is a curried closure chain). That framing decides the task: a per-arity worker for a
+*unary* function is exactly what LLVM's dead-argument elimination already does for an internal
+function at `-O2`, so the convention has no standalone value — the doc's own "value is realized only
+once other tasks consume `CallWorker`" note is the whole story, and the one consumer with a proven
+mechanism is `OPT-013`'s N>1 scalarization. Measuring that consumer's headroom *before* touching the
+ABI (`hyperfine`, 20,000,000-iteration loops at `-O2`): a two-capture immediately-applied lambda ran
+in 9.5 ms against 3.8 ms for the already-scalarized one-capture shape, so an N=2 scalarization was
+worth ~2.5x on that loop — real, and the same arena-bracket effect `OPT-013` measured. Two findings
+then removed the need for the ABI change entirely. (1) The doc's claim that "there is nowhere in the
+shared 3-`i64` signature to place more than one scalarized capture" is false for N=2: the ownership-
+flag word is free whenever the `CallKnown` passes no flag and the callee's body never reads one, and
+`LoadArgumentOwnership` is a raw `GetParam(fn, 2)` in the backend, so a callee variant can read the
+second capture through it with zero backend change — `ScalarizeSingleCaptureStackClosures` now
+accepts a 16-byte `AllocStack` filled by exactly one store per capture, and declines three or more
+(the genuine remaining boundary, which *would* need this convention). A first measurement showed no
+speedup at all despite the rewrite firing: `IsNonAllocatingInst` had no entry for
+`LoadArgumentOwnership`, so the variant was classified as allocating and the arena bracket around the
+call survived — one whitelist entry fixed it. (2) The far larger gap was upstream of any consumer:
+`DevirtualizeKnownClosureCalls` required the closure temp to be defined *directly* by
+`MakeClosure`/`MakeClosureStack`, so a let-bound local helper — `let step = given x -> ... in
+step(1)`, the common shape — never devirtualized (its call always goes through a
+`StoreLocal`/`LoadLocal` round trip), while only the rare immediately-applied lambda did. This is the
+"local slots" half of `OPT-016(b)`'s own proposed reaching-definitions lattice that its shipped
+single-agreeing-label slice left out. It now resolves through a slot written by exactly one
+`StoreLocal` (lowering only reads a binding's slot inside the binding's scope, after the store),
+removes the load it made dead, and removes the scope-exit `CleanupResource(Function)` of a stack
+closure that never received a dropper (no store to the closure object's offset-24 dropper word; the
+backend treats a zero dropper as a no-op) — without that last step the cleanup's load kept the slot,
+the closure construction, and the environment alive and scalarization still declined (measured:
+11.3 -> 7.5 ms, then 4.0 ms once the marker was removed).
+
+**Measured**, A/B against the pre-change `IrOptimizer.cs` swapped in via `git show`, same four
+probes, `hyperfine` 15 runs, 20,000,000 iterations: let-bound two-capture helper **11.3 ms -> 4.1 ms
+at `-O2` (2.76x), 151.7 ms -> 96.7 ms at `-O0` (1.57x)**; immediately-applied two-capture lambda
+10.0 -> 4.1 ms / 128.2 -> 96.5 ms; let-bound one-capture helper (newly reachable through the slot)
+11.3 -> 4.1 ms / 128.9 -> 84.6 ms; the already-scalarized one-capture immediately-applied control is
+unchanged (3.8 vs 4.1 ms within noise, identical at `-O0`). New e2e fixtures:
+`closure_local_helper_two_captures_direct_call.ash`, `closure_local_helper_called_and_escaped.ash` (a
+helper both called directly and passed to `List.map`, so its heap closure must still devirtualize
+the direct call and drop correctly), `closure_local_helper_three_captures_direct_call.ash`
+(devirtualized, not scalarized). `IrOptimizerTests`: flag-word scalarization shape and execution, a
+decline when the callee reads the ownership flag, a three-capture decline, slot-forwarded
+devirtualization with execution, a multiply-stored-slot decline, and a dropper-installed cleanup
+that must survive. What remains of this task as written — a per-function `CallWorker` ABI — would
+serve N>=3 captures, uncurrying, and `OPT-015`'s curried-helper decline; none of those has a measured
+consumer today, and the N=2 result above suggests measuring the consumer first is the right order.
+Self-hosting: a new `[ ]` line in `SELF_HOSTING.md` records the flag-word convention and the
+slot-forwarded devirtualization as one delta after the existing single-capture line.
 
 ---
 
@@ -3252,10 +3311,10 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-017(a) | Multi-anchor Perceus drop placement | Medium | None measured (see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Investigated, reverted — segfault root-caused and fixed, but zero measured benefit on every case tried, see task section |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Done — tagless layout via a per-instruction flag; -17.5% at -O0 / -3% at -O2 on a hot single-constructor match loop, -11% peak RSS on a 1M-cell live set, see Measured Outcome |
-| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
+| OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1; N=2 via the free ownership-flag word and let-bound helpers reached through their slot under OPT-016(c)) — see Measured Outcomes |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
-| OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Done (single-agreeing-label case only) — see Measured Outcome |
-| OPT-016(c) | Worker/wrapper calling convention | High | High (largest blast radius) | eases OPT-015, OPT-016(b), OPT-013's N>1 case | P2 | Not started |
+| OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Done (single-agreeing-label case; the proposal's local-slot half — a let-bound helper called through its slot — landed under OPT-016(c)) — see Measured Outcomes |
+| OPT-016(c) | Worker/wrapper calling convention | High | High (largest blast radius) | eases OPT-015, OPT-016(b), OPT-013's N>1 case | P2 | Investigated, ABI change not implemented — zero standalone value (LLVM dead-arg elimination covers a unary worker); its N=2 consumer shipped inside the existing signature plus let-bound helper devirtualization, 2.76x at -O2 on the consumer loop; N>=3 would still need it, no measured consumer — see Measured Outcome |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick
 wins or foundational infrastructure other `P1`/`P2` tasks build on; `P1` tasks are the highest-value
