@@ -1181,6 +1181,12 @@ public sealed partial class Lowering
         string defaultLabel = defaultCaseIndex is not null ? NewLabel("match_group_default") : noMatchLabel;
         Emit(new IrInst.SwitchTag(tagTemp, switchCases, defaultLabel));
 
+        // A group's last case failing its own sub-pattern test (the tag matched, but a nested
+        // literal, tuple or constructor did not) does not mean nothing matches: a trailing
+        // wildcard/variable case still covers it, exactly as in the linear lowering, so the
+        // group falls through to that default arm. Only without a default is it a real no-match.
+        string groupFailLabel = defaultLabel;
+
         for (int g = 0; g < groups.Count; g++)
         {
             Emit(new IrInst.Label(groupLabels[g]));
@@ -1193,13 +1199,13 @@ public sealed partial class Lowering
                 // (which would otherwise re-test this same, already-known tag for no reason).
                 LowerTrivialSingleCaseGroupArm(
                     match, groups[g].CaseIndices[0], groups[g].Ctor, valueTemp, valueType, resultType, resultSlot,
-                    endLabel, noMatchLabel, savedTailPos, reuseScrutineeName, runtimeReuseType,
+                    endLabel, groupFailLabel, savedTailPos, reuseScrutineeName, runtimeReuseType,
                     normalizeStaticStringArms, request);
             }
             else
             {
                 LowerTagGroupCasesLinearly(
-                    match, groups[g].CaseIndices, valueTemp, valueType, resultType, resultSlot, endLabel, noMatchLabel,
+                    match, groups[g].CaseIndices, valueTemp, valueType, resultType, resultSlot, endLabel, groupFailLabel,
                     savedTailPos, reuseScrutineeName, runtimeReuseType, normalizeStaticStringArms, request);
             }
         }

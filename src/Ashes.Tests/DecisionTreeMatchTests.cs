@@ -168,6 +168,28 @@ public sealed class DecisionTreeMatchTests
         output.ShouldBe($"{expected}\n");
     }
 
+    [Test]
+    [Arguments("Some(('>', 1))", "header")]
+    [Arguments("Some(('A', 1))", "other")]
+    [Arguments("None", "other")]
+    public async Task GroupLastCaseFailingNestedSubPattern_FallsThroughToTrailingDefault(string scrutinee, string expected)
+    {
+        // The Some group holds one case whose nested sub-pattern ('>', _) can fail even though the
+        // outer tag matched. That failure must reach the trailing wildcard arm, not the
+        // no-match path (which produced a null result and a segfault before the fix).
+        string output = await CompileAndRunAsync(
+            $$"""
+            let classify = given value ->
+                match value with
+                | Some(('>', _)) -> "header"
+                | _ -> "other"
+
+            Ashes.IO.print(classify({{scrutinee}}))
+            """).ConfigureAwait(false);
+
+        output.ShouldBe($"{expected}\n");
+    }
+
     private static List<IrInst.SwitchTag> SwitchTags(IrProgram program)
     {
         return program.Functions
