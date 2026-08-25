@@ -549,7 +549,7 @@ public sealed partial class Lowering
         PushTraitConstraintScope();
         var tcoSlots = evidence.UsesDictionary.Any(usesDictionary => usesDictionary)
             ? null
-            : TryLowerMutualRecursionTco(group, bindings, recordTypes, groupNames);
+            : TryLowerMutualRecursionTco(group, bindings, recordTypes, groupNames, setup);
         _ = PopTraitConstraintScope();
 
         TypeScheme[] schemes = FinalizeRecursiveGroupSchemes(
@@ -898,12 +898,20 @@ public sealed partial class Lowering
     /// or whose members' result types differ (the dispatch's match arms must unify), keeps the
     /// closure path.
     /// </para>
+    /// <para>
+    /// Only tail calls are redirected into the dispatch loop. A member body may also reference a
+    /// sibling outside tail position (a call whose result it inspects, a partial application, or a
+    /// reference from a nested lambda); those keep targeting the group's ordinary closure-lowered
+    /// members in <paramref name="setup"/>, which were already emitted before this transform runs,
+    /// so the dispatch body is lowered with every member name bound to its closure slot.
+    /// </para>
     /// </summary>
     private int[]? TryLowerMutualRecursionTco(
         RecursiveGroupExpr group,
         IReadOnlyList<(string Name, Expr Value)> bindings,
         TypeRef[] recordTypes,
-        HashSet<string> groupNames)
+        HashSet<string> groupNames,
+        RecursiveGroupSetup setup)
     {
         if (bindings.Count < 2)
         {
@@ -941,7 +949,7 @@ public sealed partial class Lowering
         }
 
         return MutualRecursionTcoLowerDispatchAndWrappers(
-            group, bindings, recordTypes, lambdas, groupNames, tagOf, layout);
+            group, bindings, recordTypes, lambdas, groupNames, tagOf, layout, setup);
     }
 
     // All members must be lambdas of at least unary arity; arities may differ between members.
@@ -1156,7 +1164,8 @@ public sealed partial class Lowering
         Expr.Lambda[] lambdas,
         HashSet<string> groupNames,
         Dictionary<string, int> tagOf,
-        MutualRecursionSlotLayout layout)
+        MutualRecursionSlotLayout layout,
+        RecursiveGroupSetup setup)
     {
         // Synthesize and lower the dispatch function.
         string dispatchName = $"__recgroup_dispatch_{_nextLambdaId++}";
@@ -1164,7 +1173,21 @@ public sealed partial class Lowering
 
         int dispatchSlot = NewLocal();
         var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
-        var dispatchScope = _scopes.Peek().SetItem(
+
+        // The dispatch body still contains every non-tail sibling reference of the member bodies
+        // (RewriteGroupTailCalls only redirects tail calls). Those must resolve to the group's
+        // closure-lowered members, which are already stored in their slots and stay monomorphic at
+        // this point — the schemes are generalized only after this transform — so bind each member
+        // name to its slot here, exactly as the continuation scope does with the wrapper slots later.
+        var dispatchScope = _scopes.Peek();
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            dispatchScope = dispatchScope.SetItem(
+                bindings[i].Name,
+                new Binding.Local(setup.Slots[i], recordTypes[i], setup.Members[i].Span));
+        }
+
+        dispatchScope = dispatchScope.SetItem(
             dispatchName,
             new Binding.Local(dispatchSlot, dispatchRecursiveType));
         _scopes.Push(dispatchScope);
@@ -1331,8 +1354,9 @@ public sealed partial class Lowering
 
     /// <summary>
     /// Rewrites fully-applied in-group member calls that sit in tail position into calls to the
-    /// dispatch function, leaving non-tail occurrences (which still target the member wrappers)
-    /// untouched. Only tail-position nodes are traversed.
+    /// dispatch function, leaving non-tail occurrences (which still target the group's
+    /// closure-lowered members, bound by name in the dispatch scope) untouched. Only tail-position
+    /// nodes are traversed.
     /// </summary>
     private Expr RewriteGroupTailCalls(Expr expr, HashSet<string> groupNames, Dictionary<string, int> tagOf, string dispatchName, MutualRecursionSlotLayout layout)
     {
