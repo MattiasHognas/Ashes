@@ -40,6 +40,42 @@ internal static partial class LlvmCodegen
             prefix + "_ptr");
     }
 
+    /// <summary>
+    /// Allocates a fixed-size scratch stack slot in the function's entry block, then restores the
+    /// builder to its previous position. Every <c>alloca</c> belongs in the entry block: a
+    /// fixed-size alloca emitted in a non-entry block (for example inside a TCO loop body) is
+    /// lowered by LLVM at -O0 as a runtime stack-pointer adjustment that is only reclaimed by the
+    /// function returning or an <c>llvm.stackrestore</c>, so one emitted per loop iteration leaks
+    /// the whole native stack. An entry-block alloca is a single fixed frame slot, reused every
+    /// iteration. (-O2's mem2reg/SROA promotes these away regardless, which is why the leak was
+    /// only observable at -O0.) These slots are always written before they are read at their use
+    /// site, so reusing the one slot across iterations is safe.
+    /// </summary>
+    private static LlvmValueHandle EmitEntryScratchSlot(LlvmCodegenState state, LlvmTypeHandle type, string name)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        // The current function is whatever owns the builder's insert block — not necessarily
+        // state.Function, since some runtime helpers are synthesized into their own function while
+        // state still refers to the outer one; hoisting into state.Function's entry block there
+        // would create a cross-function reference.
+        LlvmValueHandle currentFunction = LlvmApi.GetBasicBlockParent(savedBlock);
+        LlvmBasicBlockHandle entryBlock = LlvmApi.GetEntryBasicBlock(currentFunction);
+        LlvmValueHandle firstInstruction = LlvmApi.GetFirstInstruction(entryBlock);
+        if (firstInstruction.Ptr != 0)
+        {
+            LlvmApi.PositionBuilderBefore(builder, firstInstruction);
+        }
+        else
+        {
+            LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
+        }
+
+        LlvmValueHandle slot = LlvmApi.BuildAlloca(builder, type, name);
+        LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        return slot;
+    }
+
     private static LlvmValueHandle EmitAlloc(LlvmCodegenState state, int sizeBytes)
         => EmitAlloc(state, sizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
 
@@ -93,6 +129,9 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitStackAlloc(LlvmCodegenState state, int sizeBytes, string name)
     {
+        // AllocStack is a genuine per-execution dynamic stack allocation, bracketed by the TCO
+        // loop's SaveStackPointer/RestoreStackPointer; it must stay at the current insertion point,
+        // not be hoisted to the entry block like the fixed scratch slots.
         int alignedSizeBytes = AlignRuntimeSize(sizeBytes);
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I64, (ulong)(alignedSizeBytes / 8));
         LlvmValueHandle bufferPtr = LlvmApi.BuildAlloca(state.Target.Builder, bufferType, name);
@@ -178,8 +217,8 @@ internal static partial class LlvmCodegen
         string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_result_slot");
-        LlvmValueHandle freeListSlotAddress = LlvmApi.BuildAlloca(builder, state.I64, name + "_free_bin_slot");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, name + "_result_slot");
+        LlvmValueHandle freeListSlotAddress = EmitEntryScratchSlot(state, state.I64, name + "_free_bin_slot");
         LlvmValueHandle useCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
             allocationSize,
             LlvmApi.ConstInt(state.I64, RuntimeRcMaxCachedBlockSizeBytes, 0),
@@ -238,7 +277,7 @@ internal static partial class LlvmCodegen
         string name)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle tableSlot = LlvmApi.BuildAlloca(builder, state.I64, name + "_free_table_slot");
+        LlvmValueHandle tableSlot = EmitEntryScratchSlot(state, state.I64, name + "_free_table_slot");
         LlvmValueHandle table = LlvmApi.BuildLoad2(builder, state.I64, state.RcFreeListSlot, name + "_free_table");
         LlvmValueHandle tableIsNull = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, table,
             LlvmApi.ConstInt(state.I64, 0, 0), name + "_free_table_null");
@@ -346,7 +385,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitRuntimeDropReuse(LlvmCodegenState state, LlvmValueHandle valuePtr)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "drop_reuse_result_slot");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "drop_reuse_result_slot");
         LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, valuePtr,
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "drop_reuse_base");
         LlvmValueHandle count = LoadMemory(state, allocationBase,
@@ -420,7 +459,7 @@ internal static partial class LlvmCodegen
         bool tagless)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "alloc_reuse_result_slot");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "alloc_reuse_result_slot");
         LlvmValueHandle hasToken = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ne, tokenPtr,
             LlvmApi.ConstInt(state.I64, 0, 0), "alloc_reuse_has_token");
         LlvmBasicBlockHandle reuseBlock = LlvmApi.AppendBasicBlockInContext(
@@ -504,7 +543,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitStringComparison(LlvmCodegenState state, LlvmValueHandle leftRef, LlvmValueHandle rightRef)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "str_cmp_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "str_cmp_result");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
 
         LlvmValueHandle leftLen = LoadStringLength(state, leftRef, "str_cmp_left_len");
@@ -747,7 +786,7 @@ internal static partial class LlvmCodegen
         var exitBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "move_exit");
 
         LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, "move_idx");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, "move_idx");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
         LlvmApi.BuildBr(builder, headBlock);
 
@@ -1401,7 +1440,7 @@ internal static partial class LlvmCodegen
         LlvmBasicBlockHandle doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, fn, "reclaim_done");
 
         LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
-        LlvmValueHandle curEndSlot = LlvmApi.BuildAlloca(builder, state.I64, "reclaim_cur_end_slot");
+        LlvmValueHandle curEndSlot = EmitEntryScratchSlot(state, state.I64, "reclaim_cur_end_slot");
         LlvmApi.BuildStore(builder, preRestoreEnd, curEndSlot);
         LlvmApi.BuildBr(builder, loopBlock);
 
@@ -1475,7 +1514,7 @@ internal static partial class LlvmCodegen
 
             // Alloca to hold the result across both paths — no phi node binding
             // available; mem2reg promotes this to a phi automatically.
-            LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_out_result_slot");
+            LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "copy_out_result_slot");
             LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
 
             var copyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "copy_out_do");
@@ -1687,7 +1726,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle oldPtr = LoadTemp(state, oldBlobTemp);
         LlvmValueHandle srcPtr = LoadTemp(state, srcTemp);
         LlvmValueHandle newLen = LoadStringLength(state, srcPtr, "cstr_new_len");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "cstr_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "cstr_result");
 
         var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_check");
         var inPlaceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cstr_in_place");
@@ -1743,7 +1782,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle oldPtr = LoadTemp(state, oldBlobTemp);
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "cfif_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "cfif_result");
 
         var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_check");
         var inPlaceBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "cfif_in_place");
@@ -1821,7 +1860,7 @@ internal static partial class LlvmCodegen
         // Guard: if the source list is nil, return nil immediately.
         LlvmValueHandle srcIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             srcPtr, zero, prefix + "_src_nil");
-        LlvmValueHandle overallResultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_overall_result");
+        LlvmValueHandle overallResultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_overall_result");
         LlvmApi.BuildStore(builder, zero, overallResultSlot);
         var copyListStart = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_start");
         var copyListFinal = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_final");
@@ -1851,9 +1890,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle one = LlvmApi.ConstInt(state.I64, 1, 0);
 
         // Count source cells
-        LlvmValueHandle countSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count");
+        LlvmValueHandle countSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_count");
         LlvmApi.BuildStore(builder, zero, countSlot);
-        LlvmValueHandle countCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_count_cur");
+        LlvmValueHandle countCurSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_count_cur");
         LlvmApi.BuildStore(builder, srcPtr, countCurSlot);
 
         var countHead = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_count_head");
@@ -1904,11 +1943,11 @@ internal static partial class LlvmCodegen
         var (headBufAddr, headBufBytes, headBufIsOsSlot) =
             EmitListHeadCacheAlloc(state, headWords, prefix + "_head_buf");
         LlvmValueHandle headBuf = LlvmApi.BuildIntToPtr(builder, headBufAddr, state.I8Ptr, prefix + "_head_buf_ptr");
-        LlvmValueHandle cacheCurSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cache_cur");
+        LlvmValueHandle cacheCurSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_cache_cur");
         LlvmApi.BuildStore(builder, srcPtr, cacheCurSlot);
-        LlvmValueHandle cacheIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_cache_idx");
+        LlvmValueHandle cacheIdxSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_cache_idx");
         LlvmApi.BuildStore(builder, zero, cacheIdxSlot);
-        LlvmValueHandle stringOffsetSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_string_offset");
+        LlvmValueHandle stringOffsetSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_string_offset");
         LlvmApi.BuildStore(builder,
             LlvmApi.BuildMul(builder, totalCells, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_head_slots_end"),
             stringOffsetSlot);
@@ -2014,9 +2053,9 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
-        LlvmValueHandle bytesSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_string_bytes");
+        LlvmValueHandle bytesSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_string_bytes");
         LlvmApi.BuildStore(builder, zero, bytesSlot);
-        LlvmValueHandle currentSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_string_count_cur");
+        LlvmValueHandle currentSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_string_count_cur");
         LlvmApi.BuildStore(builder, srcPtr, currentSlot);
 
         LlvmBasicBlockHandle headBlock =
@@ -2064,9 +2103,9 @@ internal static partial class LlvmCodegen
 
         // Build destination list from cached head values
         // Arena allocations happen here. Source cells are never read again.
-        LlvmValueHandle buildIdxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_build_idx");
+        LlvmValueHandle buildIdxSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_build_idx");
         LlvmApi.BuildStore(builder, zero, buildIdxSlot);
-        LlvmValueHandle prevCellSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_prev");
+        LlvmValueHandle prevCellSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_prev");
         LlvmApi.BuildStore(builder, zero, prevCellSlot);
 
         // Eagerly allocate the first cell from headBuf[0].
@@ -2133,8 +2172,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildMul(builder, totalCells,
             LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_bytes");
 
-        LlvmValueHandle bufAddrSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_addr_slot");
-        LlvmValueHandle isOsSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_isos_slot");
+        LlvmValueHandle bufAddrSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_addr_slot");
+        LlvmValueHandle isOsSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_isos_slot");
 
         LlvmValueHandle isLarge = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ugt,
             totalBytes, LlvmApi.ConstInt(state.I64, 32768, 0), prefix + "_is_large");
@@ -2264,9 +2303,9 @@ internal static partial class LlvmCodegen
         out LlvmValueHandle newDropper)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle envSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_env_slot");
+        LlvmValueHandle envSlot = EmitEntryScratchSlot(state, state.I64, "copy_closure_new_env_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), envSlot);
-        LlvmValueHandle dropperSlot = LlvmApi.BuildAlloca(builder, state.I64, "copy_closure_new_dropper_slot");
+        LlvmValueHandle dropperSlot = EmitEntryScratchSlot(state, state.I64, "copy_closure_new_dropper_slot");
         LlvmApi.BuildStore(builder, dropper, dropperSlot);
         LlvmValueHandle envIsNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             envPtr, LlvmApi.ConstInt(state.I64, 0, 0), "copy_closure_env_nil");
@@ -2369,7 +2408,7 @@ internal static partial class LlvmCodegen
         // Nil guard: empty list → return 0.
         LlvmValueHandle isNil = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq,
             srcPtr, zero, "tco_cell_nil_check");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "tco_cell_result_slot");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "tco_cell_result_slot");
         LlvmApi.BuildStore(builder, zero, resultSlot);
         var copyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tco_cell_copy");
         var mergeBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "tco_cell_merge");
@@ -2730,8 +2769,8 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitValidateUtf8(LlvmCodegenState state, LlvmValueHandle bytesPtr, LlvmValueHandle len, string prefix)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
 
@@ -2938,9 +2977,9 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, prefix + "_buffer");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
+        LlvmValueHandle workSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_work");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
         LlvmApi.BuildStore(builder, value, workSlot);
 
@@ -2984,10 +3023,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
-        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_negative");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, prefix + "_buffer");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
+        LlvmValueHandle workSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_work");
+        LlvmValueHandle negativeSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_negative");
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, prefix + "_is_negative");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
@@ -3065,10 +3104,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
-        LlvmValueHandle negativeSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_negative");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, prefix + "_buffer");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
+        LlvmValueHandle workSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_work");
+        LlvmValueHandle negativeSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_negative");
         LlvmValueHandle zero = LlvmApi.ConstInt(state.I64, 0, 0);
         LlvmValueHandle isNegative = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, value, zero, prefix + "_is_negative");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
@@ -3198,9 +3237,9 @@ internal static partial class LlvmCodegen
         // keeps FPToSI-to-i64 conversions in defined range for all values on the fixed-format path.
         LlvmValueHandle safeIntegerLimit = LlvmApi.ConstReal(state.F64, 9223372036854773760.0);
         LlvmValueHandle needsScientific = LlvmApi.BuildFCmp(builder, LlvmRealPredicate.Ogt, absValue, safeIntegerLimit, prefix + "_needs_scientific");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
-        LlvmValueHandle normalizedSlot = LlvmApi.BuildAlloca(builder, state.F64, prefix + "_normalized");
-        LlvmValueHandle exponentSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_exponent");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
+        LlvmValueHandle normalizedSlot = EmitEntryScratchSlot(state, state.F64, prefix + "_normalized");
+        LlvmValueHandle exponentSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_exponent");
         LlvmValueHandle signText = LlvmApi.BuildSelect(builder, isNegative, EmitHeapStringLiteral(state, "-"), EmitHeapStringLiteral(state, ""), prefix + "_sign_text");
 
         var fixedBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_fixed");
@@ -3284,9 +3323,9 @@ internal static partial class LlvmCodegen
         LlvmValueHandle integerAsFloat = LlvmApi.BuildSIToFP(builder, integerPart, state.F64, prefix + "_integer_f64");
         LlvmValueHandle fractional = LlvmApi.BuildFSub(builder, absValue, integerAsFloat, prefix + "_fractional");
 
-        LlvmValueHandle scaleSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_scale");
-        LlvmValueHandle scaleCounterSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_scale_counter");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_result");
+        LlvmValueHandle scaleSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_scale");
+        LlvmValueHandle scaleCounterSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_scale_counter");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_result");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 1, 0), scaleSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), scaleCounterSlot);
 
@@ -3366,10 +3405,10 @@ internal static partial class LlvmCodegen
         // Caller must ensure 1 <= digits <= 18 (the 32-byte buffer holds at most 18 digits).
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmTypeHandle bufferType = LlvmApi.ArrayType2(state.I8, 32);
-        LlvmValueHandle buffer = LlvmApi.BuildAlloca(builder, bufferType, prefix + "_buffer");
-        LlvmValueHandle workSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_work");
-        LlvmValueHandle widthSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_width");
-        LlvmValueHandle indexSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_index");
+        LlvmValueHandle buffer = EmitEntryScratchSlot(state, bufferType, prefix + "_buffer");
+        LlvmValueHandle workSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_work");
+        LlvmValueHandle widthSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_width");
+        LlvmValueHandle indexSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_index");
         LlvmApi.BuildStore(builder, scaledValue, workSlot);
         LlvmApi.BuildStore(builder, digits, widthSlot);
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), indexSlot);
@@ -3481,7 +3520,7 @@ internal static partial class LlvmCodegen
         var extendBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_extend");
         var fallbackBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_fallback");
         var doneBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, "csr_done");
-        LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "csr_result");
+        LlvmValueHandle resultSlot = EmitEntryScratchSlot(state, state.I64, "csr_result");
 
         LlvmValueHandle la = LoadStringLength(state, leftRef, "csr_la");
         LlvmValueHandle lb = LoadStringLength(state, rightRef, "csr_lb");
@@ -3600,7 +3639,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle result = EmitHeapStringSliceFromBytesPointer(state, srcBytes, len, prefix, runtimeManaged);
         LlvmValueHandle destBytes = GetStringBytesPointer(state, result, prefix + "_dest");
 
-        LlvmValueHandle idxSlot = LlvmApi.BuildAlloca(builder, state.I64, prefix + "_idx_slot");
+        LlvmValueHandle idxSlot = EmitEntryScratchSlot(state, state.I64, prefix + "_idx_slot");
         LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), idxSlot);
         var checkBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_check");
         var bodyBlock = LlvmApi.AppendBasicBlockInContext(state.Target.Context, state.Function, prefix + "_body");
@@ -3663,7 +3702,7 @@ internal static partial class LlvmCodegen
     {
         byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
         LlvmTypeHandle objectType = LlvmApi.ArrayType2(state.I8, (uint)(utf8.Length + 8));
-        LlvmValueHandle storage = LlvmApi.BuildAlloca(state.Target.Builder, objectType, "str_obj");
+        LlvmValueHandle storage = EmitEntryScratchSlot(state, objectType, "str_obj");
         LlvmValueHandle lenPtr = LlvmApi.BuildBitCast(state.Target.Builder, storage, state.I64Ptr, "str_obj_len_ptr");
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0), lenPtr);
 
@@ -3681,7 +3720,7 @@ internal static partial class LlvmCodegen
     private static LlvmValueHandle EmitStackByteArray(LlvmCodegenState state, IReadOnlyList<byte> bytes)
     {
         LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (uint)bytes.Count);
-        LlvmValueHandle storage = LlvmApi.BuildAlloca(state.Target.Builder, arrayType, "byte_array");
+        LlvmValueHandle storage = EmitEntryScratchSlot(state, arrayType, "byte_array");
 
         if (bytes.Count > 0)
         {

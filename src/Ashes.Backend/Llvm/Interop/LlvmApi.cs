@@ -207,6 +207,18 @@ internal static partial class LlvmApi
     [LibraryImport(Lib, EntryPoint = "LLVMGetInsertBlock")]
     public static partial LlvmBasicBlockHandle GetInsertBlock(LlvmBuilderHandle builder);
 
+    [LibraryImport(Lib, EntryPoint = "LLVMGetEntryBasicBlock")]
+    public static partial LlvmBasicBlockHandle GetEntryBasicBlock(LlvmValueHandle function);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetBasicBlockParent")]
+    public static partial LlvmValueHandle GetBasicBlockParent(LlvmBasicBlockHandle block);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMGetFirstInstruction")]
+    public static partial LlvmValueHandle GetFirstInstruction(LlvmBasicBlockHandle block);
+
+    [LibraryImport(Lib, EntryPoint = "LLVMPositionBuilderBefore")]
+    public static partial void PositionBuilderBefore(LlvmBuilderHandle builder, LlvmValueHandle instruction);
+
     [LibraryImport(Lib, EntryPoint = "LLVMMoveBasicBlockAfter")]
     public static partial void MoveBasicBlockAfter(LlvmBasicBlockHandle block, LlvmBasicBlockHandle movePosition);
 
