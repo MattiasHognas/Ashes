@@ -1678,9 +1678,10 @@ public sealed class ArenaDeallocationTests
             """);
         List<IrInst> instructions = FindTcoFunction(ir).Instructions;
 
+        // Box has one constructor, so its cell is tagless: one payload word, no tag word.
         instructions.Any(instruction => instruction is IrInst.CopyOutArena
         {
-            StaticSizeBytes: 16,
+            StaticSizeBytes: 8,
             RuntimeManaged: true,
         }).ShouldBeTrue();
         instructions.Any(instruction => instruction is IrInst.CopyOutArena

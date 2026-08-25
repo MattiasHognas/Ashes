@@ -791,7 +791,7 @@ public sealed partial class Lowering
             foreach (OrdinaryHeapLayoutChild child in childFields)
             {
                 int childTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index, IsTaglessAdt(named)));
                 EmitRuntimeManagedChildDrop(childTemp, child.Type);
             }
 
@@ -915,7 +915,7 @@ public sealed partial class Lowering
         foreach (OrdinaryHeapLayoutChild child in childFields)
         {
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+            Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index, IsTaglessAdt(named)));
             EmitRuntimeManagedChildDrop(childTemp, child.Type);
         }
 
@@ -958,7 +958,7 @@ public sealed partial class Lowering
         foreach (OrdinaryHeapLayoutChild child in childFields)
         {
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, child.Index));
+            Emit(new IrInst.GetAdtField(childTemp, tokenTemp, child.Index, IsTaglessAdt(cleanup.Type)));
             EmitRuntimeManagedChildDrop(childTemp, child.Type);
         }
         Emit(new IrInst.Label(endLabel));
@@ -1088,8 +1088,7 @@ public sealed partial class Lowering
         Emit(new IrInst.RcIsUnique(uniqueTemp, valueTemp));
         Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
 
-        int tagTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+        int tagTemp = EmitAdtTag(valueTemp, named.Symbol);
         var cases = new List<(long Tag, string Label)>(named.Symbol.Constructors.Count);
         var blocks = new List<(string Label, ConstructorSymbol Constructor)>(named.Symbol.Constructors.Count);
         foreach (ConstructorSymbol constructor in named.Symbol.Constructors)
@@ -1108,7 +1107,7 @@ public sealed partial class Lowering
             foreach (OrdinaryHeapLayoutChild child in children)
             {
                 int childTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index));
+                Emit(new IrInst.GetAdtField(childTemp, valueTemp, child.Index, IsTaglessAdt(named)));
                 EmitRuntimeManagedChildDrop(childTemp, child.Type);
             }
 
@@ -3042,8 +3041,7 @@ public sealed partial class Lowering
         Emit(new IrInst.LoadLocal(argTemp, argSlot));
         int selfTemp = NewTemp();
         Emit(new IrInst.LoadEnv(selfTemp, 0));
-        int tagTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, argTemp));
+        int tagTemp = EmitAdtTag(argTemp, sym);
 
         var cases = new List<(long, string)>(sym.Constructors.Count);
         var ctorLabels = new string[sym.Constructors.Count];
@@ -3061,14 +3059,14 @@ public sealed partial class Lowering
             Emit(new IrInst.Label(ctorLabels[i]));
             var ctor = sym.Constructors[i];
             int newTemp = NewTemp();
-            Emit(new IrInst.AllocAdt(newTemp, GetConstructorTag(ctor), ctor.Arity));
+            Emit(new IrInst.AllocAdt(newTemp, GetConstructorTag(ctor), ctor.Arity, Tagless: IsTaglessConstructor(ctor)));
             for (int j = 0; j < ctor.Arity; j++)
             {
                 int fieldTemp = NewTemp();
-                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j)));
+                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, AdtFieldOffsetBytes(ctor, j)));
                 var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
                 int copied = CopyFieldInsideCopier(fieldTemp, fieldType, named, selfTemp);
-                Emit(new IrInst.StoreMemOffset(newTemp, HeapLayouts.Adt.PayloadWordOffsetBytes(j), copied));
+                Emit(new IrInst.StoreMemOffset(newTemp, AdtFieldOffsetBytes(ctor, j), copied));
             }
 
             Emit(new IrInst.Return(newTemp));

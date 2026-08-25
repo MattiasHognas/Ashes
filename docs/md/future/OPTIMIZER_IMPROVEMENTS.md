@@ -1324,6 +1324,63 @@ sub-pattern that could leave part of that tag's space uncovered) — see finding
 
 ### OPT-009: Single-Constructor ADT Unboxing
 
+**Status: Done (2026-08-25).** See **Measured Outcome** below.
+
+> **Measured Outcome.** Implemented as a `Tagless` flag carried on the ADT instructions themselves
+> (`AllocAdt`, `AllocAdtStack`, `AllocAdtToSpace`, `AllocReusing`, `GetAdtField`, `SetAdtField`),
+> decided in exactly one place (`Lowering.TaglessAdt.cs`: `IsTaglessAdt` — one non-nullary
+> constructor; not a builtin, zero-cost newtype, resource, or resource-bearing type) and honored by
+> the backend's three offset helpers plus its allocators via a second descriptor,
+> `HeapLayouts.TaglessAdt` (payload at offset 0). This shape was chosen over a type-directed backend
+> because the IR carries no types: every one of the ~60 lowering emission sites (constructor
+> application, record update, pattern-field extraction, record field access, structural droppers,
+> the synthesized deep copiers, TCO back-edge normalization, reuse allocation, and the two raw
+> `LoadMemOffset`/`StoreMemOffset` sites in the copier and layout-capability walker) was audited and
+> routed through the same predicate, and a tagless cell's tag is never read: a match against such a
+> type emits no `GetAdtTag`/`SwitchTag` at all (`EmitRequireTagMatch`, the tag-switch and tag-group
+> lowerings all short-circuit on the constructor, resolved by name — never on the scrutinee's inferred
+> type, which can still be a variable there), and synthesized droppers/copiers load the constructor
+> tag as a literal, which a new constant-`SwitchTag` fold in `FoldConstants` (mirroring the
+> constant-branch fold) collapses to a jump. Reuse tokens gained a layout dimension: a tagless cell is
+> one word smaller than a tagged cell with the same field count, so `TryConsumeReuseToken` now
+> rejects a tagless/tagged mismatch as `ConstructorCellKindMismatch` in both directions (the
+> tagless-token-for-tagged-target direction would otherwise write one word past the token).
+>
+> **Scope notes.** The existing zero-cost newtype form (`type UserId = UserId(Int)`, `IsZeroCost`)
+> already erases a one-line single-field declaration to its payload; this task covers the `| Ctor(...)`
+> and record forms, which are the ones that actually carry a tag word today, and composes with the
+> newtype path unchanged. The stdlib declares only two such `| Ctor` types plus one record; user
+> programs and the challenges (fannkuch's `State`, n-body's `Body`, every record) are where the
+> layout applies. The self-hosted lowering under `selfhost/` still emits the tagged layout; the parity
+> fixtures are unaffected (their only ADT is two-constructor), and a new `SELF_HOSTING.md` line
+> records the tagless layout as a distinct capability to build in from the start.
+>
+> **Measured** (against the unmodified compiler, hyperfine 5 runs, GNU `time` peak RSS):
+> a 50,000,000-iteration loop matching a two-field `Point` and rebuilding it each step ran
+> **1.283 s -> 1.058 s at `-O0` (-17.5%)** and **0.240 s -> 0.233 s at `-O2` (-3%, outside the
+> ±0.001 s spread)** — the `-O0` win is the removed tag load/compare/branch per match plus the removed
+> tag store per construction, most of which LLVM's `-O2` pipeline already hoists or folds once the
+> tag is provably constant within a function; a 1,000,000-cell live list of `Point(Int, Int)` held
+> across a fold peaked at **147.5 MB -> 131.1 MB at `-O2` (-11%)**, output identical. Both `-O0`
+> builds of the live-set program segfault identically on the unmodified and the new compiler (a
+> pre-existing `-O0` limit for a 1M-element build, not introduced here). fannkuch-redux N=9/N=10
+> and n-body run with unchanged output at the 8 MB resident floor; 1BRC output is byte-identical
+> (its own type is multi-constructor, so it is unaffected). Verification: the 645-program e2e corpus
+> (`--pipeline both`) and the full C# suite passed with the layout on; the seven C# tests that
+> failed were all assertions of the old tagged size/offset on single-constructor types (three
+> pipeline snapshots gaining the serialized `Tagless: false` property, `CopyOutArena` sizes 16 -> 8
+> and 24 -> 16, a record child offset 8 -> 0, and a reuse-decision test whose "compatible layout,
+> wrong regime" premise needed its target type to keep a tag) and were updated accordingly. New
+> tests: `HeapLayoutTests.Tagless_adt_layout_starts_payload_at_offset_zero_and_drops_the_tag_word`,
+> `SingleConstructorUnboxingTests` (tagless allocation/field access with no tag test; records;
+> multi-constructor, nullary and builtin `Option`/`Result` unaffected; compile-and-run results), and
+> `tests/single_constructor_unboxing.ash`. A direct test of a tagless reuse token against a tagged
+> constructor of the same field count could not be constructed: no shape accepted by today's reuse
+> specializer gates produces such a token (single-constructor scrutinees with copy or string fields
+> stay on the arena path at top level, and the accumulator shapes are declined as "fresh result not
+> proven"), so that branch of the compatibility rule is covered by code review and by the existing
+> cell-kind test (tagless `Pair` target vs list-cell token), not by a dedicated test.
+
 **Problem.** `HeapLayouts.cs:81` applies a uniform `[tag][payload...]` layout to every ADT regardless of
 constructor count — a type with exactly one constructor (record-like types, common wrappers) still
 allocates and stores a tag word that can never take more than one value.
@@ -2963,7 +3020,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Not started |
 | OPT-017(a) | Multi-anchor Perceus drop placement | Medium | None measured (see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Investigated, reverted — segfault root-caused and fixed, but zero measured benefit on every case tried, see task section |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
-| OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
+| OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Done — tagless layout via a per-instruction flag; -17.5% at -O0 / -3% at -O2 on a hot single-constructor match loop, -11% peak RSS on a 1M-cell live set, see Measured Outcome |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
 | OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Done (single-agreeing-label case only) — see Measured Outcome |

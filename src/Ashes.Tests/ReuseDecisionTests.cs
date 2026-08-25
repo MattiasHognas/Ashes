@@ -715,6 +715,7 @@ public sealed class ReuseDecisionTests
 
             type Callback =
                 | Callback(Int -> Int, Int)
+                | NoCallback
 
             let choice = Left(1)(2)
             match choice with

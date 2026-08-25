@@ -745,20 +745,25 @@ public abstract record IrInst
     public sealed record AllocStack(int Target, int SizeBytes) : IrInst;
 
     // ADT heap cell: layout is described by HeapLayouts.Adt. Runtime-managed cells carry an
-    // RcHeader immediately before the returned value pointer.
+    // RcHeader immediately before the returned value pointer. A tagless cell (a type with exactly
+    // one constructor, see HeapLayouts.TaglessAdt) omits the tag word entirely: its payload starts
+    // at offset 0 and every instruction that reads or writes it carries Tagless = true, so the
+    // backend never needs the type to compute an offset.
     /// <summary>Allocates a tagged ADT heap cell (layout per <c>HeapLayouts.Adt</c>) and yields its pointer.
     /// See <see cref="AllocAdtStack"/> and <see cref="AllocAdtToSpace"/> for the stack and to-space variants.</summary>
     /// <param name="Target">Temp receiving the cell pointer.</param>
     /// <param name="Tag">Constructor tag written into the cell.</param>
     /// <param name="FieldCount">Number of payload fields the cell holds.</param>
     /// <param name="RuntimeManaged">True to allocate a reference-counted cell (with an RC header).</param>
-    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false)
+    /// <param name="Tagless">True for a single-constructor cell laid out per <c>HeapLayouts.TaglessAdt</c> (no tag word).</param>
+    public sealed record AllocAdt(int Target, int Tag, int FieldCount, bool RuntimeManaged = false, bool Tagless = false)
         : IrInst, IRuntimeManagedTargetResult;
     /// <summary>Stack-allocated form of <see cref="AllocAdt"/> for a non-escaping ADT cell.</summary>
     /// <param name="Target">Temp receiving the cell pointer.</param>
     /// <param name="Tag">Constructor tag written into the cell.</param>
     /// <param name="FieldCount">Number of payload fields the cell holds.</param>
-    public sealed record AllocAdtStack(int Target, int Tag, int FieldCount) : IrInst;
+    /// <param name="Tagless">True for a single-constructor cell with no tag word.</param>
+    public sealed record AllocAdtStack(int Target, int Tag, int FieldCount, bool Tagless = false) : IrInst;
 
     /// <summary>
     /// Like <see cref="AllocAdt"/> but allocates in the persistent "to-space" arena instead of the
@@ -769,7 +774,7 @@ public abstract record IrInst
     /// (it holds part of the live accumulator); it is bounded by the number of genuinely-new cells
     /// (≈distinct keys), not by iterations. See <see cref="IrInst.AllocAdt"/>.
     /// </summary>
-    public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount) : IrInst;
+    public sealed record AllocAdtToSpace(int Target, int Tag, int FieldCount, bool Tagless = false) : IrInst;
 
     /// <summary>
     /// Converts a dead ADT cell into an explicit reuse token. <c>FieldCount</c> describes the
@@ -799,15 +804,19 @@ public abstract record IrInst
         int FieldCount,
         int TokenTemp,
         bool RuntimeManaged = false,
-        bool ListCell = false
+        bool ListCell = false,
+        bool Tagless = false
     ) : IrInst, IRuntimeManagedTargetResult;
-    // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
+    // SetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex), or
+    // HeapLayouts.TaglessAdt's when Tagless.
     /// <summary>Writes <paramref name="Source"/> into field <paramref name="FieldIndex"/> of the ADT cell at
-    /// <paramref name="Ptr"/> (offset via <c>HeapLayouts.Adt.PayloadWordOffsetBytes</c>).</summary>
+    /// <paramref name="Ptr"/> (offset via <c>HeapLayouts.Adt.PayloadWordOffsetBytes</c>, or
+    /// <c>HeapLayouts.TaglessAdt</c>'s when <paramref name="Tagless"/>).</summary>
     /// <param name="Ptr">Temp holding the ADT cell pointer.</param>
     /// <param name="FieldIndex">Zero-based payload field index to write.</param>
     /// <param name="Source">Temp holding the value to store.</param>
-    public sealed record SetAdtField(int Ptr, int FieldIndex, int Source) : IrInst;
+    /// <param name="Tagless">True when the cell has no tag word (single-constructor layout).</param>
+    public sealed record SetAdtField(int Ptr, int FieldIndex, int Source, bool Tagless = false) : IrInst;
     // Save the current stack pointer into a local slot at a TCO loop header; RestoreStackPointer resets to
     // it at each back-edge so dynamic stack allocations in the loop body (e.g. per-iteration string/syscall
     // scratch buffers) are freed every iteration instead of accumulating until the stack overflows.
@@ -819,18 +828,21 @@ public abstract record IrInst
     /// <paramref name="Slot"/>.</summary>
     /// <param name="Slot">Local slot holding the saved stack pointer.</param>
     public sealed record RestoreStackPointer(int Slot) : IrInst;
-    // GetAdtTag uses the descriptor's tag offset.
+    // GetAdtTag uses the descriptor's tag offset. It is never emitted for a tagless cell: that
+    // cell's single constructor tag is a compile-time constant, so lowering loads it directly.
     /// <summary>Reads the constructor tag from the ADT cell at <paramref name="Ptr"/> into <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the tag.</param>
     /// <param name="Ptr">Temp holding the ADT cell pointer.</param>
     public sealed record GetAdtTag(int Target, int Ptr) : IrInst;
-    // GetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex).
+    // GetAdtField uses HeapLayouts.Adt.PayloadWordOffsetBytes(FieldIndex), or
+    // HeapLayouts.TaglessAdt's when Tagless.
     /// <summary>Reads field <paramref name="FieldIndex"/> of the ADT cell at <paramref name="Ptr"/> into
     /// <paramref name="Target"/>.</summary>
     /// <param name="Target">Temp receiving the field value.</param>
     /// <param name="Ptr">Temp holding the ADT cell pointer.</param>
     /// <param name="FieldIndex">Zero-based payload field index to read.</param>
-    public sealed record GetAdtField(int Target, int Ptr, int FieldIndex) : IrInst;
+    /// <param name="Tagless">True when the cell has no tag word (single-constructor layout).</param>
+    public sealed record GetAdtField(int Target, int Ptr, int FieldIndex, bool Tagless = false) : IrInst;
 
     /// <summary>Writes the integer in <paramref name="Source"/> to standard output, followed by a newline.</summary>
     /// <param name="Source">Temp holding the integer to print.</param>

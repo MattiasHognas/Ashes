@@ -372,6 +372,7 @@ public sealed partial class Lowering
         int fieldCount,
         bool allowRuntimeManaged,
         bool listCell,
+        bool tagless,
         string targetConstructor,
         SourceLocation? location)
     {
@@ -383,10 +384,13 @@ public sealed partial class Lowering
         for (int i = _reuseTokens.Count - 1; i >= 0; i--)
         {
             ReuseToken token = _reuseTokens[i];
+            // A tagless cell is one word smaller than a tagged cell with the same field count, so
+            // the two layouts are never interchangeable: reusing a tagless token for a tagged
+            // constructor would write past its end.
             ReuseDecisionReason? rejectionReason =
                 token.FieldCount != fieldCount
                     ? ReuseDecisionReason.ConstructorFieldCountMismatch
-                    : token.ListCell != listCell
+                    : token.ListCell != listCell || token.Tagless != tagless
                         ? ReuseDecisionReason.ConstructorCellKindMismatch
                         : !allowRuntimeManaged && token.RuntimeManaged
                             ? ReuseDecisionReason.RuntimeManagedTokenNotAllowed

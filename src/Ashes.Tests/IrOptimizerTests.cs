@@ -1521,10 +1521,13 @@ public sealed class IrOptimizerTests
         // tested) local-slot meet-over-paths folding: since the three results disagree,
         // the slot-0 round trip at the join stays live and can't be folded away, so DCE
         // can't strip the evidence that each individual case folded using t0.
+        // The dispatched tag is read from a slot nothing stores to, so it stays unknown: a
+        // literal tag would fold the whole switch to a single jump before the case labels'
+        // propagation could be observed.
         var instructions = new List<IrInst>
         {
             new IrInst.LoadConstInt(0, 42),
-            new IrInst.LoadConstInt(1, 0),
+            new IrInst.LoadLocal(1, 1),
             new IrInst.SwitchTag(1, [(0, "case_a"), (1, "case_b")], "default_0"),
             new IrInst.Label("case_a"),
             new IrInst.LoadConstInt(10, 1),
@@ -1545,7 +1548,7 @@ public sealed class IrOptimizerTests
             new IrInst.Return(5),
         };
 
-        var fn = new IrFunction("entry", instructions, 1, 13, false);
+        var fn = new IrFunction("entry", instructions, 2, 13, false);
         var program = new IrProgram(fn, [], [], false, false, false, false, false, false);
         var optimized = IrOptimizer.Optimize(program);
 
@@ -2296,9 +2299,11 @@ public sealed class IrOptimizerTests
     {
         // Both a case label and the default label can independently be empty hops; both must be
         // redirected, and SwitchTag's own structure (case count, tags) must survive unchanged.
+        // The tag comes from a slot nothing stores to, so it stays unknown and the switch itself
+        // survives; a literal tag would fold the dispatch to one jump before threading ran.
         List<IrInst> instructions =
         [
-            new IrInst.LoadConstInt(0, 0),
+            new IrInst.LoadLocal(0, 0),
             new IrInst.SwitchTag(0, [(0, "case0"), (1, "case1")], "default_case"),
             new IrInst.Label("case0"),
             new IrInst.Jump("real_case0"),
@@ -2314,7 +2319,7 @@ public sealed class IrOptimizerTests
             new IrInst.LoadConstInt(3, 30),
             new IrInst.Return(3),
         ];
-        IrFunction entry = new("entry", instructions, 0, 4, false);
+        IrFunction entry = new("entry", instructions, 1, 4, false);
         IrProgram program = new(entry, [], [], true, false, false, false, false, false);
         IrProgram optimized = IrOptimizer.Optimize(program);
 

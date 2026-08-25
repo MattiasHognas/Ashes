@@ -168,10 +168,11 @@ public sealed partial class Lowering
         var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, resultType);
 
         int ptrTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity));
+        bool tagless = IsTaglessConstructor(ctor);
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, Tagless: tagless));
         for (int i = 0; i < fieldTemps.Length; i++)
         {
-            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemps[i]));
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemps[i], tagless));
         }
 
         return (ptrTemp, resultType);
@@ -201,7 +202,7 @@ public sealed partial class Lowering
             else
             {
                 int loadedTemp = NewTemp();
-                Emit(new IrInst.GetAdtField(loadedTemp, targetTemp, i));
+                Emit(new IrInst.GetAdtField(loadedTemp, targetTemp, i, IsTaglessConstructor(ctor)));
                 fieldTemps[i] = loadedTemp;
             }
         }
@@ -1245,6 +1246,7 @@ public sealed partial class Lowering
                 0,
                 runtimeManagedCandidate,
                 listCell: false,
+                tagless: IsTaglessConstructor(ctor),
                 targetConstructor: ctor.Name,
                 location)
             : default;
@@ -1438,8 +1440,9 @@ public sealed partial class Lowering
             out int consumedTokenTemp);
         for (int i = 0; i < argTemps.Count; i++)
         {
-            int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp);
-            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp));
+            bool tagless = IsTaglessConstructor(ctor);
+            int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp, tagless);
+            Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp, tagless));
         }
         if (runtimeManagedCandidate)
         {
@@ -1802,6 +1805,7 @@ public sealed partial class Lowering
                 ctor.Arity,
                 runtimeManagedCandidate,
                 listCell: false,
+                tagless: IsTaglessConstructor(ctor),
                 targetConstructor: ctor.Name,
                 location)
             : default;
@@ -1857,7 +1861,8 @@ public sealed partial class Lowering
             tag,
             ctor.Arity,
             reuseToken.Temp,
-            reuseToken.RuntimeManaged));
+            reuseToken.RuntimeManaged,
+            Tagless: IsTaglessConstructor(ctor)));
         _reuseResultTemps.Add(ptrTemp);
         RecordReuseTokenDisposition(
             reuseToken,
@@ -1890,14 +1895,14 @@ public sealed partial class Lowering
     {
         if (stackAllocate)
         {
-            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity));
+            Emit(new IrInst.AllocAdtStack(ptrTemp, tag, ctor.Arity, IsTaglessConstructor(ctor)));
             return;
         }
 
         if (_inSpecialization)
         {
             // New cells in a reuse specialization belong in persistent to-space.
-            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity));
+            Emit(new IrInst.AllocAdtToSpace(ptrTemp, tag, ctor.Arity, IsTaglessConstructor(ctor)));
             _reuseResultTemps.Add(ptrTemp);
             RecordReuseFallbackAllocation(
                 null,
@@ -1913,7 +1918,7 @@ public sealed partial class Lowering
             return;
         }
 
-        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate));
+        Emit(new IrInst.AllocAdt(ptrTemp, tag, ctor.Arity, runtimeManagedCandidate, IsTaglessConstructor(ctor)));
         if (ShouldRecordReuseFallback(tokenMatch))
         {
             RecordReuseFallbackAllocation(
@@ -1999,7 +2004,7 @@ public sealed partial class Lowering
     /// over-materializing an already-persistent value only costs a copy, never correctness.
     /// Returns the (possibly persisted) field temp to store into the cell.
     /// </summary>
-    private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp)
+    private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless)
     {
         if (_inSpecialization && _specFreshInputNames is not null
             && (argExpr is not Expr.Var fieldVar || _specFreshInputNames.Contains(fieldVar.Name)))
@@ -2015,7 +2020,7 @@ public sealed partial class Lowering
                     // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
                     // path below.
                     int oldValueTemp = NewTemp();
-                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
+                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
                     int persistentField = NewTemp();
                     Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
                     fieldTemp = persistentField;
@@ -2037,7 +2042,7 @@ public sealed partial class Lowering
                     // else materialize fresh — so value storage is reused and the blob stays bounded by
                     // distinct keys, without overwriting reclaimable main-arena memory in place.
                     int oldValueTemp = NewTemp();
-                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex));
+                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
                     int persistentField = NewTemp();
                     Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
                     fieldTemp = persistentField;

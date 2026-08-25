@@ -614,29 +614,7 @@ public sealed partial class Lowering
                         runtimeConstructor,
                         match.Cases[i].Pattern)
                     : null;
-            bool runtimeManaged = runtimeCleanup is not null;
-            int tokenTemp = NewTemp();
-            Emit(new IrInst.DropReuse(
-                tokenTemp,
-                valueTemp,
-                reuseArityVal,
-                runtimeManaged));
-            ReuseToken token = new(
-                tokenTemp,
-                valueTemp,
-                reuseArityVal,
-                runtimeCleanup,
-                reuseScrutineeName,
-                ResolveSourceLocation(AstSpans.GetOrDefault(match.Cases[i].Pattern)),
-                ListCell: match.Cases[i].Pattern is Pattern.Cons);
-            _reuseTokens.Add(token);
-            RecordReuseTokenProduction(token);
-            RecordReuseTokenUniquenessDecision(
-                match.Cases[i].Pattern,
-                reuseScrutineeName,
-                valueTemp,
-                runtimeManaged);
-            RecordReuseTokenFieldBindings(tokenTemp, match.Cases[i].Pattern, match.Cases[i].Body);
+            PublishLinearArmDeadCellToken(match.Cases[i], valueTemp, reuseArityVal, runtimeCleanup, reuseScrutineeName);
             if (match.Cases[i].Pattern is Pattern.Cons { Head: Pattern.Var head }
                 && _linearReuseNames.Add(head.Name))
             {
@@ -999,9 +977,6 @@ public sealed partial class Lowering
         bool normalizeStaticStringArms = false,
         LoweredValueRequest request = default)
     {
-        int tagTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
-
         var armLabels = new string[cases.Count];
         var switchCases = new List<(long Tag, string Label)>(cases.Count);
         for (int i = 0; i < cases.Count; i++)
@@ -1010,7 +985,14 @@ public sealed partial class Lowering
             switchCases.Add((plan[i].Tag, armLabels[i]));
         }
 
-        Emit(new IrInst.SwitchTag(tagTemp, switchCases, noMatchLabel));
+        // A single-constructor (tagless) scrutinee has nothing to switch on: its one arm is the
+        // only possible shape, so control falls straight into that arm's label below.
+        if (!IsSoleTaglessCase(cases))
+        {
+            int tagTemp = NewTemp();
+            Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+            Emit(new IrInst.SwitchTag(tagTemp, switchCases, noMatchLabel));
+        }
 
         for (int i = 0; i < cases.Count; i++)
         {
@@ -1167,9 +1149,6 @@ public sealed partial class Lowering
         bool normalizeStaticStringArms,
         LoweredValueRequest request)
     {
-        int tagTemp = NewTemp();
-        Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
-
         var groupLabels = new string[groups.Count];
         var switchCases = new List<(long Tag, string Label)>(groups.Count);
         for (int g = 0; g < groups.Count; g++)
@@ -1179,7 +1158,16 @@ public sealed partial class Lowering
         }
 
         string defaultLabel = defaultCaseIndex is not null ? NewLabel("match_group_default") : noMatchLabel;
-        Emit(new IrInst.SwitchTag(tagTemp, switchCases, defaultLabel));
+
+        // A single-constructor (tagless) scrutinee has exactly one group and nothing to switch
+        // on: control falls straight into that group's label below. Its per-case sub-pattern
+        // tests still run inside the group, and can still fall through to the default arm.
+        if (!(groups.Count == 1 && IsTaglessConstructor(groups[0].Ctor)))
+        {
+            int tagTemp = NewTemp();
+            Emit(new IrInst.GetAdtTag(tagTemp, valueTemp));
+            Emit(new IrInst.SwitchTag(tagTemp, switchCases, defaultLabel));
+        }
 
         // A group's last case failing its own sub-pattern test (the tag matched, but a nested
         // literal, tuple or constructor did not) does not mean nothing matches: a trailing
@@ -1730,13 +1718,53 @@ public sealed partial class Lowering
                 ctor.Arity,
                 runtimeCleanup,
                 reuseScrutineeName,
-                ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern)));
+                ResolveSourceLocation(AstSpans.GetOrDefault(cases[i].Pattern)),
+                Tagless: IsTaglessConstructor(ctor));
             _reuseTokens.Add(token);
             RecordReuseTokenProduction(token);
             RecordReuseTokenFieldBindings(tokenTemp, cases[i].Pattern, cases[i].Body);
         }
 
         return new ArmReuseContext(reuseTokensBefore, []);
+    }
+
+    /// <summary>
+    /// Turns one linear arm's dead matched cell into a reuse token: emits the <see cref="IrInst.DropReuse"/>,
+    /// registers the token (with the cell's layout — list cell, tagged or tagless constructor — so
+    /// only a same-layout constructor can consume it), and records the reuse diagnostics.
+    /// </summary>
+    private void PublishLinearArmDeadCellToken(
+        MatchCase matchCase,
+        int valueTemp,
+        int reuseArity,
+        RuntimeReuseCleanup? runtimeCleanup,
+        string reuseScrutineeName)
+    {
+        bool runtimeManaged = runtimeCleanup is not null;
+        int tokenTemp = NewTemp();
+        Emit(new IrInst.DropReuse(
+            tokenTemp,
+            valueTemp,
+            reuseArity,
+            runtimeManaged));
+        ReuseToken token = new(
+            tokenTemp,
+            valueTemp,
+            reuseArity,
+            runtimeCleanup,
+            reuseScrutineeName,
+            ResolveSourceLocation(AstSpans.GetOrDefault(matchCase.Pattern)),
+            ListCell: matchCase.Pattern is Pattern.Cons,
+            Tagless: TryGetConstructorSymbol(matchCase.Pattern, out ConstructorSymbol tokenConstructor)
+                && IsTaglessConstructor(tokenConstructor));
+        _reuseTokens.Add(token);
+        RecordReuseTokenProduction(token);
+        RecordReuseTokenUniquenessDecision(
+            matchCase.Pattern,
+            reuseScrutineeName,
+            valueTemp,
+            runtimeManaged);
+        RecordReuseTokenFieldBindings(tokenTemp, matchCase.Pattern, matchCase.Body);
     }
 
     private RuntimeReuseCleanup CreateRuntimeReuseCleanup(
@@ -1841,6 +1869,7 @@ public sealed partial class Lowering
             2,
             runtimeManaged,
             listCell: true,
+            tagless: false,
             targetConstructor: "::",
             location);
         if (tokenMatch.Token is { } reuseToken)
@@ -2251,7 +2280,7 @@ public sealed partial class Lowering
             && nullaryCtor.Arity == 0)
         {
             EmitRequireNonZero(valueTemp, failLabel);
-            EmitRequireTagMatch(valueTemp, GetConstructorTag(nullaryCtor), failLabel);
+            EmitRequireTagMatch(valueTemp, nullaryCtor, failLabel);
             return;
         }
         EmitPatternBinding(v.Name, valueTemp, bindingTypes, bindingSlots, v);
@@ -2307,7 +2336,7 @@ public sealed partial class Lowering
         // Ordinary ADT constructors are tagged heap allocations: [ctorTag, ...payloads].
         // Check ptr != null, then check the tag matches this constructor.
         EmitRequireNonZero(valueTemp, failLabel);
-        EmitRequireTagMatch(valueTemp, GetConstructorTag(ctorSym), failLabel);
+        EmitRequireTagMatch(valueTemp, ctorSym, failLabel);
 
         EmitConstructorFieldBindings(ctorSym, ctor, valueTemp, failLabel, bindingTypes, bindingSlots);
     }
@@ -2335,7 +2364,7 @@ public sealed partial class Lowering
         {
             // Extract payload at each field index and bind sub-patterns.
             int payloadTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, i));
+            Emit(new IrInst.GetAdtField(payloadTemp, valueTemp, i, IsTaglessConstructor(ctorSym)));
             PropagateExtractedBytesProvenance(
                 valueTemp,
                 payloadTemp,
@@ -2359,7 +2388,7 @@ public sealed partial class Lowering
         }
 
         EmitRequireNonZero(valueTemp, failLabel);
-        EmitRequireTagMatch(valueTemp, GetConstructorTag(constructor), failLabel);
+        EmitRequireTagMatch(valueTemp, constructor, failLabel);
         foreach ((string fieldName, Pattern fieldPattern) in record.Fields)
         {
             int fieldIndex = FindFieldIndex(constructor.DeclaringSyntax.FieldNames, fieldName);
@@ -2369,7 +2398,7 @@ public sealed partial class Lowering
             }
 
             int fieldTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(fieldTemp, valueTemp, fieldIndex));
+            Emit(new IrInst.GetAdtField(fieldTemp, valueTemp, fieldIndex, IsTaglessConstructor(constructor)));
             PropagateExtractedBytesProvenance(valueTemp, fieldTemp, fieldPattern, bindingTypes);
             EmitPattern(fieldPattern, fieldTemp, failLabel, bindingTypes, bindingSlots);
         }
@@ -2415,8 +2444,15 @@ public sealed partial class Lowering
         };
     }
 
-    private void EmitRequireTagMatch(int ptrTemp, int expectedTag, string failLabel)
+    private void EmitRequireTagMatch(int ptrTemp, ConstructorSymbol constructor, string failLabel)
     {
+        // A tagless cell is always its type's one constructor: there is no tag to test.
+        if (IsTaglessConstructor(constructor))
+        {
+            return;
+        }
+
+        int expectedTag = GetConstructorTag(constructor);
         int tagTemp = NewTemp();
         int eqTemp = NewTemp();
         int expectedTagTemp = NewTemp();

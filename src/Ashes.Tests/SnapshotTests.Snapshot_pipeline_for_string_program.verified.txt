@@ -91,7 +91,8 @@
         },
         {
           Target: 3,
-          RuntimeManaged: false
+          RuntimeManaged: false,
+          Tagless: false
         },
         {
           Source: 3
