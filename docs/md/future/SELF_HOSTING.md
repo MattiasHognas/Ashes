@@ -694,6 +694,19 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Decide a `let`'s runtime-RC ownership from what its value temp *is*, not how it is represented:
+  only a fresh producer (call result, constructor, concatenation) or a transferred value confers a
+  reference the binding may release at scope exit. A plain read of an RC-normalized slot — a TCO
+  loop parameter that the back edge's flag-gated parameter releases already own, an env capture, a
+  pattern field — is a borrowed read that never retained, so `let r = acc in … loop(n - 1)(r + h)`
+  must not register `r` as a runtime-managed owner: with both the back-edge parameter drop and an
+  owning scope-exit drop for `r`, every iteration releases the same reference twice (and the
+  `then r` return path drops the value before the exit transfer hands it out). **Found only by
+  compiling and running the self-hosted projects package**: the heterogeneous mutual-recursion
+  merge synthesizes exactly this alias (`let result = __recgroup_arg2`) in every member arm, and the
+  merged `pascalCaseCharacters`/`continuePascalCase` group crashed the `selfhost/tests/projects`
+  binary with a bus error; a plain single-function alias loop double-dropped silently on every
+  earlier compiler. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping

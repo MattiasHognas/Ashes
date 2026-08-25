@@ -85,6 +85,39 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Let_alias_of_rc_loop_parameter_does_not_become_an_owner()
+    {
+        // `let r = acc` inside an RC-normalized TCO loop is a borrowed read of the parameter slot:
+        // the back edge already releases the old parameter (an RcDrop with no owner slot), so an
+        // owning scope-exit drop for `r` would release the same reference a second time. Only the
+        // parameter releases may be runtime-managed; no let-owned (OwnerSlot-bearing) runtime drop
+        // of a String may exist anywhere in the loop.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive walk n acc extra =
+                match Ashes.Text.unconsText(extra) with
+                    | None -> acc
+                    | Some((h, t)) ->
+                        let r = acc
+                        in
+                            if n == 0
+                            then r
+                            else walk(n - 1)(r + h)(t)
+
+            Ashes.IO.print(walk(100)("")("abcdefghij"))
+            """);
+
+        IrFunction loop = ir.Functions.Single(function =>
+            function.Instructions.Any(inst => inst is IrInst.TextUnconsText));
+        loop.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true, OwnerSlot: -1 }).ShouldBeTrue(
+            "the back edge must still release the old parameter");
+        loop.Instructions.Any(inst =>
+            inst is IrInst.RcDrop { TypeName: "String", RuntimeManaged: true, OwnerSlot: >= 0 }).ShouldBeFalse(
+            "a let bound to a parameter read must not own a second release of the same reference");
+    }
+
+    [Test]
     public void Local_concat_consumed_by_print_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let text = \"ab\" + \"cd\" in Ashes.IO.print(text)");
