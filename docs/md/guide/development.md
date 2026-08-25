@@ -285,6 +285,39 @@ bash scripts/verify.sh
 
 ---
 
+## Measuring an Optimizer Change
+
+An optimizer or lowering change is not done when its unit tests pass; it is done when a real
+compiled `.ash` program shows the effect. Hand-built raw-IR fixtures routinely encode a shape that
+never occurs in lowered output (a `LoadLocal`/`LoadMemOffset` pair where real closures use `LoadEnv`;
+raw temp reuse across a label where real joins always go through a local slot), so a pass can pass
+every test it was written against and fire on nothing. The routine that has caught every such case:
+
+1. **Read the real shape first.** `ashes compile --emit-ir final` on a small program written in the
+   source pattern the pass targets, before writing the pass. Isolate one function with
+   `sed -n '/^function <label> /,/^function <next>/p'` and grep-count the instructions the pass is
+   supposed to remove — that count is the "did it fully fire" oracle afterwards.
+2. **Build a baseline.** Commit first, then swap in the pre-change file with
+   `git show origin/main:<path> > <path>`, rebuild, compile the probe programs to separate binaries,
+   restore with `git checkout HEAD -- <path>`, rebuild, compile again. Never run the swap over
+   uncommitted work.
+3. **Measure at both levels.** The CLI defaults to `-O2`, where LLVM already subsumes classical scalar
+   and control-flow cleanups — many passes are identical there and only show at `-O0`. A change that
+   removes an allocation, an RC operation, or an arena bracket shows at both. Use `hyperfine -N` with
+   warmup and 10+ runs, one binary per invocation (batching hides a segfault behind a timing line),
+   and `/usr/bin/time -f "%es %MKB"` for peak RSS.
+4. **Pick the signal that matches the claim**: `--explain memory`/`--explain reuse` for allocation and
+   reuse counts, `--explain rc` for dup/drop counts, an `--emit-ir final` diff for instruction shape,
+   RSS for anything touching lifetimes, and `ls -la` on the binary for layout changes.
+5. **Soak before merging anything RC-, reuse-, or closure-adjacent.** Run the full `ashes test tests`
+   suite (`--pipeline both` mirrors CI) and the compute-bound programs under `challenges/` with the
+   baseline and the new compiler, diffing outputs byte-for-byte; the C# suite has repeatedly stayed
+   green through a crash that only the end-to-end suite or a real program exposed.
+
+Record the before/after numbers and the exact program shape in the
+[Compiler Changelog](../internals/changelog.md); a pass whose only evidence is its own unit tests has
+not been shown to do anything.
+
 ## Formatting
 
 ### `.ash` Files

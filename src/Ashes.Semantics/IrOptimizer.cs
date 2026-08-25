@@ -74,7 +74,7 @@ public static class IrOptimizer
         };
     }
 
-    // String-concatenation chain folding (OPT-017(b))
+    // String-concatenation chain folding
     // A left-nested chain of ConcatStr calls (`((a ++ b) ++ c) ++ d`) pays one allocation and one
     // growing copy per link — n-1 allocations and O(n^2) total bytes copied for n parts. When every
     // intermediate result is used exactly once, and that one use is as the Left operand of the next
@@ -226,9 +226,9 @@ public static class IrOptimizer
         }
     }
 
-    // Devirtualization past a single-hop reaching definition (OPT-016(b), single-agreeing-label
-    // case only — a 2-4-label lambda-set-specialization dispatch was also proposed for this task
-    // but is not implemented here). DevirtualizeKnownClosureCalls above only recognizes a
+    // Devirtualization past a single-hop reaching definition (single-agreeing-label case only —
+    // a 2-4-label lambda-set-specialization dispatch is not implemented here).
+    // DevirtualizeKnownClosureCalls above only recognizes a
     // MakeClosure/MakeClosureStack definition, so a curried call like `add(10)(32)` never
     // devirtualizes its second application: add(10)'s result temp is defined by a CallKnown (the
     // first application, already devirtualized above), not a MakeClosure. This computes, per

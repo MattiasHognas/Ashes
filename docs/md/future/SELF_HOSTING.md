@@ -632,6 +632,19 @@ same public behavior.
   identical shared-slot layout.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
   and whole-program SCC provenance summaries.
+- [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
+  another function: the same `BorrowInspectExpression`/`BorrowInspectOnly` walk that lets a TCO loop
+  borrow its own tail parameter across match/head/tail uses and its own tail self-call is computed
+  for every parameter of every registered function as a monotone least fixpoint (a hand-off to a
+  callee already proven inspect-only in the previous pass is approved, so a chain of self-contained
+  helpers converges while a genuine mutual cycle never does), and `BorrowInspectCall` consults that
+  table for a call to a statically-resolved callee other than the function itself (a partial
+  self-application is a separate question). Note that `FunctionOwnershipSummary.ParameterOwnership`
+  cannot answer this — its walk is scoped to resource borrow-read builtins and classifies a plain
+  inspecting helper's parameter as consumed. Every consumer of the consumed-tail gate
+  (`ComputeTcoParamFacts`, `IsBorrowableInspectOnlyList`) sees through a proven callee unchanged, so
+  a traversal that hands its tail to a read-only helper no longer takes the defensive
+  `CopyOutArena` normalization path.
 - [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
   constructor-specific child/drop information.
 - [ ] Lay out a single-constructor ADT (one non-nullary constructor; not a builtin, zero-cost newtype,

@@ -2637,7 +2637,7 @@ public sealed class IrOptimizerTests
         return stdout;
     }
 
-    // ConcatStrN chain folding (OPT-017(b))
+    // ConcatStrN chain folding
 
     [Test]
     public void ConcatStrN_folds_a_left_nested_chain_with_no_intervening_arena_bracket()
@@ -2700,7 +2700,7 @@ public sealed class IrOptimizerTests
         stdout.Trim().ShouldBe("1 2 3 4");
     }
 
-    // Devirtualization past a single-hop reaching definition (OPT-016(b))
+    // Devirtualization past a single-hop reaching definition
     //
     // Real .ash source doesn't reliably exercise the shape this pass targets end to end through
     // LowerProgram's minimal test bootstrapping: a plain top-level `let`-bound closure is read via

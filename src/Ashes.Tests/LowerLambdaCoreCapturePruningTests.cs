@@ -5,7 +5,7 @@ using Shouldly;
 namespace Ashes.Tests;
 
 /// <summary>
-/// OPT-016(a): a closure capture the lowered body never reads via <see cref="IrInst.LoadEnv"/> is
+/// A closure capture the lowered body never reads via <see cref="IrInst.LoadEnv"/> is
 /// deleted at lowering time, with the environment's remaining captures renumbered to a compact
 /// range and the allocation shrunk to match.
 /// </summary>

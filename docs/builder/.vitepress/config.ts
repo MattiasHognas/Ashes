@@ -187,7 +187,6 @@ export default defineConfig({
         text: "Future Designs",
         items: [
           page("Future Features", "/future/FUTURE_FEATURES"),
-          page("Optimizer Improvements", "/future/OPTIMIZER_IMPROVEMENTS"),
           page("Package Registry Website", "/future/REGISTRY_WEBSITE"),
           page("Self-Hosting", "/future/SELF_HOSTING"),
           page("WebAssembly Target", "/future/WASM_TARGET"),

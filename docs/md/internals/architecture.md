@@ -642,6 +642,72 @@ Registers are addressed by integer index (temporaries). Each instruction
 writes to a `Target` register and reads from `Source` / `Left` / `Right`
 registers.
 
+### IR optimizer
+
+`IrOptimizer.Optimize` (`Ashes.Semantics/IrOptimizer.cs`) rewrites the lowered
+`IrProgram` before the backend sees it. It runs unconditionally for `compile`,
+`run`, and `repl`; only `ashes test --pipeline optimized|lowered|both` gates it,
+so the end-to-end suite can catch lowering bugs the optimizer would otherwise
+mask (CI runs `--pipeline both`). The `-O0..-O3` flags select the LLVM level
+only: at `-O0` no LLVM pass runs and the Ashes-optimized IR is emitted as-is;
+`-O1`+ hands the module to LLVM's full `default<Ox>` pipeline.
+
+```mermaid
+graph TD
+    A["IrCompileTimeEval.Evaluate<br/>whole program: pure constant-argument calls become constants"] --> B["per-function pipeline<br/>entry + every function, in order"]
+    B --> C["ScalarizeSingleCaptureStackClosures<br/>one- and two-capture stack closures called through a devirtualized CallKnown"]
+    C --> D["DevirtualizeReturnedClosureCalls<br/>curried second applications via known-returned labels"]
+    D --> E["ComputeNonAllocatingFunctions +<br/>StripRedundantArenaBrackets"]
+    E --> F["FoldConcatStrChains<br/>left-nested ConcatStr into one ConcatStrN"]
+    F --> G["LLVM default&lt;O1..O3&gt; or none at -O0"]
+```
+
+The per-function pipeline is a fixed sequence, each pass run once unless noted:
+`ElideTrivialOwnershipCopies`, `SinkRuntimeRcDupsIntoDiamonds` (to its own
+fixpoint), `FuseAdjacentRuntimeRcPairs`, `DevirtualizeKnownClosureCalls` (a
+closure temp defined by `MakeClosure`/`MakeClosureStack`, directly or through a
+local slot written by exactly one `StoreLocal`), `FoldConstants` (meet over every
+predecessor edge at a join, for temps and local slots; known conditions fold
+their branch), `ReduceIdentitiesAndStrength`, `ElideTrivialOwnershipCopies`
+again (identities are rewritten into copies), `EliminateLocalRedundantComputation`
+(local CSE of pure `CallKnown` targets — the purity oracle is
+`IrCompileTimeEval`'s evaluable-function set — plus field loads and stores to
+fresh cells), `ElideTrivialOwnershipCopies` again, then `SimplifyControlFlow` and
+`ElideUnreachableCode` iterated together to a fixpoint (jump threading through
+empty labels and unreachable-code removal each expose the other), `ElideDeadCode`
+(to its own fixpoint), and `ElideErasedRcDrops`. Ordering is deliberate: copies
+are cleaned before anything reasons about ownership, calls are made direct before
+constants are folded and before CSE, and dead-code elimination runs last so it
+sweeps what every earlier pass strands.
+
+Shared analysis infrastructure the passes build on:
+
+| Analysis | Lives in | Computes | Consumed by |
+|---|---|---|---|
+| `IrControlFlowGraph` | `IrControlFlowGraph.cs` | Blocks, predecessors/successors, dominators, post-dominators, generic over the block type | `PerceusLifetimePlacement` (its blocks wrap `IrCfgBlock`), `ElideUnreachableCode`, control-flow-sensitive passes |
+| `WholeProgramFixpoint.RunToFixpoint` | `WholeProgramFixpoint.cs` | The shared iterate-until-stable skeleton | `ComputeNonAllocatingFunctions`, `ComputeEvaluableFunctions`, `ComputeKnownReturnedClosureLabels`, the open-world inspect-only parameter proof, coroutine effect propagation |
+| `FunctionOwnershipSummary` | `OwnershipSummary.cs` | Parameter ownership, call census, move-safety, result reach/freshness, live-handler effects, result provenance, TCO parameter facts, via a whole-program SCC fixpoint over exact `FuncKey` edges | RC placement, reuse eligibility, TCO parameter representation, result-ownership decisions |
+| `PerceusLifetimePlacement` | `PerceusLifetimePlacement.cs` | Per-block liveness and dominance for placing `RcDrop`/`RcDup` at true last use | Ownership placement (see [Memory Model](#memory-model)) |
+| `Lowering.MoveAnalysis` | `Lowering.MoveAnalysis.cs` | Interprocedural proof that a fold accumulator is unique at every call site (not general last-use analysis) | Reuse specialization's entry-copy elision, in-place string-append arming |
+| `Lowering.DirectCalleeAnalysis` | `Lowering.DirectCalleeAnalysis.cs` | Whether a let-bound name is only ever used as a direct call target | Stack allocation of non-escaping closures |
+| `IrCompileTimeEval` | `IrCompileTimeEval.cs` | The whole-program set of provably evaluable (pure, terminating under a budget) functions | Whole-call folding and, as a purity oracle, local CSE |
+
+Which side does what. Everything that depends on ownership, reference counting,
+reuse, arena scoping, trait evidence, capabilities, purity across closures and
+user ADTs, or closure construction is Ashes-only: LLVM sees opaque calls and
+allocations and cannot reconstruct any of it (RC-wrapped calls even look
+stateful to its GVN). LLVM in turn owns the classical scalar and control-flow
+cleanups at `-O1`+ — `simplifycfg`, `mem2reg`, GVN, cost-modeled inlining, LICM,
+unrolling, induction-variable work — so Ashes-side constant folding, identity
+reduction, jump threading, and dead-code elimination exist mainly for `-O0`,
+`--debug`, `--emit-ir`, and `--explain` fidelity and for shrinking the IR the
+Ashes-specific passes see, not as competitors to LLVM. The measured pattern
+across the optimizer's history bears this out: an Ashes pass that only re-derives
+what LLVM does is identical at `-O2`, while a pass that removes an allocation,
+an RC operation, or an arena bracket LLVM cannot prove dead wins at every level.
+See [Measuring an optimizer change](../guide/development.md#measuring-an-optimizer-change)
+for how such a change is validated.
+
 ---
 
 ## Memory Model
