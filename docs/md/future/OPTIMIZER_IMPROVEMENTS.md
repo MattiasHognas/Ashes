@@ -1991,8 +1991,10 @@ evidence, not just a formality.
 
 ### OPT-015: Tail Contification of Local Helpers
 
-**Status: Not started — investigated 2026-08-25 and deliberately deferred; see note below before
-picking this up.**
+**Status: Investigated in depth (second pass, 2026-08-25) and deliberately not implemented — the
+measured case for it evaporated once a real RC leak found during baseline measurement was fixed; see
+the Measured Outcome at the end of this section. The scope note below (from the first investigation)
+still stands as the risk assessment for any future attempt.**
 
 > **Scope note from investigation, not implementation.** `TcoContext` (`Lowering.Types.cs:206`) is not
 > a self-contained join-point helper — it is the backbone of *per-parameter RC/arena representation
@@ -2107,7 +2109,42 @@ IR-optimization pipeline (which includes closure devirtualization) as ported (`[
 *lowering*-stage change, not an `IrOptimizer` pass, so it does not extend that existing `[x]` bullet.
 Add a **new** `[ ]` line describing tail contification of direct-callee-only, all-tail-position local
 helpers, scoped to lowering rather than the optimizer pipeline section. It flips to `[x]` only once the
-self-hosted `selfhost/` lowering implements the equivalent transform.
+self-hosted `selfhost/` lowering implements the equivalent transform. (Not applicable while the task
+remains unimplemented — see Measured Outcome.)
+
+**Measured Outcome (second investigation, decided against implementing).** Baselining this task's own
+worked example produced two findings, and the second removed the first's motivation.
+
+First, the current lowering does emit everything this task predicts: the worked `tag` example's final
+IR shows a per-iteration `MakeClosureStack`, an **indirect `CallClosure` per call site** (the
+devirtualizer does not fire through the binding's slot round-trip — the pre-existing gap the local-CSE
+task's notes already record), a per-call `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`
+bracket, and a per-iteration `CleanupResource` — the full cost the Problem paragraph describes is
+really there in the IR.
+
+Second, **none of it is measurable, and the one large measured gap was a genuine memory bug, not
+closure cost.** On a 20,000,000-iteration driver around the scalar worked example, the helper form and
+a hand-inlined form (the ceiling for what contification could achieve) are indistinguishable at both
+levels (`-O2` 0.01s vs 0.04s — noise; `-O0` 0.19s vs 0.18s; identical RSS): LLVM flattens the closure
+build, the indirect call, and the balanced arena-cursor bookkeeping for this shape even at `-O0`'s
+codegen. A string-returning variant DID show a dramatic gap — **163 MB vs 8.2 MB RSS and ~1.4x time**
+— but root-causing it found a real, pre-existing **32 B/iteration RC leak** (an unowned RC call result
+consumed by a read-only builtin is never released, and the `NewlyProduced` ownership fact died at
+control-flow joins and let-scope frame restores), which was fixed and shipped separately with a
+verified-failing regression test. **Post-fix, the helper and hand-inlined forms measure equal at both
+optimization levels on the string variant too** (0.01s/0.01s at `-O2`, 0.10s/0.07s at `-O0`, both at
+the 8.2 MB floor).
+
+With the example shapes showing no remaining time or memory delta against the win ceiling, what this
+task would buy on measured evidence is IR-quality/code-size only — while its implementation is, per
+the scope note above, a second `TcoContext`-scale piece of per-parameter placement machinery per
+contified helper, the compiler's highest-risk kind of change. That trade mirrors the multi-anchor
+drop-placement task's outcome (real capability gap on paper, zero measured benefit, high-risk core),
+and it was resolved the same way: documented with the measurement rather than implemented. Two durable
+artifacts beyond this record: the leak fix itself (with its probe battery and plateau regression), and
+the measurement discipline note that a hand-inlined variant is the cheap, honest win-ceiling proxy for
+any future contification attempt — re-measure that ceiling first before building the join-point
+machinery.
 
 ---
 
@@ -3109,7 +3146,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
-| OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Not started |
+| OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Investigated, not implemented — helper vs hand-inlined measures equal at both levels once a real RC leak found during baselining was fixed; see Measured Outcome |
 | OPT-017(a) | Multi-anchor Perceus drop placement | Medium | None measured (see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Investigated, reverted — segfault root-caused and fixed, but zero measured benefit on every case tried, see task section |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Done — tagless layout via a per-instruction flag; -17.5% at -O0 / -3% at -O2 on a hot single-constructor match loop, -11% peak RSS on a 1M-cell live set, see Measured Outcome |
