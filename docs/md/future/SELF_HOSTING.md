@@ -615,6 +615,22 @@ same public behavior.
   falls through by construction, silently skips the case entirely. Confirmed by a real regression:
   `reverse-complement` printed only its first FASTA header on every input because this exact shape
   (`Some(('>', _)) -> ... | _ -> ...`) misrouted on every line after the first.
+- [ ] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
+  "Missing case" engine is a deliberate under-approximation of what is missing — correct for a
+  diagnostic, which must never report a false "Missing case", and unsound as a proof that a trailing
+  arm is unreachable: constructor argument positions are checked independently of one another
+  (`(true, false) | (false, true)` covers both columns while `(false, false)` is unmatched), and a
+  record sub-pattern contributes no field constraints at all, so `None | Some(Def { body = None })` is
+  judged exhaustive and the live `Some(Def { body = Some(b) })` arm is deleted before lowering.
+  **Found only by compiling and running the self-hosted semantics package itself**: that arm was
+  `findInferenceTraitMethod`'s default-body case, so every default-method dependency check fell off
+  the end of its match (a segfault at first; a silently wrong `error = None` once the default-arm
+  routing fix above changed what a fallen-off match yields), and the same trim fired at four more
+  sites. The prefix stops growing the moment a pattern enters it that is not a catch-all, a bool
+  literal, the empty list, or a constructor/cons/tuple whose every child is a catch-all — for those,
+  coverage reduces to the constructor set the engine enumerates completely; record patterns,
+  int/string/rune literals, and any nested non-catch-all structure decline. The dead `_` after a
+  complete set of catch-all-argument constructor arms is still trimmed.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
@@ -638,6 +654,19 @@ same public behavior.
   type variable) declines the group, and so do members whose result types differ (every member body
   becomes one arm of the dispatch match). Groups that merged under the old gate must lower to the
   identical shared-slot layout.
+- [ ] Resolve a member body's **non-tail** sibling references inside the merged dispatch: only tail
+  in-group calls are rewritten into dispatch calls, so a call whose result the member inspects
+  (`match findCycle(name)(decls)(path) with ...` before its own tail call), a partial application,
+  or a reference from a nested lambda stays a plain reference to the sibling. The closure-lowered
+  member bodies resolve those by symbol through the group context, but the dispatch lambda is a
+  fresh synthesized function; lowering it with only the dispatch's own name in scope makes the
+  reference fall through to the forward-reference diagnostic (`ASH014 Binding 'findCycle' is not
+  yet declared at this point.`) on a well-formed program. Bind every member name to its
+  already-emitted closure slot (monomorphic at this point — schemes are generalized only after the
+  transform) while lowering the dispatch body, exactly as the continuation scope later binds the
+  names to the wrapper slots. The gap predates the shape widening above, but that widening made the
+  self-hosted `findSupertraitCycleInRequirements`/`findSupertraitCycle` group eligible for merging
+  and broke the `selfhost/tests/semantics` build.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
   and whole-program SCC provenance summaries.
 - [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
@@ -665,6 +694,19 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Decide a `let`'s runtime-RC ownership from what its value temp *is*, not how it is represented:
+  only a fresh producer (call result, constructor, concatenation) or a transferred value confers a
+  reference the binding may release at scope exit. A plain read of an RC-normalized slot — a TCO
+  loop parameter that the back edge's flag-gated parameter releases already own, an env capture, a
+  pattern field — is a borrowed read that never retained, so `let r = acc in … loop(n - 1)(r + h)`
+  must not register `r` as a runtime-managed owner: with both the back-edge parameter drop and an
+  owning scope-exit drop for `r`, every iteration releases the same reference twice (and the
+  `then r` return path drops the value before the exit transfer hands it out). **Found only by
+  compiling and running the self-hosted projects package**: the heterogeneous mutual-recursion
+  merge synthesizes exactly this alias (`let result = __recgroup_arg2`) in every member arm, and the
+  merged `pascalCaseCharacters`/`continuePascalCase` group crashed the `selfhost/tests/projects`
+  binary with a bus error; a plain single-function alias loop double-dropped silently on every
+  earlier compiler. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping

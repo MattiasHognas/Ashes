@@ -132,6 +132,32 @@ public sealed class MutualRecursionTcoTests
         DispatchFunctions(ir).ShouldBeEmpty("a group with no cross-member tail call needs no dispatch loop");
     }
 
+    [Test]
+    public void NonTailSiblingReference_LowersInsideDispatch()
+    {
+        // pong inspects ping's result before its own tail call, so the dispatch body carries a
+        // non-tail reference to a sibling. That reference cannot be a dispatch call (its result is
+        // consumed, not returned); it must bind to the closure-lowered member rather than fall
+        // through to the Model-A forward-reference diagnostic.
+        var ir = LowerProgram(
+            """
+            let recursive ping n acc =
+                if n == 0
+                then acc
+                else pong(n - 1)(acc + 1)
+            and pong n acc =
+                let probe = ping(0)(acc)
+                in
+                    if n == 0
+                    then probe
+                    else ping(n - 1)(probe + 1)
+
+            ping(10)(0)
+            """);
+
+        DispatchFunctions(ir).Count.ShouldBe(1, "a non-tail sibling reference must not disqualify the group");
+    }
+
     private static List<IrFunction> DispatchFunctions(IrProgram program)
     {
         return program.Functions

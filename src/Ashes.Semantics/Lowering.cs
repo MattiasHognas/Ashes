@@ -5235,7 +5235,7 @@ public sealed partial class Lowering
             else
             {
                 var isResource = GetResourceTypeName(prunedValueType) is not null;
-                bool runtimeManaged = IsRuntimeManagedResultTemp(valueTemp);
+                bool runtimeManaged = IsRuntimeManagedResultTemp(valueTemp) && !IsBorrowedOwnershipTemp(valueTemp);
                 ConstructorSymbol? runtimeConstructor = null;
                 if (runtimeManaged
                     && TryDescribeConstructorExpression(let.Value, out ConstructorSymbol? constructor, out _, out _))
@@ -5273,6 +5273,21 @@ public sealed partial class Lowering
     {
         return _tempOwnershipFacts.TryGetValue(valueTemp, out LoweredTempOwnershipFact? fact)
             && fact.Representation == LoweredTempRepresentation.RuntimeRc;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="valueTemp"/> is a borrowed read rather than a reference its consumer
+    /// may own. A `let` bound to such a temp — a plain read of an RC-normalized slot (a TCO loop
+    /// parameter no <see cref="OwnershipInfo"/> tracks, an env capture, a pattern field) — must not
+    /// become a runtime-managed owner: the read never retained, and the slot's own owner (the
+    /// back-edge parameter release, the capture, the scrutinee) still releases the reference, so an
+    /// owning scope-exit drop for the let would release it a second time (a use-after-free once a
+    /// TCO loop iterates). Only a fresh producer or a transferred value confers ownership.
+    /// </summary>
+    private bool IsBorrowedOwnershipTemp(int valueTemp)
+    {
+        return _tempOwnershipFacts.TryGetValue(valueTemp, out LoweredTempOwnershipFact? fact)
+            && fact.Ownership == LoweredTempOwnershipKind.Borrowed;
     }
 
     private (int Temp, TypeRef Type) PopLetScope(
