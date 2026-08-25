@@ -1033,7 +1033,8 @@ polymorphically.
 Self-recursive calls in tail position are guaranteed not to consume additional stack
 frames. Tail-position arguments are still evaluated strictly before the recursive jump is
 performed. Cross-member tail calls in a `let recursive ... and ...` group are also
-constant-stack when the group members share a common parameter shape; non-tail recursive
+constant-stack, including across members whose arities or parameter types differ, as long
+as every differing parameter type has a constructible default value; non-tail recursive
 calls consume one stack frame per active call. See §18.3 for the exact conditions and
 stack-depth limits.
 
@@ -2669,17 +2670,26 @@ run in constant stack space, without risk of stack overflow.
 Cross-member tail calls in a `let recursive ... and ...` group are also compiled
 to constant-stack loops when all of the following hold:
 
-- every member of the group has the same number of parameters (arity >= 1),
-- the parameter types are structurally identical position-by-position
-  across all members, and
-- at least one member makes a genuine cross-member call in tail position.
+- every member of the group is a function of at least one parameter,
+- at least one member makes a genuine cross-member call in tail position, and
+- at every parameter position where the members' parameter types differ (or
+  where only some members have a parameter at all), each distinct type is one
+  that has a constructible default value: `Int`, `Bool`, `Float`, `Str`, a
+  character, a fixed-width unsigned integer, or a list.
 
-When these conditions hold, the compiler merges the group into a single
-dispatch function whose in-group tail calls become back-edge jumps, so a
-mutually tail-recursive pair such as `isEven`/`isOdd` runs in constant
-stack space. When they do not hold, cross-member calls are ordinary
-closure calls and each one consumes a stack frame. Non-tail in-group
-calls always consume stack frames, exactly like non-tail self-calls.
+Members do not need to share an arity or identical parameter types. When these
+conditions hold, the compiler merges the group into a single dispatch function
+with one parameter slot per position where all members agree and one slot per
+distinct parameter type where they do not; in-group tail calls become back-edge
+jumps that fill the callee's slots with its arguments and every other slot with
+that slot type's default value, so a mutually tail-recursive pair such as
+`isEven`/`isOdd` — or a parser whose members carry accumulators of different
+types — runs in constant stack space. A parameter position whose types differ
+and include a type with no constructible default (a user-declared type, a tuple,
+a function, or an unresolved type variable) keeps the whole group on the closure
+path: cross-member calls are then ordinary closure calls and each one consumes a
+stack frame. Non-tail in-group calls always consume stack frames, exactly like
+non-tail self-calls.
 
 #### 18.3.2 Stack Depth and Non-Tail Recursion
 

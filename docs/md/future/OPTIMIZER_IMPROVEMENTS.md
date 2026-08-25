@@ -1677,7 +1677,8 @@ exit 0, output hashes and peak RSS unchanged from their known-good baselines, no
 
 ### OPT-012: Guarantee Stack-Bounded Behavior for General (Non-Loop-Recognized) Tail Calls
 
-**Status: Done (part (b) only; part (a) not attempted).** See **Measured Outcome** below.
+**Status: Done (both parts; (a) landed 2026-08-25 with a default-value slot layout rather than the
+doc's tagged-payload sketch).** See **Measured Outcome** below.
 
 **Problem.** Loop-based TCO (self-recursion, eligible mutual-recursion groups) guarantees O(1) native
 stack growth via an explicit IR back-edge, independent of LLVM. Any other tail call — including a tail
@@ -1806,6 +1807,55 @@ because a corruption was directly observed). Full suites green: C# 2360/2360, LS
 skipped, `dotnet format --verify-no-changes` clean. Part (a) (widening mutual-TCO loop-merge
 eligibility to heterogeneous parameter shapes) was not attempted — out of scope for this task, tracked
 separately if picked up later.
+
+**Measured Outcome — (a), done (2026-08-25).** Started from a measurement rather than the doc's design
+sketch: a 50,000,000-deep heterogeneous chain (`ping: Int -> Str -> Str` / `pong: Int -> Int -> Str`,
+each member's whole body one unconditional cross-member tail call) **segfaulted at both `-O2` and
+`-O0`** on the baseline — so, unlike the doc's expectation that (b)'s `musttail` would cover the
+heterogeneous fallback, it does not, and `--emit-ir final` shows why: the closure fallback lowers each
+cross-member "tail call" as two `CallClosure`s around a heap-allocated intermediate closure inside an
+arena bracket with a `CopyOutArena` *after* the inner call, so it is not a tail call at any level and
+never reaches `CanEmitNativeTailCall`. Reading `BuildDispatchLambda` showed the real reason for the
+identical-parameter-types gate is not the TCO machinery at all: the dispatch is synthesized as an
+ordinary AST lambda (`given which -> given arg0 -> … -> match which with …`), so one shared slot per
+position must HM-unify with every member's parameter type. The widening is therefore purely a slot
+*layout* change at the AST level (`MutualRecursionSlotLayout` in `Lowering.TopLevel.cs`): one slot per
+position where all members agree (byte-for-byte the previous layout, so every previously-merged group
+lowers identically and the `mutual_recursion` parity fixture is untouched) and one slot per distinct
+type where they disagree or where only some members have that position — which lifts the same-arity
+requirement as a free consequence. The doc's "tagged per-member payload" idea was rejected without
+prototyping: it costs an allocation per hop, and the only real design question turned out to be what an
+*inactive* slot holds. `--emit-ir final` on a homogeneous `Str`-parameter group shows the merged loop
+owns every parameter: the back edge drops each old value (guarded by a per-parameter active flag) and
+RC-normalizes each new argument by type (`CopyOutArena`/`CopyOutList`/deep copies), none of which
+tolerates a null word for a non-list type — so an inactive slot must hold a *real* value. Passing the
+caller's own parameters through would make each dispatch parameter multi-use per arm (an extra `RcDup`
+per hop, and it defeats the single-use classification the move analysis relies on to arm in-place
+accumulator growth), so instead every non-callee slot receives that slot type's default literal at every
+call and wrapper entry (`0`, `false`, `0.0`, `""`, the zero rune, the zero fixed-width unsigned, `[]`),
+and a non-shared slot whose type has no constructible default — a user-declared type, tuple, function,
+or unresolved type variable — declines the whole group exactly as before. A literal's per-hop
+normalization is an arena bump the loop's own reset reclaims, not a heap round-trip: the `-O0` cost of
+the extra slot plus its default is visible but small (below). **A pre-existing bug found by reading the
+gate**: it never compared members' *result* types, yet every member body becomes one arm of the dispatch
+`match`, so a valid group whose non-tail-calling third member returned a different type (`a`/`b`
+mutually tail-recursive returning `Int`, `c` returning `Str`) failed to compile with a bogus `ASH004
+Type mismatch: Int vs Str … in match arm 3` pointing into `<std:Ashes.Trait>`; members with differing
+result types now decline (regression fixture `tests/mutual_recursion_group_differing_result_types.ash`).
+
+**Measured**, same machine, 50,000,000-deep chains: heterogeneous `ping`/`pong` **segfault -> 0.01 s /
+8.2 MB RSS at `-O2`, segfault -> 0.32 s / 8.2 MB at `-O0`**; the homogeneous `Int`-only control at the
+same depth is 0.00 s / 0.16 s, so the default-filled extra slot costs about 2x per hop at `-O0` and
+nothing measurable at `-O2`. A 10,000,001-deep differing-arity group (`countDown: Int -> List(Int)` /
+`collect: Int -> List(Int) -> List(Int)`, previously ineligible on arity alone) completes in 10 ms. New
+e2e fixtures: `mutual_recursion_tco_heterogeneous_params.ash` and `mutual_recursion_tco_differing_arity.ash`
+(10,000,000+ deep, would overflow on the closure path), the result-type regression above, and
+`mutual_recursion_tco_undefaultable_slot_fallback.ash` (a user-ADT slot correctly keeps the closure path
+and still computes the right answer). `MutualRecursionTcoTests` repurposes its former
+"heterogeneous falls back" case into a slot-layout assertion (the synthesized `""` default is the only
+empty-string literal in the program) and adds differing-arity, no-default decline, and result-type
+decline cases. Self-hosting: the mutual-TCO port line in `SELF_HOSTING.md` describes the old same-shape
+gate; a new `[ ]` line records the slot layout and default-fill contract.
 
 ---
 
@@ -3197,7 +3247,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Done (narrowed scope: a hand-off to a statically-resolved callee proven inspect-only) — see Measured Outcome |
-| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
+| OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (both parts) — (a) via a default-filled per-type slot layout that also lifts the same-arity requirement; 50M-deep heterogeneous chain segfault -> 0.01 s; see Measured Outcome |
 | OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Investigated, not implemented — helper vs hand-inlined measures equal at both levels once a real RC leak found during baselining was fixed; see Measured Outcome |
 | OPT-017(a) | Multi-anchor Perceus drop placement | Medium | None measured (see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Investigated, reverted — segfault root-caused and fixed, but zero measured benefit on every case tried, see task section |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |

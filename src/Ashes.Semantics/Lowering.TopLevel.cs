@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Ashes.Frontend;
 
 namespace Ashes.Semantics;
@@ -885,11 +886,17 @@ public sealed partial class Lowering
     /// mutual tail calls stop growing the stack. Returns one wrapper slot per member when the
     /// transform was applied, or <c>null</c> to keep the closure-based lowering produced above.
     /// <para>
-    /// Eligible groups have at least two members, all function values of the same arity with
-    /// identical parameter types (checked against each member's inferred signature), and at least
-    /// one cross-member tail call. Identical parameter types mean every merged dispatch parameter
-    /// keeps a single well-defined type, so the existing single-function TCO — including its arena
-    /// copy-out — applies unchanged. Heterogeneous parameter types fall back to the closure path.
+    /// Eligible groups have at least two members, all function values of at least one parameter,
+    /// and at least one cross-member tail call. The dispatch function carries one parameter slot
+    /// per position where every member's parameter type agrees, and one slot per distinct type at
+    /// a position where they differ (or where only some members have a parameter at all). Every
+    /// slot keeps a single well-defined type, so the existing single-function TCO — including its
+    /// arena copy-out and runtime-managed parameter handling — applies unchanged; a tail call
+    /// fills the callee's slots with its arguments and every other slot with that slot type's
+    /// default value, which is why a non-shared slot's type must have one (see
+    /// <see cref="TryBuildDefaultValueExpr"/>). A group with a non-shared slot of any other type,
+    /// or whose members' result types differ (the dispatch's match arms must unify), keeps the
+    /// closure path.
     /// </para>
     /// </summary>
     private int[]? TryLowerMutualRecursionTco(
@@ -903,12 +910,12 @@ public sealed partial class Lowering
             return null;
         }
 
-        if (!MutualRecursionTcoTryGetLambdas(bindings, out var lambdas, out int arity))
+        if (!MutualRecursionTcoTryGetLambdas(bindings, out var lambdas, out int[] arities))
         {
             return null;
         }
 
-        if (!MutualRecursionTcoParamTypesMatch(bindings, recordTypes, arity))
+        if (!MutualRecursionTcoTryBuildSlotLayout(bindings, recordTypes, arities, out MutualRecursionSlotLayout? layout))
         {
             return null;
         }
@@ -924,7 +931,7 @@ public sealed partial class Lowering
         for (int i = 0; i < bindings.Count && !hasCrossMemberTailCall; i++)
         {
             var called = new HashSet<string>(StringComparer.Ordinal);
-            CollectGroupTailCalls(GetInnermostBody(lambdas[i]), groupNames, arity, called);
+            CollectGroupTailCalls(GetInnermostBody(lambdas[i]), groupNames, tagOf, layout, called);
             hasCrossMemberTailCall = called.Any(name => !string.Equals(name, bindings[i].Name, StringComparison.Ordinal));
         }
 
@@ -934,17 +941,17 @@ public sealed partial class Lowering
         }
 
         return MutualRecursionTcoLowerDispatchAndWrappers(
-            group, bindings, recordTypes, lambdas, groupNames, tagOf, arity);
+            group, bindings, recordTypes, lambdas, groupNames, tagOf, layout);
     }
 
-    // All members must be lambdas of the same (at least unary) arity.
+    // All members must be lambdas of at least unary arity; arities may differ between members.
     private static bool MutualRecursionTcoTryGetLambdas(
         IReadOnlyList<(string Name, Expr Value)> bindings,
         out Expr.Lambda[] lambdas,
-        out int arity)
+        out int[] arities)
     {
         lambdas = new Expr.Lambda[bindings.Count];
-        arity = -1;
+        arities = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
             if (bindings[i].Value is not Expr.Lambda lam)
@@ -953,50 +960,193 @@ public sealed partial class Lowering
             }
 
             lambdas[i] = lam;
-            int memberArity = CountLambdaChain(lam);
-            if (arity == -1)
+            arities[i] = CountLambdaChain(lam);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The dispatch function's parameter slots for a merged mutual-recursion group. Slots are
+    /// ordered position-major: at each parameter position, one slot per distinct (structurally
+    /// compared) parameter type among the members that have a parameter there. A slot is shared
+    /// when every member maps to it, which is exactly the layout a group of identical signatures
+    /// always had; any other slot needs a default value at every call that does not target one of
+    /// its members.
+    /// </summary>
+    /// <param name="SlotTypes">Each slot's parameter type, pruned.</param>
+    /// <param name="SlotOf">Per member, per parameter position, the slot index.</param>
+    /// <param name="Arities">Per member, its parameter count.</param>
+    private sealed record MutualRecursionSlotLayout(
+        IReadOnlyList<TypeRef> SlotTypes,
+        int[][] SlotOf,
+        int[] Arities)
+    {
+        public int SlotCount => SlotTypes.Count;
+
+        /// <summary>The parameter position of <paramref name="member"/> that maps to <paramref name="slot"/>, or -1.</summary>
+        public int ParamOfSlot(int member, int slot)
+        {
+            int[] slots = SlotOf[member];
+            for (int k = 0; k < slots.Length; k++)
             {
-                arity = memberArity;
+                if (slots[k] == slot)
+                {
+                    return k;
+                }
             }
-            else if (memberArity != arity)
+
+            return -1;
+        }
+    }
+
+    // Builds the dispatch slot layout, or fails when a non-shared slot's type has no default value
+    // or the members' result types do not agree.
+    private bool MutualRecursionTcoTryBuildSlotLayout(
+        IReadOnlyList<(string Name, Expr Value)> bindings,
+        TypeRef[] recordTypes,
+        int[] arities,
+        [NotNullWhen(true)] out MutualRecursionSlotLayout? layout)
+    {
+        layout = null;
+        if (!MutualRecursionTcoTryGetMemberParamTypes(bindings.Count, recordTypes, arities, out List<TypeRef>[] paramTypes))
+        {
+            return false;
+        }
+
+        var slotTypes = new List<TypeRef>();
+        var slotOf = new int[bindings.Count][];
+        for (int i = 0; i < bindings.Count; i++)
+        {
+            slotOf[i] = new int[arities[i]];
+        }
+
+        int maxArity = arities.Max();
+        for (int position = 0; position < maxArity; position++)
+        {
+            if (!MutualRecursionTcoTryAssignPositionSlots(position, paramTypes, arities, slotTypes, slotOf))
             {
                 return false;
             }
         }
 
-        return arity >= 1;
+        layout = new MutualRecursionSlotLayout(slotTypes, slotOf, arities);
+        return true;
     }
 
-    // Every member must expose the same parameter type at each position so the shared dispatch
-    // parameters are well-typed without coercion.
-    private bool MutualRecursionTcoParamTypesMatch(
-        IReadOnlyList<(string Name, Expr Value)> bindings,
+    // Unwraps each member's parameter types, failing when a member's inferred type does not expose
+    // its full arity or when the members' result types differ (every member body becomes one arm of
+    // the dispatch match, so their result types must unify).
+    private bool MutualRecursionTcoTryGetMemberParamTypes(
+        int memberCount,
         TypeRef[] recordTypes,
-        int arity)
+        int[] arities,
+        out List<TypeRef>[] paramTypes)
     {
-        var paramTypes = new List<TypeRef>[bindings.Count];
-        for (int i = 0; i < bindings.Count; i++)
+        paramTypes = new List<TypeRef>[memberCount];
+        TypeRef? firstResultType = null;
+        for (int i = 0; i < memberCount; i++)
         {
-            if (!TryGetArrowParamTypes(recordTypes[i], arity, out var memberParamTypes))
+            if (!TryGetArrowParamTypes(recordTypes[i], arities[i], out var memberParamTypes))
             {
                 return false;
             }
 
             paramTypes[i] = memberParamTypes;
-        }
-
-        for (int j = 0; j < arity; j++)
-        {
-            for (int i = 1; i < bindings.Count; i++)
+            TypeRef resultType = ArrowResultType(recordTypes[i], arities[i]);
+            if (firstResultType is null)
             {
-                if (!TypesStructurallyEqual(paramTypes[0][j], paramTypes[i][j]))
-                {
-                    return false;
-                }
+                firstResultType = resultType;
+            }
+            else if (!TypesStructurallyEqual(firstResultType, resultType))
+            {
+                return false;
             }
         }
 
         return true;
+    }
+
+    // Appends one slot per distinct parameter type at <paramref name="position"/> among the members
+    // that have a parameter there, failing when a slot not shared by every member has a type with
+    // no default value.
+    private bool MutualRecursionTcoTryAssignPositionSlots(
+        int position,
+        List<TypeRef>[] paramTypes,
+        int[] arities,
+        List<TypeRef> slotTypes,
+        int[][] slotOf)
+    {
+        var classes = new List<(TypeRef Type, List<int> Members)>();
+        for (int i = 0; i < paramTypes.Length; i++)
+        {
+            if (position >= arities[i])
+            {
+                continue;
+            }
+
+            TypeRef type = paramTypes[i][position];
+            int classIndex = classes.FindIndex(c => TypesStructurallyEqual(c.Type, type));
+            if (classIndex < 0)
+            {
+                classes.Add((type, new List<int>()));
+                classIndex = classes.Count - 1;
+            }
+
+            classes[classIndex].Members.Add(i);
+        }
+
+        foreach ((TypeRef type, List<int> members) in classes)
+        {
+            bool shared = members.Count == paramTypes.Length;
+            if (!shared && !TryBuildDefaultValueExpr(type, out _))
+            {
+                return false;
+            }
+
+            int slot = slotTypes.Count;
+            slotTypes.Add(type);
+            foreach (int member in members)
+            {
+                slotOf[member][position] = slot;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>Unwraps <paramref name="arity"/> arrows of a (curried) function type and returns the pruned result type.</summary>
+    private TypeRef ArrowResultType(TypeRef type, int arity)
+    {
+        TypeRef current = Prune(type);
+        for (int i = 0; i < arity && current is TypeRef.TFun fn; i++)
+        {
+            current = Prune(fn.Ret);
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// Synthesizes a default value expression for a dispatch slot whose type has one: the zero of
+    /// each scalar type, the empty string, and the empty list. A user-declared type, tuple, function,
+    /// or unresolved type variable has no default the compiler can construct, so a non-shared slot
+    /// of such a type disqualifies the group from the merged loop.
+    /// </summary>
+    private bool TryBuildDefaultValueExpr(TypeRef type, [NotNullWhen(true)] out Expr? value)
+    {
+        value = Prune(type) switch
+        {
+            TypeRef.TInt => new Expr.IntLit(0),
+            TypeRef.TBool => new Expr.BoolLit(false),
+            TypeRef.TFloat => new Expr.FloatLit(0.0),
+            TypeRef.TStr => new Expr.StrLit(""),
+            TypeRef.TRune => new Expr.RuneLit(0),
+            TypeRef.TUInt unsigned => new Expr.UIntLit(0, unsigned.Bits),
+            TypeRef.TList => new Expr.ListLit([]),
+            _ => null,
+        };
+        return value is not null;
     }
 
     private int[] MutualRecursionTcoLowerDispatchAndWrappers(
@@ -1006,11 +1156,11 @@ public sealed partial class Lowering
         Expr.Lambda[] lambdas,
         HashSet<string> groupNames,
         Dictionary<string, int> tagOf,
-        int arity)
+        MutualRecursionSlotLayout layout)
     {
         // Synthesize and lower the dispatch function.
         string dispatchName = $"__recgroup_dispatch_{_nextLambdaId++}";
-        var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, arity);
+        var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, layout);
 
         int dispatchSlot = NewLocal();
         var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
@@ -1019,7 +1169,7 @@ public sealed partial class Lowering
             new Binding.Local(dispatchSlot, dispatchRecursiveType));
         _scopes.Push(dispatchScope);
 
-        int paramCount = arity + 1; // the dispatch tag plus the shared parameters
+        int paramCount = layout.SlotCount + 1; // the dispatch tag plus the parameter slots
         var savedTcoCtx = _tcoCtx;
         _tcoCtx = HasTailSelfCalls(GetInnermostBody(dispatchLambda), dispatchName, paramCount)
             ? new TcoContext(dispatchName, paramCount, CollectLambdaParams(dispatchLambda))
@@ -1033,19 +1183,19 @@ public sealed partial class Lowering
             dispatchRecursiveType,
             stackAllocateClosure: false,
             forcedLabel: dispatchName,
-            originSeed: CreateMutualRecursionDispatchOriginSeed(group, bindings, arity));
+            originSeed: CreateMutualRecursionDispatchOriginSeed(group, bindings, layout.SlotCount));
         _tcoCtx = savedTcoCtx;
         Unify(dispatchRecursiveType, dispatchType);
         Emit(new IrInst.StoreLocal(dispatchSlot, dispatchTemp));
         _knownFunctionLabelsBySlot[dispatchSlot] = dispatchName;
 
-        // Synthesize and lower one wrapper per member: given p… -> dispatch(tag, p…).
+        // Synthesize and lower one wrapper per member: given p… -> dispatch(tag, slots…).
         int[] wrapperSlots = LowerMutualRecursionWrappers(
             group,
             bindings,
             recordTypes,
             tagOf,
-            arity,
+            layout,
             dispatchName);
 
         _scopes.Pop(); // dispatchScope — dispatchName must not leak into the continuation.
@@ -1057,13 +1207,13 @@ public sealed partial class Lowering
         IReadOnlyList<(string Name, Expr Value)> bindings,
         TypeRef[] recordTypes,
         IReadOnlyDictionary<string, int> tagOf,
-        int arity,
+        MutualRecursionSlotLayout layout,
         string dispatchName)
     {
         var wrapperSlots = new int[bindings.Count];
         for (int i = 0; i < bindings.Count; i++)
         {
-            Expr.Lambda wrapper = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], arity);
+            Expr.Lambda wrapper = BuildDispatchWrapper(dispatchName, tagOf[bindings[i].Name], layout);
             FuncKey function = GetRecursiveGroupMemberKey(group, i);
             SourceFunctionOrigin source = _maFunctionOrigins[function];
             var (wrapperTemp, wrapperType) = LowerLambdaCore(
@@ -1092,8 +1242,8 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Builds <c>given which -> given arg0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
-    /// where each arm is a member body with its parameters rebound to the shared dispatch arguments
+    /// Builds <c>given which -> given slot0 -> … -> match which with | 0 -> body0 | … | _ -> bodyN</c>,
+    /// where each arm is a member body with its parameters rebound to that member's dispatch slots
     /// and its in-group tail calls redirected to <paramref name="dispatchName"/>.
     /// </summary>
     private Expr.Lambda BuildDispatchLambda(
@@ -1102,17 +1252,17 @@ public sealed partial class Lowering
         HashSet<string> groupNames,
         Dictionary<string, int> tagOf,
         string dispatchName,
-        int arity)
+        MutualRecursionSlotLayout layout)
     {
         var cases = new List<MatchCase>(bindings.Count);
         for (int i = 0; i < bindings.Count; i++)
         {
             var origParams = CollectLambdaParams(lambdas[i]);
             var inner = GetInnermostBody(lambdas[i]);
-            Expr armBody = RewriteGroupTailCalls(inner, groupNames, tagOf, dispatchName, arity);
-            for (int j = arity - 1; j >= 0; j--)
+            Expr armBody = RewriteGroupTailCalls(inner, groupNames, tagOf, dispatchName, layout);
+            for (int j = layout.Arities[i] - 1; j >= 0; j--)
             {
-                armBody = new Expr.Let(origParams[j], new Expr.Var(DispatchArgName(j)), armBody);
+                armBody = new Expr.Let(origParams[j], new Expr.Var(DispatchArgName(layout.SlotOf[i][j])), armBody);
             }
 
             // The final member is the wildcard arm so the integer dispatch match is exhaustive.
@@ -1121,23 +1271,28 @@ public sealed partial class Lowering
         }
 
         Expr body = new Expr.Match(new Expr.Var(DispatchWhichName), cases);
-        for (int j = arity - 1; j >= 0; j--)
+        for (int slot = layout.SlotCount - 1; slot >= 0; slot--)
         {
-            body = new Expr.Lambda(DispatchArgName(j), body);
+            body = new Expr.Lambda(DispatchArgName(slot), body);
         }
 
         return new Expr.Lambda(DispatchWhichName, body);
     }
 
-    /// <summary>Builds <c>given w0 -> … -> dispatch(tag, w0, …)</c>, the per-member entry wrapper.</summary>
-    private Expr.Lambda BuildDispatchWrapper(string dispatchName, int tag, int arity)
+    /// <summary>
+    /// Builds <c>given w0 -> … -> dispatch(tag, slots…)</c>, the per-member entry wrapper: the
+    /// member's own slots receive its parameters and every other slot its type's default value.
+    /// </summary>
+    private Expr.Lambda BuildDispatchWrapper(string dispatchName, int tag, MutualRecursionSlotLayout layout)
     {
-        Expr body = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tag));
+        int arity = layout.Arities[tag];
+        var wrapperArgs = new List<Expr>(arity);
         for (int j = 0; j < arity; j++)
         {
-            body = new Expr.Call(body, new Expr.Var(WrapperArgName(j)));
+            wrapperArgs.Add(new Expr.Var(WrapperArgName(j)));
         }
 
+        Expr body = BuildDispatchCall(dispatchName, tag, wrapperArgs, layout);
         for (int j = arity - 1; j >= 0; j--)
         {
             body = new Expr.Lambda(WrapperArgName(j), body);
@@ -1147,45 +1302,67 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Builds <c>dispatch(tag)(slot0)…(slotN)</c> for a call of member <paramref name="tag"/> with
+    /// <paramref name="args"/>: the member's slots take its arguments in order, and every slot no
+    /// parameter of the member maps to takes that slot type's default value.
+    /// </summary>
+    private Expr BuildDispatchCall(string dispatchName, int tag, IReadOnlyList<Expr> args, MutualRecursionSlotLayout layout)
+    {
+        Expr call = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tag));
+        for (int slot = 0; slot < layout.SlotCount; slot++)
+        {
+            int param = layout.ParamOfSlot(tag, slot);
+            Expr slotValue;
+            if (param >= 0)
+            {
+                slotValue = args[param];
+            }
+            else if (!TryBuildDefaultValueExpr(layout.SlotTypes[slot], out slotValue!))
+            {
+                throw new InvalidOperationException(
+                    $"Mutual-recursion dispatch slot {slot} has no default value; the layout gate should have declined this group.");
+            }
+
+            call = new Expr.Call(call, slotValue);
+        }
+
+        return call;
+    }
+
+    /// <summary>
     /// Rewrites fully-applied in-group member calls that sit in tail position into calls to the
     /// dispatch function, leaving non-tail occurrences (which still target the member wrappers)
     /// untouched. Only tail-position nodes are traversed.
     /// </summary>
-    private Expr RewriteGroupTailCalls(Expr expr, HashSet<string> groupNames, Dictionary<string, int> tagOf, string dispatchName, int arity)
+    private Expr RewriteGroupTailCalls(Expr expr, HashSet<string> groupNames, Dictionary<string, int> tagOf, string dispatchName, MutualRecursionSlotLayout layout)
     {
         switch (expr)
         {
             case Expr.If iff:
                 return iff with
                 {
-                    Then = RewriteGroupTailCalls(iff.Then, groupNames, tagOf, dispatchName, arity),
-                    Else = RewriteGroupTailCalls(iff.Else, groupNames, tagOf, dispatchName, arity),
+                    Then = RewriteGroupTailCalls(iff.Then, groupNames, tagOf, dispatchName, layout),
+                    Else = RewriteGroupTailCalls(iff.Else, groupNames, tagOf, dispatchName, layout),
                 };
             case Expr.Match m:
                 return m with
                 {
                     Cases = m.Cases
-                        .Select(c => c with { Body = RewriteGroupTailCalls(c.Body, groupNames, tagOf, dispatchName, arity) })
+                        .Select(c => c with { Body = RewriteGroupTailCalls(c.Body, groupNames, tagOf, dispatchName, layout) })
                         .ToList(),
                 };
             case Expr.Let l:
-                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, layout) };
             case Expr.LetRecursive l:
-                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, layout) };
             case Expr.LetResult l:
-                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, arity) };
+                return l with { Body = RewriteGroupTailCalls(l.Body, groupNames, tagOf, dispatchName, layout) };
             case Expr.Call call:
                 var args = new List<Expr>();
                 var root = CollectCallArgs(call, args);
-                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == arity)
+                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == layout.Arities[tagOf[v.Name]])
                 {
-                    Expr redirected = new Expr.Call(new Expr.Var(dispatchName), new Expr.IntLit(tagOf[v.Name]));
-                    foreach (var arg in args)
-                    {
-                        redirected = new Expr.Call(redirected, arg);
-                    }
-
-                    return redirected;
+                    return BuildDispatchCall(dispatchName, tagOf[v.Name], args, layout);
                 }
 
                 return expr;
@@ -1195,34 +1372,34 @@ public sealed partial class Lowering
     }
 
     /// <summary>Collects the names of group members tail-called (fully applied) within an expression.</summary>
-    private void CollectGroupTailCalls(Expr expr, HashSet<string> groupNames, int arity, HashSet<string> found)
+    private void CollectGroupTailCalls(Expr expr, HashSet<string> groupNames, Dictionary<string, int> tagOf, MutualRecursionSlotLayout layout, HashSet<string> found)
     {
         switch (expr)
         {
             case Expr.If iff:
-                CollectGroupTailCalls(iff.Then, groupNames, arity, found);
-                CollectGroupTailCalls(iff.Else, groupNames, arity, found);
+                CollectGroupTailCalls(iff.Then, groupNames, tagOf, layout, found);
+                CollectGroupTailCalls(iff.Else, groupNames, tagOf, layout, found);
                 break;
             case Expr.Match m:
                 foreach (var c in m.Cases)
                 {
-                    CollectGroupTailCalls(c.Body, groupNames, arity, found);
+                    CollectGroupTailCalls(c.Body, groupNames, tagOf, layout, found);
                 }
 
                 break;
             case Expr.Let l:
-                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                CollectGroupTailCalls(l.Body, groupNames, tagOf, layout, found);
                 break;
             case Expr.LetRecursive l:
-                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                CollectGroupTailCalls(l.Body, groupNames, tagOf, layout, found);
                 break;
             case Expr.LetResult l:
-                CollectGroupTailCalls(l.Body, groupNames, arity, found);
+                CollectGroupTailCalls(l.Body, groupNames, tagOf, layout, found);
                 break;
             case Expr.Call call:
                 var args = new List<Expr>();
                 var root = CollectCallArgs(call, args);
-                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == arity)
+                if (root is Expr.Var v && groupNames.Contains(v.Name) && args.Count == layout.Arities[tagOf[v.Name]])
                 {
                     found.Add(v.Name);
                 }
