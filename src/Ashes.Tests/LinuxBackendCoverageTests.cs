@@ -138,6 +138,47 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_tco_loop_allocating_a_heap_cell_does_not_grow_the_stack_at_o0()
+    {
+        // A TCO loop that allocates a fresh heap cell each iteration runs the RC-allocator's
+        // scratch-slot path, whose fixed-size allocas were once emitted at the loop-body insertion
+        // point. At -O0 a non-entry-block fixed-size alloca is lowered as a runtime stack-pointer
+        // adjustment reclaimed only by function return or llvm.stackrestore, so ~112 bytes of
+        // scratch leaked per iteration and a 1,000,000-element build/walk overflowed the 8 MB stack
+        // (segfault). Hoisting those scratch slots to the function entry block makes them single
+        // fixed frame slots, reused every iteration. -O2 never showed the leak (mem2reg/SROA
+        // promotes the scratch allocas away), so this must be exercised explicitly at -O0.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        IrProgram program = LowerProgram(
+            """
+            type Cell =
+                | Cell(Int, Int)
+
+            let recursive build = given k -> given acc ->
+                if k == 0 then acc
+                else build(k - 1)(Cell(k)(k + 1) :: acc)
+
+            let recursive sum = given cells -> given acc ->
+                match cells with
+                    | [] -> acc
+                    | Cell(x, _) :: rest -> sum(rest)(acc + x)
+
+            Ashes.IO.print(sum(build(1000000)([]))(0))
+            """);
+
+        ExecutionResult result = await CompileRunWithLinuxLlvmAsync(
+            program,
+            compileOptions: new BackendCompileOptions(BackendOptimizationLevel.O0)).ConfigureAwait(false);
+
+        result.ExitCode.ShouldBe(0, $"A 1M-iteration heap-allocating TCO loop must not overflow the stack at -O0. stderr: {result.Stderr}");
+        result.Stdout.ShouldBe("500000500000\n");
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_does_not_musttail_a_call_in_a_function_that_allocates_stack_memory()
     {
         // Safety gate found during this task's own investigation, beyond what the doc's proposal
