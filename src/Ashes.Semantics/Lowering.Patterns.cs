@@ -2809,14 +2809,23 @@ public sealed partial class Lowering
 
     // Dead-arm elimination
     // Trims a trailing run of cases already proven unreachable by the guard-free cases before
-    // them, using the exact same sound, fully recursive per-field-position coverage engine
-    // EmitMatchExhaustivenessDiagnostics already uses for its "Missing case" diagnostic
-    // (TryGetMissingPattern/TryGetMissingPatternCore) — never a top-level-constructor-tag-only
-    // check, which is unsound here (`Ok(true) | Ok(false) | Error(_)` looks fully covered by tag
-    // alone after just two arms, even though Ok(true)/Ok(false) don't overlap). A prefix growing
-    // one case at a time is checked for exhaustiveness; the first exhaustive prefix found means
-    // every later case can never be reached and is dropped before any lowering happens for it —
-    // no IR, no reuse-token publish, nothing.
+    // them, using the same per-field-position coverage engine EmitMatchExhaustivenessDiagnostics
+    // uses for its "Missing case" diagnostic (TryGetMissingPattern/TryGetMissingPatternCore) —
+    // never a top-level-constructor-tag-only check, which is unsound here (`Ok(true) | Ok(false)
+    // | Error(_)` looks fully covered by tag alone after just two arms, even though
+    // Ok(true)/Ok(false) don't overlap). A prefix growing one case at a time is checked for
+    // exhaustiveness; the first exhaustive prefix found means every later case can never be
+    // reached and is dropped before any lowering happens for it — no IR, no reuse-token publish,
+    // nothing.
+    //
+    // The coverage engine is exact only for the pattern shapes IsExactCoveragePattern admits. For
+    // anything else it is a deliberate under-approximation of what is missing (fine for a
+    // diagnostic, which must never report a false "Missing case"): it checks each constructor
+    // argument position independently, so `(true, false) | (false, true)` looks complete although
+    // `(true, true)` is not matched, and a record pattern contributes no field constraints at all,
+    // so `None | Some(R { f = None })` looks complete although `Some(R { f = Some(_) })` is not
+    // matched. Trimming on such a verdict deletes a live arm, so a prefix stops being eligible the
+    // moment a non-exact pattern enters it.
     private IReadOnlyList<MatchCase> TrimProvablyUnreachableTrailingCases(IReadOnlyList<MatchCase> cases, TypeRef valueType)
     {
         if (cases.Count <= 1 || cases.Any(c => c.Guard is not null))
@@ -2862,6 +2871,11 @@ public sealed partial class Lowering
 
         for (int prefixLength = 1; prefixLength < cases.Count; prefixLength++)
         {
+            if (!IsExactCoveragePattern(patterns[prefixLength - 1]))
+            {
+                return cases;
+            }
+
             if (!TryGetMissingPattern(valueType, patterns.Take(prefixLength).ToList(), out _))
             {
                 return cases.Take(prefixLength).ToList();
@@ -2869,6 +2883,35 @@ public sealed partial class Lowering
         }
 
         return cases;
+    }
+
+    /// <summary>
+    /// Whether the coverage engine's verdict over a prefix containing <paramref name="pattern"/>
+    /// is exact rather than an under-approximation: a catch-all, a bool literal, or a
+    /// constructor/cons/tuple whose every child is a catch-all (so coverage reduces to the
+    /// constructor set, which the engine enumerates completely). Record patterns, int/string/rune
+    /// literals, and any nested non-catch-all structure decline, since their field positions are
+    /// analyzed independently of one another or not at all.
+    /// </summary>
+    private bool IsExactCoveragePattern(Pattern pattern)
+    {
+        switch (pattern)
+        {
+            case Pattern.BoolLit or Pattern.EmptyList:
+                return true;
+            case Pattern.Cons cons:
+                return IsCatchAllPattern(cons.Head) && IsCatchAllPattern(cons.Tail);
+            case Pattern.Tuple tuple:
+                return tuple.Elements.All(IsCatchAllPattern);
+            case Pattern.Constructor ctor:
+                return ctor.Patterns.All(IsCatchAllPattern);
+            case Pattern.As asPattern:
+                return IsExactCoveragePattern(asPattern.Inner);
+            case Pattern.Or orPattern:
+                return orPattern.Alternatives.All(IsExactCoveragePattern);
+            default:
+                return IsCatchAllPattern(pattern) || TryGetConstructorSymbol(pattern, out _);
+        }
     }
 
     private bool TryGetMissingPattern(TypeRef valueType, IReadOnlyList<Pattern> patterns, out Pattern missingPattern)

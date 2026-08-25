@@ -190,6 +190,84 @@ public sealed class DecisionTreeMatchTests
         output.ShouldBe($"{expected}\n");
     }
 
+    [Test]
+    [Arguments("Some(Def(name = \"a\", body = Some(\"b\")))", "default b")]
+    [Arguments("Some(Def(name = \"a\", body = None))", "no default")]
+    [Arguments("None", "missing")]
+    public async Task DeadArmTrim_KeepsArmAfterNestedRecordSubPattern(string scrutinee, string expected)
+    {
+        // A record sub-pattern contributes no per-field constraint to the coverage engine, so
+        // `None | Some(Def { body = None })` used to be judged exhaustive and the third arm dropped:
+        // a Def with a body then fell off the match. The trim must decline once a record pattern
+        // enters the prefix.
+        string output = await CompileAndRunAsync(
+            $$"""
+            type Def =
+                | name: Str
+                | body: Maybe(Str)
+
+            let classify = given value ->
+                match value with
+                | None -> "missing"
+                | Some(Def { name = _n, body = None }) -> "no default"
+                | Some(Def { name = _n, body = Some(b) }) -> "default " + b
+
+            Ashes.IO.print(classify({{scrutinee}}))
+            """).ConfigureAwait(false);
+
+        output.ShouldBe($"{expected}\n");
+    }
+
+    [Test]
+    [Arguments("(true, true)", "both")]
+    [Arguments("(true, false)", "other")]
+    [Arguments("(false, true)", "other")]
+    [Arguments("(false, false)", "neither")]
+    public async Task DeadArmTrim_KeepsWildcardAfterColumnwiseCoveredTuples(string scrutinee, string expected)
+    {
+        // The coverage engine checks tuple positions independently: after (true, true),
+        // (true, false), and (false, true) each column has seen both literals, so the engine
+        // reports nothing missing even though (false, false) is unmatched. The trailing wildcard
+        // must survive, since literal sub-patterns are not an exact coverage shape.
+        string output = await CompileAndRunAsync(
+            $$"""
+            let corners = given pair ->
+                match pair with
+                | (true, true) -> "both"
+                | (true, false) -> "other"
+                | (false, true) -> "other"
+                | _ -> "neither"
+
+            Ashes.IO.print(corners({{scrutinee}}))
+            """).ConfigureAwait(false);
+
+        output.ShouldBe($"{expected}\n");
+    }
+
+    [Test]
+    public void DeadArmTrim_StillDropsWildcardAfterExactConstructorCoverage()
+    {
+        // The exact shape the trim exists for: every constructor covered by a catch-all-argument
+        // pattern. The trailing wildcard is provably dead and its literal never reaches the program.
+        var ir = LowerProgram(
+            """
+            type Shape =
+                | Circle(Int)
+                | Square(Int)
+
+            match Circle(1) with
+                | Circle(r) -> r
+                | Square(s) -> s
+                | _ -> 424242
+            """);
+
+        ir.Functions
+            .Append(ir.EntryFunction)
+            .SelectMany(f => f.Instructions)
+            .OfType<IrInst.LoadConstInt>()
+            .ShouldNotContain(load => load.Value == 424242, "the dead wildcard arm must be trimmed before lowering");
+    }
+
     private static List<IrInst.SwitchTag> SwitchTags(IrProgram program)
     {
         return program.Functions
