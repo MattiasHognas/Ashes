@@ -60,14 +60,18 @@ dotnet run --project src/Ashes.Cli -- compile challenges/k-nucleotide/k-nucleoti
 BENCH_STDIN=/tmp/fa250k.txt challenges/bench.sh k-nucleotide
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run mean at 250k, a single timed run at 1M, GNU `time`
+peak RSS:
 
 | Input (fasta N) | >THREE bases | Time | Peak RSS |
 |-----------------|--------------|------|----------|
-| 250,000 | 1.25M | 2.83 s | 44 MB |
-| 1,000,000 | 5M | 11.3 s | 123 MB |
+| 250,000 | 1.25M | 1.32 s | 85 MB |
+| 1,000,000 | 5M | 5.20 s | 210 MB |
 
-Time and memory scale linearly with the sequence. The cost profile is the expected one: every
+Time and memory scale linearly with the sequence. Against the previous measurement (2.83 s / 44 MB
+and 11.3 s / 123 MB) time has halved while peak RSS has roughly doubled; the higher resident set
+has not been traced to a specific change and is worth a look on its own. The cost profile is the expected one: every
 k-mer count is an immutable `Map` update (O(log n) + path allocation), where the reference uses a
 mutable O(1) hashtable — that constant-factor gap, not any remaining compiler flaw, is what
 separates this from the leaderboard. The standard 25M-base input is reachable but was skipped to

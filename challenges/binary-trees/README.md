@@ -63,14 +63,15 @@ dotnet run --project src/Ashes.Cli -- compile challenges/binary-trees/binary-tre
 challenges/bench.sh binary-trees 21
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run means, GNU `time` peak RSS:
 
 | N (maxDepth) | Time | Peak RSS |
 |--------------|------|----------|
-| 16 | 0.031 s | 6.0 MB |
-| 18 | 0.145 s | 24.0 MB |
-| 20 | 0.711 s | 95.8 MB |
-| **21** (standard) | **1.41 s** | **191.8 MB** |
+| 16 | 0.030 s | 12.0 MB |
+| 18 | 0.134 s | 28.0 MB |
+| 20 | 0.621 s | 100 MB |
+| **21** (standard) | **1.25 s** | **196 MB** |
 
 The headline probe — *does the per-iteration arena reset fire for a discarded `Tree`, or does
 memory grow toward OOM?* — comes out **positive**: `N=21` allocates and discards tens of millions

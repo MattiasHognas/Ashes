@@ -58,16 +58,17 @@ dotnet run --project src/Ashes.Cli -- compile challenges/1brc/brc.ash -o /tmp/br
 
 ## Benchmarks
 
-Measured with `hyperfine` (warm page cache) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64; the
-worker cap defaults to the detected thread count (override with `--parallel-workers`).
+Measured 2026-08-25 (`main` at `cf16de07`) with `hyperfine` (three runs, warm page cache) on a
+32-thread AMD Ryzen 9 9950X3D, Linux x64; GNU `time` peak RSS; the worker cap defaults to the
+detected thread count (override with `--parallel-workers`).
 
 | Rows | Time | Peak RSS |
 |------|------|----------|
-| 10,000,000 | 0.59 s | 6.6 GB |
-| 100,000,000 | 1.31 s | 8.6 GB |
-| **1,000,000,000** (full challenge) | **8.46 s** (±0.05) | 21.7 GB |
+| 10,000,000 | 0.55 s | 6.8 GB |
+| 100,000,000 | 1.20 s | 8.8 GB |
+| **1,000,000,000** (full challenge) | **7.36 s** | 21.8 GB |
 
-At the full billion rows: 41,343 stations, ≈118 M rows/s.
+At the full billion rows: 41,343 stations, ≈136 M rows/s.
 
 These reflect the freestanding SWAR byte scan used by `Ashes.Byte.indexOf` in fully-static
 (non-networking) binaries. The per-row newline scan is ≈3 % slower at the full billion rows than

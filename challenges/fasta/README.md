@@ -61,14 +61,15 @@ dotnet run --project src/Ashes.Cli -- compile challenges/fasta/fasta.ash -o chal
 challenges/bench.sh fasta 25000000
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`, output to
-`/dev/null`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`, output to `/dev/null`; hyperfine three-run means (25M: single timed
+run), GNU `time` peak RSS:
 
 | N | Output | Time | Peak RSS |
 |---|--------|------|----------|
-| 1,000,000 | ~10 MB | 0.22 s | 34 MB |
-| 5,000,000 | ~51 MB | 3.29 s | 168 MB |
-| **25,000,000** (standard) | ~254 MB | **17.4 s** | 786 MB |
+| 1,000,000 | ~10 MB | 0.13 s | 27 MB |
+| 5,000,000 | ~51 MB | 0.63 s | 97 MB |
+| **25,000,000** (standard) | ~254 MB | **3.15 s** | 447 MB |
 
 Before the affine-growth arc this was 67 s at N=80,000 (and quadratically worse beyond); N=25M was
 out of reach. Resident memory tracks the largest single sequence's accumulator (the output is held

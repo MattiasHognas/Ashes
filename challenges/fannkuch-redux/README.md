@@ -77,15 +77,15 @@ dotnet run --project src/Ashes.Cli -- compile challenges/fannkuch-redux/fannkuch
 
 ## Benchmark
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`. All outputs match
-the reference. The Time/Peak RSS columns below are current single-run wall-clock and GNU `time`
-measurements after the RC ownership fix:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`. All outputs match the reference. Time is the hyperfine three-run mean
+(N=11: a single timed run); Peak RSS is GNU `time`, and 8.0 MB is the runtime's fixed floor:
 
 | N | checksum / Pfannkuchen | Time | Peak RSS |
 |---|---|------|----------|
-| 9 | 8629 / 30 | 0.24 s | 8.2 MB |
-| 10 | 73196 / 38 | 2.82 s | 8.2 MB |
-| 11 | 556355 / 51 | 34.9 s | 8.2 MB |
+| 9 | 8629 / 30 | 0.21 s | 8.0 MB |
+| 10 | 73196 / 38 | 2.50 s | 8.0 MB |
+| 11 | 556355 / 51 | 31.7 s | 8.0 MB |
 
 Constant resident memory at every N (the `State(perm, count)` accumulator deep-copies across the
 fixed-watermark reset); larger N is bounded only by time (`N!` enumeration). Permutation-range

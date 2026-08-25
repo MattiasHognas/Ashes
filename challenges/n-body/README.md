@@ -51,17 +51,19 @@ dotnet run --project src/Ashes.Cli -- compile challenges/n-body/n-body.ash -o ch
 challenges/bench.sh n-body 50000000
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run means (50M: single timed run), GNU `time` peak RSS
+(8.0 MB is the runtime's fixed floor):
 
 | N (steps) | Time | Peak RSS |
 |-----------|------|----------|
-| 1,000,000 | 0.43 s | 0.2 MB |
-| 10,000,000 | 4.29 s | 0.2 MB |
-| **50,000,000** (standard) | **21.4 s** | **0.2 MB** |
+| 1,000,000 | 0.29 s | 8.0 MB |
+| 10,000,000 | 2.83 s | 8.0 MB |
+| **50,000,000** (standard) | **14.3 s** | **8.0 MB** |
 
-**Constant 0.2 MB at every N** — the `List(Body)` accumulator takes the whole-list deep clone
-across the fixed-watermark reset (changelog CO-32; licensed because `advance(dt)(bodies)` rebuilds
-the list every step), and the amortized compaction (CO-35) keeps the per-step copy cost sub-linear.
-Before that arc this loop grew 4.27 GB per 1e6 steps. Time is ~0.43 us/step of pure Float
-arithmetic; the mutable reference is ~6x faster per step, the price of rebuilding an immutable
-5-record list per iteration.
+**Constant resident memory at every N** — the `List(Body)` accumulator takes the whole-list deep
+clone across the fixed-watermark reset (changelog CO-32; licensed because `advance(dt)(bodies)`
+rebuilds the list every step), and the amortized compaction (CO-35) keeps the per-step copy cost
+sub-linear. Before that arc this loop grew 4.27 GB per 1e6 steps. Time is ~0.29 us/step of pure
+Float arithmetic; the mutable reference remains several times faster per step, the price of
+rebuilding an immutable 5-record list per iteration.

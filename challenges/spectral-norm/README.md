@@ -56,13 +56,15 @@ dotnet run --project src/Ashes.Cli -- compile challenges/spectral-norm/spectral-
 challenges/bench.sh spectral-norm 5500
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run means, GNU `time` peak RSS (8.0 MB is the runtime's
+fixed floor):
 
 | N | Time | Peak RSS |
 |---|------|----------|
-| 1,000 | 0.16 s | 0.2 MB |
-| 3,000 | 1.48 s | 1.0 MB |
-| **5,500** (standard) | **4.72 s** | **1.5 MB** |
+| 1,000 | 0.031 s | 8.0 MB |
+| 3,000 | 0.26 s | 8.0 MB |
+| **5,500** (standard) | **0.87 s** | **8.0 MB** |
 
 Time scales as the O(N^2) matrix-vector products predict (5.5^2 ~ 30x from 1000 to 5500) — the
 persistent-vector access cost the benchmark was expected to expose is visible but constant-factor,

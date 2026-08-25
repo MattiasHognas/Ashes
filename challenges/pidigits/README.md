@@ -56,20 +56,22 @@ Reproduce with the shared harness (compiles at `-O2`, times with `hyperfine`, re
 challenges/bench.sh pidigits 1000
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded — this benchmark does not
-use `Ashes.Task.Parallel`), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded — this benchmark does not use `Ashes.Task.Parallel`), `-O2`; hyperfine three-run
+means (10,000: single timed run), GNU `time` peak RSS (~12 MB is the runtime's fixed floor here):
 
 | N (digits) | Time | Peak RSS |
 |------------|------|----------|
-| 1,000 | 0.029 s | 0.2 MB |
-| 2,000 | 0.123 s | 0.2 MB |
-| 5,000 | 0.82 s | 0.5 MB |
-| **10,000** (standard) | **3.50 s** | 1.2 MB |
+| 1,000 | 0.017 s | 12.0 MB |
+| 2,000 | 0.086 s | 12.0 MB |
+| 5,000 | 0.52 s | 12.0 MB |
+| **10,000** (standard) | **2.13 s** | 12.3 MB |
 
 Both original flaws are fixed. Resident memory is **constant-ish** (the working `BigInt`s
 themselves) at every `N` — down from `O(N^2)` (`N=1000` was 168 MB) after the fixed-watermark
 copy-out arc. Time dropped ~128x when `bignum_divmod` was rewritten from bit-by-bit binary long
-division to **Knuth Algorithm D in base 2^32** (changelog CO-33): `N=1000` went 3.46 s -> 0.029 s,
-and the standard `N=10000` — formerly ~an hour of extrapolated runtime — now runs in 3.5 s.
+division to **Knuth Algorithm D in base 2^32** (changelog CO-33): `N=1000` went 3.46 s -> 0.029 s
+(0.017 s today), and the standard `N=10000` — formerly ~an hour of extrapolated runtime — now runs
+in 2.1 s.
 Remaining time growth is the schoolbook `mul` (Karatsuba unimplemented; nothing currently hits it
 hard enough to matter).

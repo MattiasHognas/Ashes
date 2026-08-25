@@ -29,22 +29,23 @@ written in its natural, workaround-free form.
 
 ## Benchmarks Game results
 
-These are the last known-good pre-RC-migration results, measured on a 32-thread AMD Ryzen 9
-9950X3D, Linux x64, `-O2`, single-threaded. All outputs matched the reference implementations at
-that revision. See the linked RC Perceus sweep for the current regression status.
+Re-measured 2026-08-25 on `main` at `cf16de07` (32-thread AMD Ryzen 9 9950X3D, Linux x64, `-O2`,
+single-threaded; hyperfine three-run means for workloads under ~10 s, a single timed run above).
+All outputs match the reference implementations. Peak RSS includes the runtime's fixed footprint —
+a trivial program measures ~8 MB — so figures at or near that are the floor, not the working set.
 
 | Challenge | Standard workload | Time | Peak RSS | Note |
 |---|---|---|---|---|
-| [pidigits](pidigits/README.md) | N=10,000 | 3.50 s | 1.2 MB | Algorithm D bignum division (was O(N^3) bit-division; N=1000 went 3.46 s -> 0.029 s) |
-| [binary-trees](binary-trees/README.md) | N=21 | 1.41 s | 192 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree. **Re-verified post-CO-38 fix: 1.51 s / 196 MB** — matches this baseline (was regressed to 2.34 s / 7.3 GB). |
-| [mandelbrot](mandelbrot/README.md) | N=16,000 | 13.5 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
-| [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 34.9 s | 8.2 MB | correct `556355 / 51` output with constant RC-managed resident memory; the post-pattern-cutover retain imbalance is fixed. |
-| [n-body](n-body/README.md) | N=50,000,000 | 21.4 s | 0.2 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
-| [spectral-norm](spectral-norm/README.md) | N=5,500 | 4.72 s | 1.5 MB | clean O(N^2) scaling, 9-dp output exact |
-| [fasta](fasta/README.md) | N=25,000,000 | 17.4 s | 786 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
-| [reverse-complement](reverse-complement/README.md) | fasta 25M input | 7.09 s | 3.91 GB | buffered line output; `List(Rune)` live set and byte-exact involution verified |
-| [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 11.3 s | 123 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
-| [regex-redux](regex-redux/README.md) | fasta 5M input | 63.7 s | 1.3 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
+| [pidigits](pidigits/README.md) | N=10,000 | 2.13 s | 12.3 MB | Algorithm D bignum division (was O(N^3) bit-division; N=1000 went 3.46 s -> 0.017 s) |
+| [binary-trees](binary-trees/README.md) | N=21 | 1.25 s | 196 MB | arena reclaims tens of millions of discarded nodes; RSS tracks the long-lived tree (was regressed to 2.34 s / 7.3 GB before CO-38) |
+| [mandelbrot](mandelbrot/README.md) | N=16,000 | 11.9 s | 1.7 GB | real P4 PBM output; RSS is the packed-bitmap cons list |
+| [fannkuch-redux](fannkuch-redux/README.md) | N=11 | 31.7 s | 8.0 MB | correct `556355 / 51` output at the resident floor; the retained-but-never-released successor state is fixed (below) |
+| [n-body](n-body/README.md) | N=50,000,000 | 14.3 s | 8.0 MB | constant memory: whole-list clone of the rebuilt `List(Body)` across the reset |
+| [spectral-norm](spectral-norm/README.md) | N=5,500 | 0.87 s | 8.0 MB | clean O(N^2) scaling, 9-dp output exact |
+| [fasta](fasta/README.md) | N=25,000,000 | 3.15 s | 447 MB | natural `acc + ch` accumulator; affine reservation growth made it amortized O(1)/byte |
+| [reverse-complement](reverse-complement/README.md) | fasta 25M input | 5.76 s | 3.73 GB | buffered line output; `List(Rune)` live set and byte-exact involution verified |
+| [k-nucleotide](k-nucleotide/README.md) | fasta 1M input | 5.20 s | 210 MB | persistent-Map counting; gap to reference = immutable map vs mutable hashtable |
+| [regex-redux](regex-redux/README.md) | fasta 5M input | 59.2 s | 2.1 GB | correct + bounded memory; superlinear time from per-pass subject materialization |
 
 Two compiler bugs were found and fixed during this very benchmark rerun — the suite doing its job:
 
@@ -79,6 +80,12 @@ Both regressions are fixed; their roots were separate.
   at a decrement. Plain runtime-RC data passed by name is now released at the back-edge, after the
   successor is established, balancing the retain: N=10 back to 8.2 MB and N=11 to 8.2 MB / 36.9 s
   with unchanged output. See the changelog entry for the IR-level trace.
+- **Tag-group match falling to the no-match path:** the benchmark rerun that refreshed the table
+  above found `reverse-complement` printing only its first header and exiting 0 on every input. The
+  decision-tree match compilation grouped `Some(('>', _))` under the `Some` tag but sent a failed
+  nested-literal test to the exhaustiveness-failure path instead of the trailing `_` arm. Fixed;
+  the group now falls through to the default arm, and the involution check (`rc(rc(x)) == x`) is
+  byte-exact again.
 
 ## Math-lib coverage
 

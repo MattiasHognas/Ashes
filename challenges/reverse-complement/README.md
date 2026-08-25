@@ -57,13 +57,17 @@ dotnet run --project src/Ashes.Cli -- compile challenges/reverse-complement/reve
 BENCH_STDIN=/tmp/fa1m.txt challenges/bench.sh reverse-complement
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run means (25M: single timed run), GNU `time` peak RSS.
+This rerun found the program printing only its first header on every input — a tag-group match
+lowering bug (a failed nested sub-pattern skipped the trailing `_` arm), fixed in the same sweep;
+`rc(rc(x)) == x` is byte-exact on the 250k fixture again:
 
 | Input (fasta N) | Input size | Time | Peak RSS |
 |-----------------|-----------|------|----------|
-| 250,000 | ~2.5 MB | 0.09 s | 49 MB |
-| 1,000,000 | ~10 MB | 0.40 s | 176 MB |
-| **25,000,000** (standard) | ~254 MB | **7.09 s** | **3.91 GB** |
+| 250,000 | ~2.5 MB | 0.053 s | 44 MB |
+| 1,000,000 | ~10 MB | 0.21 s | 160 MB |
+| **25,000,000** (standard) | ~254 MB | **5.76 s** | **3.73 GB** |
 
 Time and memory are both **linear**. Peak RSS follows the largest sequence that must remain live
 until its header or EOF is reached: about 34 bytes per stored base, matching the isolated

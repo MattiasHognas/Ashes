@@ -59,13 +59,15 @@ dotnet run --project src/Ashes.Cli -- compile challenges/mandelbrot/mandelbrot.a
 challenges/bench.sh mandelbrot 4000
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run means (16,000: single timed run), GNU `time` peak
+RSS:
 
 | N | Time | Peak RSS |
 |---|------|----------|
-| 1,000 | 0.054 s | 5.2 MB |
-| 4,000 | 0.85 s | 102 MB |
-| **16,000** (standard) | **13.5 s** | **1.7 GB** |
+| 1,000 | 0.048 s | 9.0 MB |
+| 4,000 | 0.76 s | 111 MB |
+| **16,000** (standard) | **11.9 s** | **1.7 GB** |
 
 The escape loop itself is constant-memory (scalar `Int`/`Float` accumulators, the compiler's happy
 path). Resident set scales with the **output image**: the packed bitmap is `N^2/8` bytes, built as a

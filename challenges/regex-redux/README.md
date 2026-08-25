@@ -60,17 +60,20 @@ dotnet run --project src/Ashes.Cli -- compile challenges/regex-redux/regex-redux
 BENCH_STDIN=/tmp/fa1m.txt challenges/bench.sh regex-redux
 ```
 
-Measured on a 32-thread AMD Ryzen 9 9950X3D, Linux x64 (single-threaded), `-O2`:
+Measured 2026-08-25 (`main` at `cf16de07`) on a 32-thread AMD Ryzen 9 9950X3D, Linux x64
+(single-threaded), `-O2`; hyperfine three-run mean at 250k, single timed runs at 1M and 5M, GNU
+`time` peak RSS:
 
 | Input (fasta N) | Input size | Time | Peak RSS |
 |-----------------|-----------|------|----------|
-| 250,000 | ~2.5 MB | 0.64 s | 54 MB |
-| 1,000,000 | ~10 MB | 4.17 s | 240 MB |
-| **5,000,000** (standard) | ~51 MB | **63.7 s** | 1.3 GB |
+| 250,000 | ~2.5 MB | 0.45 s | 104 MB |
+| 1,000,000 | ~10 MB | 3.37 s | 416 MB |
+| **5,000,000** (standard) | ~51 MB | **59.2 s** | 2.1 GB |
 
-Correct at every scale, but time grows **superlinearly** (5x input -> ~15x time from 1M to 5M):
+Correct at every scale, but time grows **superlinearly** (5x input -> ~18x time from 1M to 5M):
 each variant count is a fresh scan of the whole subject and each substitution pass materializes a
 new large string, so the constant re-copying of a tens-of-MB subject dominates once it falls out
-of cache. Memory is bounded (the chunk fix) at ~25x the input. Closing the time gap needs
+of cache. Memory is bounded (the chunk fix) at ~40x the input — up from ~25x at the previous
+measurement, not yet traced to a specific change. Closing the time gap needs
 match-iteration over a shared subject view rather than per-pass materialization — stdlib work, not
 a compiler flaw.
