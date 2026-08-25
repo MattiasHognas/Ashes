@@ -2753,10 +2753,72 @@ replaces three `ConcatStr` instructions) and a compile-and-run correctness test
 `ConcatStrN_folded_chain_produces_correct_output`). Full suite status: C# 2377/2377, LSP 70/70, e2e
 `test tests --pipeline both` 645/0/54-skipped, format clean.
 
-Stage 2 (widening `ConcatStrTip` arming beyond the TCO back edge) was **not attempted** in this pass —
-deferred as a follow-up, consistent with the doc's own acknowledgment that its test surface may be
-narrower than stage 1's and that it depends on wiring an existing `Lowering.MoveAnalysis.cs` fact into a
-new call site, a separate, larger piece of work from stage 1's self-contained optimizer pass.
+Stage 2 (widening `ConcatStrTip` arming beyond the TCO back edge) was **investigated in depth in a
+later pass and is not shipped** — the investigation found it is materially larger and higher-risk than
+the doc's "a wiring change to consult an existing fact" framing, for the reasons below.
+
+**Baseline (measured, current `main`, 200,000-iteration in-loop accumulator, default `-O2`).** The
+inline form the existing arming already covers —
+
+```
+match n with | 0 -> acc | _ -> loop (n - 1) (acc + "x")
+```
+
+— runs in **0.00s at 8.5MB RSS** (`ConcatStrTip`, O(1) amortized append, already optimal). The
+idiomatic `let`-bound intermediate form —
+
+```
+match n with | 0 -> acc | _ -> let acc2 = acc + "x" in loop (n - 1) acc2
+```
+
+— which is what stage 2 targets, runs in **4.77s at 19.9GB RSS** (plain `ConcatStr`, O(n^2) time and
+bytes). A real, large gap; the target shape is a plausible way to write the same loop.
+
+**What the investigation established.** Making the `let`-form take the in-place path is not one wiring
+change but a coordinated set of four, spanning move analysis and the ownership core:
+
+1. **Move analysis must follow the single-use `let` alias.** `ComputeAffineSelfAppendOrdinals`
+   (`Lowering.MoveAnalysis.cs`) proves the parameter affine only when it is consumed directly as the
+   leftmost leaf of the `+` chain that becomes the tail-call argument. With `let acc2 = acc + "x" in
+   loop ... acc2` the parameter is consumed producing `acc2` and `acc2` (not the parameter) reaches the
+   tail call, so the parameter is *not* proven `AffineSelfAppendOnly` today. Teaching the analysis to
+   thread affinity through a single-use intermediate binding is a genuine analysis extension, not
+   "consulting the existing fact."
+2. **Arming must move to the `let` value.** The append is lowered at the `let` value, before the tail
+   call whose argument is the already-computed `acc2`, so `_affineAppendCtx` has to be armed there, not
+   at the tail-call argument site where the existing (inline) arming lives.
+3. **The reservation must survive the `let` scope's arena bracket.** `PushSequentialLet` brackets the
+   bound value with `EmitArenaWatermark` / `PopLetScope`; a `ConcatStrTip` reservation that grows past
+   the initial chunk is allocated *inside* that bracket and is reclaimed when the scope pops, leaving
+   `acc2` pointing into reclaimed arena. This is the crash: a prototype with steps 1-2 emitted
+   `ConcatStrTip` correctly (RSS fell to ~8.2MB) and ran correctly at small N, but **segfaulted for N
+   between 1,000 and 10,000** — exactly where the reservation first outgrows a chunk — because the
+   `let` bracket reclaims it before the back-edge reset can compact it. The inline form has no such
+   bracket, which is why it never hit this.
+4. **The tail-call argument must be recognized as the `ConcatStrTip` result to get the *time* win.**
+   Even with the crash fixed, the argument is a `LoadLocal` of `acc2`, not the `ConcatStrTip` result
+   temp, so `RuntimeManagedArgResults` is false and the back edge takes the crossed-chunk *compaction*
+   path — a full copy of the accumulator every iteration, i.e. still O(n^2) time (bounded memory, but
+   no better asymptotically than `ConcatStr`). Getting the headline O(n) time requires propagating the
+   `ConcatStrTip` producer fact from the `let`-local through to its load so the zero-copy in-place path
+   fires — and that step is UAF-adjacent: tagging a load as a live, in-place reservation is only sound
+   when the binding is provably used exactly once as that single affine argument, so it must be gated
+   on a single-use check that itself has to be built and proven.
+
+Steps 3 and 4 are on the reservation-lifecycle core the memory model warns is subtle (and that this
+same arc already produced one arena-reclaim miscompile in stage 1). A beta-reduction alternative
+(inline the single-use `let` back to the already-optimal inline form) is provably sound in this pure,
+strict language, but the affine analysis and lowering both read the same body AST, so the rewrite would
+have to run before move analysis over the stored lambda body — an invasive change to where the body is
+threaded, not a local one.
+
+**Disposition.** Not shipped. The gap is real and the eventual win is large, but the work is a
+multi-part analysis + ownership-core feature with one UAF-adjacent step, materially beyond the doc's
+original framing; per this arc's discipline it is left with a full root cause recorded here rather than
+shipped under-validated. Recommended next form if revisited: land step 3 alone (skip the `let`-scope
+arena bracket for a single-use armed affine append) as a *memory-only* win first — it turns 19.9GB into
+single-digit MB with correctness while leaving time at O(n^2) — measured and validated on its own,
+before attempting the UAF-adjacent step 4 for the time win.
 
 ---
 
@@ -3011,7 +3073,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Done (narrowed scope) — see Measured Outcome |
-| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Done (stage 1 only, narrowed scope) — see Measured Outcome |
+| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Stage 1 done (narrowed scope); stage 2 investigated, not shipped — see Measured Outcome |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
