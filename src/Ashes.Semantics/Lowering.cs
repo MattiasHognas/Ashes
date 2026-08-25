@@ -9164,19 +9164,35 @@ public sealed partial class Lowering
     // An owned value passed by name as a self-call argument moves to the next iteration —
     // it must not be dropped at this back-edge (a resource would be closed, a closure with a
     // dropper would close its captured resource). Mark it consumed so
-    // EmitTcoBackEdgeOwnedDrops (and the dead-code arm Drops after the jump) skip it.
+    // EmitDeferredTcoBackEdgeOwnedDrops (and the dead-code arm Drops after the jump) skip it.
+    //
+    // A plain runtime-managed value (no resource, no dropper) is the exception. Its argument
+    // evaluation already retained one extra reference for the successor parameter
+    // (DuplicateRuntimeManagedOwnedValueForTransfer), exactly as a pattern-bound owner is
+    // retained and then released at the back-edge. Leaving it marked as moved would keep the
+    // owner's own reference alive forever: every iteration leaves the value one count too high,
+    // the next iteration's parameter drop sees it as shared and stops at a decrement, and the
+    // whole graph is never reclaimed. Releasing the owner at the back-edge (after the successor
+    // is established) balances the retain.
     private void LowerCallTcoMarkMovedArgs(List<Expr> collectedArgs)
     {
         foreach (var arg in collectedArgs)
         {
             if (arg is Expr.Var argVar
                 && LookupOwnedValue(argVar.Name) is
-                { IsDropped: false, PerceusPatternOwner: false } movedOwned)
+                { IsDropped: false, PerceusPatternOwner: false } movedOwned
+                && !IsPlainRuntimeManagedData(movedOwned))
             {
                 movedOwned.ReleaseKind = ResourceReleaseKind.Moved;
             }
         }
     }
+
+    private bool IsPlainRuntimeManagedData(OwnershipInfo info) =>
+        info.RuntimeManaged
+        && !info.IsResource
+        && !info.IsResourceBearing
+        && !IsFunctionOwnership(info);
 
     private (int[] Temps, TypeRef[] Types) LowerCallTcoEvalArgs(TcoContext tco, List<Expr> collectedArgs)
     {

@@ -3397,6 +3397,21 @@ public sealed class LinuxBackendCoverageTests
     }
 
     [Test]
+    public async Task Linux_backend_llvm_match_field_successor_tco_argument_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureMemoryGrowthAsync(
+            BuildMatchFieldSuccessorTcoArgumentMemoryProgram,
+            outputPerIteration: 1).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("match-field successor passed by name to a self-call", samples);
+    }
+
+    [Test]
     public async Task Linux_backend_llvm_legacy_arena_string_and_record_memory_should_plateau_as_work_scales()
     {
         if (!OperatingSystem.IsLinux())
@@ -8140,6 +8155,42 @@ public sealed class LinuxBackendCoverageTests
                                 if remaining <= 0
                                 then total
                                 else loop(remaining - 1)(next)(total + 1)
+
+            Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
+            """;
+
+    // A runtime-managed successor state extracted from a match on a call result and passed by
+    // name to the tail self-call. The argument is retained for the next iteration and the
+    // extracted binding must be released at the back-edge; marking it as moved instead leaves the
+    // whole permutation graph one reference too high on every iteration.
+    private static string BuildMatchFieldSuccessorTcoArgumentMemoryProgram(int iterations)
+        => $$"""
+            type State =
+                | S(List(Int), List(Int))
+
+            type Step =
+                | Done
+                | Continue(State, Int)
+
+            let recursive setAt i value values =
+                match values with
+                    | [] -> []
+                    | head :: tail ->
+                        if i == 0
+                        then value :: tail
+                        else head :: setAt(i - 1)(value)(tail)
+
+            let advance r state =
+                match state with
+                    | S(perm, count) -> Continue(S(perm)(setAt(0)(r)(count)))(r)
+
+            let recursive loop remaining state total =
+                if remaining <= 0
+                then total
+                else
+                    match advance(remaining)(state) with
+                        | Done -> total
+                        | Continue(next, r) -> loop(remaining - 1)(next)(total + 1)
 
             Ashes.IO.print(loop({{iterations}})(S([1, 2, 3, 4, 5, 6, 7, 8])([0, 0, 0, 0, 0, 0, 0, 0]))(0))
             """;
