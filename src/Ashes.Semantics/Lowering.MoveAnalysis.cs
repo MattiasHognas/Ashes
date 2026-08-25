@@ -82,6 +82,17 @@ public sealed partial class Lowering
     // to the same FuncKey as the call census.
     private readonly Dictionary<FuncKey, IReadOnlyDictionary<string, FuncKey>> _maFunctionScopes = new();
 
+    // Open-world inspect-only parameters: for each function, the ordinals of parameters
+    // BorrowInspectCall has proven inspect-only under the current whole-program fixpoint state — never
+    // retained, stored, returned, or captured, whether by direct use in this function's own body or by
+    // being handed whole to another statically-resolved function whose corresponding parameter is
+    // ITSELF already in this table. Computed once by ComputeOpenWorldInspectOnlyParams as a monotone
+    // least fixpoint (see its own doc) before BuildOwnershipSummaries runs, so every consumer of
+    // BorrowInspectOnly — today only ComputeTcoParamFacts's ConsumedTail gate, via
+    // IsBorrowableInspectOnlyList — sees through a proven hand-off automatically, with no changes of
+    // their own.
+    private readonly Dictionary<FuncKey, HashSet<int>> _maInspectOnlyParams = new();
+
     // Every globally-unambiguous value binding's right-hand side (used to resolve accumulator seeds).
     // Colliding plain values stay conservatively unresolved under the bare-name compatibility lookup.
     private readonly Dictionary<string, Expr> _maValueRhs = new(StringComparer.Ordinal);
@@ -246,6 +257,7 @@ public sealed partial class Lowering
         _maNestedRecursive.Clear();
         _ownershipSummaries.Clear();
         _maExpressionFreshnessAll.Clear();
+        _maInspectOnlyParams.Clear();
         _maBody = desugaredBody;
 
         RegisterBindings(desugaredBody, enclosingSource: null);
@@ -274,6 +286,7 @@ public sealed partial class Lowering
         ComputeResultReach();
         ComputeFunctionResultProvenanceFixpoint();
         _maAnalyzed = true;
+        ComputeOpenWorldInspectOnlyParams();
         BuildOwnershipSummaries();
     }
 
@@ -1616,6 +1629,58 @@ public sealed partial class Lowering
     /// replaces the source name's prior meaning, so same-named bindings cannot inherit ownership
     /// from an unrelated parameter or extracted value.
     /// </summary>
+    /// <summary>
+    /// Open-world extension of the inspect-only proof: unlike <see cref="ComputeTcoParamFacts"/>'s
+    /// gate (which only ever asks about a parameter consumed at a function's OWN tail self-call),
+    /// this asks the same question — does BorrowInspectOnly prove this parameter is only ever
+    /// inspected — for EVERY parameter of EVERY registered function, so a hand-off to a
+    /// plain statically-resolved sibling function (not just a self-call) can also be proven safe. A
+    /// monotone least fixpoint: <see cref="_maInspectOnlyParams"/> starts empty (every function's first
+    /// pass sees an unrecognized-callee hand-off fail exactly as it does today), and each further pass
+    /// lets <see cref="BorrowInspectCall"/> treat a hand-off to a callee ALREADY proven inspect-only in
+    /// the previous pass as satisfied — so a chain of self-contained helpers (A hands to B, B hands to
+    /// C, C is self-contained) converges over several passes, while a genuine cycle (A needs B, B needs
+    /// A) never does, since neither side is ever in the table when the other is checked. Bounded by the
+    /// finite (function, parameter) domain, so termination is guaranteed by construction (same argument
+    /// as every other <see cref="WholeProgramFixpoint"/> user in this compiler).
+    /// </summary>
+    private void ComputeOpenWorldInspectOnlyParams()
+    {
+        foreach (FuncKey key in _maFuncs.Keys)
+        {
+            _maInspectOnlyParams[key] = [];
+        }
+
+        WholeProgramFixpoint.RunToFixpoint(() =>
+        {
+            bool changed = false;
+            foreach ((FuncKey key, (List<string> Params, Expr Body) info) in _maFuncs)
+            {
+                if (!_maFunctionScopes.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                HashSet<int> proven = _maInspectOnlyParams[key];
+                for (int i = 0; i < info.Params.Count; i++)
+                {
+                    if (proven.Contains(i))
+                    {
+                        continue;
+                    }
+
+                    if (BorrowInspectOnly(key, info, i))
+                    {
+                        proven.Add(i);
+                        changed = true;
+                    }
+                }
+            }
+
+            return changed;
+        });
+    }
+
     private bool BorrowInspectOnly(
         FuncKey function,
         (List<string> Params, Expr Body) info,
@@ -1913,12 +1978,38 @@ public sealed partial class Lowering
             && functionScope.TryGetValue(function.Name, out FuncKey callee)
             && callee.Equals(context.SelfFunction)
             && arguments.Count == context.ParamCount;
+
+        // Open-world hand-off: a tainted argument passed whole to a DIFFERENT,
+        // statically-resolved function is approved when that callee's own parameter at the same
+        // position is already proven inspect-only by ComputeOpenWorldInspectOnlyParams's fixpoint —
+        // the callee is itself proven never to retain, store, return, or capture the value. Deliberately
+        // excludes the self-function (a partial self-application is a separate question this task does
+        // not target) and any callee this fixpoint has not resolved (a closure parameter, a capability-
+        // generic call, or a callee outside the registered top-level function set all fall through to
+        // the unchanged fail-closed path below).
+        IReadOnlySet<int>? calleeInspectOnly = !isSelfCall
+            && root is Expr.Var calleeVar
+            && functionScope.TryGetValue(calleeVar.Name, out FuncKey resolvedCallee)
+            && !resolvedCallee.Equals(context.SelfFunction)
+            && _maFuncs.TryGetValue(resolvedCallee, out (List<string> Params, Expr Body) calleeInfo)
+            && arguments.Count == calleeInfo.Params.Count
+                ? _maInspectOnlyParams.GetValueOrDefault(resolvedCallee)
+                : null;
+
         for (int i = 0; i < arguments.Count; i++)
         {
             if (isSelfCall
                 && i == context.ParamIndex
                 && arguments[i] is Expr.Var tailArgument
                 && taints.GetValueOrDefault(tailArgument.Name) == BorrowInspectTaint.Tail)
+            {
+                continue;
+            }
+
+            if (calleeInspectOnly is not null
+                && calleeInspectOnly.Contains(i)
+                && arguments[i] is Expr.Var handoffArgument
+                && taints.ContainsKey(handoffArgument.Name))
             {
                 continue;
             }

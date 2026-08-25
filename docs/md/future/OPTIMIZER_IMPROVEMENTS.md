@@ -1621,6 +1621,58 @@ open-world callee-summary consultation as part of the target design, not a later
 sequencing matters because retrofitting it into an already-shipped closed-world self-hosted reuse pass
 would repeat the exact soak-testing risk called out above a second time, in a second implementation.
 
+**Measured Outcome.** The doc's own central claim — that `FunctionOwnershipSummary.ParameterOwnership`/
+`ParameterMoveSafetyProof` "already compute exactly the facts" needed — did not hold up: `ParameterOwnership`
+is computed by `ParamUsedOnlyAsBorrowRead`, which is narrowly about **resource** borrow-read builtins
+(file/socket ops), not a general "does this function only inspect its RC argument" fact. Running it on a
+plain inspecting helper (e.g. `hasAny values = match values with [] -> false | _ :: _ -> true`) classifies
+its list parameter `Consumed`, even though the function provably never retains it. The fact that actually
+answers the doc's question already existed and is proven: `BorrowInspectExpression`/`BorrowInspectOnly` —
+the walker that already lets a TCO loop borrow its own tail parameter across match/head/tail structural
+uses and its own tail self-call. It was gated to fire only for a parameter classified `ConsumedTail` of the
+function's **own** self-call, never for a plain call to another function.
+
+**Implemented**: a new `ComputeOpenWorldInspectOnlyParams` (`Lowering.MoveAnalysis.cs`) computes, for
+**every** parameter of **every** registered function (not gated to TCO self-calls), whether
+`BorrowInspectOnly` proves it inspect-only — as a monotone least fixpoint via the existing
+`WholeProgramFixpoint.RunToFixpoint` helper (`_maInspectOnlyParams` starts empty; each pass lets
+`BorrowInspectCall` treat a hand-off to a callee **already** proven inspect-only in the previous pass as
+satisfied, so a chain of self-contained helpers converges over several passes while a genuine mutual cycle
+never does, since neither side is ever in the table when the other is checked). `BorrowInspectCall` itself
+gained one new branch: a tainted argument handed whole to a different, statically-resolved callee (never
+the self-function — a partial self-application is a separate question not targeted here) is approved when
+that callee's own parameter at the same position is in the table. Every existing consumer —
+`ComputeTcoParamFacts`'s `ConsumedTail` gate, and through it `IsBorrowableInspectOnlyList` — sees through a
+proven hand-off automatically, with no changes of their own, since they call through the same now-extended
+walker. Soundness: a callee's own inspect-only proof, by the identical walker applied to its own body, is
+the same base-case guarantee the existing TCO self-call proof already relies on; a hand-off is approved
+only when it is transitively grounded in such proofs, never assumed.
+
+Measured on a worked list-of-records traversal (`walk` folds a `List(Body)` returning a scalar, one arm
+also calling a sibling helper on the tail): the caller-side hand-off to a provably inspect-only helper (a
+counting function called from an arithmetic expression, and a boolean predicate called from a match guard)
+now borrows — zero `RcDup`/`RcDrop`/`CopyOutArena` inside `walk` — where it previously defensively
+normalized. On a 200-iteration outer driver over a 200,000-element list: **32.8 MB → 20.5 MB peak RSS
+(~60%), 0.23 s → 0.05 s (~4.6x)**. A genuinely unsafe hand-off (a helper that returns its argument
+directly, retaining a reference) was verified to still normalize correctly — the safety boundary holds.
+
+**Two pre-existing tests captured today's limitation, not a soundness boundary, and were corrected rather
+than left broken** (`ReuseTokenTests.cs`, `UniquenessSummaryTests.cs`): a hand-off to a genuinely
+inspect-only sibling function is now proven safe and was asserted to keep normalizing under the old
+(over-conservative) behavior — these were repurposed to assert the correct, improved outcome, each paired
+with a new negative test using a genuinely retaining callee to preserve the original regression boundary.
+One of the two original "still normalizes" tests remains unchanged and still correctly requires
+normalization, but — traced via raw lowered IR, not assumed — for an unrelated, pre-existing reason: a
+constructor pattern destructured directly in a cons head (`Body(x, mass) :: rest`) is a separate limitation
+of `TryBindBorrowInspectPattern` (it only re-taints a cons head/tail bound to a plain variable or wildcard,
+not one destructured inline), orthogonal to this task; a companion positive test using a two-step match
+confirms the guard hand-off itself is correctly approved once that unrelated limitation is avoided.
+
+Full suites: C# 2397/2397, LSP 70/70, e2e `test tests --pipeline both` 652/0/54-skipped, format clean.
+Challenge soak run to completion (the doc's own required gate): fannkuch-redux N=10/N=11, binary-trees
+N=18/N=21, fasta, n-body, reverse-complement, k-nucleotide, mandelbrot, spectral-norm, pidigits — all
+exit 0, output hashes and peak RSS unchanged from their known-good baselines, no regression.
+
 ---
 
 ### OPT-012: Guarantee Stack-Bounded Behavior for General (Non-Loop-Recognized) Tail Calls
@@ -3144,7 +3196,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |
-| OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
+| OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Done (narrowed scope: a hand-off to a statically-resolved callee proven inspect-only) — see Measured Outcome |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
 | OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Investigated, not implemented — helper vs hand-inlined measures equal at both levels once a real RC leak found during baselining was fixed; see Measured Outcome |
 | OPT-017(a) | Multi-anchor Perceus drop placement | Medium | None measured (see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Investigated, reverted — segfault root-caused and fixed, but zero measured benefit on every case tried, see task section |
