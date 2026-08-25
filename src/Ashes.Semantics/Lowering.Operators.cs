@@ -249,34 +249,36 @@ public sealed partial class Lowering
             leftTemp,
             rightTemp,
             request.EmitsRuntime(LoweredValueRuntimeRepresentation.String)));
-        ReleaseConsumedConcatOperand(leftTemp);
+        ReleaseConsumedOwnedOperand(leftTemp);
         if (rightTemp != leftTemp)
         {
-            ReleaseConsumedConcatOperand(rightTemp);
+            ReleaseConsumedOwnedOperand(rightTemp);
         }
 
         return (target, new TypeRef.TStr());
     }
 
     /// <summary>
-    /// Releases a concatenation operand whose ownership ends at the concatenation. The result is a
-    /// fresh allocation the operands' bytes were copied into, so an operand nothing else owns is dead
-    /// the moment the copy is done.
+    /// Releases an operand whose ownership ends at the consuming read: a concatenation operand (the
+    /// result is a fresh allocation the operands' bytes were copied into), or a read-only builtin's
+    /// argument (byte-length, print, write — the value is fully read and nothing retains it). An
+    /// operand nothing else owns is dead the moment the read completes.
     /// </summary>
     /// <remarks>
     /// Only a newly produced reference-counted operand is released. A borrowed one names a value some
     /// live binding still owns and will drop itself — releasing it here would free memory still in
     /// use, which is the opposite and worse failure. The two are already distinguishable without new
-    /// analysis: a call result reaching a concatenation directly records
+    /// analysis: a call result reaching the consumer directly records
     /// <see cref="LoweredTempOwnershipKind.NewlyProduced"/>, while the same value read back out of a
-    /// <c>let</c> records <see cref="LoweredTempOwnershipKind.Borrowed"/>.
+    /// <c>let</c> records <see cref="LoweredTempOwnershipKind.Borrowed"/>. A string literal has no
+    /// runtime-RC fact at all and is likewise left alone.
     ///
     /// The operand's fact becomes <see cref="LoweredTempOwnershipKind.Transferred"/> so a later
     /// consumer of the same temp cannot release it a second time. The affine
     /// <see cref="IrInst.ConcatStrTip"/> path above needs none of this: it extends its accumulator in
     /// place and its own fallback already releases the reference it replaces.
     /// </remarks>
-    private void ReleaseConsumedConcatOperand(int operandTemp)
+    private void ReleaseConsumedOwnedOperand(int operandTemp)
     {
         if (_tempOwnershipFacts.GetValueOrDefault(operandTemp) is not
             {
