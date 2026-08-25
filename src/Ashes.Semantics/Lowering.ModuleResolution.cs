@@ -305,7 +305,7 @@ public sealed partial class Lowering
             Emit(new IrInst.LoadLocal(baseTemp, recordSlot));
         }
         int fieldTemp = NewTemp();
-        Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx));
+        Emit(new IrInst.GetAdtField(fieldTemp, baseTemp, fieldIdx, IsTaglessConstructor(ctor)));
         var fieldType = InstantiateConstructorParameterType(ctor, fieldIdx, namedRecordType);
         RecordHoverType(GetSpan(qv), $"{qv.Module}.{qv.Name}", fieldType);
         return (fieldTemp, fieldType);

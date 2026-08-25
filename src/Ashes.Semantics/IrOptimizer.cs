@@ -2036,6 +2036,50 @@ public static class IrOptimizer
         return false; // JumpIfFalse is conditional, not a terminator
     }
 
+    private static bool HandleSwitchTag(
+        IrInst.SwitchTag sw,
+        SourceLocation? location,
+        ConstantFoldingState state,
+        Dictionary<string, List<ConstantFoldingState>> savedStates,
+        List<IrInst> result,
+        ref bool changed)
+    {
+        // A switch on a tag that is already a known constant (a single-constructor type's
+        // tag is loaded as a literal, never read from the cell) takes exactly one edge: keep
+        // only that edge's state and replace the dispatch with a jump, so every other case
+        // becomes an orphaned label for ElideUnreachableCode.
+        if (state.Ints.TryGetValue(sw.TagTemp, out long knownTag))
+        {
+            string taken = sw.DefaultLabel;
+            foreach (var (caseTag, caseLabel) in sw.Cases)
+            {
+                if (caseTag == knownTag)
+                {
+                    taken = caseLabel;
+                    break;
+                }
+            }
+
+            changed = true;
+            SaveEdgeState(taken, state, savedStates);
+            result.Add(new IrInst.Jump(taken) { Location = location });
+            return true;
+        }
+
+        // Every case (and the default) is reached by exactly one edge — the switch itself —
+        // whose source state is simply the state right before dispatch (the tag test doesn't
+        // invalidate any other known fact). Recording that single snapshot per target lets the
+        // label handler's ordinary meet logic apply here too, rather than needing a special case.
+        foreach (var (_, caseLabel) in sw.Cases)
+        {
+            SaveEdgeState(caseLabel, state, savedStates);
+        }
+
+        SaveEdgeState(sw.DefaultLabel, state, savedStates);
+        result.Add(sw);
+        return true; // Multi-way terminator
+    }
+
     /// <summary>
     /// Handles the control-flow and local-slot instructions of the constant-folding
     /// pass (labels, jumps, switch, StoreLocal/LoadLocal, and every unhandled
@@ -2069,19 +2113,7 @@ public static class IrOptimizer
                 return true; // Jump is an unconditional terminator
 
             case IrInst.SwitchTag sw:
-                // Every case (and the default) is reached by exactly one edge — the
-                // switch itself — whose source state is simply the state right before
-                // dispatch (the tag test doesn't invalidate any other known fact).
-                // Recording that single snapshot per target lets the label handler's
-                // ordinary meet logic apply here too, rather than needing a special case.
-                foreach (var (_, caseLabel) in sw.Cases)
-                {
-                    SaveEdgeState(caseLabel, state, savedStates);
-                }
-
-                SaveEdgeState(sw.DefaultLabel, state, savedStates);
-                result.Add(inst);
-                return true; // Multi-way terminator
+                return HandleSwitchTag(sw, inst.Location, state, savedStates, result, ref changed);
 
             case IrInst.StoreLocal store:
                 RecordLocalStore(store, state);

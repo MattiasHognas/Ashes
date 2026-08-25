@@ -6638,10 +6638,11 @@ public sealed class LinuxBackendCoverageTests
     private static void AssertRuntimeRcOwnedRecordTcoProbe()
     {
         IrProgram probe = LowerProgram(BuildRuntimeRcOwnedRecordTcoMemoryProgram(1));
+        // The two-field record has one constructor, so its cell is tagless: two payload words.
         AllInstructions(probe).Count(instruction =>
             instruction is IrInst.CopyOutArena
             {
-                StaticSizeBytes: 24,
+                StaticSizeBytes: 16,
                 RuntimeManaged: true
             }).ShouldBeGreaterThanOrEqualTo(2,
                 "The pointer-bearing record parent should normalize at entry and replacement.");
@@ -6698,10 +6699,12 @@ public sealed class LinuxBackendCoverageTests
 
     private static void AssertRuntimeRcCopyAdtTcoProbe(IrProgram probe, string typeName)
     {
+        // Both probed types have one two-field constructor, so their cells are tagless: two
+        // payload words, no tag word.
         AllInstructions(probe).Count(instruction =>
             instruction is IrInst.CopyOutArena
             {
-                StaticSizeBytes: 24,
+                StaticSizeBytes: 16,
                 RuntimeManaged: true
             }).ShouldBeGreaterThanOrEqualTo(2,
                 $"The annotated {typeName} TCO accumulator should normalize at entry and replacement.");
@@ -6716,7 +6719,7 @@ public sealed class LinuxBackendCoverageTests
         AllInstructions(probe).Any(instruction =>
             instruction is IrInst.CopyOutArena
             {
-                StaticSizeBytes: 24,
+                StaticSizeBytes: 16,
                 RuntimeManaged: false
             }).ShouldBeFalse(
                 $"The migrated {typeName} TCO path must not relocate through an arena allocation.");

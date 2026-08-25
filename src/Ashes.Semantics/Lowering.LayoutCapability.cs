@@ -391,7 +391,7 @@ public sealed partial class Lowering
 
         if (shallow)
         {
-            staticCopySizeBytes = HeapLayouts.Adt.AllocationSizeBytes(arity);
+            staticCopySizeBytes = HeapLayouts.AdtLayout(IsTaglessAdt(symbol)).AllocationSizeBytes(arity);
             return OrdinaryHeapStructuralCopyKind.Shallow;
         }
 
@@ -824,7 +824,7 @@ public sealed partial class Lowering
                         children.Add(new OrdinaryHeapLayoutChild(
                             constructor.Name,
                             index,
-                            HeapLayouts.Adt.PayloadWordOffsetBytes(index),
+                            AdtFieldOffsetBytes(constructor, index),
                             fieldType,
                             DropKindForType(fieldType)));
                     }

@@ -598,6 +598,14 @@ same public behavior.
   and whole-program SCC provenance summaries.
 - [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
   constructor-specific child/drop information.
+- [ ] Lay out a single-constructor ADT (one non-nullary constructor; not a builtin, zero-cost newtype,
+  resource, or resource-bearing type) without a tag word: payload at offset 0, one word smaller per
+  cell, with every ADT instruction that allocates, reads or writes such a cell carrying its tagless
+  flag so the backend never consults the type for an offset; skip the tag test in a match against
+  such a type and load its constructor tag as a literal in synthesized droppers and copiers; and
+  keep reuse tokens layout-exact (a tagless token never satisfies a tagged constructor of the same
+  field count, nor the reverse). Build the classifier with this layout from the start rather than
+  porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
 - [ ] Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,

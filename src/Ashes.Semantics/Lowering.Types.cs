@@ -899,7 +899,8 @@ public sealed partial class Lowering
         RuntimeReuseCleanup? RuntimeCleanup,
         string? SourceName,
         SourceLocation? Location,
-        bool ListCell = false)
+        bool ListCell = false,
+        bool Tagless = false)
     {
         public bool RuntimeManaged => RuntimeCleanup is not null;
     }

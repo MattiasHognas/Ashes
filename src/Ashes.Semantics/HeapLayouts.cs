@@ -80,6 +80,13 @@ internal static class HeapLayouts
     // RcHeader immediately before this pointer; arena-managed values do not.
     public static HeapLayoutDescriptor Adt { get; } = new(tagOffsetBytes: 0, payloadOffsetBytes: WordSizeBytes);
 
+    // A type with exactly one constructor never needs its tag word: [field0, field1, ...]. Every IR
+    // instruction touching such a cell carries Tagless = true, so lowering and the backend agree on
+    // this descriptor for it without consulting the type.
+    public static HeapLayoutDescriptor TaglessAdt { get; } = new(tagOffsetBytes: null, payloadOffsetBytes: 0);
+
+    public static HeapLayoutDescriptor AdtLayout(bool tagless) => tagless ? TaglessAdt : Adt;
+
     // Legacy list: nil = 0; cons = [head, tail]. Ticket 5 will prepend the RC header here.
     public static HeapLayoutDescriptor List { get; } = new(
         tagOffsetBytes: null,

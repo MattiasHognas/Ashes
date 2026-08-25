@@ -269,7 +269,8 @@
         },
         {
           Target: 8,
-          RuntimeManaged: false
+          RuntimeManaged: false,
+          Tagless: false
         },
         {
           Slot: 6,

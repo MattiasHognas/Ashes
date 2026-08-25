@@ -1585,8 +1585,8 @@ public sealed partial class Lowering
         for (int field = 0; field < constructor.Arity; field++)
         {
             int fieldTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(fieldTemp, sourceHeadTemp, field));
-            Emit(new IrInst.SetAdtField(destinationHeadTemp, field, fieldTemp));
+            Emit(new IrInst.GetAdtField(fieldTemp, sourceHeadTemp, field, IsTaglessConstructor(constructor)));
+            Emit(new IrInst.SetAdtField(destinationHeadTemp, field, fieldTemp, IsTaglessConstructor(constructor)));
         }
 
         int overwriteSourceTailTemp = NewTemp();
@@ -1984,7 +1984,7 @@ public sealed partial class Lowering
         Emit(new IrInst.CopyOutArena(
             resultTemp,
             sourceTemp,
-            HeapLayouts.Adt.AllocationSizeBytes(constructor.Arity),
+            AdtAllocationSizeBytes(constructor),
             RuntimeManaged: true,
             IrInst.CopyOutPurpose.RcNormalization));
         List<OrdinaryHeapLayoutChild> children =
@@ -1992,9 +1992,9 @@ public sealed partial class Lowering
         foreach (OrdinaryHeapLayoutChild child in children)
         {
             int childTemp = NewTemp();
-            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, child.Index));
+            Emit(new IrInst.GetAdtField(childTemp, sourceTemp, child.Index, IsTaglessConstructor(constructor)));
             int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, child.Type);
-            Emit(new IrInst.SetAdtField(resultTemp, child.Index, copiedChild));
+            Emit(new IrInst.SetAdtField(resultTemp, child.Index, copiedChild, IsTaglessConstructor(constructor)));
         }
 
         MarkRuntimeManagedTemp(resultTemp);
@@ -3030,8 +3030,9 @@ public sealed partial class Lowering
     private int LowerSingleFieldConstructorValue(ConstructorSymbol constructor, int payloadTemp)
     {
         int ptrTemp = NewTemp();
-        Emit(new IrInst.AllocAdt(ptrTemp, GetConstructorTag(constructor), constructor.Arity));
-        Emit(new IrInst.SetAdtField(ptrTemp, 0, payloadTemp));
+        bool tagless = IsTaglessConstructor(constructor);
+        Emit(new IrInst.AllocAdt(ptrTemp, GetConstructorTag(constructor), constructor.Arity, Tagless: tagless));
+        Emit(new IrInst.SetAdtField(ptrTemp, 0, payloadTemp, tagless));
         return ptrTemp;
     }
 
@@ -7896,7 +7897,8 @@ public sealed partial class Lowering
                 IrInst replacement = new IrInst.AllocAdt(
                     allocation.Target,
                     allocation.Tag,
-                    allocation.FieldCount)
+                    allocation.FieldCount,
+                    Tagless: allocation.Tagless)
                 {
                     Location = allocation.Location
                 };

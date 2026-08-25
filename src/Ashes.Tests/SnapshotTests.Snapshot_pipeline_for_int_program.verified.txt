@@ -160,7 +160,8 @@
         },
         {
           Target: 6,
-          RuntimeManaged: false
+          RuntimeManaged: false,
+          Tagless: false
         },
         {
           Source: 6

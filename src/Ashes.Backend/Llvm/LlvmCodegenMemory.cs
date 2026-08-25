@@ -84,10 +84,10 @@ internal static partial class LlvmCodegen
         return cursor;
     }
 
-    private static LlvmValueHandle EmitAllocAdtToSpace(LlvmCodegenState state, int tag, int fieldCount)
+    private static LlvmValueHandle EmitAllocAdtToSpace(LlvmCodegenState state, int tag, int fieldCount, bool tagless = false)
     {
-        LlvmValueHandle ptr = EmitAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount), state.ToSpaceCursorSlot, state.ToSpaceEndSlot);
-        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"tospace_adt_tag_{tag}");
+        LlvmValueHandle ptr = EmitAlloc(state, HeapLayouts.AdtLayout(tagless).AllocationSizeBytes(fieldCount), state.ToSpaceCursorSlot, state.ToSpaceEndSlot);
+        StoreAdtTag(state, ptr, tag, tagless, $"tospace_adt_tag_{tag}");
         return ptr;
     }
 
@@ -108,15 +108,30 @@ internal static partial class LlvmCodegen
     private const ulong RuntimeRcMaxCachedBlockSizeBytes = 4096;
     private const ulong RuntimeRcFreeListTableSizeBytes = RuntimeRcMaxCachedBlockSizeBytes + 8;
 
-    private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false)
+    private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false, bool tagless = false)
     {
-        int valueSizeBytes = HeapLayouts.Adt.AllocationSizeBytes(fieldCount);
+        int valueSizeBytes = HeapLayouts.AdtLayout(tagless).AllocationSizeBytes(fieldCount);
         LlvmValueHandle ptr = runtimeManaged
             ? EmitRuntimeRcAlloc(state, valueSizeBytes, "rc_adt")
             : EmitAlloc(state, valueSizeBytes);
 
-        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_tag_{tag}");
+        StoreAdtTag(state, ptr, tag, tagless, $"adt_tag_{tag}");
         return ptr;
+    }
+
+    /// <summary>
+    /// Writes a fresh cell's constructor tag. A tagless cell (single-constructor layout) has no tag
+    /// word, so there is nothing to write: its tag is the compile-time constant every reader of
+    /// that cell already knows.
+    /// </summary>
+    private static void StoreAdtTag(LlvmCodegenState state, LlvmValueHandle adtPtr, int tag, bool tagless, string name)
+    {
+        if (tagless)
+        {
+            return;
+        }
+
+        StoreMemory(state, adtPtr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), name);
     }
 
     private static LlvmValueHandle EmitRuntimeRcAlloc(LlvmCodegenState state, int valueSizeBytes, string name)
@@ -362,10 +377,10 @@ internal static partial class LlvmCodegen
         return LlvmApi.BuildLoad2(builder, state.I64, resultSlot, "drop_reuse_result");
     }
 
-    private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount)
+    private static LlvmValueHandle EmitStackAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool tagless = false)
     {
-        LlvmValueHandle ptr = EmitStackAlloc(state, HeapLayouts.Adt.AllocationSizeBytes(fieldCount), $"adt_stack_{tag}");
-        StoreMemory(state, ptr, GetAdtTagOffsetBytes(), LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_stack_tag_{tag}");
+        LlvmValueHandle ptr = EmitStackAlloc(state, HeapLayouts.AdtLayout(tagless).AllocationSizeBytes(fieldCount), $"adt_stack_{tag}");
+        StoreAdtTag(state, ptr, tag, tagless, $"adt_stack_tag_{tag}");
         return ptr;
     }
 
@@ -381,19 +396,19 @@ internal static partial class LlvmCodegen
         int tag,
         int fieldCount,
         bool runtimeManaged,
-        bool listCell)
+        bool listCell,
+        bool tagless = false)
     {
         if (!runtimeManaged)
         {
             if (!listCell)
             {
-                StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
-                    LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+                StoreAdtTag(state, tokenPtr, tag, tagless, $"adt_reuse_tag_{tag}");
             }
             return tokenPtr;
         }
 
-        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount, listCell);
+        return EmitRuntimeAllocReusing(state, tokenPtr, tag, fieldCount, listCell, tagless);
     }
 
     private static LlvmValueHandle EmitRuntimeAllocReusing(
@@ -401,7 +416,8 @@ internal static partial class LlvmCodegen
         LlvmValueHandle tokenPtr,
         int tag,
         int fieldCount,
-        bool listCell)
+        bool listCell,
+        bool tagless)
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "alloc_reuse_result_slot");
@@ -418,8 +434,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, reuseBlock);
         if (!listCell)
         {
-            StoreMemory(state, tokenPtr, GetAdtTagOffsetBytes(),
-                LlvmApi.ConstInt(state.I64, (ulong)tag, 0), $"adt_reuse_tag_{tag}");
+            StoreAdtTag(state, tokenPtr, tag, tagless, $"adt_reuse_tag_{tag}");
         }
         LlvmApi.BuildStore(builder, tokenPtr, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
@@ -427,7 +442,7 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, freshBlock);
         LlvmValueHandle fresh = listCell
             ? EmitRuntimeRcAlloc(state, HeapLayouts.List.FixedAllocationSizeBytes, "rc_list_reuse")
-            : EmitAllocAdt(state, tag, fieldCount, runtimeManaged: true);
+            : EmitAllocAdt(state, tag, fieldCount, runtimeManaged: true, tagless: tagless);
         LlvmApi.BuildStore(builder, fresh, resultSlot);
         LlvmApi.BuildBr(builder, continueBlock);
 
@@ -439,14 +454,14 @@ internal static partial class LlvmCodegen
         => HeapLayouts.Adt.TagOffsetBytes
             ?? throw new InvalidOperationException("The ADT heap layout must contain a constructor tag.");
 
-    private static bool StoreAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, LlvmValueHandle value, string name)
-        => StoreMemory(state, adtPtr, HeapLayouts.Adt.PayloadWordOffsetBytes(fieldIndex), value, name);
+    private static bool StoreAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, LlvmValueHandle value, string name, bool tagless = false)
+        => StoreMemory(state, adtPtr, HeapLayouts.AdtLayout(tagless).PayloadWordOffsetBytes(fieldIndex), value, name);
 
     private static LlvmValueHandle LoadAdtTag(LlvmCodegenState state, LlvmValueHandle adtPtr, string name)
         => LoadMemory(state, adtPtr, GetAdtTagOffsetBytes(), name);
 
-    private static LlvmValueHandle LoadAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, string name)
-        => LoadMemory(state, adtPtr, HeapLayouts.Adt.PayloadWordOffsetBytes(fieldIndex), name);
+    private static LlvmValueHandle LoadAdtField(LlvmCodegenState state, LlvmValueHandle adtPtr, int fieldIndex, string name, bool tagless = false)
+        => LoadMemory(state, adtPtr, HeapLayouts.AdtLayout(tagless).PayloadWordOffsetBytes(fieldIndex), name);
 
     private static bool StoreListHead(LlvmCodegenState state, LlvmValueHandle listPtr, LlvmValueHandle value, string name)
         => StoreMemory(state, listPtr, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), value, name);

@@ -31,7 +31,8 @@ public sealed class OrdinaryHeapLayoutCapabilityTests
         capability.Rejections.ShouldBe(OrdinaryHeapLayoutRejection.None);
         OrdinaryHeapLayoutChild child = capability.Children.ShouldHaveSingleItem();
         child.ConstructorName.ShouldBe("Box");
-        child.OffsetBytes.ShouldBe(HeapLayouts.WordSizeBytes);
+        // A single-constructor record is tagless: its first field sits at offset 0, not past a tag word.
+        child.OffsetBytes.ShouldBe(HeapLayouts.TaglessAdt.PayloadWordOffsetBytes(0));
         child.DropKind.ShouldBe(OrdinaryHeapChildDropKind.String);
     }
 
