@@ -69,6 +69,16 @@ Both regressions are fixed; their roots were separate.
   overlapping ordinary/late TCO alias dups and by borrow-only qualified calls counted as transfers.
   The alias paths are now disjoint and borrow-only uses no longer emit transfer dups; N=9–11 are
   again correct and constant-memory.
+- **Match-field successor passed by name to the self-call:** a later sweep found `fannkuch-redux`
+  at 2.4 GB peak RSS at N=10 again (27 GB at N=11). `loop`'s `Continue(st2, r2) -> loop(...)(st2)(...)`
+  binds the successor state as an independently owned runtime-RC field of the fresh `Step`
+  scrutinee; the tail-call argument evaluation retained it for the next iteration, but the
+  back-edge then treated the binding as *moved* (the rule written for resources and closures with
+  droppers) and never released the binding's own reference. Every iteration left the permutation
+  graph one count too high, so the next iteration's parameter drop saw a shared value and stopped
+  at a decrement. Plain runtime-RC data passed by name is now released at the back-edge, after the
+  successor is established, balancing the retain: N=10 back to 8.2 MB and N=11 to 8.2 MB / 36.9 s
+  with unchanged output. See the changelog entry for the IR-level trace.
 
 ## Math-lib coverage
 
