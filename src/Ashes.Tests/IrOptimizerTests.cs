@@ -2501,4 +2501,137 @@ public sealed class IrOptimizerTests
             """))).ConfigureAwait(false);
         stdout.Trim().ShouldBe("1 2 3 4");
     }
+
+    // Devirtualization past a single-hop reaching definition (OPT-016(b))
+    //
+    // Real .ash source doesn't reliably exercise the shape this pass targets end to end through
+    // LowerProgram's minimal test bootstrapping: a plain top-level `let`-bound closure is read via
+    // StoreLocal/LoadLocal (a single-assignment local, but not a MakeClosure/CallKnown definition
+    // DevirtualizeKnownClosureCalls or this pass recognize), so even the *first* application stays
+    // indirect there and this pass never gets a CallKnown-defined closure temp to build on — a gap
+    // in the existing single-definition devirtualization this task did not set out to close. The
+    // real end-to-end path (confirmed via `ashes compile --emit-ir final` on `let add3 = given x ->
+    // given y -> given z -> x + y + z in add3(1)(2)(3)`, which resolves via the entry-body-inlining/
+    // trait-specialization machinery to a zero-capture top-level reference instead) does exercise
+    // it correctly, both for a 2-argument and a 3-argument curry, with correct output — but is not
+    // reproducible from a from-source unit test, hence the hand-built IR below.
+
+    [Test]
+    public void DevirtualizeReturnedClosureCalls_resolves_a_curried_call()
+    {
+        // helper() returns a closure to "inner"; entry calls helper directly (as if already
+        // devirtualized by DevirtualizeKnownClosureCalls, which never introduces LoadMemOffset)
+        // then calls its result indirectly — exactly the add(10)(32) shape from the design doc.
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.CallKnown(1, "helper", 0, 0),
+            new IrInst.LoadConstInt(2, 5),
+            new IrInst.CallClosure(3, 1, 2),
+            new IrInst.Return(3),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 4, false);
+        IrFunction helper = new(
+            "helper",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.MakeClosure(1, "inner", 0, 0),
+                new IrInst.Return(1),
+            ],
+            0,
+            2,
+            false);
+        IrFunction inner = new("inner", [new IrInst.LoadConstInt(0, 99), new IrInst.Return(0)], 0, 1, false);
+        IrProgram program = new(entry, [helper, inner], [], false, false, false, false, true, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallClosure>().ShouldBeEmpty(
+            "the second application should have devirtualized to a direct CallKnown.");
+        IrInst.CallKnown secondCall = optimized.EntryFunction.Instructions
+            .OfType<IrInst.CallKnown>()
+            .Where(inst => string.Equals(inst.FuncLabel, "inner", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+        IrInst.LoadMemOffset envExtraction = optimized.EntryFunction.Instructions
+            .OfType<IrInst.LoadMemOffset>()
+            .Where(inst => inst.Target == secondCall.EnvTemp)
+            .ShouldHaveSingleItem();
+        envExtraction.OffsetBytes.ShouldBe(8, "must read the closure object's env field, matching EmitCallClosure's own layout.");
+        envExtraction.BasePtr.ShouldBe(1, "must read from helper's own call result, not some other temp.");
+    }
+
+    [Test]
+    public void DevirtualizeReturnedClosureCalls_declines_a_disagreeing_origin()
+    {
+        // dispatch() returns one of two different closure labels depending on a runtime branch, so
+        // its own "known returned label" must be undetermined — entry's second application must
+        // stay indirect rather than devirtualize against whichever label happened to be seen first.
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.LoadConstInt(0, 0),
+            new IrInst.CallKnown(1, "dispatch", 0, 0),
+            new IrInst.LoadConstInt(2, 5),
+            new IrInst.CallClosure(3, 1, 2),
+            new IrInst.Return(3),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 4, false);
+        IrFunction dispatch = new(
+            "dispatch",
+            [
+                // Branches on dispatch's own argument (slot 1, the standard arg slot), not a
+                // literal — analyzed per-function in isolation, the optimizer cannot resolve this
+                // to a compile-time constant the way it could a literal condition, so the branch
+                // (and therefore the disagreement between its two arms) survives to this pass.
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.LoadConstInt(1, 0),
+                new IrInst.CmpIntEq(2, 0, 1),
+                new IrInst.JumpIfFalse(2, "else_0"),
+                new IrInst.LoadConstInt(3, 0),
+                new IrInst.MakeClosure(4, "branchA", 3, 0),
+                new IrInst.Return(4),
+                new IrInst.Label("else_0"),
+                new IrInst.LoadConstInt(5, 0),
+                new IrInst.MakeClosure(6, "branchB", 5, 0),
+                new IrInst.Return(6),
+            ],
+            2,
+            7,
+            true);
+        IrFunction branchA = new("branchA", [new IrInst.LoadConstInt(0, 1), new IrInst.Return(0)], 0, 1, false);
+        IrFunction branchB = new("branchB", [new IrInst.LoadConstInt(0, 2), new IrInst.Return(0)], 0, 1, false);
+        IrProgram program = new(entry, [dispatch, branchA, branchB], [], false, false, false, false, true, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallClosure>().ShouldHaveSingleItem(
+            "dispatch's two branches disagree on which closure they return, so devirtualization must decline.");
+    }
+
+    [Test]
+    public async Task DevirtualizeReturnedClosureCalls_curried_call_produces_correct_output()
+    {
+        string stdout = await RunAsync(IrOptimizer.Optimize(LowerProgram(
+            """
+            let add3 = given x -> given y -> given z -> x + y + z
+            Ashes.IO.print(Ashes.Text.fromInt(add3(1)(2)(3)))
+            """))).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("6");
+    }
+
+    [Test]
+    public async Task DevirtualizeReturnedClosureCalls_disagreeing_origin_still_produces_correct_output()
+    {
+        // pick's body returns one of two different lambda labels depending on a runtime branch —
+        // a real compiled/executed correctness check alongside the hand-built IR-shape decline
+        // test above.
+        string stdout = await RunAsync(IrOptimizer.Optimize(LowerProgram(
+            """
+            let pick = given flag ->
+                if flag
+                then given x -> x + 1
+                else given x -> x + 2
+            Ashes.IO.print(Ashes.Text.fromInt(pick(true)(5)))
+            """))).ConfigureAwait(false);
+        stdout.Trim().ShouldBe("6");
+    }
 }

@@ -395,6 +395,31 @@ same public behavior.
   earlier and would otherwise erase it (an erasable copy is one whose source is a constant producer, or
   whose target has exactly one remaining use). Ownership-copy elision must be a pure function of its
   input (recomputing its use-def facts fresh each call) for a second call to be safe and effective.
+- [ ] Extend closure devirtualization (`CallClosure -> CallKnown`) past a single `MakeClosure`
+  definition: a curried call's second and later applications (`add(10)(32)`) never devirtualize
+  today because the closure temp being called is defined by a `CallKnown` (the first application),
+  not a `MakeClosure`, so the existing single-definition-count test never fires past the first
+  argument. Compute, per function, via a whole-program least fixpoint (the same "repeat one pass
+  until nothing changes" control structure the non-allocating-function summary already uses,
+  generalized from a shrinking candidate set to a growing known-label map), whether every `Return`
+  in a function's body is provably the same closure label — directly from a *heap* `MakeClosure`, or
+  transitively through a `CallKnown` to another function already proven, earlier in the fixpoint, to
+  return that same label. **Deliberately excludes a stack-allocated closure as a "known returned
+  label" source, reasoned through before writing any code, not found by a wrong answer**: a stack
+  closure's environment lives in its defining function's own native stack frame, gone the instant
+  that function returns, so treating one as a function's known return value would let a later caller
+  extract and dereference a dangling pointer once devirtualized. At a `CallClosure` site whose
+  closure temp reaches such a `CallKnown`, rewrite to an explicit environment-field extraction
+  (a plain read of the closure object's fixed env offset, matching the ordinary closure-call code
+  generator's own field layout) immediately followed by a direct `CallKnown` — a plain field read
+  neither consumes nor extends the closure object's lifetime, so it does not disturb whatever
+  ownership/RC placement already exists for that temp. Iterate the rewrite per function to its own
+  local fixed point so a curry deeper than two arguments fully resolves in one optimization pass, not
+  just its first newly-direct hop. A two-to-four-label lambda-set-specialization dispatch (emitting a
+  small direct-call-per-arm dispatch when a closure temp's reaching definitions disagree across a
+  small closed set, rather than declining outright) was scoped as a stretch extension to this same
+  capability and was not implemented in the C# compiler either — treat it as a separate, larger unit
+  of work, not something this checklist item's own `[x]` should imply.
 - [ ] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
   at every label, never across control flow): forward a duplicate `GetAdtField` read or a duplicate
   `CallKnown` call to a function proven pure by the compile-time-evaluation purity oracle (reused, not
