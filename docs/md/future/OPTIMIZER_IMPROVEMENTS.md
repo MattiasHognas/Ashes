@@ -1934,6 +1934,30 @@ evidence, not just a formality.
 
 ### OPT-015: Tail Contification of Local Helpers
 
+**Status: Not started — investigated 2026-08-25 and deliberately deferred; see note below before
+picking this up.**
+
+> **Scope note from investigation, not implementation.** `TcoContext` (`Lowering.Types.cs:206`) is not
+> a self-contained join-point helper — it is the backbone of *per-parameter RC/arena representation
+> decisions* for the enclosing function's own tail calls (placement state, runtime-managed-slot
+> tracking, watermark-reset integration; see `Lowering.TcoPromotionCostSignal.cs` and the placement
+> fields on `TcoContext` itself). This task's "Proposed implementation" — generalize `TcoContext` to a
+> second, sibling join point per contified helper — means running a **second, parallel instance of that
+> same representation-decision machinery within one function frame**, coexisting with the enclosing
+> function's own `TcoContext`, with calls to the contified helper interleaved arbitrarily with the
+> enclosing function's own tail self-calls. That is materially larger and higher-risk than this task's
+> "Medium complexity" rating in Section 12 suggests — closer to extending the compiler's core TCO/RC
+> representation system than to a bounded lowering-stage pass, and both `OPT-016(a)` and `OPT-017(b)` in
+> this same arc each hid a real correctness bug despite looking simpler on paper before implementation.
+> Deferred by explicit user decision (2026-08-25) rather than attempted narrowly or in full this
+> session — a future pickup should start by deciding whether to build a **second, independent**
+> placement-tracking structure for the contified helper (simplest to reason about in isolation, but does
+> not share representation decisions with the enclosing function, so a value passed between the two
+> could get promoted/demoted redundantly at the boundary) or to extend `TcoContext` itself to model
+> multiple simultaneous join points (shares state correctly, but touches code every other TCO-dependent
+> pass in the compiler already relies on). Either direction needs its own investigation before writing
+> code, not a resumption of the plan below as originally scoped.
+
 **Problem.** Every locally-defined `let`-bound lambda that is only ever called becomes a heap- or
 stack-allocated closure object (`MakeClosure`/`MakeClosureStack`), with a per-call arena bracket and
 boundary copy-out, even when every call to it is a direct, tail-position call from within the same
