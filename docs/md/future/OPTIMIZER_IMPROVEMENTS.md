@@ -2753,9 +2753,13 @@ replaces three `ConcatStr` instructions) and a compile-and-run correctness test
 `ConcatStrN_folded_chain_produces_correct_output`). Full suite status: C# 2377/2377, LSP 70/70, e2e
 `test tests --pipeline both` 645/0/54-skipped, format clean.
 
-Stage 2 (widening `ConcatStrTip` arming beyond the TCO back edge) was **investigated in depth in a
-later pass and is not shipped** — the investigation found it is materially larger and higher-risk than
-the doc's "a wiring change to consult an existing fact" framing, for the reasons below.
+Stage 2 (widening `ConcatStrTip` arming to the `let`-bound accumulator form) was **investigated in
+depth in a later pass and then implemented in a further pass** — the investigation found it is
+materially larger than the doc's "a wiring change to consult an existing fact" framing (four
+coordinated changes, not one), and the implementation confirmed that scope while also correcting the
+investigation's own crash diagnosis. Both records are kept below: the investigation's framing of the
+four parts stands, but its step-3 mechanism (arena-bracket reclaim) turned out **not** to be the
+crash — see the implementation outcome after it.
 
 **Baseline (measured, current `main`, 200,000-iteration in-loop accumulator, default `-O2`).** The
 inline form the existing arming already covers —
@@ -2812,13 +2816,39 @@ strict language, but the affine analysis and lowering both read the same body AS
 have to run before move analysis over the stored lambda body — an invasive change to where the body is
 threaded, not a local one.
 
-**Disposition.** Not shipped. The gap is real and the eventual win is large, but the work is a
-multi-part analysis + ownership-core feature with one UAF-adjacent step, materially beyond the doc's
-original framing; per this arc's discipline it is left with a full root cause recorded here rather than
-shipped under-validated. Recommended next form if revisited: land step 3 alone (skip the `let`-scope
-arena bracket for a single-use armed affine append) as a *memory-only* win first — it turns 19.9GB into
-single-digit MB with correctness while leaving time at O(n^2) — measured and validated on its own,
-before attempting the UAF-adjacent step 4 for the time win.
+**Implementation outcome (stage 2 shipped in a further pass).** All four parts were implemented, with
+one major correction to the investigation's diagnosis: **the crash was never the `let`-scope arena
+bracket** — the real mechanism, found by reading the final IR of the still-crashing prototype, is an
+**RC double-drop**. The loop's string parameter is promoted to runtime RC, so the armed append is a
+`RuntimeManaged` `ConcatStrTip` that grows the accumulator in place and *consumes the old parameter's
+reference*; but the tail-call argument reaches the back edge as an `RcDup` of a `Borrow` of a
+`LoadLocal` of the `let` slot, which carried no `ConcatStrTip` producer fact — so
+`consumedStringPredecessor` stayed false and the back edge dropped the old parameter a second time, a
+net −1 refcount per iteration on the one live accumulator. It crashed exactly when the string outgrew
+its first free-list chunk (between 2,000 and 3,000 iterations), the freed-but-live buffer's chunk
+being reused. Two subtleties cost most of the debugging: (a) an analyzer-rejected temporary debug
+print made `dotnet run` silently reuse a stale compiler build, faking a "fix didn't work" signal —
+verify the build actually happened before trusting a null result; (b) the TCO reset resolution
+(`ResolvePendingTcoResets`) **replays** every function's instructions with `_tempOwnershipFacts`
+cleared and re-derived from the instructions alone, so a fact stamped out-of-band at initial lowering
+evaporates before the back edge is emitted — the stamp must be re-establishable from durable state,
+here a `(function origin, slot)`-keyed map (`_affineAppendResultSlots`) consulted by a new
+`LoadLocal` case in the central per-`Emit` fact recorder, with `IsRuntimeManagedConcatStrTipResult`
+following `RcDup`/`Borrow` source chains. The four shipped pieces: (1)
+`ComputeAffineSelfAppendOrdinals` follows a single-use `let` alias (`AppendAliases`, with a
+fail-closed occurrence counter that counts any unrecognized expression shape as a second use); (2)
+`PushSequentialLet` arms `_affineAppendCtx` around the let value via `TryArmAffineAppendForLetValue`;
+(3) the armed let's scope-exit arena reclaim is suppressed (`PopLetScope`/`PopOwnershipScope`); (4)
+the producer-fact propagation above. **Measured** (200,000-iteration
+`let acc2 = acc + "x" in loop (n-1) acc2`, default `-O2`): **4.77s / 19.9GB → 0.00s / 8.5MB** —
+identical to the inline form; N=4,000,000 runs in 0.00s / 13.3MB (genuinely O(n)). An 8-case
+adversarial battery is correct, including the shapes that must *decline*: a binding used on both the
+loop and exit paths, and a binding whose length is read before the tail call, both stay on the
+copying path (O(n^2) but correct) via the single-use gate. New e2e regressions:
+`tests/tco_affine_string_append_let_bound.ash` (crossing the historical crash threshold by 30x, plus
+exact-content and multi-part-chain cases) and `tests/tco_affine_let_two_uses_declines.ash` (both
+decline shapes); the pre-existing inline-form test `tests/tco_affine_string_append.ash` is unchanged
+and green. Full suites: C# 2393/2393, LSP 70/70, e2e green, format clean.
 
 ---
 
@@ -3073,7 +3103,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-004 | Generalize CFG infrastructure | High | Medium-High | none | P0 | Done |
 | OPT-010 | Unified interprocedural function-summary framework | High | Medium | none | P0 | Done (narrowed scope — see Measured Outcome) |
 | OPT-016(a) | Prune dead closure captures | Medium | Low | none (raises OPT-013's hit rate) | P0 | Done (narrowed scope) — see Measured Outcome |
-| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Stage 1 done (narrowed scope); stage 2 investigated, not shipped — see Measured Outcome |
+| OPT-017(b) | `ConcatStrN` peephole + affine string-append arming | Medium | Low (stage 1) / Medium (stage 2) | none (stage 2 reuses move analysis) | P0 | Done (both stages) — see Measured Outcome |
 | OPT-006 | Local CSE for pure calls and field loads | High | Medium | none (reuses `IrCompileTimeEval` oracle) | P1 | Done |
 | OPT-007 | Recursive decision-tree match compilation (absorbs OPT-008's dead-arm elimination — required scope) | High | High | none (high regression risk vs. reuse) | P1 | Done (narrowed scope) — see Measured Outcome |
 | OPT-008 | Exploit exhaustiveness diagnostics for dead-arm elimination | Medium | Low | Fold into OPT-007, not standalone | P1 | Done — closed via OPT-007, see its Measured Outcome |

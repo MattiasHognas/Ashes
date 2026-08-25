@@ -529,11 +529,21 @@ same public behavior.
   20,000,000-iteration loop ran **~2.25x faster at `-O0`** and **~15-17x faster at the CLI's default
   `-O2`** — unlike most passes in this pipeline, the `-O2` win dominates, since LLVM cannot invent
   away a real allocator call with observable side effects that the unfolded chain pays every
-  iteration. A companion task (not yet ported, not yet attempted in the C# compiler either) would
-  widen the existing affine-accumulator in-place-append reservation path beyond its current
-  TCO-back-edge-only arming condition to any `let`-bound accumulator move analysis proves
-  affine-self-append — see the not-yet-ported reuse/move-analysis section below for where that fact
-  itself is tracked.
+  iteration.
+- [ ] Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound
+  accumulator form `let acc2 = acc + rhs in loop(...)(acc2)`, as the C# compiler now does. Four
+  coordinated pieces, three of them in the not-yet-ported move-analysis/ownership side (see the
+  reuse/move-analysis section below): the affine-self-append analysis follows a *single-use* `let`
+  alias of a candidate parameter (a fail-closed occurrence counter — any unrecognized expression
+  shape counts as a second use — gates eligibility, because the whole transform is sound only for a
+  binding consumed exactly once); the in-place append is armed while lowering that `let`'s value
+  rather than at the tail-call argument; and loads of the armed binding carry the append result's
+  producer fact so the tail-call back edge recognizes the argument as the in-place-grown accumulator
+  (whose append already consumed the old parameter's reference) and skips the predecessor release —
+  without that skip the accumulator is freed while live, a crash once it outgrows its first chunk.
+  Porting note: the C# reset resolution replays each function's instructions with all per-temp facts
+  cleared and re-derived from the instructions alone, so this fact must be recoverable from durable
+  per-function state (keyed by function and local slot), not only stamped once at initial lowering.
 - [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
   empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
   chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed

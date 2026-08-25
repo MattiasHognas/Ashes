@@ -1141,6 +1141,27 @@ public sealed partial class Lowering
         public required int ParamCount { get; init; }
         public required HashSet<int> Candidates { get; init; }
         public bool SawSelfCall { get; set; }
+
+        // A single-use `let acc2 = acc + rhs in ...` binding aliases the candidate parameter's affine
+        // append: `acc2` in the body resolves to `acc`'s ordinal so its use as the affine self-call
+        // argument is recognized and any stray use still disqualifies. Scoped to the body walk.
+        public Dictionary<string, int> AppendAliases { get; } = new(StringComparer.Ordinal);
+    }
+
+    // Resolves a name to its affine-self-append candidate ordinal: a TCO parameter directly, or a
+    // single-use `let`-bound alias of one (see AffineSelfAppendWalkLet).
+    private static bool TryResolveAffineSelfAppendOrdinal(
+        string name,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state,
+        out int ordinal)
+    {
+        if (parameterScope.TryGetValue(name, out ordinal))
+        {
+            return true;
+        }
+
+        return state.AppendAliases.TryGetValue(name, out ordinal);
     }
 
     /// <summary>
@@ -1197,7 +1218,7 @@ public sealed partial class Lowering
                 if (thenContinues || elseContinues)
                 {
                     DisqualifyAffineSelfAppendMentions(
-                        conditional.Cond, shadowed, parameterScope, state.Candidates);
+                        conditional.Cond, shadowed, parameterScope, state);
                 }
 
                 return thenContinues || elseContinues;
@@ -1244,7 +1265,7 @@ public sealed partial class Lowering
             if (caseContinues && matchCase.Guard is not null)
             {
                 DisqualifyAffineSelfAppendMentions(
-                    matchCase.Guard, armShadowed, parameterScope, state.Candidates);
+                    matchCase.Guard, armShadowed, parameterScope, state);
             }
 
             anyContinues |= caseContinues;
@@ -1253,7 +1274,7 @@ public sealed partial class Lowering
         if (anyContinues)
         {
             DisqualifyAffineSelfAppendMentions(
-                match.Value, shadowed, parameterScope, state.Candidates);
+                match.Value, shadowed, parameterScope, state);
         }
 
         return anyContinues;
@@ -1266,6 +1287,35 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, int> parameterScope,
         AffineSelfAppendState state)
     {
+        // `let acc2 = acc + rhs in <body>` where `acc` is a live candidate, the append is its own
+        // affine leftmost-leaf append, and `acc2` is used exactly once in the body: treat `acc2` as an
+        // alias of `acc`'s ordinal for the body walk so its single use as the self-call argument is
+        // recognized (and any other use still disqualifies). Single-use is what makes the later
+        // in-place lowering sound, so the analysis mirrors that exact eligibility here.
+        if (TryGetAffineAppendAliasOrdinal(let.Value, shadowed, parameterScope, state, out int aliasOrdinal)
+            && CountFreeAffineAliasUses(let.Body, let.Name) == 1)
+        {
+            bool aliasReplaced = state.AppendAliases.TryGetValue(let.Name, out int previousAlias);
+            state.AppendAliases[let.Name] = aliasOrdinal;
+            bool aliasBodyContinues = AffineSelfAppendWalk(
+                let.Body,
+                shadowed,
+                ExtendTcoFuncScope(functionScope, let, let.Name, let.Value),
+                RemoveTcoParameterNames(parameterScope, [let.Name]),
+                state);
+            if (aliasReplaced)
+            {
+                state.AppendAliases[let.Name] = previousAlias;
+            }
+            else
+            {
+                state.AppendAliases.Remove(let.Name);
+            }
+
+            // The append IS the candidate's affine own-append; do not disqualify it.
+            return aliasBodyContinues;
+        }
+
         HashSet<string> bodyShadowed = SetAffineSelfAppendShadow(shadowed, let.Name);
         bool bodyContinues = AffineSelfAppendWalk(
             let.Body,
@@ -1276,10 +1326,118 @@ public sealed partial class Lowering
         if (bodyContinues)
         {
             DisqualifyAffineSelfAppendMentions(
-                let.Value, shadowed, parameterScope, state.Candidates);
+                let.Value, shadowed, parameterScope, state);
         }
 
         return bodyContinues;
+    }
+
+    // The single candidate ordinal whose affine leftmost-leaf append `value` is (`acc + rhs`, no other
+    // reference to `acc` in the chain), or false. `acc` may itself be a parameter or an already-
+    // registered single-use alias, so nested `let` appends chain naturally.
+    private bool TryGetAffineAppendAliasOrdinal(
+        Expr value,
+        HashSet<string> shadowed,
+        IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state,
+        out int ordinal)
+    {
+        ordinal = -1;
+        if (value is not Expr.Add)
+        {
+            return false;
+        }
+
+        Expr chain = value;
+        while (chain is Expr.Add addition)
+        {
+            chain = addition.Left;
+        }
+
+        if (chain is not Expr.Var leaf
+            || shadowed.Contains(leaf.Name)
+            || !TryResolveAffineSelfAppendOrdinal(leaf.Name, parameterScope, state, out int candidate)
+            || !state.Candidates.Contains(candidate)
+            || !IsAffineSelfAppendOwnArgument(value, shadowed, parameterScope, state, candidate))
+        {
+            return false;
+        }
+
+        ordinal = candidate;
+        return true;
+    }
+
+    // Free-occurrence count of `name`, stopping descent where `name` is rebound; saturates at 2 (the
+    // only distinction the single-use gate needs). Fails safe: any node shape not explicitly walked
+    // counts as 2 (decline) rather than being skipped, so a real use can never be under-counted before
+    // `name` is treated as a single-use in-place accumulator. Used only for that eligibility gate.
+    private int CountFreeAffineAliasUses(Expr expression, string name)
+    {
+        switch (expression)
+        {
+            case Expr.IntLit or Expr.UIntLit or Expr.BigIntLit or Expr.FloatLit
+                or Expr.StrLit or Expr.RuneLit or Expr.BoolLit or Expr.QualifiedVar:
+                return 0;
+            case Expr.Var v:
+                return string.Equals(v.Name, name, StringComparison.Ordinal) ? 1 : 0;
+            case Expr.Add a:
+                return SaturateAdd(CountFreeAffineAliasUses(a.Left, name), CountFreeAffineAliasUses(a.Right, name));
+            case Expr.Subtract s:
+                return SaturateAdd(CountFreeAffineAliasUses(s.Left, name), CountFreeAffineAliasUses(s.Right, name));
+            case Expr.Multiply m:
+                return SaturateAdd(CountFreeAffineAliasUses(m.Left, name), CountFreeAffineAliasUses(m.Right, name));
+            case Expr.Divide d:
+                return SaturateAdd(CountFreeAffineAliasUses(d.Left, name), CountFreeAffineAliasUses(d.Right, name));
+            case Expr.Modulo mo:
+                return SaturateAdd(CountFreeAffineAliasUses(mo.Left, name), CountFreeAffineAliasUses(mo.Right, name));
+            case Expr.Call c:
+                return SaturateAdd(CountFreeAffineAliasUses(c.Func, name), CountFreeAffineAliasUses(c.Arg, name));
+            case Expr.If iff:
+                return SaturateAdd(
+                    CountFreeAffineAliasUses(iff.Cond, name),
+                    SaturateAdd(CountFreeAffineAliasUses(iff.Then, name), CountFreeAffineAliasUses(iff.Else, name)));
+            case Expr.Let l:
+                int letValue = CountFreeAffineAliasUses(l.Value, name);
+                // A rebinding of `name` shadows it in the body; our occurrences there are none.
+                int letBody = string.Equals(l.Name, name, StringComparison.Ordinal)
+                    ? 0
+                    : CountFreeAffineAliasUses(l.Body, name);
+                return SaturateAdd(letValue, letBody);
+            case Expr.Match match:
+                return CountFreeAffineAliasUsesMatch(match, name);
+            default:
+                return 2;
+        }
+    }
+
+    private static int SaturateAdd(int left, int right) => left + right >= 2 ? 2 : left + right;
+
+    private int CountFreeAffineAliasUsesMatch(Expr.Match match, string name)
+    {
+        int total = CountFreeAffineAliasUses(match.Value, name);
+        foreach (MatchCase matchCase in match.Cases)
+        {
+            var binders = new HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBinders(matchCase.Pattern, binders);
+            if (binders.Contains(name))
+            {
+                // `name` is rebound by this arm's pattern; it is not free in the arm.
+                continue;
+            }
+
+            if (matchCase.Guard is not null)
+            {
+                total = SaturateAdd(total, CountFreeAffineAliasUses(matchCase.Guard, name));
+            }
+
+            total = SaturateAdd(total, CountFreeAffineAliasUses(matchCase.Body, name));
+            if (total >= 2)
+            {
+                break;
+            }
+        }
+
+        return total;
     }
 
     private bool AffineSelfAppendWalkLetResult(
@@ -1298,7 +1456,7 @@ public sealed partial class Lowering
         if (bodyContinues)
         {
             DisqualifyAffineSelfAppendMentions(
-                letResult.Value, shadowed, parameterScope, state.Candidates);
+                letResult.Value, shadowed, parameterScope, state);
         }
 
         return bodyContinues;
@@ -1325,7 +1483,7 @@ public sealed partial class Lowering
         if (bodyContinues)
         {
             DisqualifyAffineSelfAppendMentions(
-                letRecursive.Value, bodyShadowed, bodyParameterScope, state.Candidates);
+                letRecursive.Value, bodyShadowed, bodyParameterScope, state);
         }
 
         return bodyContinues;
@@ -1356,7 +1514,7 @@ public sealed partial class Lowering
             {
                 if (argumentIndex == candidate
                     && IsAffineSelfAppendOwnArgument(
-                        arguments[argumentIndex], shadowed, parameterScope, candidate))
+                        arguments[argumentIndex], shadowed, parameterScope, state, candidate))
                 {
                     continue;
                 }
@@ -1365,7 +1523,7 @@ public sealed partial class Lowering
                     arguments[argumentIndex],
                     shadowed,
                     parameterScope,
-                    state.Candidates,
+                    state,
                     candidate);
             }
         }
@@ -1377,13 +1535,14 @@ public sealed partial class Lowering
         Expr argument,
         HashSet<string> shadowed,
         IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state,
         int candidate)
     {
         Expr chain = argument;
         while (chain is Expr.Add addition)
         {
             if (ReferencesAffineSelfAppendCandidate(
-                addition.Right, shadowed, parameterScope, candidate))
+                addition.Right, shadowed, parameterScope, state, candidate))
             {
                 return false;
             }
@@ -1393,7 +1552,7 @@ public sealed partial class Lowering
 
         return chain is Expr.Var variable
             && !shadowed.Contains(variable.Name)
-            && parameterScope.TryGetValue(variable.Name, out int ordinal)
+            && TryResolveAffineSelfAppendOrdinal(variable.Name, parameterScope, state, out int ordinal)
             && ordinal == candidate;
     }
 
@@ -1401,15 +1560,15 @@ public sealed partial class Lowering
         Expr expression,
         HashSet<string> shadowed,
         IReadOnlyDictionary<string, int> parameterScope,
-        HashSet<int> candidates,
+        AffineSelfAppendState state,
         int? onlyCandidate = null)
     {
         foreach (string name in FreeVars(expression, shadowed))
         {
-            if (parameterScope.TryGetValue(name, out int ordinal)
+            if (TryResolveAffineSelfAppendOrdinal(name, parameterScope, state, out int ordinal)
                 && (onlyCandidate is null || onlyCandidate == ordinal))
             {
-                candidates.Remove(ordinal);
+                state.Candidates.Remove(ordinal);
             }
         }
     }
@@ -1418,11 +1577,13 @@ public sealed partial class Lowering
         Expr expression,
         HashSet<string> shadowed,
         IReadOnlyDictionary<string, int> parameterScope,
+        AffineSelfAppendState state,
         int candidate)
     {
         foreach (string name in FreeVars(expression, shadowed))
         {
-            if (parameterScope.TryGetValue(name, out int ordinal) && ordinal == candidate)
+            if (TryResolveAffineSelfAppendOrdinal(name, parameterScope, state, out int ordinal)
+                && ordinal == candidate)
             {
                 return true;
             }
