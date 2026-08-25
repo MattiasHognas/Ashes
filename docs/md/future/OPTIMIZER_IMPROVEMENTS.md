@@ -2413,6 +2413,50 @@ introducing a new analysis.
 
 #### (a) Multi-Anchor Drop Placement
 
+**Status: Attempted and reverted (2026-08-25) — a real segfault found via full e2e testing, not
+unit tests. See the note below before picking this up again.**
+
+> **Attempt summary.** Implemented as proposed: `PlaceOwner` generalized to accept an anchor array,
+> a new `TryRemoveLexicalAnchors` verifying exactly one `StoreLocal` definition for the slot (and
+> that every anchor agrees on the dropped value's runtime-managed/type shape) before removing all
+> anchors and computing a union of `ReachableBeforeBoundary` over each anchor's own boundary — reusing
+> `CollectOwnerAliases`/`ComputeLiveness`/`CollectInsertions` completely unchanged for both the
+> single- and multi-anchor cases. Verified against real compiled IR first (not assumed): a
+> `let s = ... in if flag then s + "!" else s + "?"` shape confirmed the genuine multi-anchor case is
+> real and common (one definition, two `RcDrop` anchors sharing an `OwnerSlot`, one per arm) —
+> distinguishing it from the *different* hazard of a slot number reused across mutually-exclusive,
+> unrelated bindings (e.g. different match-arm pattern locals sharing a slot), which the
+> single-definition check declines correctly. All new C# unit tests passed, and the full C# suite
+> (2381/2381) passed.
+>
+> **The full e2e suite (`test tests --pipeline both`) then found a real segfault** in
+> `host_tool_installed_layout.ash` — a genuine `.ash` program (not a synthetic worst case) with a
+> recursive function whose body is a `match` with a nested `if`/`let` arm. A `gdb` backtrace
+> (`run` + `bt` against the compiled, `-g` binary — see [debugging.md](../guide/debugging.md)) placed
+> the fault inside `Ashes.IO.Path`'s stdlib `render` helper, several frames below the user code that
+> triggered it — consistent with a value read after its backing memory was reclaimed. This doc's own
+> "Proposed implementation" names *exactly* this risk as "the one genuinely new case" (a block
+> live-out on one successor edge and dead on another) and prescribes splitting that edge before
+> placing a drop there. The implementation attempt reasoned that skipping this refinement would only
+> be *conservative* (a drop landing later than optimal, never a missing one) and deliberately deferred
+> it as a safe narrowing — **that reasoning was wrong**, or at least is contradicted by this crash;
+> the edge-split case appears to be load-bearing for correctness, not merely an optimization
+> refinement, though the crash was not fully root-caused down to a confirmed mechanism before this
+> attempt was reverted (time-boxed against this exact area's documented history of multi-session
+> debugging efforts — see `docs/md/internals/changelog.md`'s RC Perceus migration deep dive, and this
+> task's own "Testing" note below citing that history).
+>
+> **Reverted in full** rather than partially fixed under time pressure — `git checkout --` on
+> `PerceusLifetimePlacement.cs`, confirmed the reverted state's full e2e suite passes again including
+> `host_tool_installed_layout.ash`. A future attempt should: (1) minimize the crash to a small,
+> committable raw-IR or `.ash` regression test *before* writing any fix (the `gdb` backtrace above and
+> the general shape — a value used across a nested `if` inside one `match` arm, with a sibling arm
+> that also anchors the same value — are the known starting point, not a full root cause); (2)
+> implement the edge-split refinement this doc's own proposed implementation already calls for,
+> rather than treating it as optional; (3) re-verify with the full e2e suite (not just the C# unit
+> suite, which passed throughout this attempt and caught nothing) before considering the task done
+> again.
+
 **Problem.** One line in the Perceus lifetime-placement pass restricts it to the single-anchor case:
 ```
 if (anchors.Length != 1) continue;   // PerceusLifetimePlacement.cs:75
@@ -2897,7 +2941,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-011 | Open-world reuse across unrecognized callees | High | High (highest risk) | OPT-010 | P1 | Not started |
 | OPT-012 | Guaranteed stack-bounded general tail calls | High | Medium (b) / High (a) | none | P1 | Done (b only) — see Measured Outcome |
 | OPT-015 | Tail contification of local helpers | High | Medium | none (benefits from OPT-016(a) first) | P1 | Not started |
-| OPT-017(a) | Multi-anchor Perceus drop placement | Medium | Medium | none (correctness-sensitive, soak-test) | P1 | Not started |
+| OPT-017(a) | Multi-anchor Perceus drop placement | Medium | Medium (higher in practice — see Measured/Status) | none (correctness-sensitive, soak-test) | P1 | Attempted, reverted — real segfault found via e2e testing, see task section |
 | OPT-005 | CFG simplification suite (jump threading, block merging) | Medium | Medium | OPT-004 (soft) | P2 | Done |
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
