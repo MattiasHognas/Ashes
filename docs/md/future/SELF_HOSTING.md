@@ -1,6 +1,6 @@
 # Self-Hosting: Building the Ashes Compiler in Ashes
 
-Status as of 2026-08-22. This document contains both the capability audit of what Ashes-the-language,
+Status as of 2026-08-25. This document contains both the capability audit of what Ashes-the-language,
 its compiler/runtime, and its standard library must provide before a compiler can be written in Ashes,
 and the implementation handoff for the active self-hosted toolchain migration. See
 [FUTURE_FEATURES.md](FUTURE_FEATURES.md) for how self-hosting fits the broader roadmap and the
@@ -606,7 +606,15 @@ same public behavior.
   larger win, since disqualifying an entire match over one nested arm was the dominant real-world cost.
   Not yet closed: a multi-case group's own cases still each re-test the already-proven-by-the-outer-
   switch tag via general pattern testing, rather than a tag-already-known field-extraction variant;
-  column reordering and cross-arm frequency heuristics remain unexplored.
+  column reordering and cross-arm frequency heuristics remain unexplored. **Third confirmed sharp
+  edge**: a group's last case's failure target must be the group's own trailing default arm's label
+  whenever one exists in the match, not the match's overall exhaustiveness-failure label — a case
+  whose outer tag matches but whose nested sub-pattern then fails (`Some(('>', _))` failing its
+  character literal test) is exactly the situation a trailing `_` arm exists to cover, and routing it
+  to the failure path instead produces a null result (segfault) or, when the failure path itself
+  falls through by construction, silently skips the case entirely. Confirmed by a real regression:
+  `reverse-complement` printed only its first FASTA header on every input because this exact shape
+  (`Some(('>', _)) -> ... | _ -> ...`) misrouted on every line after the first.
 - [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
   signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
   across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
@@ -657,6 +665,34 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
+  back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
+  argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping
+  must also release the pattern-bound owner's own reference once the successor is established — it is
+  not a moved value and must not follow the moved-argument rule written for resources and
+  closures-with-droppers, which excludes an argument from the back-edge drop set. Getting this wrong
+  leaks one reference per iteration with no observable failure until the retained graph itself grows
+  unboundedly (confirmed via `fannkuch-redux`: 2.4 GB peak RSS at N=10, 27 GB at N=11, both flat at
+  8.2 MB once fixed) — a plateau-over-iterations regression test, not a single-shot correctness test,
+  is the only kind that catches this class of bug.
+- [ ] Release the RC-managed result of a call consumed only by a read-only builtin
+  (`Ashes.Text.byteLength`, `print`, `write`) once nothing else owns it: a fresh, unowned,
+  RC-normalized call result (from `CopyOutArena`/`CopyOutList` normalization, or an RC-returning
+  callee on both branches of a conditional return) has no natural release site, because lifetime
+  placement only moves drops anchored to an existing owner and never invents one for an anonymous
+  temporary. Three propagation facts must stay consistent together, since dropping any one silently
+  reopens the leak one layer up: (1) a read-only builtin argument release must fire whenever the
+  argument was itself freshly produced (a general "newly produced" ownership fact, not builtin-specific
+  analysis) and must decline for a borrowed binding or literal; (2) an if/match join keeps a merged
+  value's "newly produced" fact only when *every* arm was itself freshly produced — one borrowed or
+  owned arm (including a runtime-managed but caller-owned TCO parameter) poisons the merge, since
+  releasing a merged owned value would free memory still in use elsewhere; (3) a let-scope's
+  save/reload around its own exit drops must preserve the same "newly produced" fact across the reload,
+  since the reloaded temp names the same fresh object the pre-reload analysis already classified.
+  Measured: an unfixed loop consuming `byteLength(f(i))` from a closure call each iteration grew to
+  163 MB over 5,000,000 iterations against an 8.2 MB floor, at both `-O0` and `-O2`; a regression test
+  for this class needs a long-running plateau check (a single-shot output comparison cannot see a
+  32-bytes-per-iteration leak).
 - [ ] Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
 - [ ] Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
@@ -680,6 +716,20 @@ same public behavior.
   allocations, RC/drop/reuse, globals, and calls.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming.
+- [ ] Emit every fixed-size runtime-helper scratch `alloca` (RC-block acquisition, free-list bin
+  lookup, dynamic allocation, copy-out/reclaim, BigInt formatting, and any future helper with the same
+  shape) positioned in the function's **entry block**, never at the current insertion point inside a
+  loop body — LLVM's canonical rule is that a fixed-size alloca belongs in the entry block as one
+  frame slot allocated once; a fixed-size alloca emitted elsewhere is lowered at `-O0` as a runtime
+  stack-pointer adjustment that only function return or `llvm.stackrestore` reclaims, so one inside a
+  TCO loop body leaks native stack every iteration. `-O2` hides this completely (`mem2reg`/SROA
+  promotes the scratch alloca away), so does every `-O2`-compiled test — an `.ash` test cannot guard
+  this at all, since the end-to-end runner defaults to `-O2`; only a C# test that compiles at `-O0`
+  explicitly can. Confirmed with a TCO loop allocating one fresh heap cell per iteration: `rsp`
+  dropped exactly 112 bytes per iteration and never recovered, segfaulting a 1,000,000-element build
+  at `-O0`. The genuine `AllocStack` path (managed by its own `SaveStackPointer`/`RestoreStackPointer`
+  bracket, not a fixed helper slot) is a different mechanism and correctly stays a loop-body alloca —
+  do not route it through the same entry-block hoist.
 - [ ] Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
   terminal raw/poll operations, files/directories/memory maps, subprocesses, clocks/entropy, sockets,
   HTTP/TLS, regex, math, and BigInt.
