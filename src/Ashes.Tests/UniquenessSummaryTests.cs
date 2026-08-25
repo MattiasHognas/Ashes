@@ -1093,8 +1093,13 @@ public sealed class UniquenessSummaryTests
     }
 
     [Test]
-    public void Consumed_tail_escape_uses_the_conservative_parameter_mode()
+    public void Consumed_tail_escape_to_a_provably_inspect_only_callee_still_borrows()
     {
+        // hasAny only inspects its argument (never stores, returns, or captures it), so the
+        // whole-program fixpoint proves the hand-off safe and sum's own tail parameter keeps its
+        // BorrowInspectOnly mode even though the tail also escapes to hasAny, not only to the self-call.
+        // See the companion test below for the same shape with a callee that genuinely retains its
+        // argument, which must fall back to the conservative GeneralOrUnknown mode.
         const string source =
             """
             type Body =
@@ -1114,6 +1119,39 @@ public sealed class UniquenessSummaryTests
                                 if hasAny(tail)
                                 then sum(tail)(total + value)
                                 else total
+            in sum([Body(value = 1), Body(value = 2)])(0)
+            """;
+
+        FunctionOwnershipSummary? summary = LowerProgram(source).GetOwnershipSummary("sum");
+
+        summary.ShouldNotBeNull();
+        TcoParamStructuralFacts values = summary.TcoParamFacts[0];
+        values.Shape.ShouldBe(TcoSelfCallArgumentShape.ConsumedTail);
+        values.UseMode.ShouldBe(TcoParamUseMode.BorrowInspectOnly);
+    }
+
+    [Test]
+    public void Consumed_tail_escape_to_a_retaining_callee_uses_the_conservative_parameter_mode()
+    {
+        // passThrough returns its argument directly — a genuinely unsafe hand-off, unlike the
+        // inspect-only hasAny above. Nothing proves the caller's tail outlives the call without a
+        // retained alias, so sum's own tail parameter must still fall back to GeneralOrUnknown.
+        const string source =
+            """
+            type Body =
+                | value: Int
+
+            let passThrough values = values
+
+            let recursive sum values total =
+                match values with
+                    | [] -> total
+                    | body :: tail ->
+                        match body with
+                            | Body(value) ->
+                                match passThrough(tail) with
+                                | [] -> total
+                                | _ :: _ -> sum(tail)(total + value)
             in sum([Body(value = 1), Body(value = 2)])(0)
             """;
 

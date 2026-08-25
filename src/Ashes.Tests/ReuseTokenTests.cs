@@ -739,10 +739,16 @@ public sealed class ReuseTokenTests
     }
 
     [Test]
-    public void Record_list_traversal_that_hands_tail_to_another_function_still_normalizes()
+    public void Record_list_traversal_that_hands_tail_to_a_provably_inspect_only_function_borrows()
     {
-        // The tail escapes into a second function (not the tail self-call), so nothing proves it is
-        // only inspected: the borrow is declined and the defensive RC normalization is retained.
+        // The tail escapes into a second function (not the tail self-call) — but that function
+        // (countRest) only counts: it never stores, returns, or captures the list. Its own body is
+        // itself proven inspect-only in its one parameter, so the whole-program fixpoint approves the
+        // hand-off and the defensive RC normalization is elided. See the companion test below for the
+        // same shape with a callee that genuinely retains its argument, which must still normalize.
+        // The check is scoped to walk's own functions: the top-level program scope can independently
+        // emit an unrelated CopyOutArena of its own (preserving the trailing Unit result across a
+        // stack-closure resource cleanup), which is not walk's traversal decision under test here.
         IrProgram program = LowerProgram("""
             type Body =
                 | x: Int
@@ -763,15 +769,56 @@ public sealed class ReuseTokenTests
             Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
             """);
 
+        program.Functions
+            .Where(function => string.Equals(
+                function.Origin?.Source?.SourceName,
+                "walk",
+                StringComparison.Ordinal))
+            .Any(function => function.Instructions.Any(
+                instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
+            .ShouldBeFalse("a hand-off to a provably inspect-only callee must borrow, not RC-normalize");
+    }
+
+    [Test]
+    public void Record_list_traversal_that_hands_tail_to_a_retaining_function_still_normalizes()
+    {
+        // passThrough returns its argument directly — a genuinely unsafe hand-off, unlike the
+        // inspect-only countRest above. Nothing proves the caller's list outlives the call without a
+        // retained alias, so the borrow must still be declined and RC normalization retained.
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let passThrough values = values
+
+            let recursive walk bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, mass) ->
+                                match passThrough(rest) with
+                                    | [] -> walk(rest)(acc + x * mass)
+                                    | _ :: _ -> walk(rest)(acc + x * mass + 1)
+
+            Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
+            """);
+
         program.Functions.Prepend(program.EntryFunction)
             .Any(function => function.Instructions.Any(
                 instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
-            .ShouldBeTrue("a traversal whose tail escapes to another function must keep RC normalization");
+            .ShouldBeTrue("a hand-off to a callee that retains its argument must keep RC normalization");
     }
 
     [Test]
     public void Record_list_traversal_that_hands_tail_to_guard_function_still_normalizes()
     {
+        // A nested constructor pattern directly in the cons head (Body(x, mass) :: rest) is a
+        // separate, pre-existing limitation of the pattern-binding walk (it only re-taints a cons
+        // head/tail bound to a plain variable or wildcard, not one destructured inline) — this keeps
+        // normalizing regardless of the guard hand-off itself. See the companion test below, which
+        // isolates the guard hand-off with a two-step match and shows it borrows on its own.
         IrProgram program = LowerProgram("""
             type Body =
                 | x: Int
@@ -797,6 +844,49 @@ public sealed class ReuseTokenTests
             .Any(function => function.Instructions.Any(
                 instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
             .ShouldBeTrue("a traversal whose tail escapes through a guard must keep RC normalization");
+    }
+
+    [Test]
+    public void Record_list_traversal_that_hands_tail_to_a_provably_inspect_only_guard_function_borrows()
+    {
+        // Same guard hand-off as the companion test above, but with the cons head bound to a plain
+        // variable and destructured in a separate nested match — avoiding the pattern-binding
+        // limitation that blocks that test, so this isolates the guard hand-off itself: hasAny only
+        // inspects its argument, so the whole-program fixpoint approves the hand-off through the
+        // guard clause and the traversal borrows.
+        // The check is scoped to walk's own functions, for the same reason as the companion test
+        // above: hasAny's own closure is stack-allocated here (it is used only as a direct callee),
+        // which makes the top-level program scope emit its own unrelated result-preserving
+        // CopyOutArena across that resource's cleanup — not walk's traversal decision under test.
+        IrProgram program = LowerProgram("""
+            type Body =
+                | x: Int
+                | mass: Int
+
+            let hasAny values =
+                match values with
+                    | [] -> false
+                    | _ :: _ -> true
+
+            let recursive walk bodies acc =
+                match bodies with
+                    | [] -> acc
+                    | b :: rest ->
+                        match b with
+                            | Body(x, mass) when hasAny(rest) -> walk(rest)(acc + x * mass + 1)
+                            | Body(x, mass) -> walk(rest)(acc + x * mass)
+
+            Ashes.IO.print(walk([Body(x = 1, mass = 2)])(0))
+            """);
+
+        program.Functions
+            .Where(function => string.Equals(
+                function.Origin?.Source?.SourceName,
+                "walk",
+                StringComparison.Ordinal))
+            .Any(function => function.Instructions.Any(
+                instruction => instruction is IrInst.CopyOutArena { Purpose: IrInst.CopyOutPurpose.RcNormalization }))
+            .ShouldBeFalse("a hand-off through a guard to a provably inspect-only callee must borrow");
     }
 
     private static IrProgram LowerProgram(string source)
