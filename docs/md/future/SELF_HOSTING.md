@@ -480,6 +480,22 @@ same public behavior.
   20,000,000-iteration hot loop building and calling a single-capture closure per iteration; unlike
   most passes in this pipeline, the `-O2` win is real (not subsumed by LLVM) because it comes from
   removing genuine arena-cursor runtime bookkeeping, not the allocation itself.
+- [ ] Extend closure environment scalarization to two scalar captures, and reach let-bound local
+  helpers with it. A second capture travels in the call's ownership-flag word, which is free
+  whenever the `CallKnown` passes no flag and the callee's body never reads one: the variant reads
+  it through `LoadArgumentOwnership` (a raw read of that same parameter), the caller-side gate
+  accepts a 16-byte `AllocStack` filled by exactly one store per 8-byte capture and used nowhere
+  else, and three or more captures still keep their environment (the shared 3-word signature has
+  no further free word). `LoadArgumentOwnership` counts as non-allocating so the scalarized call's
+  arena bracket is stripped. Closure devirtualization resolves a call's closure temp through a local
+  slot written by exactly one `StoreLocal` (lowering only reads a binding's slot inside the
+  binding's own scope, after the store), removes the load it made dead, and removes the scope-exit
+  `CleanupResource(Function)` of a stack closure that never received a dropper (no store to the
+  closure object's dropper word at offset 24 — a runtime no-op), so the slot, the closure
+  construction, and the environment die and a `let step = given x -> ...` helper scalarizes like an
+  immediately-applied lambda. Measured **2.76x at `-O2` / 1.57x at `-O0`** on a 20,000,000-iteration
+  loop building and calling a two-capture let-bound helper per iteration; the already-scalarized
+  single-capture immediately-applied shape is unchanged.
 - [ ] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
   not part of the `IrOptimizer` pipeline above, since a capture's environment is built at the
   creation site *before* the body is lowered and its used-set is known): record each capture's fill

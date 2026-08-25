@@ -384,26 +384,26 @@ public static class IrOptimizer
     }
 
     // Closure environment scalarization
-    // A stack-allocated closure with exactly one 8-byte scalar capture, whose only use is already a
-    // devirtualized CallKnown (EnvironmentIsStackAllocated: true), packs that single value through
-    // an AllocStack + StoreMemOffset + LoadMemOffset round trip even though the value never needs
-    // to leave a register. When the callee's only access to its environment parameter is exactly
-    // one such dereference, the round trip is unnecessary: the captured value can be passed
-    // directly as the "env" argument (reusing the existing CallKnown ABI unchanged — env, arg, and
-    // an optional runtime-managed-argument flag) and the callee rewritten to use it directly
-    // instead of dereferencing it.
+    // A stack-allocated closure with one or two 8-byte scalar captures, whose only use is already a
+    // devirtualized CallKnown (EnvironmentIsStackAllocated: true), packs those values through an
+    // AllocStack + StoreMemOffset + LoadMemOffset round trip even though they never need to leave a
+    // register. When the callee only touches its environment through LoadEnv, the round trip is
+    // unnecessary: the captured values are passed directly in the existing CallKnown ABI (env, arg,
+    // and the runtime-managed-argument flag word) and the callee rewritten to read them directly.
+    // The first capture travels in the "env" word; a second capture travels in the flag word, which
+    // is free whenever the call passes no ownership flag and the callee never reads one
+    // (LoadArgumentOwnership is a raw read of that same parameter, so the variant reads the second
+    // capture through it).
     //
-    // A new callee variant is generated per eligible target label (memoized across call sites)
-    // rather than rewriting the original callee in place: the same label may still be used
-    // elsewhere in a way that needs the pointer-based form (a different capture count, or an
-    // escaping/non-devirtualized use), and safety here does not depend on proving there is no such
-    // other use — the original function is always left completely untouched.
+    // A new callee variant is generated per eligible target label and capture count (memoized
+    // across call sites) rather than rewriting the original callee in place: the same label may
+    // still be used elsewhere in a way that needs the pointer-based form (an escaping or
+    // non-devirtualized use), and safety here does not depend on proving there is no such other
+    // use — the original function is always left completely untouched.
     //
-    // Scope: exactly one scalar capture only (N=1). A general N-capture variant would need a new
-    // calling convention (every Ashes-callable function shares one fixed 3-word LLVM signature so
-    // that CallClosure's indirect dispatch stays uniform; a direct-call-only variant with N+2
-    // parameters is a materially larger change than reusing the existing "env" slot for a single
-    // scalar) — left as future work, matching this document's own part (a)/(b) split precedent.
+    // Scope: at most two scalar captures, because that is what the shared 3-word signature can
+    // carry without an environment pointer. Three or more would need a direct-call-only calling
+    // convention with a per-function parameter list, a materially larger change.
     private static (IrFunction Entry, List<IrFunction> Functions) ScalarizeSingleCaptureStackClosures(
         IrFunction entry, List<IrFunction> functions)
     {
@@ -470,12 +470,12 @@ public static class IrOptimizer
     {
         (var defCount, var defIndex, var useCount) = ComputeTempDefUseFacts(instructions);
 
-        var storeIndexByEnvPtr = new Dictionary<int, int>();
+        var storeIndexByEnvPtrAndOffset = new Dictionary<(int BasePtr, int OffsetBytes), int>();
         for (int i = 0; i < instructions.Count; i++)
         {
-            if (instructions[i] is IrInst.StoreMemOffset { OffsetBytes: 0 } store)
+            if (instructions[i] is IrInst.StoreMemOffset store)
             {
-                storeIndexByEnvPtr[store.BasePtr] = i;
+                storeIndexByEnvPtrAndOffset[(store.BasePtr, store.OffsetBytes)] = i;
             }
         }
 
@@ -483,47 +483,84 @@ public static class IrOptimizer
         var rewrites = new Dictionary<int, IrInst>();
         for (int i = 0; i < instructions.Count; i++)
         {
-            if (instructions[i] is not IrInst.CallKnown { EnvironmentIsStackAllocated: true } call)
-            {
-                continue;
-            }
-
-            // Exactly two uses of the env pointer total (the store below, and this call) proves
-            // there is no third consumer anywhere in the function — no other read, no escape.
-            if (defCount.GetValueOrDefault(call.EnvTemp) != 1
-                || useCount.GetValueOrDefault(call.EnvTemp) != 2
-                || !defIndex.TryGetValue(call.EnvTemp, out int allocIndex)
-                || instructions[allocIndex] is not IrInst.AllocStack { SizeBytes: 8 } alloc
-                || alloc.Target != call.EnvTemp
-                || !storeIndexByEnvPtr.TryGetValue(call.EnvTemp, out int storeIndex)
-                || instructions[storeIndex] is not IrInst.StoreMemOffset store)
-            {
-                continue;
-            }
-
-            if (!functionsByLabel.TryGetValue(call.FuncLabel, out IrFunction? callee))
+            if (instructions[i] is not IrInst.CallKnown { EnvironmentIsStackAllocated: true } call
+                || !TryMatchScalarEnvCallSite(
+                    instructions, call, defCount, defIndex, useCount, storeIndexByEnvPtrAndOffset,
+                    out int allocIndex, out int[] storeIndices)
+                || !functionsByLabel.TryGetValue(call.FuncLabel, out IrFunction? callee))
             {
                 continue;
             }
 
             string? cloneLabel = GetOrCreateScalarEnvVariant(
-                callee, functionsByLabel, cloneLabelByOriginal, newFunctions, ref cloneCounter);
+                callee, storeIndices.Length, functionsByLabel, cloneLabelByOriginal, newFunctions, ref cloneCounter);
             if (cloneLabel is null)
             {
                 continue;
             }
 
             toRemove.Add(allocIndex);
-            toRemove.Add(storeIndex);
+            foreach (int storeIndex in storeIndices)
+            {
+                toRemove.Add(storeIndex);
+            }
+
             rewrites[i] = call with
             {
                 FuncLabel = cloneLabel,
-                EnvTemp = store.Source,
+                EnvTemp = ((IrInst.StoreMemOffset)instructions[storeIndices[0]]).Source,
+                RuntimeManagedArgumentFlagTemp = storeIndices.Length == 2
+                    ? ((IrInst.StoreMemOffset)instructions[storeIndices[1]]).Source
+                    : call.RuntimeManagedArgumentFlagTemp,
                 EnvironmentIsStackAllocated = false,
             };
         }
 
         return (toRemove, rewrites);
+    }
+
+    // Matches the caller-side shape: the env pointer is defined once by an 8- or 16-byte AllocStack,
+    // filled by exactly one store per 8-byte capture, and used nowhere else but those stores and
+    // this call (so there is no other read and no escape). A second capture can only travel in the
+    // flag word when this call does not already pass an ownership flag.
+    private static bool TryMatchScalarEnvCallSite(
+        List<IrInst> instructions,
+        IrInst.CallKnown call,
+        Dictionary<int, int> defCount,
+        Dictionary<int, int> defIndex,
+        Dictionary<int, int> useCount,
+        Dictionary<(int BasePtr, int OffsetBytes), int> storeIndexByEnvPtrAndOffset,
+        out int allocIndex,
+        out int[] storeIndices)
+    {
+        storeIndices = [];
+        if (defCount.GetValueOrDefault(call.EnvTemp) != 1
+            || !defIndex.TryGetValue(call.EnvTemp, out allocIndex)
+            || instructions[allocIndex] is not IrInst.AllocStack { SizeBytes: 8 or 16 } alloc
+            || alloc.Target != call.EnvTemp)
+        {
+            allocIndex = -1;
+            return false;
+        }
+
+        int captureCount = alloc.SizeBytes / 8;
+        if (useCount.GetValueOrDefault(call.EnvTemp) != captureCount + 1
+            || (captureCount == 2 && call.RuntimeManagedArgumentFlagTemp >= 0))
+        {
+            return false;
+        }
+
+        var stores = new int[captureCount];
+        for (int capture = 0; capture < captureCount; capture++)
+        {
+            if (!storeIndexByEnvPtrAndOffset.TryGetValue((call.EnvTemp, capture * 8), out stores[capture]))
+            {
+                return false;
+            }
+        }
+
+        storeIndices = stores;
+        return true;
     }
 
     private static (Dictionary<int, int> DefCount, Dictionary<int, int> DefIndex, Dictionary<int, int> UseCount)
@@ -551,19 +588,21 @@ public static class IrOptimizer
 
     private static string? GetOrCreateScalarEnvVariant(
         IrFunction callee,
+        int captureCount,
         Dictionary<string, IrFunction> functionsByLabel,
         Dictionary<string, string?> cloneLabelByOriginal,
         List<IrFunction> newFunctions,
         ref int cloneCounter)
     {
-        if (cloneLabelByOriginal.TryGetValue(callee.Label, out string? cached))
+        string memoKey = $"{callee.Label}#{captureCount}";
+        if (cloneLabelByOriginal.TryGetValue(memoKey, out string? cached))
         {
             return cached;
         }
 
-        IrFunction? clone = TryBuildScalarEnvVariant(callee, cloneCounter);
+        IrFunction? clone = TryBuildScalarEnvVariant(callee, captureCount, cloneCounter);
         string? cloneLabel = clone?.Label;
-        cloneLabelByOriginal[callee.Label] = cloneLabel;
+        cloneLabelByOriginal[memoKey] = cloneLabel;
         if (clone is not null)
         {
             cloneCounter++;
@@ -575,19 +614,18 @@ public static class IrOptimizer
     }
 
     // Builds a scalar-env variant of a devirtualizable callee, or returns null when the callee's
-    // body does not match the narrow single-dereference shape this task recognizes. Eligible shape:
-    // local slot 0 (the env parameter) is read exactly once anywhere in the function, that read's
-    // result is used exactly once, and that one use is exactly one LoadMemOffset at offset 0 — i.e.
-    // the entire function touches its environment through exactly one pointer dereference of the
-    // sole capture, nothing else (no null check, no second field, no passing the env pointer on).
-    private static IrFunction? TryBuildScalarEnvVariant(IrFunction callee, int cloneCounter)
+    // body does not match the narrow shape this pass recognizes: the function touches its
+    // environment only through LoadEnv of capture indices below captureCount (no raw read of the
+    // env pointer, no other field), and — when the second capture is to travel in the flag word —
+    // never reads the ownership flag itself.
+    private static IrFunction? TryBuildScalarEnvVariant(IrFunction callee, int captureCount, int cloneCounter)
     {
         // Real (non-coroutine) lowered closures read a capture via the dedicated LoadEnv
         // instruction, which implicitly dereferences local slot 0 — never via an explicit
         // LoadLocal(_, 0) of the env pointer. A coroutine's state-machine transform rewrites
         // LoadEnv into a LoadMemOffset against its own frame/state-struct temp instead (see
         // StateMachineTransform.AdjustLoadEnvForStateStruct), a materially different and riskier
-        // shape this narrow task does not attempt.
+        // shape this narrow pass does not attempt.
         if (!callee.HasEnvAndArgParams || callee.Coroutine is not null)
         {
             return null;
@@ -597,7 +635,13 @@ public static class IrOptimizer
         if (body.Any(inst => inst is IrInst.LoadLocal { Slot: 0 }))
         {
             // The env pointer is read as a raw value somewhere outside of LoadEnv — it is treated
-            // as a genuine pointer for some other purpose this task does not attempt to reason about.
+            // as a genuine pointer for some other purpose this pass does not attempt to reason about.
+            return null;
+        }
+
+        if (captureCount == 2 && body.Any(inst => inst is IrInst.LoadArgumentOwnership))
+        {
+            // The flag word is already meaningful to this callee, so it cannot carry a capture.
             return null;
         }
 
@@ -609,10 +653,10 @@ public static class IrOptimizer
                 continue;
             }
 
-            if (loadEnv.Index != 0)
+            if (loadEnv.Index < 0 || loadEnv.Index >= captureCount)
             {
-                // A single 8-byte capture only ever has offset 0 — an unexpected index means this
-                // callee's shape is not what this task's caller-side gate assumed.
+                // An index past the environment the caller-side gate measured means this callee's
+                // shape is not what that gate assumed.
                 return null;
             }
 
@@ -627,7 +671,10 @@ public static class IrOptimizer
         var newBody = new List<IrInst>(body);
         foreach (int i in loadEnvIndices)
         {
-            newBody[i] = new IrInst.LoadLocal(((IrInst.LoadEnv)body[i]).Target, 0);
+            IrInst.LoadEnv loadEnv = (IrInst.LoadEnv)body[i];
+            newBody[i] = loadEnv.Index == 0
+                ? new IrInst.LoadLocal(loadEnv.Target, 0)
+                : new IrInst.LoadArgumentOwnership(loadEnv.Target);
         }
 
         return callee with { Label = $"{callee.Label}__scalarenv{cloneCounter}", Instructions = newBody };
@@ -947,7 +994,7 @@ public static class IrOptimizer
     private static bool IsNonAllocatingInst(IrInst inst, HashSet<string> nonAllocatingFns) => inst switch
     {
         IrInst.LoadConstInt or IrInst.LoadConstFloat or IrInst.LoadConstBool or IrInst.LoadConstStr
-            or IrInst.LoadLocal or IrInst.StoreLocal or IrInst.LoadEnv
+            or IrInst.LoadLocal or IrInst.StoreLocal or IrInst.LoadEnv or IrInst.LoadArgumentOwnership
             or IrInst.LoadMemOffset or IrInst.StoreMemOffset
             or IrInst.AddInt or IrInst.SubInt or IrInst.MulInt or IrInst.DivInt or IrInst.DivUInt
             or IrInst.AndInt or IrInst.OrInt or IrInst.XorInt or IrInst.ShlInt or IrInst.ShrInt
@@ -1111,51 +1158,170 @@ public static class IrOptimizer
 
     private static List<IrInst> DevirtualizeKnownClosureCalls(List<IrInst> instructions)
     {
-        // Count definitions per temp; remember the defining instruction of single-def temps.
-        var defCount = new Dictionary<int, int>();
-        var singleDef = new Dictionary<int, IrInst>();
-        foreach (var inst in instructions)
-        {
-            foreach (var d in StateMachineTransform.GetDefinedTemps(inst))
-            {
-                defCount[d] = defCount.GetValueOrDefault(d) + 1;
-                singleDef[d] = inst;
-            }
-        }
+        // Count definitions per temp; remember the defining instruction of single-def temps. Local
+        // slots are tracked the same way: a slot written by exactly one StoreLocal in the whole
+        // function holds that store's value at every load, since lowering only ever reads a
+        // binding's slot inside the binding's own scope, after the store. This is what lets a
+        // let-bound local helper (`let step = given x -> ... in step(1)`), whose call always goes
+        // through a StoreLocal/LoadLocal round trip, resolve to its MakeClosure like an
+        // immediately-applied lambda does.
+        ClosureDefinitionFacts facts = ClosureDefinitionFacts.Collect(instructions);
 
         bool changed = false;
         var result = new List<IrInst>(instructions.Count);
+        // A slot load whose only use was a call rewritten here is dead afterwards; dropping it lets
+        // the slot's store and the closure construction die in the ordinary dead-code sweep.
+        var deadSlotLoadTemps = new HashSet<int>();
         foreach (var inst in instructions)
         {
-            if (inst is IrInst.CallClosure cc
-                && defCount.GetValueOrDefault(cc.ClosureTemp) == 1
-                && singleDef.TryGetValue(cc.ClosureTemp, out var def))
+            // A let-bound closure's scope-exit resource cleanup is a runtime no-op when the closure
+            // is a stack closure that never received a dropper; removing it (and its load) is what
+            // lets the slot, the closure construction, and the environment die once every call is
+            // devirtualized below.
+            if (inst is IrInst.CleanupResource { TypeName: "Function", Destructor: null } cleanup
+                && facts.IsDropperFreeStackClosureSlotLoad(cleanup.SourceTemp))
             {
-                (string Label, int EnvTemp)? known = def switch
+                if (facts.UseCount.GetValueOrDefault(cleanup.SourceTemp) == 1)
                 {
-                    IrInst.MakeClosure mk => (mk.FuncLabel, mk.EnvPtrTemp),
-                    IrInst.MakeClosureStack mks => (mks.FuncLabel, mks.EnvPtrTemp),
-                    _ => null,
-                };
-                if (known is { } k && defCount.GetValueOrDefault(k.EnvTemp) == 1)
-                {
-                    result.Add(new IrInst.CallKnown(
-                        cc.Target,
-                        k.Label,
-                        k.EnvTemp,
-                        cc.ArgTemp,
-                        cc.RuntimeManagedArgumentFlagTemp,
-                        EnvironmentIsStackAllocated: def is IrInst.MakeClosureStack { EnvSizeBytes: > 0 })
-                    { Location = cc.Location });
-                    changed = true;
-                    continue;
+                    deadSlotLoadTemps.Add(cleanup.SourceTemp);
                 }
+
+                changed = true;
+                continue;
+            }
+
+            if (inst is IrInst.CallClosure cc
+                && facts.ResolveClosureDefinition(cc.ClosureTemp, out bool throughSlot) is { } def
+                && TryBuildKnownCall(cc, def, facts) is { } known)
+            {
+                result.Add(known);
+                if (throughSlot && facts.UseCount.GetValueOrDefault(cc.ClosureTemp) == 1)
+                {
+                    deadSlotLoadTemps.Add(cc.ClosureTemp);
+                }
+
+                changed = true;
+                continue;
             }
 
             result.Add(inst);
         }
 
+        if (deadSlotLoadTemps.Count > 0)
+        {
+            result.RemoveAll(inst => inst is IrInst.LoadLocal load && deadSlotLoadTemps.Contains(load.Target));
+        }
+
         return changed ? result : instructions;
+    }
+
+    // The direct call for a closure call whose closure was produced by a known construction, or
+    // null when the construction is not a closure or its environment pointer is not single-defined.
+    private static IrInst.CallKnown? TryBuildKnownCall(IrInst.CallClosure call, IrInst definition, ClosureDefinitionFacts facts)
+    {
+        (string Label, int EnvTemp)? known = definition switch
+        {
+            IrInst.MakeClosure mk => (mk.FuncLabel, mk.EnvPtrTemp),
+            IrInst.MakeClosureStack mks => (mks.FuncLabel, mks.EnvPtrTemp),
+            _ => null,
+        };
+        if (known is not { } k || facts.DefCount.GetValueOrDefault(k.EnvTemp) != 1)
+        {
+            return null;
+        }
+
+        return new IrInst.CallKnown(
+            call.Target,
+            k.Label,
+            k.EnvTemp,
+            call.ArgTemp,
+            call.RuntimeManagedArgumentFlagTemp,
+            EnvironmentIsStackAllocated: definition is IrInst.MakeClosureStack { EnvSizeBytes: > 0 })
+        { Location = call.Location };
+    }
+
+    /// <summary>
+    /// Per-function definition facts for closure devirtualization: how often each temp is defined
+    /// and by which instruction, and how often each local slot is stored and from which temp.
+    /// </summary>
+    private sealed class ClosureDefinitionFacts
+    {
+        public Dictionary<int, int> DefCount { get; } = new();
+        public Dictionary<int, int> UseCount { get; } = new();
+        private readonly Dictionary<int, IrInst> _singleDef = new();
+        private readonly Dictionary<int, int> _storeCountBySlot = new();
+        private readonly Dictionary<int, int> _singleStoreSourceBySlot = new();
+
+        public static ClosureDefinitionFacts Collect(List<IrInst> instructions)
+        {
+            var facts = new ClosureDefinitionFacts();
+            foreach (var inst in instructions)
+            {
+                foreach (var d in StateMachineTransform.GetDefinedTemps(inst))
+                {
+                    facts.DefCount[d] = facts.DefCount.GetValueOrDefault(d) + 1;
+                    facts._singleDef[d] = inst;
+                }
+
+                foreach (var u in StateMachineTransform.GetUsedTemps(inst))
+                {
+                    facts.UseCount[u] = facts.UseCount.GetValueOrDefault(u) + 1;
+                }
+
+                if (inst is IrInst.StoreLocal store)
+                {
+                    facts._storeCountBySlot[store.Slot] = facts._storeCountBySlot.GetValueOrDefault(store.Slot) + 1;
+                    facts._singleStoreSourceBySlot[store.Slot] = store.Source;
+                }
+                else if (inst is IrInst.StoreMemOffset { OffsetBytes: ClosureDropperOffsetBytes } dropperStore)
+                {
+                    facts._closureTempsWithDropper.Add(dropperStore.BasePtr);
+                }
+            }
+
+            return facts;
+        }
+
+        // The closure object's resource-dropper word: {code, env, packed size/ownership, dropper}.
+        private const int ClosureDropperOffsetBytes = 24;
+        private readonly HashSet<int> _closureTempsWithDropper = new();
+
+        /// <summary>
+        /// True when <paramref name="temp"/> is a load of a single-store slot holding a stack closure
+        /// that never had a resource dropper installed, so a resource cleanup of that value is a
+        /// no-op at runtime (an ordinary closure's dropper word is zero).
+        /// </summary>
+        public bool IsDropperFreeStackClosureSlotLoad(int temp)
+            => ResolveClosureDefinition(temp, out bool throughSlot) is IrInst.MakeClosureStack closure
+                && throughSlot
+                && !_closureTempsWithDropper.Contains(closure.Target);
+
+        /// <summary>
+        /// The instruction that produced the closure in <paramref name="closureTemp"/>, seen through
+        /// a single-store local slot: a slot written by exactly one StoreLocal holds that store's
+        /// value at every load, since lowering only reads a binding's slot inside the binding's own
+        /// scope, after the store. Null when the temp has more than one definition.
+        /// </summary>
+        public IrInst? ResolveClosureDefinition(int closureTemp, out bool throughSlot)
+        {
+            throughSlot = false;
+            if (DefCount.GetValueOrDefault(closureTemp) != 1 || !_singleDef.TryGetValue(closureTemp, out var def))
+            {
+                return null;
+            }
+
+            if (def is IrInst.LoadLocal load
+                && _storeCountBySlot.GetValueOrDefault(load.Slot) == 1
+                && _singleStoreSourceBySlot.TryGetValue(load.Slot, out int storedTemp)
+                && DefCount.GetValueOrDefault(storedTemp) == 1
+                && _singleDef.TryGetValue(storedTemp, out var storedDef))
+            {
+                throughSlot = true;
+                return storedDef;
+            }
+
+            return def;
+        }
     }
 
     // Trivial ownership-copy elision

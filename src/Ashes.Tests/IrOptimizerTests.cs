@@ -524,8 +524,8 @@ public sealed class IrOptimizerTests
         output.ShouldBe("10\n");
     }
 
-    [Test]
-    public void Scalarize_declines_a_two_capture_stack_closure()
+    private static (IrFunction Entry, IrFunction Callee) BuildTwoCaptureStackClosureProgram(
+        IReadOnlyList<IrInst>? calleeBody = null)
     {
         List<IrInst> entryInstructions =
         [
@@ -543,12 +543,204 @@ public sealed class IrOptimizerTests
         IrFunction entry = new("entry", entryInstructions, 0, 6, false);
         IrFunction callee = new(
             "callee2",
+            calleeBody is null
+                ?
+                [
+                    new IrInst.LoadEnv(0, 0),
+                    new IrInst.LoadEnv(1, 1),
+                    new IrInst.AddInt(2, 0, 1),
+                    new IrInst.LoadLocal(3, 1),
+                    new IrInst.AddInt(4, 2, 3),
+                    new IrInst.Return(4),
+                ]
+                : [.. calleeBody],
+            2,
+            6,
+            true);
+        return (entry, callee);
+    }
+
+    [Test]
+    public void Scalarize_two_capture_stack_closure_passes_the_second_capture_in_the_flag_word()
+    {
+        (IrFunction entry, IrFunction callee) = BuildTwoCaptureStackClosureProgram();
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldBeEmpty(
+            "Both captures fit the existing three-word call signature, so no environment is needed.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.StoreMemOffset>().ShouldBeEmpty();
+        IrInst.CallKnown call = optimized.EntryFunction.Instructions.OfType<IrInst.CallKnown>().ShouldHaveSingleItem();
+        call.EnvironmentIsStackAllocated.ShouldBeFalse();
+        call.RuntimeManagedArgumentFlagTemp.ShouldBeGreaterThanOrEqualTo(0,
+            "The second capture travels in the otherwise-unused ownership-flag word.");
+        call.RuntimeManagedArgumentFlagTemp.ShouldNotBe(call.EnvTemp);
+
+        IrFunction variant = optimized.Functions
+            .Where(f => string.Equals(f.Label, call.FuncLabel, StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+        variant.Instructions.OfType<IrInst.LoadEnv>().ShouldBeEmpty();
+        variant.Instructions.OfType<IrInst.LoadArgumentOwnership>().ShouldHaveSingleItem(
+            "The variant reads the second capture as the raw flag-word parameter.");
+        optimized.Functions.ShouldContain(f => string.Equals(f.Label, "callee2", StringComparison.Ordinal),
+            "The original callee is left untouched.");
+    }
+
+    [Test]
+    public async Task Scalarize_two_capture_stack_closure_preserves_execution_semantics()
+    {
+        (IrFunction entry, IrFunction callee) = BuildTwoCaptureStackClosureProgram();
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldBeEmpty();
+
+        string output = await RunAsync(optimized).ConfigureAwait(false);
+
+        output.ShouldBe("19\n");
+    }
+
+    [Test]
+    public void Scalarize_declines_a_two_capture_callee_that_reads_the_ownership_flag()
+    {
+        // The callee already gives the flag word its real meaning, so it cannot carry a capture.
+        (IrFunction entry, IrFunction callee) = BuildTwoCaptureStackClosureProgram(
+        [
+            new IrInst.LoadEnv(0, 0),
+            new IrInst.LoadEnv(1, 1),
+            new IrInst.AddInt(2, 0, 1),
+            new IrInst.LoadArgumentOwnership(3),
+            new IrInst.AddInt(4, 2, 3),
+            new IrInst.Return(4),
+        ]);
+        IrProgram program = new(entry, [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
+            "A callee that reads the ownership flag keeps its pointer-based environment.");
+        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee2");
+    }
+
+    // A let-bound local helper: the closure goes through a StoreLocal/LoadLocal slot round trip
+    // before being called, and its scope exit carries a Function resource cleanup on the slot.
+    private static IrFunction BuildSlotBoundTwoCaptureEntry(bool installDropper = false, bool storeSlotTwice = false)
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 16),
+            new IrInst.LoadConstInt(1, 7),
+            new IrInst.StoreMemOffset(0, 0, 1),
+            new IrInst.LoadConstInt(2, 9),
+            new IrInst.StoreMemOffset(0, 8, 2),
+            new IrInst.MakeClosureStack(3, "callee2", 0, 16),
+        ];
+        if (installDropper)
+        {
+            entryInstructions.Add(new IrInst.LoadFuncAddr(8, "callee2"));
+            entryInstructions.Add(new IrInst.StoreMemOffset(3, 24, 8));
+        }
+
+        entryInstructions.Add(new IrInst.StoreLocal(0, 3));
+        if (storeSlotTwice)
+        {
+            entryInstructions.Add(new IrInst.StoreLocal(0, 3));
+        }
+
+        entryInstructions.AddRange(
+        [
+            new IrInst.LoadLocal(4, 0),
+            new IrInst.LoadConstInt(5, 3),
+            new IrInst.CallClosure(6, 4, 5),
+            new IrInst.PrintInt(6),
+            new IrInst.LoadLocal(7, 0),
+            new IrInst.CleanupResource(7, "Function"),
+            new IrInst.Return(6),
+        ]);
+        return new IrFunction("entry", entryInstructions, 1, 9, false);
+    }
+
+    [Test]
+    public async Task Devirtualize_and_scalarize_a_let_bound_stack_closure_through_its_slot()
+    {
+        (_, IrFunction callee) = BuildTwoCaptureStackClosureProgram();
+        IrProgram program = new(BuildSlotBoundTwoCaptureEntry(), [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallClosure>().ShouldBeEmpty(
+            "The call resolves through the single-store slot to its MakeClosureStack.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.CleanupResource>().ShouldBeEmpty(
+            "A dropper-free stack closure's scope-exit cleanup is a runtime no-op and is removed.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldBeEmpty(
+            "With the slot's last reader gone, the closure and its environment die and both captures scalarize.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallKnown>().ShouldHaveSingleItem()
+            .RuntimeManagedArgumentFlagTemp.ShouldBeGreaterThanOrEqualTo(0);
+
+        string output = await RunAsync(optimized).ConfigureAwait(false);
+        output.ShouldBe("19\n");
+    }
+
+    [Test]
+    public async Task Devirtualize_leaves_a_multiply_stored_slot_alone()
+    {
+        (_, IrFunction callee) = BuildTwoCaptureStackClosureProgram();
+        IrProgram program = new(
+            BuildSlotBoundTwoCaptureEntry(storeSlotTwice: true), [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallClosure>().ShouldHaveSingleItem(
+            "A slot with more than one store is not proven to hold one closure, so the call stays indirect.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem();
+
+        string output = await RunAsync(optimized).ConfigureAwait(false);
+        output.ShouldBe("19\n");
+    }
+
+    [Test]
+    public void Cleanup_of_a_stack_closure_with_an_installed_dropper_is_kept()
+    {
+        (_, IrFunction callee) = BuildTwoCaptureStackClosureProgram();
+        IrProgram program = new(
+            BuildSlotBoundTwoCaptureEntry(installDropper: true), [callee], [], true, false, true, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CleanupResource>().ShouldHaveSingleItem(
+            "A closure that received a dropper closes resources on cleanup; the marker must survive.");
+        optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
+            "The surviving cleanup keeps the closure object alive, so its environment cannot scalarize.");
+    }
+
+    [Test]
+    public void Scalarize_declines_a_three_capture_stack_closure()
+    {
+        List<IrInst> entryInstructions =
+        [
+            new IrInst.AllocStack(0, 24),
+            new IrInst.LoadConstInt(1, 7),
+            new IrInst.StoreMemOffset(0, 0, 1),
+            new IrInst.LoadConstInt(2, 9),
+            new IrInst.StoreMemOffset(0, 8, 2),
+            new IrInst.LoadConstInt(3, 11),
+            new IrInst.StoreMemOffset(0, 16, 3),
+            new IrInst.MakeClosureStack(4, "callee3", 0, 24),
+            new IrInst.LoadConstInt(5, 3),
+            new IrInst.CallClosure(6, 4, 5),
+            new IrInst.PrintInt(6),
+            new IrInst.Return(6),
+        ];
+        IrFunction entry = new("entry", entryInstructions, 0, 7, false);
+        IrFunction callee = new(
+            "callee3",
             [
                 new IrInst.LoadEnv(0, 0),
                 new IrInst.LoadEnv(1, 1),
-                new IrInst.AddInt(2, 0, 1),
-                new IrInst.LoadLocal(3, 1),
-                new IrInst.AddInt(4, 2, 3),
+                new IrInst.LoadEnv(2, 2),
+                new IrInst.AddInt(3, 0, 1),
+                new IrInst.AddInt(4, 3, 2),
                 new IrInst.Return(4),
             ],
             2,
@@ -559,8 +751,8 @@ public sealed class IrOptimizerTests
         IrProgram optimized = IrOptimizer.Optimize(program);
 
         optimized.EntryFunction.Instructions.OfType<IrInst.AllocStack>().ShouldHaveSingleItem(
-            "A two-field environment is out of this task's single-capture scope and must be left alone.");
-        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee2");
+            "Three captures do not fit the shared three-word signature and must keep their environment.");
+        optimized.Functions.ShouldHaveSingleItem().Label.ShouldBe("callee3");
     }
 
     [Test]
@@ -1817,8 +2009,9 @@ public sealed class IrOptimizerTests
             "let recursive countUp = given (n) -> if n < 0 then n else countUp(n + 1) " +
             "in Ashes.IO.print(countUp(1))");
 
+        // The let-bound call devirtualizes to a direct CallKnown; either form is still a runtime call.
         ir.EntryFunction.Instructions
-            .Any(i => i is IrInst.CallClosure)
+            .Any(i => i is IrInst.CallClosure or IrInst.CallKnown)
             .ShouldBeTrue("Non-terminating recursion must not be folded; the call stays runtime.");
     }
 
