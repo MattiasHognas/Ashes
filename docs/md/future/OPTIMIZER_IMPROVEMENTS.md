@@ -2191,6 +2191,9 @@ with, so this is a correctness guard on the decline path instead. Full suite sta
 
 #### (b) Devirtualize Past a Single Definition
 
+**Status: Done (single-agreeing-label case only — see Measured Outcome). The 2-4-label
+lambda-set-specialization dispatch was not attempted.**
+
 **Problem.** `DevirtualizeKnownClosureCalls` (`IrOptimizer.cs:464-522`, Category 2.11) requires
 `defCount[closureTemp] == 1` — the closure temp being called must have exactly one static definition
 site. This is exactly why a curried call like `add(10)(32)` leaves its second call (`CallClosure` on the
@@ -2256,6 +2259,80 @@ devirtualization as ported (`[x]`) under the existing single-definition rule —
 is not edited. Add a **new** `[ ]` line scoped to exactly this delta: devirtualization via a
 reaching-definitions lattice (including consuming `RecordReturnedClosureLabel` facts) rather than a raw
 single-definition count.
+
+**Measured Outcome.** Implemented the single-agreeing-label case; the 2-4-label
+lambda-set-specialization dispatch was **not attempted** — a materially larger piece of work (emitting a
+new multi-arm dispatch shape, not a rewrite within the existing `CallClosure`-to-`CallKnown` shape) that
+this task did not scope tightly enough to fit alongside the single-label case with the same confidence.
+
+**A factual gap in the doc's own "Evidence" section, found by tracing the code rather than by
+implementation trial and error:** `RecordReturnedClosureLabel`'s result (`_functionReturnedClosureLabels`)
+is a **private, in-memory field of the `Lowering` class instance** — it is never persisted onto
+`IrFunction`/`IrProgram`, and lowering has already completed and gone out of scope by the time
+`IrOptimizer` runs. The doc's proposed implementation ("a called function's recorded
+`RecordReturnedClosureLabel` result, computed today and never read by the optimizer... consuming this
+existing bookkeeping") is not actually reachable as written — `IrOptimizer.cs` has no access to any
+`Lowering` instance's fields at all. The equivalent fact has to be **recomputed from the IR itself**: new
+`ComputeKnownReturnedClosureLabels` is a whole-program least fixpoint (reusing the existing
+`WholeProgramFixpoint.RunToFixpoint` helper `ComputeNonAllocatingFunctions` already uses, generalized from
+a shrinking candidate set to a growing known-label map) determining, per function, whether every `Return`
+in its body is provably the same closure label — directly from a `MakeClosure` (`defCount == 1`), or
+transitively through a `CallKnown` to another function already proven, earlier in the fixpoint, to return
+that same label.
+
+**A second hazard, reasoned through before writing any code rather than found by a failing test:**
+`TryGetKnownClosureLabel` deliberately treats only `MakeClosure` (heap) as a valid "known label" source,
+never `MakeClosureStack`. A stack-allocated closure's environment lives in its defining function's own
+native stack frame — gone the instant that function returns — so treating a function that (however
+implausibly, given the existing stack-allocation escape analysis should already rule this out) returns a
+`MakeClosureStack` as having a "known returned label" would let a *later* caller extract and dereference a
+dangling environment pointer. Excluding it costs nothing in practice (a genuinely escaping/returned
+closure is essentially always heap-allocated by construction) while removing a catastrophic-if-wrong risk
+outright — the same class of mistake as `OPT-017(b)`'s arena-reclaim bug in this same arc, caught here by
+tracing the closure object's `{code, env, size, dropper}` layout (`EmitCallClosure`'s own field offsets)
+before implementing, not after a wrong answer at runtime.
+
+At the rewrite site, `DevirtualizeReturnedClosureCallsInFunction` extracts the environment via a new
+`LoadMemOffset(envTemp, closureTemp, 8)` (matching `EmitCallClosure`'s own env-field offset) immediately
+before the new `CallKnown`, at the exact instruction position the original `CallClosure` occupied — a
+plain field read that neither consumes nor extends the closure object's lifetime, so whatever RC/ownership
+placement already exists for that temp (computed earlier in the pipeline, unaware this pass would run)
+stays correct unmodified. Each function iterates this rewrite to its own local fixpoint (recomputing
+def/use facts fresh each time) so a curry deeper than two arguments — `add3(1)(2)(3)` — fully resolves in
+one `IrOptimizer.Optimize` invocation, not just its first newly-direct hop; verified directly via
+`--emit-ir final` on a hand-compiled 3-argument curry, all three applications (`add3__trait` -> `lambda_4`
+-> `lambda_5`) becoming `CallKnown`.
+
+Two hand-built raw-IR tests (real .ash source does not reliably reach this pass's precondition through
+`LowerProgram`'s minimal test bootstrapping — a plain top-level `let`-bound closure is read via
+`StoreLocal`/`LoadLocal`, not a `MakeClosure`/`CallKnown` definition, so even the first application stays
+indirect there, a pre-existing gap in `DevirtualizeKnownClosureCalls` this task did not set out to close):
+one confirms the `add(10)(32)`-shaped positive case (both calls end as `CallKnown`, the second's `EnvTemp`
+sourced from a `LoadMemOffset` at offset 8 reading the first call's result); one confirms a
+disagreeing-origin negative case declines correctly (two branches returning different closure labels,
+guarded by a condition read from the function's own argument rather than a literal, since a literal
+condition is foldable by earlier passes in the same pipeline and would silently resolve the "disagreement"
+away before this pass ever saw it — found while writing the test, not by a wrong answer). Two further
+tests compile and run real `.ash` source end to end (a 3-argument curry, and the disagreeing-origin `pick`
+example) confirming correct output either way.
+
+**Measured**: the doc's own worked shape, `let add = given x -> given y -> x + y in add(10)(32)`,
+confirmed via `--emit-ir final` on real compiled source — both applications are `CallKnown`; the second's
+env is a `LoadMemOffset` at offset 8 off the first call's result. A representative hot-loop case (`let add
+= given x -> given y -> x + y` called as `add(k)(1)` inside a 30,000,000-iteration TCO loop) showed the
+devirtualization firing correctly *inside* the loop body (confirmed via `--emit-ir final`: the loop's
+`CallClosure`/`CallClosure` pair becomes `CallKnown`/`LoadMemOffset`/`CallKnown`), but **no measurable
+wall-clock difference at either `-O0` (0.20s vs 0.20s) or `-O2` (0.04s vs 0.04s)** against a temporary
+pre-task baseline, 3 runs each side. Reported honestly rather than searched for a more favorable
+benchmark shape: for a single-instruction callee body (`x + y`) called through a target that never
+changes across iterations, the indirect-call overhead this task removes appears to be small relative to
+the loop's own TCO/arena-bracket mechanics, and modern indirect-branch prediction already handles a
+stable-target indirect call cheaply. This task's real, defensible value — matching the doc's own "Why"
+framing — is structural: every devirtualized call becomes visible to LLVM's inliner and to `FoldConstants`
+the same way an already-devirtualized call is today, which a program with a non-trivial curried-callee
+body (unlike this specific microbenchmark's trivial one) would be expected to benefit from measurably;
+this was not separately constructed and measured. Full suite status: C# 2381/2381, LSP 70/70, e2e
+`test tests --pipeline both` 645/0/54-skipped, format clean.
 
 #### (c) The Worker/Wrapper Calling Convention (deferred, highest leverage)
 
@@ -2825,7 +2902,7 @@ a multi-part string-concatenation-heavy program (e.g. a formatting/reporting wor
 | OPT-009 | Single-constructor ADT unboxing | Medium | Medium-High | OPT-011 (sequencing) | P2 | Not started |
 | OPT-013 | Closure environment scalarization | Medium | Medium | OPT-010 (soft) | P2 | Done (N=1 only) — see Measured Outcome |
 | OPT-014 | Store-to-load and projection forwarding | Medium | Low-Medium | pairs with OPT-006 | P2 | Done |
-| OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Not started |
+| OPT-016(b) | Devirtualize closure calls past a single definition | Medium | Medium | none (reuses FoldConstants dataflow skeleton) | P2 | Done (single-agreeing-label case only) — see Measured Outcome |
 | OPT-016(c) | Worker/wrapper calling convention | High | High (largest blast radius) | eases OPT-015, OPT-016(b), OPT-013's N>1 case | P2 | Not started |
 
 Every row corresponds to a full task specification in Section 5. `P0` tasks are either independent quick

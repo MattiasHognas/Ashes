@@ -697,11 +697,15 @@ public abstract record IrInst
         int RuntimeManagedArgumentFlagTemp = -1
     ) : IrInst;
     // Devirtualized closure call: the callee label is statically known (the closure temp was
-    // produced by a MakeClosure with this label), so codegen emits a direct call the LLVM
-    // inliner can see through. Produced only by IrOptimizer.DevirtualizeKnownClosureCalls.
+    // produced by a MakeClosure with this label, or reaches a CallKnown to a function already
+    // proven to always return that label), so codegen emits a direct call the LLVM inliner can see
+    // through. Produced by IrOptimizer.DevirtualizeKnownClosureCalls and
+    // IrOptimizer.DevirtualizeReturnedClosureCalls.
     /// <summary>Devirtualized closure call: the callee label is statically known, so codegen emits a direct
-    /// call the LLVM inliner can see through. Produced only by <c>IrOptimizer.DevirtualizeKnownClosureCalls</c>
-    /// from a <see cref="CallClosure"/> whose closure came from a <see cref="MakeClosure"/> with this label.</summary>
+    /// call the LLVM inliner can see through. Produced by <c>IrOptimizer.DevirtualizeKnownClosureCalls</c>
+    /// from a <see cref="CallClosure"/> whose closure came from a <see cref="MakeClosure"/> with this label,
+    /// or by <c>IrOptimizer.DevirtualizeReturnedClosureCalls</c> when the closure temp instead reaches a
+    /// <see cref="CallKnown"/> to a function already proven to always return this same label.</summary>
     /// <param name="Target">Temp receiving the call result.</param>
     /// <param name="FuncLabel">Label of the statically-known callee.</param>
     /// <param name="EnvTemp">Temp holding the environment pointer to pass.</param>

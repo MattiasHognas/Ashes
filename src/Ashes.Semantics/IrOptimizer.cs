@@ -43,6 +43,14 @@ public static class IrOptimizer
         // non-allocation summary below (a scalarized callee is strictly less allocating, never more).
         (optimizedEntry, optimizedFuncs) = ScalarizeSingleCaptureStackClosures(optimizedEntry, optimizedFuncs);
 
+        // Interprocedural: devirtualize a CallClosure whose closure temp reaches a CallKnown to a
+        // function already proven to always return one specific closure label (a curried call's
+        // second and later applications — DevirtualizeKnownClosureCalls above only looks at a
+        // MakeClosure definition, never at what a called function is known to return). Runs after
+        // ScalarizeSingleCaptureStackClosures (its own scalarization target shape is unaffected by
+        // this) and before the non-allocation summary below, so a newly-direct call is visible to it.
+        (optimizedEntry, optimizedFuncs) = DevirtualizeReturnedClosureCalls(optimizedEntry, optimizedFuncs);
+
         // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
         // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
         // dead MakeClosures are already resolved, and needs whole-program non-allocation
@@ -216,6 +224,163 @@ public static class IrOptimizer
             }
             return chainIndices;
         }
+    }
+
+    // Devirtualization past a single-hop reaching definition (OPT-016(b), single-agreeing-label
+    // case only — a 2-4-label lambda-set-specialization dispatch was also proposed for this task
+    // but is not implemented here). DevirtualizeKnownClosureCalls above only recognizes a
+    // MakeClosure/MakeClosureStack definition, so a curried call like `add(10)(32)` never
+    // devirtualizes its second application: add(10)'s result temp is defined by a CallKnown (the
+    // first application, already devirtualized above), not a MakeClosure. This computes, per
+    // function and via a whole-program least fixpoint, whether every Return in a function's body is
+    // provably the exact same closure label — directly from a heap MakeClosure (never
+    // MakeClosureStack: a stack closure's environment lives in its defining function's own frame,
+    // which is gone once that function returns, so treating one as a function's "known returned
+    // label" would let a later caller read a dangling pointer), or transitively through a CallKnown
+    // to another function already proven, earlier in the fixpoint, to always return that same label.
+    // A CallClosure whose closure temp reaches such a CallKnown is then rewritten to an explicit
+    // environment-field extraction (LoadMemOffset at the closure object's fixed env offset, matching
+    // EmitCallClosure's own field layout) plus a direct CallKnown — safe regardless of the closure
+    // object's own ownership/RC treatment, since extracting a field is a plain read that neither
+    // consumes nor extends its lifetime, and it happens at the exact instruction position the
+    // original (consuming) CallClosure occupied, so existing drop placement for the closure temp is
+    // unaffected. Iterates each function to its own local fixpoint so a deeper curry (three or more
+    // arguments) fully resolves, not just its first newly-direct hop.
+    private static (IrFunction Entry, List<IrFunction> Functions) DevirtualizeReturnedClosureCalls(
+        IrFunction entry, List<IrFunction> functions)
+    {
+        Dictionary<string, string> knownReturnedLabel = ComputeKnownReturnedClosureLabels(functions);
+        if (knownReturnedLabel.Count == 0)
+        {
+            return (entry, functions);
+        }
+
+        return (
+            DevirtualizeReturnedClosureCallsInFunction(entry, knownReturnedLabel),
+            functions.Select(f => DevirtualizeReturnedClosureCallsInFunction(f, knownReturnedLabel)).ToList());
+    }
+
+    private static Dictionary<string, string> ComputeKnownReturnedClosureLabels(IReadOnlyList<IrFunction> functions)
+    {
+        var knownLabel = new Dictionary<string, string>(StringComparer.Ordinal);
+        WholeProgramFixpoint.RunToFixpoint(() =>
+        {
+            bool changed = false;
+            foreach (IrFunction f in functions)
+            {
+                if (knownLabel.ContainsKey(f.Label))
+                {
+                    continue;
+                }
+
+                if (TryDetermineKnownReturnedClosureLabel(f, knownLabel) is { } label)
+                {
+                    knownLabel[f.Label] = label;
+                    changed = true;
+                }
+            }
+
+            return changed;
+        });
+
+        return knownLabel;
+    }
+
+    private static string? TryDetermineKnownReturnedClosureLabel(
+        IrFunction function, Dictionary<string, string> knownLabel)
+    {
+        (var defCount, var defIndex, _) = ComputeTempDefUseFacts(function.Instructions);
+        string? result = null;
+        bool sawReturn = false;
+        foreach (IrInst inst in function.Instructions)
+        {
+            if (inst is not IrInst.Return ret)
+            {
+                continue;
+            }
+
+            sawReturn = true;
+            string? returnedLabel = TryGetKnownClosureLabel(ret.Source, function.Instructions, defCount, defIndex, knownLabel);
+            if (returnedLabel is null)
+            {
+                return null;
+            }
+
+            if (result is not null && !string.Equals(result, returnedLabel, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            result = returnedLabel;
+        }
+
+        return sawReturn ? result : null;
+    }
+
+    private static string? TryGetKnownClosureLabel(
+        int sourceTemp,
+        List<IrInst> instructions,
+        Dictionary<int, int> defCount,
+        Dictionary<int, int> defIndex,
+        Dictionary<string, string> knownLabel)
+    {
+        if (defCount.GetValueOrDefault(sourceTemp) != 1 || !defIndex.TryGetValue(sourceTemp, out int index))
+        {
+            return null;
+        }
+
+        return instructions[index] switch
+        {
+            IrInst.MakeClosure mk => mk.FuncLabel,
+            IrInst.CallKnown ck => knownLabel.GetValueOrDefault(ck.FuncLabel),
+            _ => null,
+        };
+    }
+
+    private static IrFunction DevirtualizeReturnedClosureCallsInFunction(
+        IrFunction function, Dictionary<string, string> knownReturnedLabel)
+    {
+        bool changed;
+        do
+        {
+            (function, changed) = DevirtualizeReturnedClosureCallsOnce(function, knownReturnedLabel);
+        }
+        while (changed);
+
+        return function;
+    }
+
+    private static (IrFunction, bool) DevirtualizeReturnedClosureCallsOnce(
+        IrFunction function, Dictionary<string, string> knownReturnedLabel)
+    {
+        (var defCount, var defIndex, _) = ComputeTempDefUseFacts(function.Instructions);
+        List<IrInst> instructions = function.Instructions;
+        var result = new List<IrInst>(instructions.Count);
+        int nextTemp = function.TempCount;
+        bool changed = false;
+
+        foreach (IrInst inst in instructions)
+        {
+            if (inst is IrInst.CallClosure cc
+                && defCount.GetValueOrDefault(cc.ClosureTemp) == 1
+                && defIndex.TryGetValue(cc.ClosureTemp, out int defAt)
+                && instructions[defAt] is IrInst.CallKnown known
+                && knownReturnedLabel.TryGetValue(known.FuncLabel, out string? label))
+            {
+                int envTemp = nextTemp++;
+                result.Add(new IrInst.LoadMemOffset(envTemp, cc.ClosureTemp, 8));
+                result.Add(new IrInst.CallKnown(
+                    cc.Target, label, envTemp, cc.ArgTemp, cc.RuntimeManagedArgumentFlagTemp,
+                    EnvironmentIsStackAllocated: false)
+                { Location = cc.Location });
+                changed = true;
+                continue;
+            }
+
+            result.Add(inst);
+        }
+
+        return changed ? (function with { Instructions = result, TempCount = nextTemp }, true) : (function, false);
     }
 
     // Closure environment scalarization
