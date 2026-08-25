@@ -1188,6 +1188,41 @@ public sealed partial class Lowering
     // shadow check, and the loop's reservation start/end slots.)
     private (string Name, int Slot, int ResvStart, int ResvEnd)? _affineAppendCtx;
 
+    // Local slots bound to a single-use armed affine-append value (a ConcatStrTip result), keyed by
+    // the owning function's origin (slot numbers restart per function, and the TCO reset resolution
+    // replays every function's instructions with facts cleared — see ResolvePendingTcoResets). A
+    // LoadLocal of such a slot inherits the ConcatStrTip producer fact so the tail-call argument is
+    // recognized as the in-place reservation result and the back edge skips the predecessor drop the
+    // append already consumed. Maps to the value temp that produced the binding.
+    private readonly Dictionary<(IrFunctionOrigin? Origin, int Slot), int> _affineAppendResultSlots = [];
+
+    private void RecordAffineAppendLetResultSlot(int slot, int valueTemp)
+    {
+        if (IsRuntimeManagedConcatStrTipResult(valueTemp))
+        {
+            _affineAppendResultSlots[(_activeFunctionOrigin, slot)] = valueTemp;
+        }
+    }
+
+    // Stamps a load of a single-use armed affine-append binding with the bound ConcatStrTip result's
+    // ownership fact: the load IS the in-place-grown accumulator (which already consumed the old
+    // accumulator's reference), so the tail-call machinery must recognize the ConcatStrTip producer
+    // and skip the predecessor drop. Sound only because move analysis proved the binding single-use
+    // before arming (see TryArmAffineAppendForLetValue). Called both at initial lowering and from the
+    // reset-resolution replay (which clears and re-derives every temp fact from the instructions).
+    private bool TryStampAffineAppendLoad(int loadTemp, int slot)
+    {
+        if (_affineAppendResultSlots.TryGetValue((_activeFunctionOrigin, slot), out int tipValueTemp)
+            && _tempOwnershipFacts.TryGetValue(tipValueTemp, out LoweredTempOwnershipFact? tipFact)
+            && tipFact.Producer == LoweredTempProducerKind.ConcatStrTip)
+        {
+            _tempOwnershipFacts[loadTemp] = tipFact;
+            return true;
+        }
+
+        return false;
+    }
+
     // Slack added to the amortized-compaction threshold (growth > 2*live + slack): small loops with
     // tiny live sizes still batch a few KB of garbage per compaction instead of copying every
     // iteration, and loops whose live size is zero compact only once slack accumulates.
@@ -1612,9 +1647,36 @@ public sealed partial class Lowering
     }
 
     private bool IsRuntimeManagedConcatStrTipResult(int temp)
-        => _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
-            && fact.Representation == LoweredTempRepresentation.RuntimeRc
-            && fact.Producer == LoweredTempProducerKind.ConcatStrTip;
+    {
+        // A Borrow or RcDup of the tip result names/retains the same in-place-grown object, and the
+        // tip append still consumed the predecessor's reference, so follow those chains (bounded) —
+        // the let-bound accumulator form reaches the back edge as an RcDup of a Borrow of the load.
+        for (int hops = 0; hops < 8; hops++)
+        {
+            if (!_tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+                || fact.Representation != LoweredTempRepresentation.RuntimeRc)
+            {
+                return false;
+            }
+
+            if (fact.Producer == LoweredTempProducerKind.ConcatStrTip)
+            {
+                return true;
+            }
+
+            if (fact.Producer is LoweredTempProducerKind.RcDup or LoweredTempProducerKind.Borrow
+                && fact.SourceTemp is int source
+                && source != temp)
+            {
+                temp = source;
+                continue;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
 
     private int TcoBackEdgeNormalizeRuntimeManagedArg(
         int sourceTemp,
@@ -2923,6 +2985,11 @@ public sealed partial class Lowering
     private void LoadLocalWithBytesProvenance(int temp, Binding.Local local, Expr.Var variable)
     {
         Emit(new IrInst.LoadLocal(temp, local.Slot));
+        if (TryStampAffineAppendLoad(temp, local.Slot))
+        {
+            return;
+        }
+
         RecordUnknownBorrowedTemp(
             temp,
             ResolveSourceLocation(AstSpans.GetOrDefault(variable)),
@@ -3086,7 +3153,8 @@ public sealed partial class Lowering
         SequentialBindingKind Kind,
         string Name,
         bool PopInlinableShadow,
-        bool RemoveCoroutineHelperMarker);
+        bool RemoveCoroutineHelperMarker,
+        bool SuppressArenaReclaim = false);
 
     private (int, TypeRef) LowerLet(Expr.Let let, LoweredValueRequest request) =>
         LowerSequentialBindingChain(let, request);
@@ -3126,7 +3194,7 @@ public sealed partial class Lowering
                 _coroutineHelperArity.Remove(frame.Name);
             }
             result = frame.Kind == SequentialBindingKind.Ordinary
-                ? PopLetScope(result.Temp, result.Type)
+                ? PopLetScope(result.Temp, result.Type, frame.SuppressArenaReclaim)
                 : PopRecursiveLetScope(result);
         }
         return result;
@@ -3145,6 +3213,13 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
+        // A single-use `let acc2 = acc + rhs in ...` affine string accumulator (proven by move
+        // analysis, see TryArmAffineAppendForLetValue): arm the in-place ConcatStrTip path for the
+        // value, and keep the grown reservation out of this let scope's arena bracket — it is the
+        // loop accumulator and is reclaimed by the TCO back-edge reset, not at this scope's exit.
+        (string Name, int Slot, int ResvStart, int ResvEnd)? affineArm =
+            TryArmAffineAppendForLetValue(let);
+
         // Save the arena watermark before the bound value so allocations from
         // both value and body belong to this let scope.
         EmitArenaWatermark();
@@ -3152,9 +3227,10 @@ public sealed partial class Lowering
         int depth0Before = _depth0LambdaCount;
 
         PushTraitConstraintScope();
-        (int valueTemp, TypeRef valueType) value = LowerTraitValidationAwareLetValue(
+        (int valueTemp, TypeRef valueType) value = LowerSequentialLetValueWithAffineArming(
             let,
             request.WithoutExpectedType() with { TransfersRuntimeManagedChildren = false },
+            affineArm,
             out IReadOnlyList<TraitConstraint> writtenRequirements);
         IReadOnlyList<TraitConstraint> inferredRequirements = PopTraitConstraintScope(
             out bool needsLateTraitTypeHint);
@@ -3163,6 +3239,10 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(slot, value.valueTemp));
         RecordLocalBytesProvenance(slot, value.valueTemp);
         RecordLocalDebugInfo(slot, let.Name, value.valueType);
+        if (affineArm is not null)
+        {
+            RecordAffineAppendLetResultSlot(slot, value.valueTemp);
+        }
         // Record the binding value so a later tail call `loop(<this name>)` can prove the accumulator
         // address-stable by tracing it back through this let into the value's match/if leaves.
         _letBindingValues[slot] = let.Value;
@@ -3180,20 +3260,13 @@ public sealed partial class Lowering
         TrackLetOwnership(let, slot, value.valueTemp, value.valueType);
 
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = savedTailPos;
-        // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
-        // top-level definition itself (same lambda we registered) must stay inlinable in its own body.
-        bool isOwnDefinition = (let.Value is Expr.Lambda defLam
-                && _inlinableFunctions.TryGetValue(let.Name, out var reg)
-                && ReferenceEquals(reg.Body, GetInnermostBody(defLam)))
-            // Stitched stdlib helpers have an alias-wrapped value (a `let`-chain, not a bare lambda),
-            // so match the defining let by the value object identity recorded at registration.
-            || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
-        bool shadowed = !isOwnDefinition && PushInlinableShadow(let.Name);
+        bool shadowed = PushSequentialLetInlinableShadow(let);
         return new SequentialBindingFrame(
             SequentialBindingKind.Ordinary,
             let.Name,
             shadowed,
-            RemoveCoroutineHelperMarker: false);
+            RemoveCoroutineHelperMarker: false,
+            SuppressArenaReclaim: affineArm is not null);
     }
 
     private TypeScheme FinalizeLetTraitScheme(
@@ -5196,8 +5269,21 @@ public sealed partial class Lowering
             && fact.Representation == LoweredTempRepresentation.RuntimeRc;
     }
 
-    private (int Temp, TypeRef Type) PopLetScope(int bodyTemp, TypeRef bodyType)
+    private (int Temp, TypeRef Type) PopLetScope(
+        int bodyTemp,
+        TypeRef bodyType,
+        bool suppressArenaReclaim = false)
     {
+        // An armed affine-append let never reclaims its scope: the bound value is the in-place loop
+        // accumulator (reservation), released by the TCO back-edge reset, and its body is the tail
+        // call itself, so there is no copy-out result to preserve.
+        if (suppressArenaReclaim)
+        {
+            PopOwnershipScope(bodyType, bodyTemp, suppressArenaReclaim: true);
+            _scopes.Pop();
+            return (bodyTemp, bodyType);
+        }
+
         // Preserve the result only when the scope has drops that could otherwise
         // invalidate or overwrite the temp holding the body result.
         if (!_collectInferredTraitElaboration && HasAliveOwnedValuesInCurrentScope())
@@ -9325,6 +9411,82 @@ public sealed partial class Lowering
         {
             _affineAppendCtx = (tco.ParamNames[index], tco.ParamSlots[index], resvSlots.Start, resvSlots.End);
         }
+    }
+
+    // A let only *shadows* an inlinable helper if it rebinds the name to a different value. The
+    // top-level definition itself (same lambda we registered) must stay inlinable in its own body.
+    private bool PushSequentialLetInlinableShadow(Expr.Let let)
+    {
+        bool isOwnDefinition = (let.Value is Expr.Lambda defLam
+                && _inlinableFunctions.TryGetValue(let.Name, out var reg)
+                && ReferenceEquals(reg.Body, GetInnermostBody(defLam)))
+            // Stitched stdlib helpers have an alias-wrapped value (a `let`-chain, not a bare lambda),
+            // so match the defining let by the value object identity recorded at registration.
+            || (_inlinableDefiningValues.TryGetValue(let.Name, out var defValue) && ReferenceEquals(defValue, let.Value));
+        return !isOwnDefinition && PushInlinableShadow(let.Name);
+    }
+
+    // Lowers a sequential let's bound value, installing the affine-append arming context around it when
+    // this let was recognized as a single-use affine accumulator so LowerAdd emits the in-place
+    // ConcatStrTip; restores the prior context afterward.
+    private (int Temp, TypeRef Type) LowerSequentialLetValueWithAffineArming(
+        Expr.Let let,
+        LoweredValueRequest request,
+        (string Name, int Slot, int ResvStart, int ResvEnd)? affineArm,
+        out IReadOnlyList<TraitConstraint> writtenRequirements)
+    {
+        (string Name, int Slot, int ResvStart, int ResvEnd)? savedAffineCtx = _affineAppendCtx;
+        if (affineArm is { } armCtx)
+        {
+            _affineAppendCtx = armCtx;
+        }
+
+        (int Temp, TypeRef Type) value = LowerTraitValidationAwareLetValue(
+            let,
+            request,
+            out writtenRequirements);
+        _affineAppendCtx = savedAffineCtx;
+        return value;
+    }
+
+    // A `let acc2 = acc + rhs in ...` accumulator append is lowered at the let value, before the tail
+    // call whose argument is the already-computed `acc2`, so `_affineAppendCtx` is armed here rather
+    // than at the tail-call argument. Move analysis has already proven `acc` AffineSelfAppendOnly
+    // through this single-use alias (ComputeAffineSelfAppendOrdinals's AppendAliases handling), which
+    // also guarantees `acc2` is used exactly once — the property the in-place reservation relies on.
+    // Returns the arming context to install around the value, or null to leave the copying path.
+    private (string Name, int Slot, int ResvStart, int ResvEnd)? TryArmAffineAppendForLetValue(Expr.Let let)
+    {
+        if (_tcoCtx is not { } tco || tco.FixedCursorSlot < 0 || let.Value is not Expr.Add)
+        {
+            return null;
+        }
+
+        Expr chainLeaf = let.Value;
+        while (chainLeaf is Expr.Add chainAdd)
+        {
+            chainLeaf = chainAdd.Left;
+        }
+
+        if (chainLeaf is not Expr.Var affineVar || Lookup(affineVar.Name) is not Binding.Local leafLocal)
+        {
+            return null;
+        }
+
+        for (int index = 0; index < tco.ParamNames.Count && index < tco.ParamSlots.Count; index++)
+        {
+            int paramSlot = tco.ParamSlots[index];
+            if (paramSlot == leafLocal.Slot
+                && string.Equals(affineVar.Name, tco.ParamNames[index], StringComparison.Ordinal)
+                && tco.ParamFacts.TryGetValue(paramSlot, out TcoParamStaticFacts? facts)
+                && facts.AffineSelfAppendOnly
+                && tco.AffineResvSlots.TryGetValue(paramSlot, out var resvSlots))
+            {
+                return (tco.ParamNames[index], paramSlot, resvSlots.Start, resvSlots.End);
+            }
+        }
+
+        return null;
     }
 
     // Gather the AST/scope-dependent facts about each argument NOW (they need the

@@ -1604,10 +1604,16 @@ public sealed partial class Lowering
     /// <param name="resultType">The scope result type, used to decide arena action.</param>
     /// <param name="resultTemp">The IR temp holding the scope result (pointer or value).
     ///   Pass -1 if the result temp is unavailable or irrelevant.</param>
+    /// <param name="suppressArenaReclaim">When true, pop the scope and emit its drops but perform no
+    ///   scope-exit arena reset or copy-out — used by an armed affine-append let whose bound value's
+    ///   reservation is reclaimed by the enclosing loop's back-edge reset instead.</param>
     /// <returns>The IR temp to use as the scope result after cleanup.
     ///   For copy-out, this is a newly allocated temp that differs from
     ///   <paramref name="resultTemp"/>. Otherwise it equals <paramref name="resultTemp"/>.</returns>
-    private int PopOwnershipScope(TypeRef? resultType = null, int resultTemp = -1)
+    private int PopOwnershipScope(
+        TypeRef? resultType = null,
+        int resultTemp = -1,
+        bool suppressArenaReclaim = false)
     {
         if (_collectInferredTraitElaboration)
         {
@@ -1621,6 +1627,14 @@ public sealed partial class Lowering
         EmitDropsForCurrentScope();
 
         var (cursorSlot, endSlot) = _arenaWatermarks.Pop();
+
+        if (suppressArenaReclaim)
+        {
+            // The armed affine-append let shares the enclosing loop's arena watermark for its bound
+            // value's reservation; the TCO back-edge reset reclaims it. No scope-exit arena action.
+            PopTrackedOwnershipScope();
+            return resultTemp;
+        }
 
         if (resultType is not null)
         {

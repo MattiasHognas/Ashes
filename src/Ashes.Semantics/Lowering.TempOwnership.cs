@@ -290,6 +290,12 @@ public sealed partial class Lowering
                     LoweredTempOwnershipReason.BorrowForward,
                     instruction.Location);
                 break;
+            case IrInst.LoadLocal load:
+                // A load of a single-use armed affine-append binding carries the bound ConcatStrTip
+                // result's fact — recorded here so the reset-resolution replay (which re-derives
+                // facts from instructions alone) re-establishes it. No-op for every other slot.
+                TryStampAffineAppendLoad(load.Target, load.Slot);
+                break;
         }
     }
 
