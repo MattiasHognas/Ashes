@@ -639,7 +639,13 @@ public sealed partial class Lowering
     // normalized = makeNode(...)) reuses the same cell rather than allocating a fresh one.
     private readonly HashSet<int> _reuseResultTemps = new();
 
-    private readonly Stack<List<bool>?> _runtimeManagedMatchResultArms = new();
+    // Per-arm result-ownership facts for the innermost match being lowered: whether the arm's result
+    // is runtime-RC at all, and whether it is a fresh, unowned RC value (no live binding drops it) —
+    // the second bit lets the merged match result stay releasable by a consuming read when EVERY arm
+    // produced a fresh value (see RecordControlFlowJoinTemp).
+    private readonly record struct MatchArmResultOwnership(bool RuntimeManaged, bool NewlyProduced);
+
+    private readonly Stack<List<MatchArmResultOwnership>?> _runtimeManagedMatchResultArms = new();
     // Accumulator names made uniquely-owned at loop entry (deep-copied) specifically so a call
     // f(acc) to a specializable function can be rewritten to f$reuse(acc). Distinct from
     // _linearReuseNames, which marks accumulators matched directly in the loop body.
@@ -6054,7 +6060,11 @@ public sealed partial class Lowering
     {
         bool runtimeManaged =
             IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp);
-        RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged);
+        RecordControlFlowJoinTemp(
+            resultTemp,
+            resultType,
+            runtimeManaged,
+            IsNewlyProducedRcTemp(leftTemp) && IsNewlyProducedRcTemp(rightTemp));
     }
 
     private (int, TypeRef) LowerLambda(

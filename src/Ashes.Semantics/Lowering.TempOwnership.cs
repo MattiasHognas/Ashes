@@ -489,10 +489,15 @@ public sealed partial class Lowering
 
     private void RecordFrameRestoreTemp(int target, int source, TypeRef type)
     {
+        // A let-scope result reload names the same value the scope's body produced — a fresh, unowned
+        // RC result (a call result no binding owns) is still fresh and unowned after the reload, and
+        // keeping NewlyProduced lets a consuming read (concat operand, byte-length, print) release it.
         PropagateTempOwnership(
             target,
             source,
-            LoweredTempOwnershipKind.Transferred,
+            IsNewlyProducedRcTemp(source)
+                ? LoweredTempOwnershipKind.NewlyProduced
+                : LoweredTempOwnershipKind.Transferred,
             LoweredTempOwnershipReason.FrameRestore,
             location: null);
         RefineTempOwnershipType(target, type);
@@ -600,8 +605,14 @@ public sealed partial class Lowering
     private void RecordControlFlowJoinTemp(
         int temp,
         TypeRef resultType,
-        bool runtimeManaged)
+        bool runtimeManaged,
+        bool allBranchesNewlyProduced = false)
     {
+        // A join whose every branch produced a fresh, unowned RC value yields a value that is itself
+        // fresh and unowned — keeping NewlyProduced lets a consuming read (concat operand, byte-length,
+        // print) release it, exactly as it would release each branch's value had there been no join.
+        // One borrowed or unknown branch poisons this: the merged value may then be a live binding's,
+        // and releasing it would free memory still in use.
         RecordTempOwnership(
             temp,
             runtimeManaged
@@ -614,11 +625,20 @@ public sealed partial class Lowering
             runtimeManaged
                 ? LoweredTempDropKind.RuntimeRcHeader
                 : LoweredTempDropKind.Unknown,
-            LoweredTempOwnershipKind.Transferred,
+            runtimeManaged && allBranchesNewlyProduced
+                ? LoweredTempOwnershipKind.NewlyProduced
+                : LoweredTempOwnershipKind.Transferred,
             LoweredTempProducerKind.ControlFlowJoin,
             location: null,
             LoweredTempOwnershipReason.ControlFlowJoin);
     }
+
+    // Whether this temp is a fresh, unowned reference-counted value (no live binding owns it) — the
+    // shape a consuming read may release. A borrowed temp names a value some owner still drops.
+    private bool IsNewlyProducedRcTemp(int temp) =>
+        _tempOwnershipFacts.TryGetValue(temp, out LoweredTempOwnershipFact? fact)
+            && fact.Representation == LoweredTempRepresentation.RuntimeRc
+            && fact.Ownership == LoweredTempOwnershipKind.NewlyProduced;
 
     private void RefineTempOwnershipType(int temp, TypeRef type)
     {

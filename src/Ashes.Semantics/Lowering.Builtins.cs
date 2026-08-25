@@ -28,6 +28,8 @@ public sealed partial class Lowering
         {
             _usesPrintStr = true;
             Emit(new IrInst.PrintStr(vTemp));
+            // The string is fully written; release a newly produced RC argument nothing owns.
+            ReleaseConsumedOwnedOperand(vTemp);
             return LowerUnitValue();
         }
 
@@ -75,6 +77,8 @@ public sealed partial class Lowering
             Emit(new IrInst.WriteStr(valueTemp));
         }
 
+        // The string is fully written; release a newly produced RC argument nothing owns.
+        ReleaseConsumedOwnedOperand(valueTemp);
         return LowerUnitValue();
     }
 
@@ -118,6 +122,8 @@ public sealed partial class Lowering
 
         Unify(loweredType, new TypeRef.TStr());
         Emit(new IrInst.WriteErrorStr(valueTemp, appendNewline));
+        // The string is fully written; release a newly produced RC argument nothing owns.
+        ReleaseConsumedOwnedOperand(valueTemp);
         return LowerUnitValue();
     }
 
@@ -5663,6 +5669,9 @@ public sealed partial class Lowering
 
         var target = NewTemp();
         Emit(new IrInst.TextByteLength(target, textTemp));
+        // The argument is fully read; a newly produced RC string (e.g. a closure call's normalized
+        // result) has no owner to drop it and would otherwise leak one cell per evaluation.
+        ReleaseConsumedOwnedOperand(textTemp);
         return (target, new TypeRef.TInt());
     }
 

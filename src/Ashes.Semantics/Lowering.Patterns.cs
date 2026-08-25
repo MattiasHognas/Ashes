@@ -47,7 +47,7 @@ public sealed partial class Lowering
             GetMatchReuseScrutinee(match, valueType, savedTailPos);
         bool normalizeStaticStringArms = ShouldNormalizeStaticStringMatchArms(match.Cases);
 
-        List<bool>? runtimeManagedResultArms = LowerMatchArms(
+        List<MatchArmResultOwnership>? runtimeManagedResultArms = LowerMatchArms(
             match, valueTemp, valueType, resultType, resultSlot,
             endLabel,
             noMatchLabel,
@@ -89,7 +89,7 @@ public sealed partial class Lowering
     private (int Temp, TypeRef Type) CompleteMatchResult(
         int resultTemp,
         TypeRef resultType,
-        IReadOnlyList<bool>? runtimeManagedResultArms,
+        IReadOnlyList<MatchArmResultOwnership>? runtimeManagedResultArms,
         IReadOnlyList<MatchCase> cases)
     {
         TypeRef prunedResultType = Prune(resultType);
@@ -104,15 +104,20 @@ public sealed partial class Lowering
     private void MarkRuntimeManagedMatchResult(
         int resultTemp,
         TypeRef resultType,
-        IReadOnlyList<bool>? runtimeManagedResultArms,
+        IReadOnlyList<MatchArmResultOwnership>? runtimeManagedResultArms,
         IReadOnlyList<MatchCase> cases)
     {
         bool runtimeManaged = runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
-            && runtimeManagedResultArms.Select((runtimeManaged, index) =>
-                runtimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body))
+            && runtimeManagedResultArms.Select((arm, index) =>
+                arm.RuntimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body))
                 .All(value => value);
-        RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged);
+        // An arm returning a runtime-managed TCO parameter is RC but OWNED (the parameter's own drop
+        // machinery releases it), so it must not count toward the all-fresh join property.
+        bool allNewlyProduced = runtimeManagedResultArms is not null
+            && runtimeManagedResultArms.Count == cases.Count
+            && runtimeManagedResultArms.All(arm => arm.NewlyProduced);
+        RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged, allNewlyProduced);
     }
 
     private bool MatchArmReturnsRuntimeManagedTcoParam(Expr body)
@@ -128,7 +133,7 @@ public sealed partial class Lowering
             && IsRuntimeManagedTcoParamSlot(local);
     }
 
-    private List<bool>? LowerMatchArms(
+    private List<MatchArmResultOwnership>? LowerMatchArms(
         Expr.Match match,
         int valueTemp,
         TypeRef valueType,
@@ -142,7 +147,7 @@ public sealed partial class Lowering
         bool normalizeStaticStringArms,
         LoweredValueRequest request)
     {
-        List<bool>? runtimeManagedResultArms = [];
+        List<MatchArmResultOwnership>? runtimeManagedResultArms = [];
         _runtimeManagedMatchResultArms.Push(runtimeManagedResultArms);
         if (TryPlanTagSwitch(match.Cases, out var switchPlan))
         {
@@ -703,10 +708,12 @@ public sealed partial class Lowering
             // Copy-out occurred: update the result slot with the freshly allocated copy.
             Emit(new IrInst.StoreLocal(resultSlot, armFinalTemp));
         }
-        if (_runtimeManagedMatchResultArms.TryPeek(out List<bool>? runtimeManagedArms)
+        if (_runtimeManagedMatchResultArms.TryPeek(out List<MatchArmResultOwnership>? runtimeManagedArms)
             && runtimeManagedArms is not null)
         {
-            runtimeManagedArms.Add(IsRuntimeManagedResultTemp(armFinalTemp));
+            runtimeManagedArms.Add(new MatchArmResultOwnership(
+                IsRuntimeManagedResultTemp(armFinalTemp),
+                IsNewlyProducedRcTemp(armFinalTemp)));
         }
         Emit(new IrInst.Jump(endLabel));
     }

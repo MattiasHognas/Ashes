@@ -2673,6 +2673,95 @@ public sealed class LinuxBackendCoverageTests
             """;
 
     [Test]
+    public async Task Linux_backend_llvm_read_builtin_consumed_call_result_memory_should_plateau()
+    {
+        // A read-only builtin (byte-length, print, write) fully consumes its argument, so a
+        // reference-counted call result nothing owns is dead once the read completes. A nested
+        // let-bound helper's call survives inlining as a real closure call whose conditionally
+        // RC-normalized result reaches the read with no owner — abandoning it there leaked one
+        // string per evaluation. The merged-through-a-join and reloaded-past-a-let-scope variants
+        // exercise the NewlyProduced fact surviving control-flow joins and frame restores; without
+        // that survival the release declines and the same leak returns one layer up.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> direct = await MeasureLowFloorMemoryGrowthAsync(
+            BuildReadBuiltinNestedHelperResultMemoryProgram,
+            outputPerIteration: ReadBuiltinLeakPayloadBytes).ConfigureAwait(false);
+        List<MemoryExecutionResult> matchJoined = await MeasureLowFloorMemoryGrowthAsync(
+            BuildReadBuiltinMatchJoinedResultMemoryProgram,
+            outputPerIteration: ReadBuiltinLeakPayloadBytes).ConfigureAwait(false);
+        List<MemoryExecutionResult> letScopeReloaded = await MeasureLowFloorMemoryGrowthAsync(
+            BuildReadBuiltinLetScopeReloadedResultMemoryProgram,
+            outputPerIteration: ReadBuiltinLeakPayloadBytes).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("read-builtin nested-helper result", direct, growthBudgetKb: 512);
+        AssertMemoryPlateaus("read-builtin match-joined result", matchJoined, growthBudgetKb: 512);
+        AssertMemoryPlateaus("read-builtin let-scope-reloaded result", letScopeReloaded, growthBudgetKb: 512);
+    }
+
+    // Each leaked string carries a ~1 KB payload so that a per-iteration leak clears both the RC
+    // allocator's chunk granularity and the growth budget within the harness's fixed 2k/10k/50k
+    // iteration counts — at the original 2-byte payload, 48k leaked cells (~1.5 MB) hid inside
+    // already-mapped allocator chunks and the plateau assertion could not see them.
+    private const int ReadBuiltinLeakPayloadBytes = 1026;
+
+    private static readonly string ReadBuiltinLeakPad = new('x', ReadBuiltinLeakPayloadBytes - 2);
+
+    // The helper closure lives in the loop body, so its call is a real closure call whose string
+    // result is conditionally RC-normalized and reaches byte-length with no owner. Every helper
+    // argument below derives from the loop counter — a constant argument would let compile-time
+    // evaluation fold the whole byte-length chain to a scalar, deleting the very call under test.
+    private static string BuildReadBuiltinNestedHelperResultMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let f = given k -> Ashes.Text.fromInt(k) + "!{{ReadBuiltinLeakPad}}"
+                    in loop(n - 1)(total + Ashes.Text.byteLength(f(n - (n / 2) * 2 + 7)))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // The two call results merge through a match join before the read; every arm is a fresh RC
+    // value, so the joined value must stay releasable.
+    private static string BuildReadBuiltinMatchJoinedResultMemoryProgram(int iterations)
+        => $$"""
+            let recursive loop n total =
+                if n <= 0 then total
+                else
+                    let f = given k -> Ashes.Text.fromInt(k) + "!{{ReadBuiltinLeakPad}}"
+                    in
+                        let v =
+                            match n - (n / 2) * 2 with
+                                | 0 -> f(n - (n / 2) * 2 + 7)
+                                | _ -> f(n - (n / 2) * 2 + 8)
+                        in loop(n - 1)(total + Ashes.Text.byteLength(v))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    // The helper lives inside a callee whose body is a let chain over if joins, so the result is
+    // reloaded past the let scope's own drops (a frame restore) before the read consumes it.
+    private static string BuildReadBuiltinLetScopeReloadedResultMemoryProgram(int iterations)
+        => $$"""
+            let classify k =
+                let f = given j -> Ashes.Text.fromInt(j) + "!{{ReadBuiltinLeakPad}}"
+                in
+                    if k < 0 then f(k - 1)
+                    else if k == 0 then f(k + 1)
+                    else f(k + 2)
+
+            let recursive loop n total =
+                if n <= 0 then total
+                else loop(n - 1)(total + Ashes.Text.byteLength(classify(n - (n / 2) * 2)))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    [Test]
     public async Task Linux_backend_llvm_runtime_rc_higher_order_list_result_memory_should_plateau()
     {
         if (!OperatingSystem.IsLinux())
