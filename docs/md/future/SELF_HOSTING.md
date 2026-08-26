@@ -400,13 +400,17 @@ same public behavior.
   rebuilds branch-reference counts inside unreachable-code elimination so a label with no remaining
   reference inside an unreachable region is dropped together with its body; covered by
   `selfhost/tests/semantics/IrOptimizerTests.ash`.
-- [ ] Re-run ownership-copy elision after identity elimination/strength reduction within the same
+- [x] Re-run ownership-copy elision after identity elimination/strength reduction within the same
   optimization invocation: identity reduction (`x+0`, `0+x`, `x-0` -> `x`) rewrites the identity into a
   copy instruction rather than retargeting downstream uses directly, and — because a single-pass pipeline
   runs each stage once — that new copy is never revisited by the copy-elision stage that already ran
   earlier and would otherwise erase it (an erasable copy is one whose source is a constant producer, or
   whose target has exactly one remaining use). Ownership-copy elision must be a pure function of its
   input (recomputing its use-def facts fresh each call) for a second call to be safe and effective.
+  Pure Ashes now runs `elideTrivialOwnershipCopies` a second time directly on the output of
+  `reduceIdentitiesAndStrength` (its copy-type producers and use counts are recomputed on every call,
+  so the second run needs no shared state), erasing the `Borrow` copies the identity rewrites
+  introduce; covered by `selfhost/tests/semantics/IrOptimizerTests.ash`.
 - [ ] Extend closure devirtualization (`CallClosure -> CallKnown`) past a single `MakeClosure`
   definition: a curried call's second and later applications (`add(10)(32)`) never devirtualize
   today because the closure temp being called is defined by a `CallKnown` (the first application),

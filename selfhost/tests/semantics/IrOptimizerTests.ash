@@ -756,6 +756,40 @@ let testLoopHeaderClearsFacts unit =
             else test.fail("testLoopHeaderClearsFacts: the loop body add was folded")
         else test.fail("testLoopHeaderClearsFacts: a label with an unobserved back edge must clear every fact"))
 
+let recursive hasBorrow instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Borrow(_, _) } :: _ -> true
+        | _ :: tail -> hasBorrow(tail)
+
+let testIdentityCopyErasedAfterReduction unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                0
+                |> LoadLocal(0)
+                |> makeInstruction,
+                0
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                1
+                |> AddInt(2)(0)
+                |> makeInstruction,
+                makeInstruction(Return(2))
+            ]
+        )(
+            1
+        )(
+            3
+        )
+    in
+        if hasAddInt(optimized)
+        then test.fail("testIdentityCopyErasedAfterReduction: x + 0 must reduce to a copy")
+        else
+            if hasBorrow(optimized)
+            then test.fail("testIdentityCopyErasedAfterReduction: the copy introduced by identity reduction must be erased by the second elision")
+            else Unit)
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -769,6 +803,7 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testKnownFalseBranchBecomesJump(Unit))
     |> (given (_) -> testKnownSwitchTagBecomesJump(Unit))
     |> (given (_) -> testUnreferencedLabelInUnreachableRegionIsDropped(Unit))
+    |> (given (_) -> testIdentityCopyErasedAfterReduction(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
