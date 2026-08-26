@@ -215,6 +215,99 @@ public sealed partial class Lowering
     }
 
     /// <summary>
+    /// Retains a child that an aggregate stores and will own or carry out of the scopes that own it:
+    /// first as a transferred runtime-managed owned binding, otherwise as a runtime-managed loop
+    /// parameter, which is not an ownership-scope entry (the loop's back edge and exit release it) and
+    /// so never enters <see cref="DuplicateRuntimeManagedOwnedValueForTransfer"/>.
+    /// </summary>
+    private int RetainRuntimeManagedAggregateChild(Expr element, int elementTemp, TypeRef elementType)
+    {
+        int retainedTemp = DuplicateRuntimeManagedOwnedValueForTransfer(element, elementTemp, elementType);
+        return retainedTemp != elementTemp
+            ? retainedTemp
+            : DuplicateRuntimeManagedTcoParameterForAggregate(element, elementTemp, elementType);
+    }
+
+    /// <summary>
+    /// A loop-parameter child retained into an aggregate before the parameter's final placement is
+    /// known: the marker is upgraded to a runtime-managed duplicate at TCO finalization when the
+    /// parameter's placement is runtime-RC, and stays an erased copy otherwise.
+    /// </summary>
+    private readonly record struct TcoParameterAggregateRetain(TcoContext Tco, int DupTemp, int Slot, TypeRef Type);
+
+    private readonly List<TcoParameterAggregateRetain> _tcoParameterAggregateRetains = [];
+
+    // A loop parameter's placement (arena or runtime-RC) is decided after its body is lowered, so
+    // the retain is an RcDup marker recorded for FinalizeTcoParameterAggregateRetains. Never inside
+    // a tail self-call's arguments: the back edge moves the old parameter's reference into the
+    // successor it builds there, so a retain would leave one reference per iteration unreleased.
+    private int DuplicateRuntimeManagedTcoParameterForAggregate(Expr element, int elementTemp, TypeRef elementType)
+    {
+        if (_loweringTcoBackEdgeArguments
+            || _tcoCtx is not { } tco
+            || element is not Expr.Var variable
+            || Lookup(variable.Name) is not Binding.Local local
+            || !tco.ParamSlots.Contains(local.Slot)
+            || LookupOwnedValue(variable.Name) is { PerceusPatternOwner: true })
+        {
+            return elementTemp;
+        }
+
+        int duplicatedTemp = NewTemp();
+        if (IsRuntimeManagedTcoParamSlot(local))
+        {
+            Emit(new IrInst.RcDup(
+                duplicatedTemp,
+                elementTemp,
+                RuntimeManaged: true,
+                MayBeEmpty: MayUseEmptyListRepresentation(Prune(elementType))));
+            MarkRuntimeManagedTemp(duplicatedTemp);
+            return duplicatedTemp;
+        }
+
+        Emit(new IrInst.RcDup(duplicatedTemp, elementTemp));
+        _tcoParameterAggregateRetains.Add(new TcoParameterAggregateRetain(tco, duplicatedTemp, local.Slot, elementType));
+        return duplicatedTemp;
+    }
+
+    private void FinalizeTcoParameterAggregateRetains(TcoContext? tco)
+    {
+        if (tco is null)
+        {
+            return;
+        }
+
+        for (int index = _tcoParameterAggregateRetains.Count - 1; index >= 0; index--)
+        {
+            TcoParameterAggregateRetain retain = _tcoParameterAggregateRetains[index];
+            if (!ReferenceEquals(retain.Tco, tco))
+            {
+                continue;
+            }
+
+            _tcoParameterAggregateRetains.RemoveAt(index);
+            if (!tco.IsRuntimeManagedSlot(retain.Slot))
+            {
+                continue;
+            }
+
+            for (int instIndex = 0; instIndex < _inst.Count; instIndex++)
+            {
+                if (_inst[instIndex] is IrInst.RcDup { RuntimeManaged: false } marker && marker.Target == retain.DupTemp)
+                {
+                    _inst[instIndex] = marker with
+                    {
+                        RuntimeManaged = true,
+                        MayBeEmpty = MayUseEmptyListRepresentation(Prune(retain.Type)),
+                    };
+                    MarkRuntimeManagedTemp(retain.DupTemp);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Resolves an ownership alias chain to the original owner name.
     /// If the name is not an alias, returns itself.
     /// </summary>
