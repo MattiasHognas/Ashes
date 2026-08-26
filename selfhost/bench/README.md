@@ -63,6 +63,23 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-08-26, after the parser-state change
+
+The parse row was one mechanism: the parser state tuple is rebuilt on every token, it stays an
+arena shell because `List(Token)` is not admitted to RC placement, and stage 0 deep-copies every
+`Str` element of an escaping arena tuple — the whole source per token. Carrying the source as its
+`Bytes` view (which that path leaves alone) takes `parseProgram` on `TypeInference.ash` from
+382 ms to 29 ms and the corpus row from 21x to 2.9x. Lex is now the largest real ratio.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 16 | 822 | 32 | 821 | 2.00x | 1 file crashed and was excluded |
+| lex | 39 | 360789 | 298 | 360757 | 7.64x | 1 file crashed and was excluded |
+| parse | 152 | 807 | 441 | 801 | 2.90x | 1 file crashed and was excluded |
+| format | 102 | 2346813 | 56 | 1493607 | 0.55x | 23 files crashed and were excluded |
+| infer (stage 1) vs infer+lower (stage 0) | 1198 | 376 | 7 | 35 | 0.01x | 1 file crashed and was excluded |
+| optimize IR (stage 0 only) | 279 | 1176 | - | - | - | |
+
 ### 2026-08-26, after the `Ashes.Text.split` rewrite
 
 The first run's header row was almost entirely the stdlib `split`: its nested recursive closure
