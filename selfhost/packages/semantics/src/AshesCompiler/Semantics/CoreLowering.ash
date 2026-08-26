@@ -2156,13 +2156,197 @@ let lowerMatchArmsViaTagGroups cases (groups: List(CoreTagGroup)) (defaultIndex:
                                     |> lowerTagGroups(cases)(groups)(groupLabels)(defaultLabel)(lower)
                                     |> lowerDefaultTagGroupArm(cases)(defaultIndex)(defaultLabel)(lower)
 
-let lowerMatchArmsDispatch cases lower (plan: CoreMatchPlan) =
+// Dead-arm trimming. A trailing run of arms after a prefix that already matches every value is
+// unreachable and is dropped before any arm is lowered. The verdict is only trusted for pattern
+// shapes whose coverage reduces to a constructor set, a bool pair, or the two list shapes: a
+// catch-all, a bool literal, the empty list, or a cons/tuple/constructor whose every child is a
+// catch-all. Anything else (a literal, a record sub-pattern, a nested constructor) stops the
+// prefix from growing, since a per-field coverage engine is a deliberate under-approximation of
+// what is missing - right for a diagnostic, wrong as a proof that an arm can never run.
+let recursive trimCatchAllChildren state patterns =
+    match patterns with
+        | [] -> true
+        | pattern :: rest ->
+            if isCatchAllPattern(state)(pattern)
+            then trimCatchAllChildren(state)(rest)
+            else false
+
+let recursive isExactCoveragePattern state pattern =
+    match unwrapPatternAt(pattern) with
+        | PatternWildcard -> true
+        | PatternVar(_name) -> true
+        | PatternBool(_value) -> true
+        | PatternEmptyList -> true
+        | PatternCons(head, tail) -> trimCatchAllChildren(state)([head, tail])
+        | PatternTuple(elements) -> trimCatchAllChildren(state)(elements)
+        | PatternConstructor(_name, patterns) -> trimCatchAllChildren(state)(patterns)
+        | PatternAs(inner, _name) -> isExactCoveragePattern(state)(inner)
+        | PatternOr(alternatives) -> trimExactAlternatives(state)(alternatives)
+        | _ -> false
+and trimExactAlternatives state alternatives =
+    match alternatives with
+        | [] -> true
+        | alternative :: rest ->
+            if isExactCoveragePattern(state)(alternative)
+            then trimExactAlternatives(state)(rest)
+            else false
+
+// The constructor a pattern names, when it is a constructor pattern (a bare nullary name included).
+let trimConstructorName state pattern =
+    match unwrapPatternAt(pattern) with
+        | PatternConstructor(name, _patterns) ->
+            match constructorLayout(name)(state) with
+                | Some(_layout) -> Some(name)
+                | None -> None
+        | PatternVar(name) ->
+            if isNullaryConstructorPatternName(name)(state)
+            then Some(name)
+            else None
+        | _ -> None
+
+let trimAdtOfConstructor state (name: Str) =
+    match constructorLayout(name)(state) with
+        | Some(CoreConstructorLayout { scheme = TypeScheme { body = body } }) -> schemeResultName(body)
+        | None -> None
+
+let recursive trimAdtConstructorNames (layouts: List(CoreConstructorLayout)) (adtName: Str) acc =
+    match layouts with
+        | [] -> reverse(acc)
+        | CoreConstructorLayout { name = name, scheme = TypeScheme { body = body } } :: rest ->
+            match schemeResultName(body) with
+                | Some(candidate) ->
+                    if candidate == adtName
+                    then trimAdtConstructorNames(rest)(adtName)(name :: acc)
+                    else trimAdtConstructorNames(rest)(adtName)(acc)
+                | None -> trimAdtConstructorNames(rest)(adtName)(acc)
+
+let stateConstructorLayouts state =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts } -> layouts
+
+let recursive trimSeenConstructors state patterns acc =
+    match patterns with
+        | [] -> acc
+        | pattern :: rest ->
+            match trimConstructorName(state)(pattern) with
+                | Some(name) -> trimSeenConstructors(state)(rest)(name :: acc)
+                | None -> trimSeenConstructors(state)(rest)(acc)
+
+let recursive trimAllSeen (names: List(Str)) (seen: List(Str)) =
+    match names with
+        | [] -> true
+        | name :: rest ->
+            if containsName(name)(seen)
+            then trimAllSeen(rest)(seen)
+            else false
+
+let recursive trimAnyCatchAll state patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            if isCatchAllPattern(state)(pattern)
+            then true
+            else trimAnyCatchAll(state)(rest)
+
+let recursive trimHasBool patterns (wanted: Bool) =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match unwrapPatternAt(pattern) with
+                | PatternBool(value) ->
+                    if value == wanted
+                    then true
+                    else trimHasBool(rest)(wanted)
+                | _ -> trimHasBool(rest)(wanted)
+
+let recursive trimHasEmptyList patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match unwrapPatternAt(pattern) with
+                | PatternEmptyList -> true
+                | _ -> trimHasEmptyList(rest)
+
+let recursive trimHasCons patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match unwrapPatternAt(pattern) with
+                | PatternCons(_head, _tail) -> true
+                | _ -> trimHasCons(rest)
+
+let recursive trimFirstConstructor state patterns =
+    match patterns with
+        | [] -> None
+        | pattern :: rest ->
+            match trimConstructorName(state)(pattern) with
+                | Some(name) -> Some(name)
+                | None -> trimFirstConstructor(state)(rest)
+
+// Whether a prefix of exact-coverage patterns matches every value of its domain.
+let trimPrefixCoversAll state patterns =
+    if trimAnyCatchAll(state)(patterns)
+    then true
+    else
+        match trimFirstConstructor(state)(patterns) with
+            | Some(name) ->
+                match trimAdtOfConstructor(state)(name) with
+                    | Some(adtName) ->
+                        match trimAdtConstructorNames(stateConstructorLayouts(state))(adtName)([]) with
+                            | [] -> false
+                            | names ->
+                                []
+                                |> trimSeenConstructors(state)(patterns)
+                                |> trimAllSeen(names)
+                    | None -> false
+            | None ->
+                if trimHasBool(patterns)(true)
+                then trimHasBool(patterns)(false)
+                else
+                    if trimHasEmptyList(patterns)
+                    then trimHasCons(patterns)
+                    else false
+
+let recursive trimTake cases (count: Int) acc =
+    match cases with
+        | [] -> reverse(acc)
+        | matchCase :: rest ->
+            if count == 0
+            then reverse(acc)
+            else trimTake(rest)(count - 1)(matchCase :: acc)
+
+// Grows the prefix one guard-free exact-coverage arm at a time; the first prefix that covers
+// every value ends the match there.
+let recursive trimProvablyUnreachableTrailingCasesFrom state cases remaining (prefixPatterns: List(Pattern)) (prefixLength: Int) =
+    match remaining with
+        | [] -> cases
+        | (pattern, _body, guard) :: rest ->
+            match rest with
+                | [] -> cases
+                | _ ->
+                    match guard with
+                        | Some(_guard) -> cases
+                        | None ->
+                            if isExactCoveragePattern(state)(pattern)
+                            then
+                                let patterns = append(prefixPatterns)([pattern])
+                                in
+                                    if trimPrefixCoversAll(state)(patterns)
+                                    then trimTake(cases)(prefixLength + 1)([])
+                                    else trimProvablyUnreachableTrailingCasesFrom(state)(cases)(rest)(patterns)(prefixLength + 1)
+                            else cases
+
+let trimProvablyUnreachableTrailingCases state cases = trimProvablyUnreachableTrailingCasesFrom(state)(cases)(cases)([])(0)
+
+let lowerMatchArmsDispatch allCases lower (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | _ ->
-            match planTagGroups(cases)(0)(plan.state)(None)([]) with
-                | Some((groups, defaultIndex)) -> lowerMatchArmsViaTagGroups(cases)(groups)(defaultIndex)(lower)(plan)
-                | None -> lowerMatchArms(cases)(lower)(plan)
+            let cases = trimProvablyUnreachableTrailingCases(plan.state)(allCases)
+            in
+                match planTagGroups(cases)(0)(plan.state)(None)([]) with
+                    | Some((groups, defaultIndex)) -> lowerMatchArmsViaTagGroups(cases)(groups)(defaultIndex)(lower)(plan)
+                    | None -> lowerMatchArms(cases)(lower)(plan)
 
 let lowerMatch value cases lower state =
     state

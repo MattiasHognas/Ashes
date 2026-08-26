@@ -680,7 +680,7 @@ same public behavior.
   pure-Ashes inference, pattern-binding preparation, lowering, and the group planner now resolve such
   a name against the constructor table exactly as stage 0 does, so it is a tag test rather than a
   catch-all binder that silently absorbed every later arm.
-- [ ] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
+- [x] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
   "Missing case" engine is a deliberate under-approximation of what is missing — correct for a
   diagnostic, which must never report a false "Missing case", and unsound as a proof that a trailing
   arm is unreachable: constructor argument positions are checked independently of one another
@@ -703,6 +703,13 @@ same public behavior.
   and cost signals analyze parameter RC-eligibility, allocation and borrow blockers, and threshold-based
   profitability verdicts without violating strict evaluation semantics. Fully validated with pure-Ashes
   test suite in `selfhost/tests/semantics/TcoTests.ash`.
+  Pure Ashes now ports the trim with the gate built in (`trimProvablyUnreachableTrailingCases`):
+  the prefix grows one guard-free arm at a time only while every arm is a catch-all, a bool literal,
+  the empty list, or a cons/tuple/constructor whose children are all catch-alls, and for those shapes
+  its coverage verdict is exactly the constructor set (from the layouts of the arms' ADT), the bool
+  pair, or the two list shapes, so it needs no per-field engine; a literal, record, or nested
+  constructor sub-pattern stops the prefix, and the trailing arms after a covering prefix are dropped
+  before planning or lowering.
 - [ ] Upgrade LLVM's advisory `tail` marker to the hard-guarantee `musttail` marker for a non-loop tail
   call already proven `CanEmitNativeTailCall`-eligible (exact `CallKnown`-immediately-followed-by-
   matching-`Return` adjacency), gated by a whole-function scan for any native stack allocation
