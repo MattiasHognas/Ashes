@@ -155,6 +155,20 @@ type CoreMatchPlan =
     | resultType: SemanticType
     | error: Maybe(CoreLoweringError)
 
+// The cases of one match that share an outer constructor tag, in first-seen order. A group is a
+// trivial single case only while it has exactly one case whose sub-patterns are all catch-alls,
+// the one shape the switch can dispatch to without re-testing the tag it just proved.
+type CoreTagGroup =
+    | tag: Int
+    | constructorName: Str
+    | caseIndices: List(Int)
+    | trivialSingleCase: Bool
+
+type CoreCaseClass =
+    | CaseConstructor(Str, Int, Str, Bool)
+    | CaseDefault
+    | CaseReject
+
 type PreparedCoreRecursiveBinding =
     | name: Str
     | parameter: Str
@@ -1869,11 +1883,268 @@ let finishMatchPlan plan =
                             |> emit(LoadLocal(resultTemp)(resultSlot))
                             |> success(resultTemp)(resolveType(resultState)(resultType))
 
+// Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their
+// outer constructor tag; one GetAdtTag/SwitchTag then dispatches to the group, a trivial single
+// case binds its payload directly (the switch already proved the tag), and any other group tests
+// its cases linearly in their original order, scoped to that group. A group's last case failing
+// its own sub-pattern test does not mean nothing matches: the trailing wildcard/variable arm, when
+// one exists, still covers it, so every group falls through to that default arm's label and only
+// without a default to the match's no-match path. Guards, zero-cost constructors, a second ADT,
+// or a catch-all anywhere but last decline to the linear lowering; so does an all-trivial match of
+// at most four arms, where linear tag tests cost no more than a switch.
+let recursive unwrapPatternAt pattern =
+    match pattern with
+        | PatternAt(_span, inner) -> unwrapPatternAt(inner)
+        | other -> other
+
+let isCatchAllPattern pattern =
+    match unwrapPatternAt(pattern) with
+        | PatternWildcard -> true
+        | PatternVar(_) -> true
+        | _ -> false
+
+let recursive allCatchAllPatterns patterns =
+    match patterns with
+        | [] -> true
+        | pattern :: rest ->
+            if isCatchAllPattern(pattern)
+            then allCatchAllPatterns(rest)
+            else false
+
+let recursive schemeResultName (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_, result, _) -> schemeResultName(result)
+        | SemNamed(_, name, _) -> Some(name)
+        | _ -> None
+
+let classifyMatchCase (matchCase: (Pattern, Expr, Maybe(Expr))) state =
+    match matchCase with
+        | (_pattern, _body, Some(_guard)) -> CaseReject
+        | (pattern, _body, None) ->
+            match unwrapPatternAt(pattern) with
+                | PatternWildcard -> CaseDefault
+                | PatternVar(_) -> CaseDefault
+                | PatternConstructor(name, patterns) ->
+                    match constructorLayout(name)(state) with
+                        | None -> CaseReject
+                        | Some(CoreConstructorLayout { isZeroCost = true }) -> CaseReject
+                        | Some(CoreConstructorLayout { tag = tag, scheme = TypeScheme { body = body } }) ->
+                            match schemeResultName(body) with
+                                | Some(adtName) ->
+                                    patterns
+                                    |> allCatchAllPatterns
+                                    |> CaseConstructor(name)(tag)(adtName)
+                                | None -> CaseReject
+                | _ -> CaseReject
+
+let recursive addCaseToTagGroups (groups: List(CoreTagGroup)) (tag: Int) (name: Str) (index: Int) (trivial: Bool) =
+    match groups with
+        | [] -> [CoreTagGroup(tag = tag, constructorName = name, caseIndices = [index], trivialSingleCase = trivial)]
+        | group :: rest ->
+            if group.tag == tag
+            then (group with caseIndices = append(group.caseIndices)([index]), trivialSingleCase = false) :: rest
+            else group :: addCaseToTagGroups(rest)(tag)(name)(index)(trivial)
+
+let recursive anyGroupNeedsLinearFallback (groups: List(CoreTagGroup)) =
+    match groups with
+        | [] -> false
+        | group :: rest ->
+            if group.trivialSingleCase
+            then anyGroupNeedsLinearFallback(rest)
+            else true
+
+let recursive countGroups (groups: List(CoreTagGroup)) (acc: Int) =
+    match groups with
+        | [] -> acc
+        | _ :: rest -> countGroups(rest)(acc + 1)
+
+// Some((groups, default case index)) when the match dispatches through a tag switch.
+let recursive planTagGroups cases (index: Int) state (adtName: Maybe(Str)) (groups: List(CoreTagGroup)) =
+    match cases with
+        | [] ->
+            if anyGroupNeedsLinearFallback(groups)
+            then Some((groups, None))
+            else
+                if countGroups(groups)(0) > 4
+                then Some((groups, None))
+                else None
+        | matchCase :: rest ->
+            match classifyMatchCase(matchCase)(state) with
+                | CaseReject -> None
+                | CaseDefault ->
+                    match rest with
+                        | [] ->
+                            match groups with
+                                | [] -> None
+                                | _ ->
+                                    if anyGroupNeedsLinearFallback(groups)
+                                    then Some((groups, Some(index)))
+                                    else
+                                        if countGroups(groups)(0) > 4
+                                        then Some((groups, Some(index)))
+                                        else None
+                        | _ -> None
+                | CaseConstructor(name, tag, caseAdt, trivial) ->
+                    match adtName with
+                        | Some(seen) ->
+                            if seen == caseAdt
+                            then
+                                trivial
+                                |> addCaseToTagGroups(groups)(tag)(name)(index)
+                                |> planTagGroups(rest)(index + 1)(state)(adtName)
+                            else None
+                        | None ->
+                            trivial
+                            |> addCaseToTagGroups(groups)(tag)(name)(index)
+                            |> planTagGroups(rest)(index + 1)(state)(Some(caseAdt))
+
+let recursive nthMatchCase cases (index: Int) =
+    match cases with
+        | [] -> None
+        | matchCase :: rest ->
+            if index == 0
+            then Some(matchCase)
+            else nthMatchCase(rest)(index - 1)
+
+// The tag is already proven by the switch: bind the payload fields without re-testing it.
+let finishKnownTagConstructorPattern patterns valueTemp valueType failLabel lowerPattern shape =
+    match shape with
+        | CoreConstructorShape { layout = CoreConstructorLayout { isZeroCost = true } } -> finishConstructorPattern(patterns)(valueTemp)(valueType)(failLabel)(lowerPattern)(shape)
+        | CoreConstructorShape { state = state, parameterTypes = parameterTypes, resultType = resultType } ->
+            if coreListLength(patterns) != coreListLength(parameterTypes)
+            then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
+            else
+                match bindType(valueType)(resultType)(state) with
+                    | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
+                    | (typedState, None) -> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)(LoweredCorePattern(state = typedState, error = None))
+
+let lowerKnownTagPattern pattern valueTemp valueType failLabel state =
+    match unwrapPatternAt(pattern) with
+        | PatternConstructor(name, patterns) ->
+            match constructorLayout(name)(state) with
+                | None -> LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("unknown constructor " + name)))
+                | Some(layout) ->
+                    state
+                    |> instantiateConstructor(layout)
+                    |> finishKnownTagConstructorPattern(patterns)(valueTemp)(valueType)(failLabel)(lowerPattern)
+        | _ -> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)(state)
+
+let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPlan) =
+    match plan.state with
+        | CoreLoweringState { bindings = outerBindings } ->
+            plan.state
+            |> preparePattern(pattern)
+            |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
+            |> lowerMatchGuard(guard)(failLabel)(lower)
+            |> finishMatchArm(body)(plan.resultSlot)(plan.endLabel)(plan.resultType)(outerBindings)(lower)
+
+// The group's cases in their original order; the last one fails to the group's fail target.
+let recursive lowerTagGroupCasesLinearly cases (indices: List(Int)) (groupFailLabel: Str) lower (plan: CoreMatchPlan) =
+    match (indices, plan) with
+        | (_indices, CoreMatchPlan { error = Some(_error) }) -> plan
+        | ([], _) -> plan
+        | (index :: rest, _) ->
+            match nthMatchCase(cases)(index) with
+                | None -> plan
+                | Some((pattern, body, guard)) ->
+                    match rest with
+                        | [] ->
+                            plan
+                            |> lowerMatchArm(pattern)(body)(guard)(groupFailLabel)(lower)
+                            |> recastMatchPlan(plan)
+                        | _ ->
+                            match freshLabel("match_group_next")(plan.state) with
+                                | FreshLabel { state = labelState, label = caseFailLabel } ->
+                                    let currentPlan = plan with state = labelState
+                                    in
+                                        currentPlan
+                                        |> lowerMatchArm(pattern)(body)(guard)(caseFailLabel)(lower)
+                                        |> recastMatchPlan(currentPlan)
+                                        |> (given (next: CoreMatchPlan) -> next with state = emit(Label(caseFailLabel))(next.state))
+                                        |> lowerTagGroupCasesLinearly(cases)(rest)(groupFailLabel)(lower)
+
+let lowerTagGroup cases (group: CoreTagGroup) (groupLabel: Str) (groupFailLabel: Str) lower (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | _ ->
+            let labeled = plan with state = emit(Label(groupLabel))(plan.state)
+            in
+                if group.trivialSingleCase
+                then
+                    match group.caseIndices with
+                        | index :: _ ->
+                            match nthMatchCase(cases)(index) with
+                                | Some((pattern, body, guard)) ->
+                                    labeled
+                                    |> lowerKnownTagMatchArm(pattern)(body)(guard)(groupFailLabel)(lower)
+                                    |> recastMatchPlan(labeled)
+                                | None -> labeled
+                        | [] -> labeled
+                else lowerTagGroupCasesLinearly(cases)(group.caseIndices)(groupFailLabel)(lower)(labeled)
+
+let recursive lowerTagGroups cases (groups: List(CoreTagGroup)) (labels: List(Str)) (groupFailLabel: Str) lower (plan: CoreMatchPlan) =
+    match (groups, labels) with
+        | (group :: groupRest, label :: labelRest) ->
+            plan
+            |> lowerTagGroup(cases)(group)(label)(groupFailLabel)(lower)
+            |> lowerTagGroups(cases)(groupRest)(labelRest)(groupFailLabel)(lower)
+        | _ -> plan
+
+let recursive freshGroupLabels (groups: List(CoreTagGroup)) state (reversedLabels: List(Str)) (reversedCases: List(IrSwitchCase)) =
+    match groups with
+        | [] -> (state, reverse(reversedLabels), reverse(reversedCases))
+        | group :: rest ->
+            match freshLabel("match_group")(state) with
+                | FreshLabel { state = labelState, label = label } -> freshGroupLabels(rest)(labelState)(label :: reversedLabels)(IrSwitchCase(tag = group.tag, label = label) :: reversedCases)
+
+let lowerDefaultTagGroupArm cases (defaultIndex: Maybe(Int)) (defaultLabel: Str) lower (plan: CoreMatchPlan) =
+    match (defaultIndex, plan) with
+        | (_index, CoreMatchPlan { error = Some(_error) }) -> plan
+        | (None, _) -> plan
+        | (Some(index), _) ->
+            match nthMatchCase(cases)(index) with
+                | None -> plan
+                | Some((pattern, body, guard)) ->
+                    let labeled = plan with state = emit(Label(defaultLabel))(plan.state)
+                    in
+                        labeled
+                        |> lowerMatchArm(pattern)(body)(guard)(plan.noMatchLabel)(lower)
+                        |> recastMatchPlan(labeled)
+
+let lowerMatchArmsViaTagGroups cases (groups: List(CoreTagGroup)) (defaultIndex: Maybe(Int)) lower (plan: CoreMatchPlan) =
+    match freshGroupLabels(groups)(plan.state)([])([]) with
+        | (labelState, groupLabels, switchCases) ->
+            let defaultLabelled =
+                match defaultIndex with
+                    | Some(_) -> freshLabel("match_group_default")(labelState)
+                    | None -> FreshLabel(state = labelState, label = plan.noMatchLabel)
+            in
+                match defaultLabelled with
+                    | FreshLabel { state = defaultState, label = defaultLabel } ->
+                        match freshTemp(defaultState) with
+                            | FreshTemp { state = tagState, temp = tagTemp } ->
+                                let switched =
+                                    tagState
+                                    |> emit(GetAdtTag(tagTemp)(plan.valueTemp))
+                                    |> emit(SwitchTag(tagTemp)(switchCases)(defaultLabel))
+                                in
+                                    (plan with state = switched)
+                                    |> lowerTagGroups(cases)(groups)(groupLabels)(defaultLabel)(lower)
+                                    |> lowerDefaultTagGroupArm(cases)(defaultIndex)(defaultLabel)(lower)
+
+let lowerMatchArmsDispatch cases lower (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | _ ->
+            match planTagGroups(cases)(0)(plan.state)(None)([]) with
+                | Some((groups, defaultIndex)) -> lowerMatchArmsViaTagGroups(cases)(groups)(defaultIndex)(lower)(plan)
+                | None -> lowerMatchArms(cases)(lower)(plan)
+
 let lowerMatch value cases lower state =
     state
     |> lower(value)
     |> prepareMatchPlan
-    |> lowerMatchArms(cases)(lower)
+    |> lowerMatchArmsDispatch(cases)(lower)
     |> finishMatchPlan
 
 let recursive lambdaParts expression =
