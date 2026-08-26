@@ -13,6 +13,7 @@ import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
+import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
@@ -20,6 +21,7 @@ import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
@@ -32,6 +34,7 @@ export (
     value lowerCoreExpressionWithContext,
     value lowerCoreExpressionWithFullContext,
     value lowerCoreExpressionWithCompleteContext,
+    value lowerCoreExpressionLocated,
     value lowerCoreRecursiveGroup,
     value pruneDeadCaptures,
 )
@@ -98,6 +101,9 @@ type CoreLoweringState =
     | stringLiterals: List(IrStringLiteral)
     | typeSupply: TypeVariableSupply
     | substitution: List((Int, SemanticType))
+    | sourceContext: Maybe(SourceContext)
+    | currentSpan: Maybe(TextSpan)
+    | currentItem: Int
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -294,7 +300,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         nextStringId = 0,
         stringLiterals = [],
         typeSupply = initialTypeVariableSupply(Unit),
-        substitution = []
+        substitution = [],
+        sourceContext = None,
+        currentSpan = None,
+        currentItem = 0
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -363,10 +372,12 @@ let freshFunctionType state =
                         resultType = resultType
                     )
 
+// Every emitted instruction carries the innermost enclosing source span resolved through the
+// installed source context (runtime machinery stays unlocated); without a context, no location.
 let emit kind state =
     match state with
-        | CoreLoweringState { reversedInstructions = instructions } ->
-            let wrapped = IrInstruction(instruction = kind, location = None)
+        | CoreLoweringState { reversedInstructions = instructions, sourceContext = context, currentSpan = span, currentItem = item } ->
+            let wrapped = tagItemInstruction(kind)(span)(item)(context)
             in state with reversedInstructions = wrapped :: instructions
 
 let success temp semanticType state =
@@ -3959,7 +3970,19 @@ let expressionName expression =
 
 let recursive lowerCore expression state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCore(inner)(state)
+        | ExprAt(span, inner) ->
+            match state with
+                | CoreLoweringState { currentSpan = previous } ->
+                    match lowerCore(inner)((state with currentSpan = Some(span))) with
+                        | LoweredCoreValue { state = innerState, temp = temp, semanticType = semanticType, error = error } ->
+                            let restored = innerState with currentSpan = previous
+                            in
+                                LoweredCoreValue(
+                                    state = restored,
+                                    temp = temp,
+                                    semanticType = semanticType,
+                                    error = error
+                                )
         | ExprInt(value) ->
             lowerConstant(given (target) -> LoadConstInt(target)(value))(SemInt)(state)
         | ExprBigInt(digits) -> lowerCoreBigInt(digits)(state)
@@ -4174,6 +4197,15 @@ let lowerCoreExpressionWithFullContext constructorLayouts builtinLayouts externa
 let lowerCoreExpressionWithCompleteContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes capabilityLayouts staticProviders capabilityGlobalCount expression =
     Unit
     |> initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)(capabilityLayouts)(staticProviders)(capabilityGlobalCount)
+    |> lowerCore(expression)
+    |> buildProgram
+
+// Lowers an expression that is (part of) the combined item at itemIndex of a stitched project,
+// locating every emitted instruction through the context's item regions.
+let lowerCoreExpressionLocated (context: SourceContext) (itemIndex: Int) expression =
+    Unit
+    |> initialState
+    |> (given (state: CoreLoweringState) -> state with sourceContext = Some(context), currentItem = itemIndex)
     |> lowerCore(expression)
     |> buildProgram
 

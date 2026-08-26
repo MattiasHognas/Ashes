@@ -3,10 +3,12 @@ import Ashes.Collection.List.length
 import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoroutineFrame
 import AshesCompiler.Semantics.DecisionSnapshot
 import AshesCompiler.Semantics.FunctionOrigins
 import AshesCompiler.Semantics.HoverTypeInfo
+import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
@@ -89,10 +91,137 @@ let testSourceContextMultiFile unit =
                                     let _ = test.assertEqual(true)(locOut == None)
                                     in Unit)
 
+// A dependency module with a header comment and an export block (exactly what a text-rendering
+// stitcher would strip) next to the entry module; the stitched context resolves each module's
+// spans against that module's own file, keyed by the combined item the span belongs to.
+let tokSource = "// A dependency module.\nexport (\n    value describe,\n)\n\nlet describe (kind: Kind) =\n    match kind with\n        | Alpha -> \"alpha\"\n"
+
+let mainSource = "import Repro.Tok\n\nlet render (text: Str) =\n    describe(text)\n"
+
+let stitchedContext unit =
+    createStitchedSourceContext([("Tok.ash", tokSource), ("Main.ash", mainSource)])(
+        [
+            StitchedItemRegion(itemFilePath = "Tok.ash", itemStart = 0, itemEnd = 1),
+            StitchedItemRegion(itemFilePath = "Main.ash", itemStart = 1, itemEnd = 2)
+        ]
+    )(
+        "Main.ash"
+    )
+
+// Only a span's start takes part in resolution, so the end is one past it.
+let spanAt (source: Str) (text: Str) =
+    (let start = Ashes.Text.indexOf(source)(text)
+    in
+        if start < 0
+        then test.fail("test source must contain " + text)
+        else TextSpan(start)(start + 1))
+
+let expectLocation (label: Str) (path: Str) (line: Int) (column: Int) (location: Maybe(IrSourceLocation)) =
+    match location with
+        | Some(IrSourceLocation(actualPath, actualLine, actualColumn)) ->
+            let _ = test.assertEqual(path)(actualPath)
+            in
+                let _ = test.assertEqual(line)(actualLine)
+                in
+                    let _ = test.assertEqual(column)(actualColumn)
+                    in Unit
+        | None -> test.fail(label + ": expected a location")
+
+let testStitchedSourceContext unit =
+    (let ctx = stitchedContext(Unit)
+    in
+        let _ =
+            "match kind with"
+            |> spanAt(tokSource)
+            |> resolveItemSpanLocation(ctx)(0)
+            |> expectLocation("dependency item")("Tok.ash")(7)(5)
+        in
+            let _ =
+                "describe(text)"
+                |> spanAt(mainSource)
+                |> resolveItemSpanLocation(ctx)(1)
+                |> expectLocation("entry item")("Main.ash")(4)(5)
+            in
+                let glue =
+                    "match kind with"
+                    |> spanAt(tokSource)
+                    |> resolveItemSpanLocation(ctx)(5)
+                in
+                    let _ = test.assertEqual(true)(glue == None)
+                    in
+                        let empty =
+                            0
+                            |> TextSpan(0)
+                            |> resolveItemSpanLocation(ctx)(0)
+                        in
+                            let _ = test.assertEqual(true)(empty == None)
+                            in Unit)
+
+let recursive locatedInstructionLines instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { location = Some(IrSourceLocation(path, line, _column)) } :: tail -> locatedInstructionLines(tail)((path, line) :: acc)
+        | _ :: tail -> locatedInstructionLines(tail)(acc)
+
+let recursive allLocatedIn (path: Str) (located: List((Str, Int))) =
+    match located with
+        | [] -> true
+        | (candidate, _) :: tail ->
+            if candidate == path
+            then allLocatedIn(path)(tail)
+            else false
+
+let recursive anyLocatedAtLine (line: Int) (located: List((Str, Int))) =
+    match located with
+        | [] -> false
+        | (_, candidate) :: tail ->
+            if candidate == line
+            then true
+            else anyLocatedAtLine(line)(tail)
+
+// Lowering an expression of the dependency item tags every emitted instruction with that
+// module's file and the line of the innermost enclosing span (the entry Return stays unlocated).
+let testLoweredDependencyItemCarriesItsOwnFileLines unit =
+    (let ctx = stitchedContext(Unit)
+    in
+        let expression =
+            ExprInt(2)
+            |> ExprAdd(ExprAt(spanAt(tokSource)("Alpha"))(ExprInt(1)))
+            |> ExprAt(spanAt(tokSource)("match kind with"))
+        in
+            match lowerCoreExpressionLocated(ctx)(0)(expression) with
+                | CoreLoweringResult { program = Some(IrProgram { entryFunction = IrFunction { instructions = instructions } }), error = None } ->
+                    let located = locatedInstructionLines(instructions)([])
+                    in
+                        let _ =
+                            located
+                            |> length
+                            |> test.assertEqual(length(instructions) - 1)
+                        in
+                            let _ =
+                                located
+                                |> allLocatedIn("Tok.ash")
+                                |> test.assertEqual(true)
+                            in
+                                let _ =
+                                    located
+                                    |> anyLocatedAtLine(7)
+                                    |> test.assertEqual(true)
+                                in
+                                    let _ =
+                                        located
+                                        |> anyLocatedAtLine(8)
+                                        |> test.assertEqual(true)
+                                    in Unit
+                | _ -> test.fail("located core lowering should produce a program"))
+
 let testRuntimeMachineryTagging unit =
     (let ctx = createSourceContext("Test.ash")("let v = 42")
     in
-        let span = Some(TextSpan(4)(5))
+        let span =
+            5
+            |> TextSpan(4)
+            |> Some
         in
             let returnInst = tagInstruction(Return(0))(span)(Some(ctx))
             in
@@ -107,7 +236,8 @@ let testRuntimeMachineryTagging unit =
                                     in Unit
                         | _ -> test.fail("expected tagged return instruction")
                 in
-                    let dropInst = tagInstruction(RcDrop(0)("Int")(0)(false)(false)(None))(span)(Some(ctx))
+                    let dropInst =
+                        tagInstruction(RcDrop(0)("Int")(0)(false)(false)(None))(span)(Some(ctx))
                     in
                         let _ =
                             match dropInst with
@@ -201,7 +331,10 @@ let testFunctionOriginsDiscovery unit =
             in
                 let origins = discoverSourceFunctionOrigins(ast)(None)(Some(ctx))
                 in
-                    let _ = test.assertEqual(1)(length(origins))
+                    let _ =
+                        origins
+                        |> length
+                        |> test.assertEqual(1)
                     in
                         let _ =
                             match origins with
@@ -260,7 +393,10 @@ let testHoverTypeInfo unit =
                             in
                                 let caps = collectTypeCapabilities(semType)
                                 in
-                                    let _ = test.assertEqual(2)(length(caps))
+                                    let _ =
+                                        caps
+                                        |> length
+                                        |> test.assertEqual(2)
                                     in
                                         let authority = capturePublicAuthority(["getTime"])(hoverList)
                                         in
@@ -268,7 +404,10 @@ let testHoverTypeInfo unit =
                                                 match authority with
                                                     | PublicAuthorityRecord(name, authCaps) :: [] ->
                                                         let _ = test.assertEqual("getTime")(name)
-                                                        in test.assertEqual(2)(length(authCaps))
+                                                        in
+                                                            authCaps
+                                                            |> length
+                                                            |> test.assertEqual(2)
                                                     | _ -> test.fail("unexpected public authority record")
                                             in Unit)
 
@@ -330,11 +469,17 @@ let testDecisionSnapshot unit =
                     in
                         let funcOwnerships = filterOwnershipFor(srcOrigin)(snapshot)
                         in
-                            let _ = test.assertEqual(1)(length(funcOwnerships))
+                            let _ =
+                                funcOwnerships
+                                |> length
+                                |> test.assertEqual(1)
                             in
                                 let placements = filterPlacementsIn("compute_0")(snapshot)
                                 in
-                                    let _ = test.assertEqual(1)(length(placements))
+                                    let _ =
+                                        placements
+                                        |> length
+                                        |> test.assertEqual(1)
                                     in
                                         let cat = classifyValuePlacement(false)(false)(false)(true)(false)(false)
                                         in
@@ -346,15 +491,19 @@ let runMetadataAndOriginsTests unit =
     in
         let _ = testSourceContextMultiFile(Unit)
         in
-            let _ = testRuntimeMachineryTagging(Unit)
+            let _ = testStitchedSourceContext(Unit)
             in
-                let _ = testFunctionOriginsCreation(Unit)
+                let _ = testLoweredDependencyItemCarriesItsOwnFileLines(Unit)
                 in
-                    let _ = testFunctionOriginsDiscovery(Unit)
+                    let _ = testRuntimeMachineryTagging(Unit)
                     in
-                        let _ = testHoverTypeInfo(Unit)
+                        let _ = testFunctionOriginsCreation(Unit)
                         in
-                            let _ = testDecisionSnapshot(Unit)
+                            let _ = testFunctionOriginsDiscovery(Unit)
                             in
-                                let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
-                                in Unit)
+                                let _ = testHoverTypeInfo(Unit)
+                                in
+                                    let _ = testDecisionSnapshot(Unit)
+                                    in
+                                        let _ = Ashes.IO.print("all self-hosted metadata and origins tests passed")
+                                        in Unit)
