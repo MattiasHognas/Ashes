@@ -781,6 +781,59 @@ public sealed class ReuseDecisionTests
         return matches[0];
     }
 
+    [Test]
+    public void ToSpaceSpecialization_DeclinesAnAccumulatorWhoseFieldsCannotBePersisted()
+    {
+        const string source = """
+            type Tree(v) =
+                | Leaf
+                | Node(Tree(v), Int, v, Tree(v))
+
+            let recursive setTree key value tree =
+                match tree with
+                    | Leaf -> Node(Leaf)(key)(value)(Leaf)
+                    | Node(left, nodeKey, nodeValue, right) ->
+                        if key == nodeKey
+                        then Node(left)(nodeKey)(value)(right)
+                        else
+                            if key <= nodeKey
+                            then Node(setTree(key)(value)(left))(nodeKey)(nodeValue)(right)
+                            else Node(left)(nodeKey)(nodeValue)(setTree(key)(value)(right))
+
+            let recursive fillLists count tree =
+                if count <= 0
+                then tree
+                else fillLists(count - 1)(setTree(count)(["item"])(tree))
+
+            let recursive fillInts count tree =
+                if count <= 0
+                then tree
+                else fillInts(count - 1)(setTree(count)(count)(tree))
+
+            let lists = fillLists(3)(Leaf)
+            let ints = fillInts(3)(Leaf)
+            in (lists, ints)
+            """;
+
+        Lowering lowering = LowerProgram(source, "reuse-persistence.ash");
+
+        ReuseDecision rejection = lowering.ReuseDecisions.Single(decision =>
+            decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
+            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent);
+        rejection.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
+        rejection.TargetFunction.ShouldBe("setTree");
+        rejection.Function.Source.ShouldNotBeNull();
+        rejection.Function.Source.SourceName.ShouldBe("fillLists", "the list-valued tree must decline the to-space specialization");
+        rejection.Candidate.ShouldNotBeNull();
+        rejection.Candidate.SourceName.ShouldBe("tree");
+
+        lowering.ReuseDecisions
+            .Count(decision =>
+                decision.Decision == ReuseDecisionKind.SpecializationGeneration
+                && string.Equals(decision.Function.Source?.SourceName, "setTree", StringComparison.Ordinal))
+            .ShouldBe(1, "the Int-valued tree still generates its specialization");
+    }
+
     private static Lowering LowerProgram(string source, string filePath)
     {
         Diagnostics diagnostics = new();

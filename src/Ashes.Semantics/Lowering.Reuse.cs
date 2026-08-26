@@ -1493,17 +1493,19 @@ public sealed partial class Lowering
         // path while retaining specialization for concrete evidence-free function arguments.
         if (CannotSpecializeAbstractEvidenceCall(name, args, prepared.SourceTypes))
         {
-            if (unspecializedFunctionTemp is not null)
-            {
-                return ApplyLoweredArgs(
-                    unspecializedFunctionTemp.Value,
-                    prepared.AppliedTemps,
-                    prepared.ResultType);
-            }
-            (int sourceTemp, TypeRef sourceType) = TryLowerTraitDictionaryFunctionValue(new Expr.Var(name), funcType)
-                ?? LowerVar(new Expr.Var(name));
-            Unify(sourceType, funcType);
-            return ApplyLoweredArgs(sourceTemp, prepared.SourceTemps, prepared.ResultType);
+            return LowerUnspecializedReuseCall(name, funcType, prepared, unspecializedFunctionTemp);
+        }
+
+        // Every fresh constructor cell a specialization builds lives in the persistent to-space, and
+        // only the field shapes the materialization can copy into the blob (copy types, Str/Bytes,
+        // and tuples of copy types) become persistent there. An accumulator whose constructors can
+        // hold any other shape (a list, a closure, a foreign ADT) would keep the caller's fresh
+        // scratch value as a raw pointer that dangles once that scratch is reclaimed, so such a call
+        // stays on its ordinary path, where the callee's entry normalizes the arguments it stores.
+        if (!AccumulatorLayoutIsPersistable(prepared.SourceTypes[^1]))
+        {
+            RecordAccumulatorLayoutRejection(name, funcType, args[^1], callExpr);
+            return LowerUnspecializedReuseCall(name, funcType, prepared, unspecializedFunctionTemp);
         }
 
         string label = GetOrCreateReuseSpecialization(
@@ -1535,6 +1537,56 @@ public sealed partial class Lowering
         }
 
         return (current, prepared.ResultType);
+    }
+
+    private (int, TypeRef) LowerUnspecializedReuseCall(
+        string name,
+        TypeRef funcType,
+        PreparedReuseArguments prepared,
+        int? unspecializedFunctionTemp)
+    {
+        if (unspecializedFunctionTemp is not null)
+        {
+            return ApplyLoweredArgs(
+                unspecializedFunctionTemp.Value,
+                prepared.AppliedTemps,
+                prepared.ResultType);
+        }
+        (int sourceTemp, TypeRef sourceType) = TryLowerTraitDictionaryFunctionValue(new Expr.Var(name), funcType)
+            ?? LowerVar(new Expr.Var(name));
+        Unify(sourceType, funcType);
+        return ApplyLoweredArgs(sourceTemp, prepared.SourceTemps, prepared.ResultType);
+    }
+
+    // A list accumulator's cells are rebuilt in the ordinary heap; only a named ADT accumulator has
+    // its fresh cells allocated into the persistent to-space, so only its field layout is gated.
+    private bool AccumulatorLayoutIsPersistable(TypeRef accumulatorType) =>
+        Prune(accumulatorType) is not TypeRef.TNamedType
+        || AccumulatorIsFullyPersistent(accumulatorType);
+
+    private void RecordAccumulatorLayoutRejection(
+        string name,
+        TypeRef funcType,
+        Expr accumulator,
+        Expr call)
+    {
+        Expr root = call is Expr.Call callExpression
+            ? CollectCallArgs(callExpression, [])
+            : call;
+        if (_activeFunctionOrigin is null
+            || !ShouldRecordReuseSpecializationCandidateRejection(root, name))
+        {
+            return;
+        }
+
+        RecordReuseSpecializationCandidateRejection(
+            new ReuseSpecializationQualification(
+                name,
+                funcType,
+                CreateReuseSpecializationCandidate(accumulator),
+                Accepted: false,
+                ReuseDecisionReason.AccumulatorLayoutNotPersistent),
+            call);
     }
 
     private void RecordFullyReusingCall(
