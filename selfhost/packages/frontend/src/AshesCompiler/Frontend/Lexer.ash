@@ -36,12 +36,12 @@ let lexerByteAt (bytes: Bytes) (position: Int) =
 
 let lexerSlice (bytes: Bytes) (position: Int) (count: Int) = Ashes.Byte.subText(bytes)(position)(count)
 
-let lexerStartsAt (bytes: Bytes) (byteCount: Int) (position: Int) (expected: Str) =
-    (let expectedLength = Ashes.Text.byteLength(expected)
-    in
-        if position + expectedLength > byteCount
-        then false
-        else lexerSlice(bytes)(position)(expectedLength) == expected)
+let lexerByteOr (bytes: Bytes) (byteCount: Int) (position: Int) =
+    if position >= byteCount
+    then -1
+    else lexerByteAt(bytes)(position)
+
+let lexerByteIs (bytes: Bytes) (byteCount: Int) (position: Int) (expected: Int) = lexerByteOr(bytes)(byteCount)(position) == expected
 
 let lexerToken (kind: TokenKind) (text: Str) (intValue: Int) (floatValue: Float) (position: Int) (length: Int) = Token(kind = kind, text = text, intValue = intValue, floatValue = floatValue, position = position, length = length)
 
@@ -168,7 +168,7 @@ let recursive lexerSkipTrivia (bytes: Bytes) (byteCount: Int) (position: Int) =
                 in
                     if current == 47
                     then
-                        if lexerStartsAt(bytes)(byteCount)(position)("//")
+                        if lexerByteIs(bytes)(byteCount)(position + 1)(47)
                         then
                             position + 2
                             |> lexerSkipLine(bytes)(byteCount)
@@ -176,170 +176,33 @@ let recursive lexerSkipTrivia (bytes: Bytes) (byteCount: Int) (position: Int) =
                         else position
                     else position
 
-let recursive lexerHashRange (bytes: Bytes) (position: Int) (remaining: Int) (value: Int) =
-    if remaining <= 0
-    then value
-    else lexerHashRange(bytes)(position + 1)(remaining - 1)(value * 131 + lexerByteAt(bytes)(position))
-
-let recursive lexerRangeEquals (expectedBytes: Bytes) (sourceBytes: Bytes) (sourcePosition: Int) (position: Int) (count: Int) =
-    if position >= count
-    then true
-    else
-        if lexerByteAt(expectedBytes)(position) != lexerByteAt(sourceBytes)(sourcePosition + position)
-        then false
-        else lexerRangeEquals(expectedBytes)(sourceBytes)(sourcePosition)(position + 1)(count)
-
-let lexerKeywordMatches (sourceCode: Int) (bytes: Bytes) (start: Int) (count: Int) (expected: Str) =
-    (let expectedBytes = Ashes.Byte.fromText(expected)
-    in
-        if count != Ashes.Byte.length(expectedBytes)
-        then false
-        else
-            if sourceCode != lexerHashRange(expectedBytes)(0)(count)(0)
-            then false
-            else lexerRangeEquals(expectedBytes)(bytes)(start)(0)(count))
-
-let lexerKeywordKind (bytes: Bytes) (start: Int) (count: Int) =
-    (let sourceCode = lexerHashRange(bytes)(start)(count)(0)
-    in
-        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("recursive")
-        then Recursive
-        else
-            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("in")
-            then In
-            else
-                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("and")
-                then And
-                else
-                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("if")
-                    then If
-                    else
-                        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("then")
-                        then Then
-                        else
-                            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("else")
-                            then Else
-                            else
-                                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("match")
-                                then Match
-                                else
-                                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("with")
-                                    then With
-                                    else
-                                        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("when")
-                                        then When
-                                        else
-                                            if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("given")
-                                            then Given
-                                            else
-                                                if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("true")
-                                                then True
-                                                else
-                                                    if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("false")
-                                                    then False
-                                                    else
-                                                        if lexerKeywordMatches(sourceCode)(bytes)(start)(count)("type")
-                                                        then Type
-                                                        else
-                                                            if lexerKeywordMatches(
-                                                                sourceCode,
-                                                                bytes,
-                                                                start,
-                                                                count,
-                                                                "await"
-                                                            )
-                                                            then Await
-                                                            else
-                                                                if lexerKeywordMatches(
-                                                                    sourceCode,
-                                                                    bytes,
-                                                                    start,
-                                                                    count,
-                                                                    "external"
-                                                                )
-                                                                then External
-                                                                else
-                                                                    if lexerKeywordMatches(
-                                                                        sourceCode,
-                                                                        bytes,
-                                                                        start,
-                                                                        count,
-                                                                        "capability"
-                                                                    )
-                                                                    then Capability
-                                                                    else
-                                                                        if lexerKeywordMatches(
-                                                                            sourceCode,
-                                                                            bytes,
-                                                                            start,
-                                                                            count,
-                                                                            "needs"
-                                                                        )
-                                                                        then Needs
-                                                                        else
-                                                                            if lexerKeywordMatches(
-                                                                                sourceCode,
-                                                                                bytes,
-                                                                                start,
-                                                                                count,
-                                                                                "provide"
-                                                                            )
-                                                                            then Provide
-                                                                            else
-                                                                                if lexerKeywordMatches(
-                                                                                    sourceCode,
-                                                                                    bytes,
-                                                                                    start,
-                                                                                    count,
-                                                                                    "perform"
-                                                                                )
-                                                                                then Perform
-                                                                                else
-                                                                                    if lexerKeywordMatches(
-                                                                                        sourceCode,
-                                                                                        bytes,
-                                                                                        start,
-                                                                                        count,
-                                                                                        "handle"
-                                                                                    )
-                                                                                    then Handle
-                                                                                    else
-                                                                                        if lexerKeywordMatches(
-                                                                                            sourceCode,
-                                                                                            bytes,
-                                                                                            start,
-                                                                                            count,
-                                                                                            "trait"
-                                                                                        )
-                                                                                        then Trait
-                                                                                        else
-                                                                                            if lexerKeywordMatches(
-                                                                                                sourceCode,
-                                                                                                bytes,
-                                                                                                start,
-                                                                                                count,
-                                                                                                "implement"
-                                                                                            )
-                                                                                            then Implement
-                                                                                            else
-                                                                                                if lexerKeywordMatches(
-                                                                                                    sourceCode,
-                                                                                                    bytes,
-                                                                                                    start,
-                                                                                                    count,
-                                                                                                    "requires"
-                                                                                                )
-                                                                                                then Requires
-                                                                                                else
-                                                                                                    if lexerKeywordMatches(
-                                                                                                        sourceCode,
-                                                                                                        bytes,
-                                                                                                        start,
-                                                                                                        count,
-                                                                                                        "deriving"
-                                                                                                    )
-                                                                                                    then Deriving
-                                                                                                    else Ident)
+let lexerKeywordKind (text: Str) =
+    match text with
+        | "recursive" -> Recursive
+        | "in" -> In
+        | "and" -> And
+        | "if" -> If
+        | "then" -> Then
+        | "else" -> Else
+        | "match" -> Match
+        | "with" -> With
+        | "when" -> When
+        | "given" -> Given
+        | "true" -> True
+        | "false" -> False
+        | "type" -> Type
+        | "await" -> Await
+        | "external" -> External
+        | "capability" -> Capability
+        | "needs" -> Needs
+        | "provide" -> Provide
+        | "perform" -> Perform
+        | "handle" -> Handle
+        | "trait" -> Trait
+        | "implement" -> Implement
+        | "requires" -> Requires
+        | "deriving" -> Deriving
+        | _ -> Ident
 
 let recursive lexerIdentifierEnd (bytes: Bytes) (byteCount: Int) (position: Int) =
     if position >= byteCount
@@ -356,21 +219,18 @@ let lexerReadIdentifier (bytes: Bytes) (byteCount: Int) (start: Int) =
     in
         let tokenLength = endPosition - start
         in
-            let sourceCode = lexerHashRange(bytes)(start)(tokenLength)(0)
+            let text = lexerSlice(bytes)(start)(tokenLength)
             in
-                if lexerKeywordMatches(sourceCode)(bytes)(start)(tokenLength)("let")
+                if text == "let"
                 then
-                    if lexerStartsAt(bytes)(byteCount)(endPosition)("?")
+                    if lexerByteIs(bytes)(byteCount)(endPosition)(63)
                     then lexerToken(LetQuestion)("let?")(0)(0.0)(start)(tokenLength + 1)
                     else
-                        if lexerStartsAt(bytes)(byteCount)(endPosition)("!")
+                        if lexerByteIs(bytes)(byteCount)(endPosition)(33)
                         then lexerToken(LetBang)("let!")(0)(0.0)(start)(tokenLength + 1)
-                        else
-                            lexerToken(Let)(lexerSlice(bytes)(start)(tokenLength))(0)(0.0)(start)(tokenLength)
+                        else lexerToken(Let)(text)(0)(0.0)(start)(tokenLength)
                 else
-                    let kind = lexerKeywordKind(bytes)(start)(tokenLength)
-                    in
-                        lexerToken(kind)(lexerSlice(bytes)(start)(tokenLength))(0)(0.0)(start)(tokenLength))
+                    lexerToken(lexerKeywordKind(text))(text)(0)(0.0)(start)(tokenLength))
 
 let recursive lexerDigitsEnd (bytes: Bytes) (byteCount: Int) (position: Int) =
     if position >= byteCount
@@ -781,165 +641,76 @@ let lexerReadRune (bytes: Bytes) (byteCount: Int) (start: Int) =
                             |> lexerDiagnostic(start)(endPosition - start)
                             |> Some))
 
+let lexerFixed (kind: TokenKind) (text: Str) (position: Int) (length: Int) =
+    length
+    |> lexerToken(kind)(text)(0)(0.0)(position)
+    |> Some
+
 let lexerFixedToken (bytes: Bytes) (byteCount: Int) (position: Int) =
-    if lexerStartsAt(bytes)(byteCount)(position)("|?>")
-    then
-        3
-        |> lexerToken(PipeQuestionGreater)("|?>")(0)(0.0)(position)
-        |> Some
-    else
-        if lexerStartsAt(bytes)(byteCount)(position)("|!>")
-        then
-            3
-            |> lexerToken(PipeBangGreater)("|!>")(0)(0.0)(position)
-            |> Some
-        else
-            if lexerStartsAt(bytes)(byteCount)(position)("->")
-            then
-                2
-                |> lexerToken(Arrow)("->")(0)(0.0)(position)
-                |> Some
-            else
-                if lexerStartsAt(bytes)(byteCount)(position)(">=")
-                then
-                    2
-                    |> lexerToken(GreaterEquals)(">=")(0)(0.0)(position)
-                    |> Some
-                else
-                    if lexerStartsAt(bytes)(byteCount)(position)("<=")
-                    then
-                        2
-                        |> lexerToken(LessEquals)("<=")(0)(0.0)(position)
-                        |> Some
+    (let first = lexerByteAt(bytes)(position)
+    in
+        let second = lexerByteOr(bytes)(byteCount)(position + 1)
+        in
+            match first with
+                | 124 ->
+                    if second == 62
+                    then lexerFixed(PipeGreater)("|>")(position)(2)
                     else
-                        if lexerStartsAt(bytes)(byteCount)(position)("==")
+                        if lexerByteOr(bytes)(byteCount)(position + 2) == 62
                         then
-                            2
-                            |> lexerToken(EqualsEquals)("==")(0)(0.0)(position)
-                            |> Some
-                        else
-                            if lexerStartsAt(bytes)(byteCount)(position)("!=")
-                            then
-                                2
-                                |> lexerToken(BangEquals)("!=")(0)(0.0)(position)
-                                |> Some
+                            if second == 63
+                            then lexerFixed(PipeQuestionGreater)("|?>")(position)(3)
                             else
-                                if lexerStartsAt(bytes)(byteCount)(position)("<<")
-                                then
-                                    2
-                                    |> lexerToken(LessLess)("<<")(0)(0.0)(position)
-                                    |> Some
-                                else
-                                    if lexerStartsAt(bytes)(byteCount)(position)(">>")
-                                    then
-                                        2
-                                        |> lexerToken(GreaterGreater)(">>")(0)(0.0)(position)
-                                        |> Some
-                                    else
-                                        if lexerStartsAt(bytes)(byteCount)(position)("::")
-                                        then
-                                            2
-                                            |> lexerToken(ColonColon)("::")(0)(0.0)(position)
-                                            |> Some
-                                        else
-                                            if lexerStartsAt(bytes)(byteCount)(position)("|>")
-                                            then
-                                                2
-                                                |> lexerToken(PipeGreater)("|>")(0)(0.0)(position)
-                                                |> Some
-                                            else
-                                                let value = lexerByteAt(bytes)(position)
-                                                in
-                                                    match value with
-                                                        | 60 ->
-                                                            1
-                                                            |> lexerToken(LessThan)("<")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 62 ->
-                                                            1
-                                                            |> lexerToken(GreaterThan)(">")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 43 ->
-                                                            1
-                                                            |> lexerToken(Plus)("+")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 45 ->
-                                                            1
-                                                            |> lexerToken(Minus)("-")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 42 ->
-                                                            1
-                                                            |> lexerToken(Star)("*")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 47 ->
-                                                            1
-                                                            |> lexerToken(Slash)("/")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 37 ->
-                                                            1
-                                                            |> lexerToken(Percent)("%")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 126 ->
-                                                            1
-                                                            |> lexerToken(Tilde)("~")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 38 ->
-                                                            1
-                                                            |> lexerToken(Ampersand)("&")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 94 ->
-                                                            1
-                                                            |> lexerToken(Caret)("^")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 33 ->
-                                                            1
-                                                            |> lexerToken(Bang)("!")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 61 ->
-                                                            1
-                                                            |> lexerToken(Equals)("=")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 44 ->
-                                                            1
-                                                            |> lexerToken(Comma)(",")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 124 ->
-                                                            1
-                                                            |> lexerToken(Pipe)("|")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 40 ->
-                                                            1
-                                                            |> lexerToken(LParen)("(")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 41 ->
-                                                            1
-                                                            |> lexerToken(RParen)(")")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 91 ->
-                                                            1
-                                                            |> lexerToken(LBracket)("[")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 93 ->
-                                                            1
-                                                            |> lexerToken(RBracket)("]")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 46 ->
-                                                            1
-                                                            |> lexerToken(Dot)(".")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 58 ->
-                                                            1
-                                                            |> lexerToken(Colon)(":")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 123 ->
-                                                            1
-                                                            |> lexerToken(LBrace)("{")(0)(0.0)(position)
-                                                            |> Some
-                                                        | 125 ->
-                                                            1
-                                                            |> lexerToken(RBrace)("}")(0)(0.0)(position)
-                                                            |> Some
-                                                        | _ -> None
+                                if second == 33
+                                then lexerFixed(PipeBangGreater)("|!>")(position)(3)
+                                else lexerFixed(Pipe)("|")(position)(1)
+                        else lexerFixed(Pipe)("|")(position)(1)
+                | 45 ->
+                    if second == 62
+                    then lexerFixed(Arrow)("->")(position)(2)
+                    else lexerFixed(Minus)("-")(position)(1)
+                | 62 ->
+                    if second == 61
+                    then lexerFixed(GreaterEquals)(">=")(position)(2)
+                    else
+                        if second == 62
+                        then lexerFixed(GreaterGreater)(">>")(position)(2)
+                        else lexerFixed(GreaterThan)(">")(position)(1)
+                | 60 ->
+                    if second == 61
+                    then lexerFixed(LessEquals)("<=")(position)(2)
+                    else
+                        if second == 60
+                        then lexerFixed(LessLess)("<<")(position)(2)
+                        else lexerFixed(LessThan)("<")(position)(1)
+                | 61 ->
+                    if second == 61
+                    then lexerFixed(EqualsEquals)("==")(position)(2)
+                    else lexerFixed(Equals)("=")(position)(1)
+                | 33 ->
+                    if second == 61
+                    then lexerFixed(BangEquals)("!=")(position)(2)
+                    else lexerFixed(Bang)("!")(position)(1)
+                | 58 ->
+                    if second == 58
+                    then lexerFixed(ColonColon)("::")(position)(2)
+                    else lexerFixed(Colon)(":")(position)(1)
+                | 43 -> lexerFixed(Plus)("+")(position)(1)
+                | 42 -> lexerFixed(Star)("*")(position)(1)
+                | 47 -> lexerFixed(Slash)("/")(position)(1)
+                | 37 -> lexerFixed(Percent)("%")(position)(1)
+                | 126 -> lexerFixed(Tilde)("~")(position)(1)
+                | 38 -> lexerFixed(Ampersand)("&")(position)(1)
+                | 94 -> lexerFixed(Caret)("^")(position)(1)
+                | 44 -> lexerFixed(Comma)(",")(position)(1)
+                | 40 -> lexerFixed(LParen)("(")(position)(1)
+                | 41 -> lexerFixed(RParen)(")")(position)(1)
+                | 91 -> lexerFixed(LBracket)("[")(position)(1)
+                | 93 -> lexerFixed(RBracket)("]")(position)(1)
+                | 46 -> lexerFixed(Dot)(".")(position)(1)
+                | 123 -> lexerFixed(LBrace)("{")(position)(1)
+                | 125 -> lexerFixed(RBrace)("}")(position)(1)
+                | _ -> None)
 
 let lexerReadNext (bytes: Bytes) (byteCount: Int) (position: Int) =
     match lexerFixedToken(bytes)(byteCount)(position) with

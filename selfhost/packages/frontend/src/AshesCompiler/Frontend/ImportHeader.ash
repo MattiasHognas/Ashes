@@ -5,7 +5,6 @@
 // - Written import text and source order are retained for deterministic diagnostics.
 // - Body offsets and import spans are absolute UTF-8 byte offsets.
 
-import Ashes.Collection.List.append as appendList
 import Ashes.Collection.List.reverse as reverseList
 import Ashes.Internal.deepCopy as deepCopy
 import Ashes.Text
@@ -376,67 +375,104 @@ let parseImportLine written sourceLine imports =
             |> InvalidImportSyntax(sourceLine)
             |> Error
 
-let isImportCandidate trimmed =
-    if trimmed == "import"
-    then true
-    else
-        if Ashes.Text.startsWith(trimmed)("import ")
-        then true
-        else Ashes.Text.startsWith(trimmed)("import\t")
+let headerByteAt (bytes: Bytes) (position: Int) =
+    position
+    |> Ashes.Byte.get(bytes)
+    |> Ashes.Number.UInt.toInt
 
-let finishHeader importsReversed outputReversed bodyStartByteOffset remainingLines =
-    ParsedImportHeader(imports = reverseList(importsReversed), sourceWithoutImports = remainingLines
-    |> appendList(reverseList(outputReversed))
+let recursive headerLineEnd (bytes: Bytes) (byteCount: Int) (position: Int) =
+    if position >= byteCount
+    then byteCount
+    else
+        if headerByteAt(bytes)(position) == 10
+        then position
+        else headerLineEnd(bytes)(byteCount)(position + 1)
+
+let recursive headerContentStart (bytes: Bytes) (lineEnd: Int) (position: Int) =
+    if position >= lineEnd
+    then lineEnd
+    else
+        if position
+        |> headerByteAt(bytes)
+        |> Ashes.Text.isWhiteSpaceByte
+        then headerContentStart(bytes)(lineEnd)(position + 1)
+        else position
+
+let headerLineIsComment (bytes: Bytes) (lineEnd: Int) (contentStart: Int) =
+    if contentStart + 2 > lineEnd
+    then false
+    else
+        if headerByteAt(bytes)(contentStart) == 47
+        then headerByteAt(bytes)(contentStart + 1) == 47
+        else false
+
+let headerLineIsImport (bytes: Bytes) (lineEnd: Int) (contentStart: Int) =
+    if contentStart + 6 > lineEnd
+    then false
+    else
+        if Ashes.Byte.subText(bytes)(contentStart)(6) == "import"
+        then
+            if contentStart + 6 == lineEnd
+            then true
+            else
+                let following = headerByteAt(bytes)(contentStart + 6)
+                in
+                    if following == 32
+                    then true
+                    else following == 9
+        else false
+
+let finishHeader importsReversed outputReversed bodyStartByteOffset =
+    ParsedImportHeader(imports = reverseList(importsReversed), sourceWithoutImports = outputReversed
+    |> reverseList
     |> Ashes.Text.join("\n"), bodyStartByteOffset = bodyStartByteOffset)
 
-let recursive parseHeaderLines source lines sourceLine byteOffset importsReversed outputReversed =
-    match lines with
-        | [] ->
-            []
-            |> finishHeader(importsReversed)(outputReversed)(Ashes.Text.byteLength(source))
-            |> Ok
-        | line :: rest ->
-            if Ashes.Text.trimStart(line) == ""
-            then
-                parseHeaderLines(
-                    source,
-                    rest,
-                    sourceLine + 1,
-                    byteOffset + Ashes.Text.byteLength(line) + 1,
-                    importsReversed,
-                    line :: outputReversed
-                )
-            else
-                if Ashes.Text.startsWith(Ashes.Text.trimStart(line))("//")
-                then
-                    parseHeaderLines(
-                        source,
-                        rest,
-                        sourceLine + 1,
-                        byteOffset + Ashes.Text.byteLength(line) + 1,
-                        importsReversed,
-                        line :: outputReversed
-                    )
-                else
-                    if line
-                    |> Ashes.Text.trimStart
-                    |> isImportCandidate
+let recursive parseHeaderLines (bytes: Bytes) (byteCount: Int) (lineStart: Int) (sourceLine: Int) importsReversed outputReversed =
+    if lineStart > byteCount
+    then
+        byteCount
+        |> finishHeader(importsReversed)(outputReversed)
+        |> Ok
+    else
+        let lineEnd = headerLineEnd(bytes)(byteCount)(lineStart)
+        in
+            let contentStart = headerContentStart(bytes)(lineEnd)(lineStart)
+            in
+                let isHeaderLine =
+                    if contentStart >= lineEnd
+                    then true
+                    else headerLineIsComment(bytes)(lineEnd)(contentStart)
+                in
+                    if isHeaderLine
                     then
-                        match parseImportLine(line)(sourceLine)(importsReversed) with
-                            | Error(error) -> Error(error)
-                            | Ok(entry) ->
-                                parseHeaderLines(
-                                    source,
-                                    rest,
-                                    sourceLine + 1,
-                                    byteOffset + Ashes.Text.byteLength(line) + 1,
-                                    entry :: importsReversed,
-                                    "" :: outputReversed
-                                )
+                        parseHeaderLines(
+                            bytes,
+                            byteCount,
+                            lineEnd + 1,
+                            sourceLine + 1,
+                            importsReversed,
+                            Ashes.Byte.subText(bytes)(lineStart)(lineEnd - lineStart) :: outputReversed
+                        )
                     else
-                        line :: rest
-                        |> finishHeader(importsReversed)(outputReversed)(byteOffset)
-                        |> Ok
+                        if headerLineIsImport(bytes)(lineEnd)(contentStart)
+                        then
+                            match parseImportLine(Ashes.Byte.subText(bytes)(lineStart)(lineEnd - lineStart))(sourceLine)(importsReversed) with
+                                | Error(error) -> Error(error)
+                                | Ok(entry) ->
+                                    parseHeaderLines(
+                                        bytes,
+                                        byteCount,
+                                        lineEnd + 1,
+                                        sourceLine + 1,
+                                        entry :: importsReversed,
+                                        "" :: outputReversed
+                                    )
+                        else
+                            lineStart
+                            |> finishHeader(importsReversed)(Ashes.Byte.subText(bytes)(lineStart)(byteCount - lineStart) :: outputReversed)
+                            |> Ok
 
 let parseImportHeader source =
-    parseHeaderLines(source)(Ashes.Text.split(source)("\n"))(1)(0)([])([])
+    (let bytes = Ashes.Byte.fromText(source)
+    in
+        parseHeaderLines(bytes)(Ashes.Byte.length(bytes))(0)(1)([])([]))
