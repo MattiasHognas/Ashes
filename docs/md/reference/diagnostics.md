@@ -131,7 +131,9 @@ These codes cover the capability surface (`capability` declarations, `needs` row
 
 - `ASH018` — **Capability not permitted by a closed row.** A function whose written `needs`
   row is closed performs a capability (directly or by calling a capability-requiring function) that
-  the row does not include.
+  the row does not include. The rule applies transitively through higher-order functions, trait
+  methods, recursive helpers, and imported package APIs; add each reported capability to the row,
+  or write an open row when the function deliberately forwards its caller's effects.
   Message: `Capability 'Capability' is not permitted by the closed row needs {...}.`
 
 - `ASH019` — **Unknown capability or operation.** A qualified reference names a declared

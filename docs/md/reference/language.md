@@ -3224,6 +3224,23 @@ check (`ASH017`). Their value is purely in typing:
 - They can be named in `needs` rows like declared capabilities:
   `let opener : Int -> Task(Str, Socket) needs {NetListen} = given (p) -> tcp.listen(p)`.
 
+A closed row therefore names every runtime authority the function acquires, directly or through
+what it calls — higher-order arguments, trait methods, recursive helpers, and imported package
+APIs alike:
+
+```ash
+// Rejected: the closed row omits FileRead.
+let load : Str -> Result(Str, Str) needs {} = given path -> Ashes.IO.File.readText(path)
+
+// Accepted: the authority is explicit.
+let load : Str -> Result(Str, Str) needs {FileRead} = given path -> Ashes.IO.File.readText(path)
+```
+
+Add each capability `ASH018` reports to the row, or write an open row when the function
+deliberately forwards its caller's effects. `ashes compile --explain authority` prints the inferred
+row of every public binding and the classification of every external (see the CLI reference), and
+`ashes info` shows the same public capability set for a published package.
+
 `Stop.stop(Unit)` requests graceful shutdown from inside the program (an admin route, a health
 check, a test): the server stops accepting, drains in-flight handlers, and completes its lifecycle
 result with `Ok(())` — the same path as the first `SIGINT`/`SIGTERM`. On a multi-reactor server a

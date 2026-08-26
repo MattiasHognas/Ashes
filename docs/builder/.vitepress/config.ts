@@ -152,10 +152,6 @@ export default defineConfig({
           page("Projects", "/guide/projects"),
           page("Testing", "/guide/testing"),
           page("Fuzz Testing", "/guide/fuzz-testing"),
-          page(
-            "Migrating Ambient Capabilities",
-            "/guide/migrating-ambient-capabilities",
-          ),
           page("Debugging", "/guide/debugging"),
           page("Development", "/guide/development"),
           page("Local CI/CD", "/guide/local-ci"),
