@@ -3271,6 +3271,109 @@ public sealed partial class Lowering
         Emit(new IrInst.Return(cellTemp));
     }
 
+    private readonly Dictionary<string, string> _listToSpaceCopierLabels = new(StringComparer.Ordinal);
+
+    // A to-space analogue of SynthesizeListDeepCopier/EmitListDeepCopierBody above, for a value
+    // that must survive not just one arena reset but indefinitely (an argument passed to a
+    // generic function's parameter — see EmitCallArgumentToSpaceCopyIfGeneric). Str-element lists
+    // only for now. Each cell is built as ordinary-arena scratch, then copied whole into the
+    // persistent blob region via CopyOutArenaToSpace's fixed-size branch (there is no direct
+    // "allocate this many bytes in to-space" primitive for a non-ADT cell) — the scratch cell's own
+    // later arena reclaim is fine since it has already been copied by then.
+    private string SynthesizeListToSpaceCopier(TypeRef elementType)
+    {
+        var key = Pretty(elementType);
+        if (_listToSpaceCopierLabels.TryGetValue(key, out var existing))
+        {
+            return existing;
+        }
+
+        string label = $"__tospacecopy_list_{_nextLambdaId++}";
+        _listToSpaceCopierLabels[key] = label;
+
+        var saved = BeginSynthesizedBody();
+
+        EmitListToSpaceCopierBody(label);
+
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.ListDeepCopier,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    $"List({key})"),
+                StableDiscriminator: key));
+
+        RestoreEnclosingBodyState(saved);
+
+        return label;
+    }
+
+    private void EmitListToSpaceCopierBody(string label)
+    {
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: the list to copy (implicit)
+
+        int argTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(argTemp, argSlot));
+        int selfTemp = NewTemp();
+        Emit(new IrInst.LoadEnv(selfTemp, 0));
+
+        string copyLabel = $"{label}_copy";
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int isNilTemp = NewTemp();
+        Emit(new IrInst.CmpIntEq(isNilTemp, argTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(isNilTemp, copyLabel));
+        int nilResult = NewTemp();
+        Emit(new IrInst.LoadConstInt(nilResult, 0));
+        Emit(new IrInst.Return(nilResult));
+
+        Emit(new IrInst.Label(copyLabel));
+        int headTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(headTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex)));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(tailTemp, argTemp, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+
+        int copiedHead = NewTemp();
+        Emit(new IrInst.CopyOutArenaToSpace(copiedHead, headTemp, -1));
+
+        int copiedTail = NewTemp();
+        Emit(new IrInst.CallClosure(copiedTail, selfTemp, tailTemp));
+
+        int scratchCell = NewTemp();
+        Emit(new IrInst.Alloc(scratchCell, HeapLayouts.List.FixedAllocationSizeBytes));
+        Emit(new IrInst.StoreMemOffset(scratchCell, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListHeadIndex), copiedHead));
+        Emit(new IrInst.StoreMemOffset(scratchCell, HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex), copiedTail));
+
+        int toSpaceCell = NewTemp();
+        Emit(new IrInst.CopyOutArenaToSpace(toSpaceCell, scratchCell, HeapLayouts.List.FixedAllocationSizeBytes));
+        Emit(new IrInst.Return(toSpaceCell));
+    }
+
+    // Builds a one-shot, no-capture closure over the synthesized to-space list copier and applies
+    // it to sourceTemp. A closure call is the only way to invoke it (it's a real recursive
+    // function, not something inlinable at the call site), so every caller pays this fixed
+    // MakeClosure/CallClosure overhead per list — negligible next to walking the list itself.
+    private int EmitListToSpaceCopy(int sourceTemp, TypeRef elementType)
+    {
+        string listLabel = SynthesizeListToSpaceCopier(elementType);
+        int envPtr = NewTemp();
+        Emit(new IrInst.Alloc(envPtr, 8));
+        int copier = NewTemp();
+        Emit(new IrInst.MakeClosure(copier, listLabel, envPtr, 8));
+        Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
+        int result = NewTemp();
+        Emit(new IrInst.CallClosure(result, copier, sourceTemp));
+        return result;
+    }
+
     /// <summary>
     /// Copies one field inside a synthesized ADT copier: a field of the same recursive type uses the
     /// self-closure (env[0]) for recursion; any other field type goes through <see cref="EmitDeepCopy"/>.

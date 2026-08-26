@@ -953,23 +953,26 @@ same public behavior.
   `(left :: rights, absorbed)` all read back freed cells once later allocations reused them.
   **Found only by compiling and running the self-hosted optimizer's concatenation-chain walk.**
   Regression: `tests/aggregate_result_retains_runtime_managed_children.ash`.
-- [ ] Keep a heap aggregate alive when it is stored through a generic parameter of a function that
+- [x] Keep a heap aggregate alive when it is stored through a generic parameter of a function that
   is neither inlined nor persistently specialized: `HashMap.set(key)([text])(map)` (a tuple, record,
   or `Some(text)` value behaves the same) and a user `setTree key value tree` storing `value` into
-  an RC node both end up holding a dangling pointer, while a bare `Str` or scalar value and an
-  assoc list built with `::` in the caller are correct. Two halves: the in-place reuse
-  specialization allocates every fresh cell into persistent to-space but
-  `MaterializeSpecializationField` persists only `Str`/`Bytes` and all-scalar tuples, leaving any
-  other fresh input as a raw pointer into the call's reclaimed arena window (the rule
-  `AccumulatorIsFullyPersistent` already states, but it gates only the loop reset); and the ordinary
-  curried path lowers arguments in arena form and applies the adopt-or-retain protocol only to
-  arguments that are already RC temps, while a stage whose direct parameter has a type-variable type
-  can neither normalize an arena graph on entry (no layout) nor, as observed, adopt an RC argument,
-  so even a loop-built RC list argument had its elements released by the caller. Small programs read
-  back correctly; a string-allocating churn loop between the inserts and the reads exposes it.
-  **Found by the self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion
-  texts and `List(Int)` anchor indices in `HashMap` values.** Its pure-Ashes code now keeps only
-  `Int`/`Str` map values (composite keys such as `signature#occurrence`).
+  an RC node both used to end up holding a dangling pointer. Small programs read back correctly; a
+  string-allocating churn loop between the inserts and the reads exposed it. **Found by the
+  self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion texts and
+  `List(Int)` anchor indices in `HashMap` values.** Fixed 2026-08-26 by copying the argument into the
+  persistent to-space/blob region at each of the two call-lowering paths that reach a generic
+  parameter: the ordinary curried path (`LowerCallApplyOneArgument`, gated on the callee's own
+  pre-instantiation type scheme leaving the parameter position quantified, via
+  `IsCalleeParameterQuantifiedInScheme`) and the in-place reuse specialization's field
+  materialization (`MaterializeSpecializationField`, extended with a `List(Str)` branch alongside its
+  existing `Str`/`Bytes`/copy-tuple coverage). Both share a new to-space list copier
+  (`SynthesizeListToSpaceCopier`/`EmitListToSpaceCopy`), a to-space analogue of the existing
+  arena/RC-heap list deep-copier. An earlier attempt that forced the argument onto the ordinary RC
+  heap instead eliminated the crash but produced *silently wrong output* — RC allocations share the
+  main arena's reclaimable bump-pointer cursor, so they are just as vulnerable to a
+  `RestoreArenaState` reset as a plain arena value; only the persistent to-space region is actually
+  immune. Currently covers `Str` and `List(Str)` argument types; extend if a new failing shape turns
+  up. Regression: `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
 - [ ] Retain the record elements that `Ashes.Collection.List.reverse` (or any generic function
   moving type-variable elements from a consumed list into the cells it builds) carries out of a
   loop's accumulator: a tail-recursive loop that conses a callee's record result (a record holding a
