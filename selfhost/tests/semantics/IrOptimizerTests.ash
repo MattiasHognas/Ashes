@@ -50,15 +50,29 @@ let makeProgram entryFunction functions stringLiterals capGlobals =
         traitEvidence = emptyTraitEvidenceAnnotations
     )
 
+let entryInstructions (program: IrProgram) =
+    (let entry = program.entryFunction
+    in entry.instructions)
+
 let testConstantFolding unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(LoadConstInt(0)(10)),
-                makeInstruction(LoadConstInt(1)(20)),
-                makeInstruction(AddInt(2)(0)(1)),
-                makeInstruction(LoadConstInt(3)(2)),
-                makeInstruction(MulInt(4)(2)(3)),
+                10
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                20
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                1
+                |> AddInt(2)(0)
+                |> makeInstruction,
+                2
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                3
+                |> MulInt(4)(2)
+                |> makeInstruction,
                 makeInstruction(Return(4))
             ]
         )(
@@ -79,13 +93,27 @@ let testIdentityReduction unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(LoadConstInt(0)(0)),
-                makeInstruction(LoadConstInt(1)(42)),
-                makeInstruction(AddInt(2)(1)(0)),
-                makeInstruction(LoadConstInt(3)(1)),
-                makeInstruction(MulInt(4)(2)(3)),
-                makeInstruction(LoadConstInt(5)(2)),
-                makeInstruction(MulInt(6)(4)(5)),
+                0
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                42
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                0
+                |> AddInt(2)(1)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                3
+                |> MulInt(4)(2)
+                |> makeInstruction,
+                2
+                |> LoadConstInt(5)
+                |> makeInstruction,
+                5
+                |> MulInt(6)(4)
+                |> makeInstruction,
                 makeInstruction(Return(6))
             ]
         )(
@@ -106,9 +134,13 @@ let testUnreachableCodeElision unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(LoadConstInt(0)(100)),
+                100
+                |> LoadConstInt(0)
+                |> makeInstruction,
                 makeInstruction(Return(0)),
-                makeInstruction(LoadConstInt(1)(999)),
+                999
+                |> LoadConstInt(1)
+                |> makeInstruction,
                 makeInstruction(Return(1))
             ]
         )(
@@ -129,9 +161,15 @@ let testDeadCodeElision unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(LoadConstInt(0)(123)),
-                makeInstruction(LoadConstInt(1)(456)),
-                makeInstruction(LoadConstInt(2)(789)),
+                123
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                456
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                789
+                |> LoadConstInt(2)
+                |> makeInstruction,
                 makeInstruction(Return(1))
             ]
         )(
@@ -152,10 +190,18 @@ let testDevirtualizeClosure unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(LoadConstInt(0)(0)),
-                makeInstruction(MakeClosure(1)("helper_target")(0)(0)(false)(false)(false)),
-                makeInstruction(LoadConstInt(2)(5)),
-                makeInstruction(CallClosure(3)(1)(2)(-1)),
+                0
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                false
+                |> MakeClosure(1)("helper_target")(0)(0)(false)(false)
+                |> makeInstruction,
+                5
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                -1
+                |> CallClosure(3)(1)(2)
+                |> makeInstruction,
                 makeInstruction(Return(3))
             ]
         )(
@@ -176,10 +222,18 @@ let testRedundantArenaBrackets unit =
     (let fn =
         makeFunction("_start_main")(
             [
-                makeInstruction(SaveArenaState(0)(1)(false)),
-                makeInstruction(LoadConstInt(0)(77)),
-                makeInstruction(RestoreArenaState(0)(1)(2)(false)),
-                makeInstruction(ReclaimArenaChunks(1)(2)(false)),
+                false
+                |> SaveArenaState(0)(1)
+                |> makeInstruction,
+                77
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                false
+                |> RestoreArenaState(0)(1)(2)
+                |> makeInstruction,
+                false
+                |> ReclaimArenaChunks(1)(2)
+                |> makeInstruction,
                 makeInstruction(Return(0))
             ]
         )(
@@ -194,7 +248,7 @@ let testRedundantArenaBrackets unit =
         in
             let optProg = optimizeIrProgram(program)
             in
-                match optProg.entryFunction.instructions with
+                match entryInstructions(optProg) with
                     | IrInstruction { instruction = LoadConstInt(0, 77) } :: IrInstruction { instruction = Return(0) } :: [] -> Unit
                     | _ -> test.fail("testRedundantArenaBrackets failed"))
 
@@ -202,9 +256,15 @@ let testCompileTimeEvaluation unit =
     (let helper =
         makeFunction("add_ten")(
             [
-                makeInstruction(LoadLocal(0)(1)),
-                makeInstruction(LoadConstInt(1)(10)),
-                makeInstruction(AddInt(2)(0)(1)),
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                10
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                1
+                |> AddInt(2)(0)
+                |> makeInstruction,
                 makeInstruction(Return(2))
             ]
         )(
@@ -218,8 +278,12 @@ let testCompileTimeEvaluation unit =
         let entry =
             makeFunction("_start_main")(
                 [
-                    makeInstruction(LoadConstInt(0)(32)),
-                    makeInstruction(CallKnown(1)("add_ten")(0)(0)(-1)(false)),
+                    32
+                    |> LoadConstInt(0)
+                    |> makeInstruction,
+                    false
+                    |> CallKnown(1)("add_ten")(0)(0)(-1)
+                    |> makeInstruction,
                     makeInstruction(Return(1))
                 ]
             )(
@@ -234,24 +298,291 @@ let testCompileTimeEvaluation unit =
             in
                 let optProg = optimizeIrProgram(program)
                 in
-                    match optProg.entryFunction.instructions with
+                    match entryInstructions(optProg) with
                         | IrInstruction { instruction = LoadConstInt(1, 42) } :: IrInstruction { instruction = Return(1) } :: [] -> Unit
                         | _ -> test.fail("testCompileTimeEvaluation failed"))
 
-let runIrOptimizerTests unit =
-    (let _ = testConstantFolding(Unit)
+let recursive hasLoadConstInt instructions dest value =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadConstInt(d, v) } :: tail ->
+            if d == dest
+            then
+                if v == value
+                then true
+                else hasLoadConstInt(tail)(dest)(value)
+            else hasLoadConstInt(tail)(dest)(value)
+        | _ :: tail -> hasLoadConstInt(tail)(dest)(value)
+
+let recursive hasAddInt instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AddInt(_, _, _) } :: _ -> true
+        | _ :: tail -> hasAddInt(tail)
+
+let recursive hasLoadLocal instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(_, _) } :: _ -> true
+        | _ :: tail -> hasLoadLocal(tail)
+
+let optimizeInstructions instructions localCount tempCount =
+    (let optimized =
+        false
+        |> makeFunction("_start_main")(instructions)(localCount)(tempCount)
+        |> optimizeIrFunction
+    in optimized.instructions)
+
+let testMeetOverPathsAgreeingEdges unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                7
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                true
+                |> LoadConstBool(1)
+                |> makeInstruction,
+                "else"
+                |> JumpIfFalse(1)
+                |> makeInstruction,
+                makeInstruction(Jump("join")),
+                makeInstruction(Label("else")),
+                makeInstruction(Jump("join")),
+                makeInstruction(Label("join")),
+                1
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                2
+                |> AddInt(3)(0)
+                |> makeInstruction,
+                makeInstruction(Return(3))
+            ]
+        )(
+            0
+        )(
+            4
+        )
     in
-        let _ = testIdentityReduction(Unit)
-        in
-            let _ = testUnreachableCodeElision(Unit)
-            in
-                let _ = testDeadCodeElision(Unit)
-                in
-                    let _ = testDevirtualizeClosure(Unit)
-                    in
-                        let _ = testRedundantArenaBrackets(Unit)
-                        in
-                            let _ = testCompileTimeEvaluation(Unit)
-                            in
-                                let _ = Ashes.IO.print("all self-hosted IR optimizer tests passed")
-                                in Unit)
+        if hasLoadConstInt(optimized)(3)(8)
+        then
+            if hasAddInt(optimized)
+            then test.fail("testMeetOverPathsAgreeingEdges: the folded add survived")
+            else Unit
+        else test.fail("testMeetOverPathsAgreeingEdges: a fact agreed on by both edges must survive the join"))
+
+let testMeetOverPathsLocalSlotAgreeing unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                true
+                |> LoadConstBool(0)
+                |> makeInstruction,
+                "else"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                7
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                1
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Jump("join")),
+                makeInstruction(Label("else")),
+                7
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                2
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Label("join")),
+                0
+                |> LoadLocal(3)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(4)
+                |> makeInstruction,
+                4
+                |> AddInt(5)(3)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )(
+            1
+        )(
+            6
+        )
+    in
+        if hasLoadConstInt(optimized)(5)(8)
+        then Unit
+        else test.fail("testMeetOverPathsLocalSlotAgreeing: a slot stored the same constant on every edge must fold its load"))
+
+let testMeetOverPathsLocalSlotDisagreeing unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                true
+                |> LoadConstBool(0)
+                |> makeInstruction,
+                "else"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                7
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                1
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Jump("join")),
+                makeInstruction(Label("else")),
+                9
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                2
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Label("join")),
+                0
+                |> LoadLocal(3)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(4)
+                |> makeInstruction,
+                4
+                |> AddInt(5)(3)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )(
+            1
+        )(
+            6
+        )
+    in
+        if hasLoadLocal(optimized)
+        then
+            if hasAddInt(optimized)
+            then Unit
+            else test.fail("testMeetOverPathsLocalSlotDisagreeing: the add over a disagreeing slot was folded")
+        else test.fail("testMeetOverPathsLocalSlotDisagreeing: a slot stored differently on each edge must keep its load"))
+
+let testLocalSlotConstantFolds unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                5
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                0
+                |> StoreLocal(0)
+                |> makeInstruction,
+                0
+                |> LoadLocal(1)
+                |> makeInstruction,
+                2
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                2
+                |> AddInt(3)(1)
+                |> makeInstruction,
+                makeInstruction(Return(3))
+            ]
+        )(
+            1
+        )(
+            4
+        )
+    in
+        if hasLoadConstInt(optimized)(3)(7)
+        then Unit
+        else test.fail("testLocalSlotConstantFolds: a load of a slot holding a known constant must fold"))
+
+let testLocalSlotUnknownStoreKills unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                5
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                0
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(LoadProgramArgs(1)),
+                1
+                |> StoreLocal(0)
+                |> makeInstruction,
+                0
+                |> LoadLocal(2)
+                |> makeInstruction,
+                2
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                3
+                |> AddInt(4)(2)
+                |> makeInstruction,
+                makeInstruction(Return(4))
+            ]
+        )(
+            1
+        )(
+            5
+        )
+    in
+        if hasLoadLocal(optimized)
+        then Unit
+        else test.fail("testLocalSlotUnknownStoreKills: a store of an unknown value must kill the slot's fact"))
+
+let testLoopHeaderClearsFacts unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                3
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                0
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Label("head")),
+                0
+                |> LoadLocal(1)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                2
+                |> AddInt(3)(1)
+                |> makeInstruction,
+                3
+                |> StoreLocal(0)
+                |> makeInstruction,
+                makeInstruction(Jump("head"))
+            ]
+        )(
+            1
+        )(
+            4
+        )
+    in
+        if hasLoadLocal(optimized)
+        then
+            if hasAddInt(optimized)
+            then Unit
+            else test.fail("testLoopHeaderClearsFacts: the loop body add was folded")
+        else test.fail("testLoopHeaderClearsFacts: a label with an unobserved back edge must clear every fact"))
+
+let runIrOptimizerTests unit =
+    unit
+    |> testConstantFolding
+    |> (given (_) -> testMeetOverPathsAgreeingEdges(Unit))
+    |> (given (_) -> testMeetOverPathsLocalSlotAgreeing(Unit))
+    |> (given (_) -> testMeetOverPathsLocalSlotDisagreeing(Unit))
+    |> (given (_) -> testLocalSlotConstantFolds(Unit))
+    |> (given (_) -> testLocalSlotUnknownStoreKills(Unit))
+    |> (given (_) -> testLoopHeaderClearsFacts(Unit))
+    |> (given (_) -> testIdentityReduction(Unit))
+    |> (given (_) -> testUnreachableCodeElision(Unit))
+    |> (given (_) -> testDeadCodeElision(Unit))
+    |> (given (_) -> testDevirtualizeClosure(Unit))
+    |> (given (_) -> testRedundantArenaBrackets(Unit))
+    |> (given (_) -> testCompileTimeEvaluation(Unit))
+    |> (given (_) -> Ashes.IO.print("all self-hosted IR optimizer tests passed"))

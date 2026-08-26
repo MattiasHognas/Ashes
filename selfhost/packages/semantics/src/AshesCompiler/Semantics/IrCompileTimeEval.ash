@@ -31,28 +31,37 @@ type CtValue =
     | CtAdt(Int, List(CtValue))
     deriving {Eq, Show}
 
+type InterpreterState =
+    | stepsLeft: Int
+    | temps: List((IrTemp, CtValue))
+    | locals: List((IrLocal, CtValue))
+
+type CallerScanState =
+    | temps: List((IrTemp, CtValue))
+    | slots: List((IrLocal, CtValue))
+
 let stepBudget = 50000
 
 let depthBudget = 1000
 
-let recursive lookupAssociation key map =
-    match map with
+let recursive lookupAssociation key entries =
+    match entries with
         | [] -> None
         | (k, v) :: tail ->
             if k == key
             then Some(v)
             else lookupAssociation(key)(tail)
 
-let recursive setAssociation key value map =
-    match map with
+let recursive setAssociation key value entries =
+    match entries with
         | [] -> [(key, value)]
         | (k, v) :: tail ->
             if k == key
             then (key, value) :: tail
             else (k, v) :: setAssociation(key)(value)(tail)
 
-let recursive removeAssociation key map =
-    match map with
+let recursive removeAssociation key entries =
+    match entries with
         | [] -> []
         | (k, v) :: tail ->
             if k == key
@@ -147,7 +156,15 @@ let recursive allInstructionsModeledPure evaluable instructions =
             then allInstructionsModeledPure(evaluable)(tail)
             else false
 
-let computeEvaluableFunctions program =
+let recursive lookupFunction label functions =
+    match functions with
+        | [] -> None
+        | (IrFunction { label = l } as fn) :: tail ->
+            if l == label
+            then Some(fn)
+            else lookupFunction(label)(tail)
+
+let computeEvaluableFunctions (program: IrProgram) =
     match program with
         | IrProgram { entryFunction = entryFunction, functions = functions } ->
             let allFunctions = entryFunction :: functions
@@ -174,14 +191,6 @@ let computeEvaluableFunctions program =
                             then candidates
                             else fixpoint(filtered)
                     in fixpoint(initialCandidates)
-
-let recursive lookupFunction label functions =
-    match functions with
-        | [] -> None
-        | (IrFunction { label = l } as fn) :: tail ->
-            if l == label
-            then Some(fn)
-            else lookupFunction(label)(tail)
 
 let recursive lookupStringLiteral label literals =
     match literals with
@@ -236,171 +245,7 @@ let resolveSwitchTag tag cases defaultLabel =
                 else findCase(tail)
     in findCase(cases))
 
-type InterpreterState =
-    | stepsLeft: Int
-    | temps: List((IrTemp, CtValue))
-    | locals: List((IrLocal, CtValue))
-
-let recursive evalFunction program evaluable fn env arg depth steps =
-    if depth > depthBudget
-    then (None, steps)
-    else
-        if steps <= 0
-        then (None, steps)
-        else
-            if not(fn.hasEnvAndArgParams)
-            then (None, steps)
-            else
-                let labelIndex = buildLabelIndex(fn.instructions)(0)
-                in
-                    let initialLocals = [(0, env), (1, arg)]
-                    in
-                        let recursive runLoop pc state =
-                            if state.stepsLeft <= 0
-                            then (None, state.stepsLeft)
-                            else
-                                match nthInstruction(fn.instructions)(pc)(0) with
-                                    | None -> (None, state.stepsLeft)
-                                    | Some(IrInstruction { instruction = inst, location = loc }) ->
-                                        let nextSteps = state.stepsLeft - 1
-                                        in
-                                            let stepState =
-                                                InterpreterState(
-                                                    stepsLeft = nextSteps,
-                                                    temps = state.temps,
-                                                    locals = state.locals
-                                                )
-                                            in
-                                                match inst with
-                                                    | Return(src) ->
-                                                        match lookupAssociation(src)(stepState.temps) with
-                                                            | None -> (None, nextSteps)
-                                                            | Some(val) -> (Some(val), nextSteps)
-                                                    | Jump(target) ->
-                                                        match lookupAssociation(target)(labelIndex) with
-                                                            | None -> (None, nextSteps)
-                                                            | Some(nextPc) -> runLoop(nextPc)(stepState)
-                                                    | JumpIfFalse(cond, target) ->
-                                                        match lookupAssociation(cond)(stepState.temps) with
-                                                            | Some(CtBool(false)) ->
-                                                                match lookupAssociation(target)(labelIndex) with
-                                                                    | None -> (None, nextSteps)
-                                                                    | Some(nextPc) -> runLoop(nextPc)(stepState)
-                                                            | Some(CtBool(true)) -> runLoop(pc + 1)(stepState)
-                                                            | _ -> (None, nextSteps)
-                                                    | SwitchTag(tagTemp, cases, defaultLabel) ->
-                                                        match lookupAssociation(tagTemp)(stepState.temps) with
-                                                            | Some(CtInt(tagVal)) ->
-                                                                let target = resolveSwitchTag(tagVal)(cases)(defaultLabel)
-                                                                in
-                                                                    match lookupAssociation(target)(labelIndex) with
-                                                                        | None -> (None, nextSteps)
-                                                                        | Some(nextPc) -> runLoop(nextPc)(stepState)
-                                                            | _ -> (None, nextSteps)
-                                                    | CallKnown(target, calleeLabel, envTemp, argTemp, _, _) ->
-                                                        if not(listContains(calleeLabel)(evaluable))
-                                                        then (None, nextSteps)
-                                                        else
-                                                            let calleeOpt =
-                                                                lookupFunction(calleeLabel)(
-                                                                    program.entryFunction :: program.functions
-                                                                )
-                                                            in
-                                                                let calleeEnv =
-                                                                    match lookupAssociation(envTemp)(stepState.temps) with
-                                                                        | Some(e) -> e
-                                                                        | None -> CtUnit
-                                                                in
-                                                                    match lookupAssociation(argTemp)(stepState.temps) with
-                                                                        | None -> (None, nextSteps)
-                                                                        | Some(calleeArg) ->
-                                                                            match calleeOpt with
-                                                                                | None -> (None, nextSteps)
-                                                                                | Some(callee) ->
-                                                                                    match evalFunction(program)(evaluable)(callee)(
-                                                                                        calleeEnv
-                                                                                    )(
-                                                                                        calleeArg
-                                                                                    )(
-                                                                                        depth + 1
-                                                                                    )(
-                                                                                        nextSteps
-                                                                                    ) with
-                                                                                        | (callResult, remSteps) ->
-                                                                                            match callResult with
-                                                                                                | None -> (None, remSteps)
-                                                                                                | Some(res) ->
-                                                                                                    let updatedTemps =
-                                                                                                        setAssociation(target)(res)(
-                                                                                                            stepState.temps
-                                                                                                        )
-                                                                                                    in
-                                                                                                        runLoop(pc + 1)(
-                                                                                                            InterpreterState(
-                                                                                                                stepsLeft = remSteps,
-                                                                                                                temps = updatedTemps,
-                                                                                                                locals = stepState.locals
-                                                                                                            )
-                                                                                                        )
-                                                    | CallClosure(target, closureTemp, argTemp, _) ->
-                                                        match lookupAssociation(closureTemp)(stepState.temps) with
-                                                            | Some(CtClosure(calleeLabel, closureEnv)) ->
-                                                                if not(listContains(calleeLabel)(evaluable))
-                                                                then (None, nextSteps)
-                                                                else
-                                                                    match lookupAssociation(argTemp)(stepState.temps) with
-                                                                        | None -> (None, nextSteps)
-                                                                        | Some(calleeArg) ->
-                                                                            let calleeOpt =
-                                                                                lookupFunction(calleeLabel)(
-                                                                                    program.entryFunction :: program.functions
-                                                                                )
-                                                                            in
-                                                                                match calleeOpt with
-                                                                                    | None -> (None, nextSteps)
-                                                                                    | Some(callee) ->
-                                                                                        match evalFunction(program)(evaluable)(callee)(
-                                                                                            closureEnv
-                                                                                        )(
-                                                                                            calleeArg
-                                                                                        )(
-                                                                                            depth + 1
-                                                                                        )(
-                                                                                            nextSteps
-                                                                                        ) with
-                                                                                            | (callResult, remSteps) ->
-                                                                                                match callResult with
-                                                                                                    | None -> (None, remSteps)
-                                                                                                    | Some(res) ->
-                                                                                                        let updatedTemps =
-                                                                                                            setAssociation(target)(
-                                                                                                                res
-                                                                                                            )(
-                                                                                                                stepState.temps
-                                                                                                            )
-                                                                                                        in
-                                                                                                            runLoop(pc + 1)(
-                                                                                                                InterpreterState(
-                                                                                                                    stepsLeft = remSteps,
-                                                                                                                    temps = updatedTemps,
-                                                                                                                    locals = stepState.locals
-                                                                                                                )
-                                                                                                            )
-                                                            | _ -> (None, nextSteps)
-                                                    | _ ->
-                                                        match execPureInst(program)(inst)(stepState) with
-                                                            | None -> (None, nextSteps)
-                                                            | Some(nextState) -> runLoop(pc + 1)(nextState)
-                        in
-                            runLoop(0)(
-                                InterpreterState(
-                                    stepsLeft = steps,
-                                    temps = [],
-                                    locals = initialLocals
-                                )
-                            )
-
-let execPureInst program inst state =
+let execPureInst (program: IrProgram) inst (state: InterpreterState) =
     match inst with
         | LoadConstInt(target, v) ->
             Some(
@@ -682,7 +527,7 @@ let execPureInst program inst state =
                     Some(
                         InterpreterState(
                             stepsLeft = state.stepsLeft,
-                            temps = setAssociation(target)(CtFloat(intToFloat(v)))(state.temps),
+                            temps = setAssociation(target)(CtFloat(Ashes.Number.Math.toFloat(v)))(state.temps),
                             locals = state.locals
                         )
                     )
@@ -693,7 +538,7 @@ let execPureInst program inst state =
                     Some(
                         InterpreterState(
                             stepsLeft = state.stepsLeft,
-                            temps = setAssociation(target)(CtInt(floatToInt(v)))(state.temps),
+                            temps = setAssociation(target)(CtInt(Ashes.Number.Math.truncToInt(v)))(state.temps),
                             locals = state.locals
                         )
                     )
@@ -968,12 +813,167 @@ let execPureInst program inst state =
         | RestoreStackPointer(_) -> Some(state)
         | _ -> None
 
-type CallerScanState =
-    | temps: List((IrTemp, CtValue))
-    | slots: List((IrLocal, CtValue))
+let recursive evalFunction (program: IrProgram) evaluable (fn: IrFunction) env arg depth steps =
+    if depth > depthBudget
+    then (None, steps)
+    else
+        if steps <= 0
+        then (None, steps)
+        else
+            if !fn.hasEnvAndArgParams
+            then (None, steps)
+            else
+                let labelIndex = buildLabelIndex(fn.instructions)(0)
+                in
+                    let initialLocals = [(0, env), (1, arg)]
+                    in
+                        let recursive runLoop pc (state: InterpreterState) =
+                            if state.stepsLeft <= 0
+                            then (None, state.stepsLeft)
+                            else
+                                match nthInstruction(fn.instructions)(pc)(0) with
+                                    | None -> (None, state.stepsLeft)
+                                    | Some(IrInstruction { instruction = inst, location = loc }) ->
+                                        let nextSteps = state.stepsLeft - 1
+                                        in
+                                            let stepState =
+                                                InterpreterState(
+                                                    stepsLeft = nextSteps,
+                                                    temps = state.temps,
+                                                    locals = state.locals
+                                                )
+                                            in
+                                                match inst with
+                                                    | Return(src) ->
+                                                        match lookupAssociation(src)(stepState.temps) with
+                                                            | None -> (None, nextSteps)
+                                                            | Some(val) -> (Some(val), nextSteps)
+                                                    | Jump(target) ->
+                                                        match lookupAssociation(target)(labelIndex) with
+                                                            | None -> (None, nextSteps)
+                                                            | Some(nextPc) -> runLoop(nextPc)(stepState)
+                                                    | JumpIfFalse(cond, target) ->
+                                                        match lookupAssociation(cond)(stepState.temps) with
+                                                            | Some(CtBool(false)) ->
+                                                                match lookupAssociation(target)(labelIndex) with
+                                                                    | None -> (None, nextSteps)
+                                                                    | Some(nextPc) -> runLoop(nextPc)(stepState)
+                                                            | Some(CtBool(true)) -> runLoop(pc + 1)(stepState)
+                                                            | _ -> (None, nextSteps)
+                                                    | SwitchTag(tagTemp, cases, defaultLabel) ->
+                                                        match lookupAssociation(tagTemp)(stepState.temps) with
+                                                            | Some(CtInt(tagVal)) ->
+                                                                let target = resolveSwitchTag(tagVal)(cases)(defaultLabel)
+                                                                in
+                                                                    match lookupAssociation(target)(labelIndex) with
+                                                                        | None -> (None, nextSteps)
+                                                                        | Some(nextPc) -> runLoop(nextPc)(stepState)
+                                                            | _ -> (None, nextSteps)
+                                                    | CallKnown(target, calleeLabel, envTemp, argTemp, _, _) ->
+                                                        if !listContains(calleeLabel)(evaluable)
+                                                        then (None, nextSteps)
+                                                        else
+                                                            let calleeOpt =
+                                                                lookupFunction(calleeLabel)(
+                                                                    program.entryFunction :: program.functions
+                                                                )
+                                                            in
+                                                                let calleeEnv =
+                                                                    match lookupAssociation(envTemp)(stepState.temps) with
+                                                                        | Some(e) -> e
+                                                                        | None -> CtUnit
+                                                                in
+                                                                    match lookupAssociation(argTemp)(stepState.temps) with
+                                                                        | None -> (None, nextSteps)
+                                                                        | Some(calleeArg) ->
+                                                                            match calleeOpt with
+                                                                                | None -> (None, nextSteps)
+                                                                                | Some(callee) ->
+                                                                                    match evalFunction(program)(evaluable)(callee)(
+                                                                                        calleeEnv
+                                                                                    )(
+                                                                                        calleeArg
+                                                                                    )(
+                                                                                        depth + 1
+                                                                                    )(
+                                                                                        nextSteps
+                                                                                    ) with
+                                                                                        | (callResult, remSteps) ->
+                                                                                            match callResult with
+                                                                                                | None -> (None, remSteps)
+                                                                                                | Some(res) ->
+                                                                                                    let updatedTemps =
+                                                                                                        setAssociation(target)(res)(
+                                                                                                            stepState.temps
+                                                                                                        )
+                                                                                                    in
+                                                                                                        runLoop(pc + 1)(
+                                                                                                            InterpreterState(
+                                                                                                                stepsLeft = remSteps,
+                                                                                                                temps = updatedTemps,
+                                                                                                                locals = stepState.locals
+                                                                                                            )
+                                                                                                        )
+                                                    | CallClosure(target, closureTemp, argTemp, _) ->
+                                                        match lookupAssociation(closureTemp)(stepState.temps) with
+                                                            | Some(CtClosure(calleeLabel, closureEnv)) ->
+                                                                if !listContains(calleeLabel)(evaluable)
+                                                                then (None, nextSteps)
+                                                                else
+                                                                    match lookupAssociation(argTemp)(stepState.temps) with
+                                                                        | None -> (None, nextSteps)
+                                                                        | Some(calleeArg) ->
+                                                                            let calleeOpt =
+                                                                                lookupFunction(calleeLabel)(
+                                                                                    program.entryFunction :: program.functions
+                                                                                )
+                                                                            in
+                                                                                match calleeOpt with
+                                                                                    | None -> (None, nextSteps)
+                                                                                    | Some(callee) ->
+                                                                                        match evalFunction(program)(evaluable)(callee)(
+                                                                                            closureEnv
+                                                                                        )(
+                                                                                            calleeArg
+                                                                                        )(
+                                                                                            depth + 1
+                                                                                        )(
+                                                                                            nextSteps
+                                                                                        ) with
+                                                                                            | (callResult, remSteps) ->
+                                                                                                match callResult with
+                                                                                                    | None -> (None, remSteps)
+                                                                                                    | Some(res) ->
+                                                                                                        let updatedTemps =
+                                                                                                            setAssociation(target)(
+                                                                                                                res
+                                                                                                            )(
+                                                                                                                stepState.temps
+                                                                                                            )
+                                                                                                        in
+                                                                                                            runLoop(pc + 1)(
+                                                                                                                InterpreterState(
+                                                                                                                    stepsLeft = remSteps,
+                                                                                                                    temps = updatedTemps,
+                                                                                                                    locals = stepState.locals
+                                                                                                                )
+                                                                                                            )
+                                                            | _ -> (None, nextSteps)
+                                                    | _ ->
+                                                        match execPureInst(program)(inst)(stepState) with
+                                                            | None -> (None, nextSteps)
+                                                            | Some(nextState) -> runLoop(pc + 1)(nextState)
+                        in
+                            runLoop(0)(
+                                InterpreterState(
+                                    stepsLeft = steps,
+                                    temps = [],
+                                    locals = initialLocals
+                                )
+                            )
 
-let rewriteFunctionCalls program evaluable fn =
-    (let recursive scanInstructions instructions state acc =
+let rewriteFunctionCalls (program: IrProgram) evaluable (fn: IrFunction) =
+    (let recursive scanInstructions instructions (state: CallerScanState) acc =
         match instructions with
             | [] -> reverse(acc)
             | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
@@ -1296,7 +1296,7 @@ let rewriteFunctionCalls program evaluable fn =
                 lifetimesPlaced = fn.lifetimesPlaced
             ))
 
-let evaluateCompileTimeConstants program =
+let evaluateCompileTimeConstants (program: IrProgram) =
     (let evaluable = computeEvaluableFunctions(program)
     in
         if length(evaluable) == 0

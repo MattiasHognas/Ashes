@@ -8,7 +8,9 @@
 //   3. Runtime RcDup sinking into branch diamonds
 //   4. Adjacent runtime RcDup / RcDrop pair fusion
 //   5. Known closure devirtualization (CallClosure -> CallKnown)
-//   6. Constant folding (arithmetic, bitwise, comparison with single-predecessor label state)
+//   6. Constant propagation and folding (arithmetic, bitwise, comparison; temp and local-slot facts
+//      with a true meet over every predecessor edge at a label once all edges are observed, and a
+//      conservative clear at a label with a not-yet-observed backward edge)
 //   7. Identity elimination and strength reduction (x+0, x-0, x*0, x*1, x*2, x/1)
 //   8. Unreachable code elimination (after Jump, Return, SwitchTag)
 //   9. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
@@ -41,6 +43,17 @@ type IrOptimizerOptions =
     | enableDeadCodeElision: Bool
     | enableIdentityReduction: Bool
 
+// Constant facts carried by the folding pass. Temps are single-assignment, so a temp fact never
+// changes once recorded; a local slot is ordinary mutable storage, so a store of an unknown or
+// non-scalar value kills its fact and a slot holds at most one of Int/Float/Bool at a time.
+type FoldFacts =
+    | ints: List((IrTemp, Int))
+    | floats: List((IrTemp, Float))
+    | bools: List((IrTemp, Bool))
+    | localInts: List((IrLocal, Int))
+    | localFloats: List((IrLocal, Float))
+    | localBools: List((IrLocal, Bool))
+
 let defaultOptimizerOptions =
     IrOptimizerOptions(
         enableCompileTimeEval = true,
@@ -49,24 +62,24 @@ let defaultOptimizerOptions =
         enableIdentityReduction = true
     )
 
-let recursive lookupAssociation key map =
-    match map with
+let recursive lookupAssociation key entries =
+    match entries with
         | [] -> None
         | (k, v) :: tail ->
             if k == key
             then Some(v)
             else lookupAssociation(key)(tail)
 
-let recursive setAssociation key value map =
-    match map with
+let recursive setAssociation key value entries =
+    match entries with
         | [] -> [(key, value)]
         | (k, v) :: tail ->
             if k == key
             then (key, value) :: tail
             else (k, v) :: setAssociation(key)(value)(tail)
 
-let recursive removeAssociation key map =
-    match map with
+let recursive removeAssociation key entries =
+    match entries with
         | [] -> []
         | (k, v) :: tail ->
             if k == key
@@ -86,7 +99,7 @@ let recursive resolveTemp remap temp =
         | None -> temp
         | Some(resolved) -> resolveTemp(remap)(resolved)
 
-let remapSourceTemps inst remap =
+let remapSourceTemps inst (remap: List((IrTemp, IrTemp))) =
     (let r temp = resolveTemp(remap)(temp)
     in
         match inst with
@@ -181,15 +194,15 @@ let recursive countTempUses instructions acc =
         | IrInstruction { instruction = inst } :: tail ->
             let used = getUsedTemps(inst)
             in
-                let recursive addUses us map =
+                let recursive addUses us entries =
                     match us with
-                        | [] -> map
+                        | [] -> entries
                         | u :: uTail ->
                             let count =
-                                match lookupAssociation(u)(map) with
+                                match lookupAssociation(u)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
-                            in addUses(uTail)(setAssociation(u)(count)(map))
+                            in addUses(uTail)(setAssociation(u)(count)(entries))
                 in countTempUses(tail)(addUses(used)(acc))
 
 let recursive collectCopyTypeProducers instructions acc =
@@ -280,7 +293,7 @@ let fuseAdjacentRuntimeRcPairs instructions =
                             | (RcDup(rDest, rSrc, true, _), RcDrop(rDropSrc, _, _, true, _, _)) ->
                                 if rDropSrc == rDest
                                 then
-                                    if not(isTempUsedInInstructions(tail)(rDest))
+                                    if !isTempUsedInInstructions(tail)(rDest)
                                     then fusePass(tail)(remap)(acc)
                                     else
                                         fusePass(dropInst :: tail)(remap)(
@@ -314,15 +327,15 @@ let recursive countDefinitions instructions acc =
         | IrInstruction { instruction = inst } :: tail ->
             let defs = getDefinedTemps(inst)
             in
-                let recursive addDefs ds map =
+                let recursive addDefs ds entries =
                     match ds with
-                        | [] -> map
+                        | [] -> entries
                         | d :: dTail ->
                             let count =
-                                match lookupAssociation(d)(map) with
+                                match lookupAssociation(d)(entries) with
                                     | Some(c) -> c + 1
                                     | None -> 1
-                            in addDefs(dTail)(setAssociation(d)(count)(map))
+                            in addDefs(dTail)(setAssociation(d)(count)(entries))
                 in countDefinitions(tail)(addDefs(defs)(acc))
 
 let recursive collectSingleDefinitions instructions defCounts acc =
@@ -401,15 +414,15 @@ let recursive countBranchRefsToLabels instructions acc =
                             | None -> 1
                     in countBranchRefsToLabels(tail)(setAssociation(target)(count)(acc))
                 | SwitchTag(_, cases, defaultLabel) ->
-                    let recursive addCases cs map =
+                    let recursive addCases cs entries =
                         match cs with
-                            | [] -> map
+                            | [] -> entries
                             | IrSwitchCase { label = l } :: cTail ->
                                 let c =
-                                    match lookupAssociation(l)(map) with
+                                    match lookupAssociation(l)(entries) with
                                         | Some(n) -> n + 1
                                         | None -> 1
-                                in addCases(cTail)(setAssociation(l)(c)(map))
+                                in addCases(cTail)(setAssociation(l)(c)(entries))
                     in
                         let mapWithCases = addCases(cases)(acc)
                         in
@@ -420,636 +433,267 @@ let recursive countBranchRefsToLabels instructions acc =
                             in countBranchRefsToLabels(tail)(setAssociation(defaultLabel)(defCount)(mapWithCases))
                 | _ -> countBranchRefsToLabels(tail)(acc)
 
-type FoldState =
-    | ints: List((IrTemp, Int))
-    | floats: List((IrTemp, Float))
-    | bools: List((IrTemp, Bool))
-    | savedInts: List((Str, List((IrTemp, Int))))
-    | savedFloats: List((Str, List((IrTemp, Float))))
-    | savedBools: List((Str, List((IrTemp, Bool))))
-    | prevIsTerminator: Bool
+let emptyFoldFacts = FoldFacts(ints = [], floats = [], bools = [], localInts = [], localFloats = [], localBools = [])
 
-let emptyFoldState =
-    FoldState(
-        ints = [],
-        floats = [],
-        bools = [],
-        savedInts = [],
-        savedFloats = [],
-        savedBools = [],
-        prevIsTerminator = false
-    )
+let factsWithInt dest value (facts: FoldFacts) = facts with ints = setAssociation(dest)(value)(facts.ints)
+
+let factsWithFloat dest value (facts: FoldFacts) = facts with floats = setAssociation(dest)(value)(facts.floats)
+
+let factsWithBool dest value (facts: FoldFacts) = facts with bools = setAssociation(dest)(value)(facts.bools)
+
+let factsWithStore slot source (facts: FoldFacts) =
+    (let cleared =
+        FoldFacts(
+            ints = facts.ints,
+            floats = facts.floats,
+            bools = facts.bools,
+            localInts = removeAssociation(slot)(facts.localInts),
+            localFloats = removeAssociation(slot)(facts.localFloats),
+            localBools = removeAssociation(slot)(facts.localBools)
+        )
+    in
+        match lookupAssociation(source)(facts.ints) with
+            | Some(value) -> cleared with localInts = setAssociation(slot)(value)(cleared.localInts)
+            | None ->
+                match lookupAssociation(source)(facts.floats) with
+                    | Some(value) -> cleared with localFloats = setAssociation(slot)(value)(cleared.localFloats)
+                    | None ->
+                        match lookupAssociation(source)(facts.bools) with
+                            | Some(value) -> cleared with localBools = setAssociation(slot)(value)(cleared.localBools)
+                            | None -> cleared)
+
+let intEquals (left: Int) (right: Int) = left == right
+
+let floatEquals (left: Float) (right: Float) = left == right
+
+let boolEquals (left: Bool) (right: Bool) = left == right
+
+let recursive associationAgreesEverywhere equalValues key value snapshots =
+    match snapshots with
+        | [] -> true
+        | snapshot :: tail ->
+            match lookupAssociation(key)(snapshot) with
+                | Some(other) ->
+                    if equalValues(other)(value)
+                    then associationAgreesEverywhere(equalValues)(key)(value)(tail)
+                    else false
+                | None -> false
+
+// The meet over predecessor edges: an entry survives only when every other edge carries the same
+// key with the same value. Value equality arrives as a function so the helper carries a single
+// abstract requirement (the key's equality) like every other association helper here.
+let recursive meetAssociation equalValues entries others =
+    match entries with
+        | [] -> []
+        | (key, value) :: tail ->
+            if associationAgreesEverywhere(equalValues)(key)(value)(others)
+            then (key, value) :: meetAssociation(equalValues)(tail)(others)
+            else meetAssociation(equalValues)(tail)(others)
+
+let snapshotInts (snapshot: FoldFacts) = snapshot.ints
+
+let snapshotFloats (snapshot: FoldFacts) = snapshot.floats
+
+let snapshotBools (snapshot: FoldFacts) = snapshot.bools
+
+let snapshotLocalInts (snapshot: FoldFacts) = snapshot.localInts
+
+let snapshotLocalFloats (snapshot: FoldFacts) = snapshot.localFloats
+
+let snapshotLocalBools (snapshot: FoldFacts) = snapshot.localBools
+
+let meetFacts (snapshots: List(FoldFacts)) =
+    match snapshots with
+        | [] -> emptyFoldFacts
+        | first :: rest ->
+            FoldFacts(
+                ints = meetAssociation(intEquals)(first.ints)(map(snapshotInts)(rest)),
+                floats = meetAssociation(floatEquals)(first.floats)(map(snapshotFloats)(rest)),
+                bools = meetAssociation(boolEquals)(first.bools)(map(snapshotBools)(rest)),
+                localInts = meetAssociation(intEquals)(first.localInts)(map(snapshotLocalInts)(rest)),
+                localFloats = meetAssociation(floatEquals)(first.localFloats)(map(snapshotLocalFloats)(rest)),
+                localBools = meetAssociation(boolEquals)(first.localBools)(map(snapshotLocalBools)(rest))
+            )
+
+// One snapshot per predecessor edge observed so far, keyed by target label.
+let recordEdgeSnapshot target facts saved =
+    match lookupAssociation(target)(saved) with
+        | Some(snapshots) -> setAssociation(target)(append(snapshots)([facts]))(saved)
+        | None -> setAssociation(target)([facts])(saved)
+
+let recursive recordSwitchCaseSnapshots cases facts saved =
+    match cases with
+        | [] -> saved
+        | IrSwitchCase { label = caseLabel } :: tail -> recordSwitchCaseSnapshots(tail)(facts)(recordEdgeSnapshot(caseLabel)(facts)(saved))
+
+// The facts entering a label. When every predecessor edge (each explicit branch plus fall-through,
+// if any) has been observed by this forward scan, the entering facts are the meet over those edges;
+// a single-predecessor label and a fall-through-only label are the one-snapshot special case. A
+// predecessor not yet observed (a backward branch, whose source appears later) is unknowable here,
+// so a loop header conservatively clears every fact.
+let factsAtLabel name branchRefs (facts: FoldFacts) saved prevIsTerminator =
+    (let branchCount =
+        match lookupAssociation(name)(branchRefs) with
+            | Some(count) -> count
+            | None -> 0
+    in
+        let fallthrough =
+            if prevIsTerminator
+            then 0
+            else 1
+        in
+            let snapshots =
+                match lookupAssociation(name)(saved) with
+                    | Some(list) -> list
+                    | None -> []
+            in
+                let total = branchCount + fallthrough
+                in
+                    let observed = length(snapshots) + fallthrough
+                    in
+                        if total > 0
+                        then
+                            if observed == total
+                            then
+                                meetFacts(
+                                    if fallthrough == 1
+                                    then facts :: snapshots
+                                    else snapshots
+                                )
+                            else emptyFoldFacts
+                        else emptyFoldFacts)
+
+let foldIntPair (facts: FoldFacts) left right =
+    match (lookupAssociation(left)(facts.ints), lookupAssociation(right)(facts.ints)) with
+        | (Some(leftValue), Some(rightValue)) -> Some((leftValue, rightValue))
+        | _ -> None
+
+let foldFloatPair (facts: FoldFacts) left right =
+    match (lookupAssociation(left)(facts.floats), lookupAssociation(right)(facts.floats)) with
+        | (Some(leftValue), Some(rightValue)) -> Some((leftValue, rightValue))
+        | _ -> None
+
+let intResult dest value location = IrInstruction(instruction = LoadConstInt(dest)(value), location = location)
+
+let floatResult dest value location = IrInstruction(instruction = LoadConstFloat(dest)(value), location = location)
+
+let boolResult dest value location = IrInstruction(instruction = LoadConstBool(dest)(value), location = location)
 
 let foldConstants instructions =
     (let branchRefs = countBranchRefsToLabels(instructions)([])
     in
-        let recursive foldLoop insts state acc =
+        let recursive foldLoop insts (facts: FoldFacts) saved prevIsTerminator acc =
             match insts with
                 | [] -> reverse(acc)
                 | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
                     (match inst with
-                        | LoadConstInt(dest, v) ->
-                            let nextInts = setAssociation(dest)(v)(state.ints)
-                            in
-                                foldLoop(tail)(
-                                    FoldState(
-                                        ints = nextInts,
-                                        floats = state.floats,
-                                        bools = state.bools,
-                                        savedInts = state.savedInts,
-                                        savedFloats = state.savedFloats,
-                                        savedBools = state.savedBools,
-                                        prevIsTerminator = false
-                                    )
-                                )(
-                                    irInst :: acc
-                                )
-                        | LoadConstFloat(dest, v) ->
-                            let nextFloats = setAssociation(dest)(v)(state.floats)
-                            in
-                                foldLoop(tail)(
-                                    FoldState(
-                                        ints = state.ints,
-                                        floats = nextFloats,
-                                        bools = state.bools,
-                                        savedInts = state.savedInts,
-                                        savedFloats = state.savedFloats,
-                                        savedBools = state.savedBools,
-                                        prevIsTerminator = false
-                                    )
-                                )(
-                                    irInst :: acc
-                                )
-                        | LoadConstBool(dest, v) ->
-                            let nextBools = setAssociation(dest)(v)(state.bools)
-                            in
-                                foldLoop(tail)(
-                                    FoldState(
-                                        ints = state.ints,
-                                        floats = state.floats,
-                                        bools = nextBools,
-                                        savedInts = state.savedInts,
-                                        savedFloats = state.savedFloats,
-                                        savedBools = state.savedBools,
-                                        prevIsTerminator = false
-                                    )
-                                )(
-                                    irInst :: acc
-                                )
+                        | LoadConstInt(dest, value) -> foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(irInst :: acc)
+                        | LoadConstFloat(dest, value) -> foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(irInst :: acc)
+                        | LoadConstBool(dest, value) -> foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(irInst :: acc)
                         | AddInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv + rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv + rv)(facts))(saved)(false)(intResult(dest)(lv + rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | SubInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv - rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv - rv)(facts))(saved)(false)(intResult(dest)(lv - rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | MulInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv * rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv * rv)(facts))(saved)(false)(intResult(dest)(lv * rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) ->
                                     if rv != 0
-                                    then
-                                        let v = lv / rv
-                                        in
-                                            foldLoop(tail)(
-                                                FoldState(
-                                                    ints = setAssociation(dest)(v)(state.ints),
-                                                    floats = state.floats,
-                                                    bools = state.bools,
-                                                    savedInts = state.savedInts,
-                                                    savedFloats = state.savedFloats,
-                                                    savedBools = state.savedBools,
-                                                    prevIsTerminator = false
-                                                )
-                                            )(
-                                                IrInstruction(
-                                                    instruction = LoadConstInt(dest)(v),
-                                                    location = loc
-                                                ) :: acc
-                                            )
-                                    else foldLoop(tail)(state)(irInst :: acc)
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                                    then foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
+                                    else foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivUInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) ->
                                     if rv != 0
-                                    then
-                                        let v = lv / rv
-                                        in
-                                            foldLoop(tail)(
-                                                FoldState(
-                                                    ints = setAssociation(dest)(v)(state.ints),
-                                                    floats = state.floats,
-                                                    bools = state.bools,
-                                                    savedInts = state.savedInts,
-                                                    savedFloats = state.savedFloats,
-                                                    savedBools = state.savedBools,
-                                                    prevIsTerminator = false
-                                                )
-                                            )(
-                                                IrInstruction(
-                                                    instruction = LoadConstInt(dest)(v),
-                                                    location = loc
-                                                ) :: acc
-                                            )
-                                    else foldLoop(tail)(state)(irInst :: acc)
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                                    then foldLoop(tail)(factsWithInt(dest)(lv / rv)(facts))(saved)(false)(intResult(dest)(lv / rv)(loc) :: acc)
+                                    else foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | AndInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv & rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv & rv)(facts))(saved)(false)(intResult(dest)(lv & rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | OrInt(dest, l, r) ->
-                            (match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    (let v = lv | rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        ))
-                                | _ -> foldLoop(tail)(state)(irInst :: acc))
+                            (match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> (foldLoop(tail)(factsWithInt(dest)(lv | rv)(facts))(saved)(false)(intResult(dest)(lv | rv)(loc) :: acc))
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc))
                         | XorInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv ^ rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv ^ rv)(facts))(saved)(false)(intResult(dest)(lv ^ rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | ShlInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv << rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv << rv)(facts))(saved)(false)(intResult(dest)(lv << rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | ShrInt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv >> rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = setAssociation(dest)(v)(state.ints),
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstInt(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithInt(dest)(lv >> rv)(facts))(saved)(false)(intResult(dest)(lv >> rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | AddFloat(dest, l, r) ->
-                            match (lookupAssociation(l)(state.floats), lookupAssociation(r)(state.floats)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv + rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = setAssociation(dest)(v)(state.floats),
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(
-                                                instruction = LoadConstFloat(dest)(v),
-                                                location = loc
-                                            ) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldFloatPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv + rv)(facts))(saved)(false)(floatResult(dest)(lv + rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | SubFloat(dest, l, r) ->
-                            match (lookupAssociation(l)(state.floats), lookupAssociation(r)(state.floats)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv - rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = setAssociation(dest)(v)(state.floats),
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(
-                                                instruction = LoadConstFloat(dest)(v),
-                                                location = loc
-                                            ) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldFloatPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv - rv)(facts))(saved)(false)(floatResult(dest)(lv - rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | MulFloat(dest, l, r) ->
-                            match (lookupAssociation(l)(state.floats), lookupAssociation(r)(state.floats)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv * rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = setAssociation(dest)(v)(state.floats),
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(
-                                                instruction = LoadConstFloat(dest)(v),
-                                                location = loc
-                                            ) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldFloatPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv * rv)(facts))(saved)(false)(floatResult(dest)(lv * rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | DivFloat(dest, l, r) ->
-                            match (lookupAssociation(l)(state.floats), lookupAssociation(r)(state.floats)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv / rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = setAssociation(dest)(v)(state.floats),
-                                                bools = state.bools,
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(
-                                                instruction = LoadConstFloat(dest)(v),
-                                                location = loc
-                                            ) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldFloatPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithFloat(dest)(lv / rv)(facts))(saved)(false)(floatResult(dest)(lv / rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntEq(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv == rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv == rv)(facts))(saved)(false)(boolResult(dest)(lv == rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntNe(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv != rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv != rv)(facts))(saved)(false)(boolResult(dest)(lv != rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntGt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv > rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv > rv)(facts))(saved)(false)(boolResult(dest)(lv > rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntGe(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv >= rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv >= rv)(facts))(saved)(false)(boolResult(dest)(lv >= rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntLt(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv < rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv < rv)(facts))(saved)(false)(boolResult(dest)(lv < rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | CmpIntLe(dest, l, r) ->
-                            match (lookupAssociation(l)(state.ints), lookupAssociation(r)(state.ints)) with
-                                | (Some(lv), Some(rv)) ->
-                                    let v = lv <= rv
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = setAssociation(dest)(v)(state.bools),
-                                                savedInts = state.savedInts,
-                                                savedFloats = state.savedFloats,
-                                                savedBools = state.savedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            IrInstruction(instruction = LoadConstBool(dest)(v), location = loc) :: acc
-                                        )
-                                | _ -> foldLoop(tail)(state)(irInst :: acc)
-                        | Label(name) ->
-                            let branchCount =
-                                match lookupAssociation(name)(branchRefs) with
-                                    | Some(c) -> c
-                                    | None -> 0
-                            in
-                                let totalPreds =
-                                    branchCount + (if state.prevIsTerminator
-                                    then 0
-                                    else 1)
-                                in
-                                    let restoredState =
-                                        if totalPreds <= 1
-                                        then
-                                            if state.prevIsTerminator
-                                            then
-                                                match lookupAssociation(name)(state.savedInts) with
-                                                    | Some(si) ->
-                                                        let sFloats =
-                                                            match lookupAssociation(name)(state.savedFloats) with
-                                                                | Some(sf) -> sf
-                                                                | None -> []
-                                                        in
-                                                            let sBools =
-                                                                match lookupAssociation(name)(state.savedBools) with
-                                                                    | Some(sb) -> sb
-                                                                    | None -> []
-                                                            in
-                                                                FoldState(
-                                                                    ints = si,
-                                                                    floats = sFloats,
-                                                                    bools = sBools,
-                                                                    savedInts = removeAssociation(name)(state.savedInts),
-                                                                    savedFloats = removeAssociation(name)(state.savedFloats),
-                                                                    savedBools = removeAssociation(name)(state.savedBools),
-                                                                    prevIsTerminator = false
-                                                                )
-                                                    | None ->
-                                                        FoldState(
-                                                            ints = [],
-                                                            floats = [],
-                                                            bools = [],
-                                                            savedInts = removeAssociation(name)(state.savedInts),
-                                                            savedFloats = removeAssociation(name)(state.savedFloats),
-                                                            savedBools = removeAssociation(name)(state.savedBools),
-                                                            prevIsTerminator = false
-                                                        )
-                                            else
-                                                if branchCount == 0
-                                                then
-                                                    FoldState(
-                                                        ints = state.ints,
-                                                        floats = state.floats,
-                                                        bools = state.bools,
-                                                        savedInts = removeAssociation(name)(state.savedInts),
-                                                        savedFloats = removeAssociation(name)(state.savedFloats),
-                                                        savedBools = removeAssociation(name)(state.savedBools),
-                                                        prevIsTerminator = false
-                                                    )
-                                                else
-                                                    FoldState(
-                                                        ints = [],
-                                                        floats = [],
-                                                        bools = [],
-                                                        savedInts = removeAssociation(name)(state.savedInts),
-                                                        savedFloats = removeAssociation(name)(state.savedFloats),
-                                                        savedBools = removeAssociation(name)(state.savedBools),
-                                                        prevIsTerminator = false
-                                                    )
-                                        else
-                                            FoldState(
-                                                ints = [],
-                                                floats = [],
-                                                bools = [],
-                                                savedInts = removeAssociation(name)(state.savedInts),
-                                                savedFloats = removeAssociation(name)(state.savedFloats),
-                                                savedBools = removeAssociation(name)(state.savedBools),
-                                                prevIsTerminator = false
-                                            )
-                                    in foldLoop(tail)(restoredState)(irInst :: acc)
-                        | Jump(target) ->
-                            let nextSavedInts = setAssociation(target)(state.ints)(state.savedInts)
-                            in
-                                let nextSavedFloats = setAssociation(target)(state.floats)(state.savedFloats)
-                                in
-                                    let nextSavedBools = setAssociation(target)(state.bools)(state.savedBools)
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = nextSavedInts,
-                                                savedFloats = nextSavedFloats,
-                                                savedBools = nextSavedBools,
-                                                prevIsTerminator = true
-                                            )
-                                        )(
-                                            irInst :: acc
-                                        )
-                        | JumpIfFalse(_, target) ->
-                            let nextSavedInts = setAssociation(target)(state.ints)(state.savedInts)
-                            in
-                                let nextSavedFloats = setAssociation(target)(state.floats)(state.savedFloats)
-                                in
-                                    let nextSavedBools = setAssociation(target)(state.bools)(state.savedBools)
-                                    in
-                                        foldLoop(tail)(
-                                            FoldState(
-                                                ints = state.ints,
-                                                floats = state.floats,
-                                                bools = state.bools,
-                                                savedInts = nextSavedInts,
-                                                savedFloats = nextSavedFloats,
-                                                savedBools = nextSavedBools,
-                                                prevIsTerminator = false
-                                            )
-                                        )(
-                                            irInst :: acc
-                                        )
-                        | SwitchTag(_, _, _) ->
-                            foldLoop(tail)(
-                                FoldState(
-                                    ints = state.ints,
-                                    floats = state.floats,
-                                    bools = state.bools,
-                                    savedInts = state.savedInts,
-                                    savedFloats = state.savedFloats,
-                                    savedBools = state.savedBools,
-                                    prevIsTerminator = true
-                                )
-                            )(
-                                irInst :: acc
-                            )
-                        | Return(_) ->
-                            foldLoop(tail)(
-                                FoldState(
-                                    ints = state.ints,
-                                    floats = state.floats,
-                                    bools = state.bools,
-                                    savedInts = state.savedInts,
-                                    savedFloats = state.savedFloats,
-                                    savedBools = state.savedBools,
-                                    prevIsTerminator = true
-                                )
-                            )(
-                                irInst :: acc
-                            )
-                        | _ -> foldLoop(tail)(state)(irInst :: acc))
-        in foldLoop(instructions)(emptyFoldState)([]))
+                            match foldIntPair(facts)(l)(r) with
+                                | Some((lv, rv)) -> foldLoop(tail)(factsWithBool(dest)(lv <= rv)(facts))(saved)(false)(boolResult(dest)(lv <= rv)(loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
+                        | StoreLocal(slot, source) -> foldLoop(tail)(factsWithStore(slot)(source)(facts))(saved)(false)(irInst :: acc)
+                        | LoadLocal(dest, slot) ->
+                            match lookupAssociation(slot)(facts.localInts) with
+                                | Some(value) -> foldLoop(tail)(factsWithInt(dest)(value)(facts))(saved)(false)(intResult(dest)(value)(loc) :: acc)
+                                | None ->
+                                    match lookupAssociation(slot)(facts.localFloats) with
+                                        | Some(value) -> foldLoop(tail)(factsWithFloat(dest)(value)(facts))(saved)(false)(floatResult(dest)(value)(loc) :: acc)
+                                        | None ->
+                                            match lookupAssociation(slot)(facts.localBools) with
+                                                | Some(value) -> foldLoop(tail)(factsWithBool(dest)(value)(facts))(saved)(false)(boolResult(dest)(value)(loc) :: acc)
+                                                | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
+                        | Label(name) -> foldLoop(tail)(factsAtLabel(name)(branchRefs)(facts)(saved)(prevIsTerminator))(removeAssociation(name)(saved))(false)(irInst :: acc)
+                        | Jump(target) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(irInst :: acc)
+                        | JumpIfFalse(_, target) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
+                        | SwitchTag(_, cases, defaultLabel) -> foldLoop(tail)(facts)(recordEdgeSnapshot(defaultLabel)(facts)(recordSwitchCaseSnapshots(cases)(facts)(saved)))(true)(irInst :: acc)
+                        | Return(_) -> foldLoop(tail)(facts)(saved)(true)(irInst :: acc)
+                        | _ -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc))
+        in foldLoop(instructions)(emptyFoldFacts)([])(false)([]))
 
 let reduceIdentitiesAndStrength instructions =
     (let branchRefs = countBranchRefsToLabels(instructions)([])
@@ -1243,12 +887,12 @@ let recursive collectAllReadSlots instructions acc =
 
 let isDeadInstruction inst usedTemps readSlots =
     match inst with
-        | LoadConstInt(t, _) -> not(listContains(t)(usedTemps))
-        | LoadConstFloat(t, _) -> not(listContains(t)(usedTemps))
-        | LoadConstBool(t, _) -> not(listContains(t)(usedTemps))
-        | StoreLocal(slot, _) -> not(listContains(slot)(readSlots))
-        | MakeClosure(t, _, _, _, _, _, _) -> not(listContains(t)(usedTemps))
-        | MakeClosureStack(t, _, _, _, _, _) -> not(listContains(t)(usedTemps))
+        | LoadConstInt(t, _) -> !listContains(t)(usedTemps)
+        | LoadConstFloat(t, _) -> !listContains(t)(usedTemps)
+        | LoadConstBool(t, _) -> !listContains(t)(usedTemps)
+        | StoreLocal(slot, _) -> !listContains(slot)(readSlots)
+        | MakeClosure(t, _, _, _, _, _, _) -> !listContains(t)(usedTemps)
+        | MakeClosureStack(t, _, _, _, _, _) -> !listContains(t)(usedTemps)
         | _ -> false
 
 let elideDeadCode instructions =
@@ -1261,7 +905,7 @@ let elideDeadCode instructions =
                     filter(
                         given (irInst) ->
                             match irInst with
-                                | IrInstruction { instruction = inst } -> not(isDeadInstruction(inst)(usedTemps)(readSlots))
+                                | IrInstruction { instruction = inst } -> !isDeadInstruction(inst)(usedTemps)(readSlots)
                     )(
                         insts
                     )
@@ -1398,7 +1042,15 @@ let recursive allInstructionsNonAllocating nonAllocatingFns instructions =
             then allInstructionsNonAllocating(nonAllocatingFns)(tail)
             else false
 
-let computeNonAllocatingFunctions functions =
+let recursive lookupFunction label (functions: List(IrFunction)) =
+    match functions with
+        | [] -> None
+        | (IrFunction { label = l } as fn) :: tail ->
+            if l == label
+            then Some(fn)
+            else lookupFunction(label)(tail)
+
+let computeNonAllocatingFunctions (functions: List(IrFunction)) =
     (let initialCandidates =
         map(given (f) ->
             match f with
@@ -1420,15 +1072,7 @@ let computeNonAllocatingFunctions functions =
                 else fixpoint(filtered)
         in fixpoint(initialCandidates))
 
-let recursive lookupFunction label functions =
-    match functions with
-        | [] -> None
-        | (IrFunction { label = l } as fn) :: tail ->
-            if l == label
-            then Some(fn)
-            else lookupFunction(label)(tail)
-
-let stripRedundantArenaBrackets nonAllocatingFns fn =
+let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
     (let isWholeNonAllocating =
         if listContains(fn.label)(nonAllocatingFns)
         then true
@@ -1532,7 +1176,7 @@ let stripRedundantArenaBrackets nonAllocatingFns fn =
                                     lifetimesPlaced = fn.lifetimesPlaced
                                 ))
 
-let optimizeIrFunction fn =
+let optimizeIrFunction (fn: IrFunction) =
     (let insts0 = fn.instructions
     in
         let insts1 = elideTrivialOwnershipCopies(insts0)
@@ -1564,7 +1208,7 @@ let optimizeIrFunction fn =
                                             lifetimesPlaced = fn.lifetimesPlaced
                                         ))
 
-let optimizeIrProgramWithOptions options program =
+let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgram) =
     (let programAfterCtEval =
         if options.enableCompileTimeEval
         then evaluateCompileTimeConstants(program)
