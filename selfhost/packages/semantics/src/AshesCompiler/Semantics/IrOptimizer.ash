@@ -22,8 +22,9 @@
 //      a Borrow copy; operands are canonicalized through a LoadLocal/StoreLocal/Borrow/RcDup alias
 //      map (with the function's own env/arg slots seeded to a stable identity) before keying the
 //      caches, which any instruction that could write through an existing pointer invalidates,
-//      while arena and stack bookkeeping never does; followed by a third ownership-copy elision
-//      that forwards the copies it introduced
+//      while arena and stack bookkeeping never does, and a SetAdtField through a pointer
+//      allocated in the same block populates instead (store-to-load forwarding); followed by a
+//      third ownership-copy elision that forwards the copies it introduced
 //   9. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
 //      reference inside an unreachable region is dropped with its body)
 //   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
@@ -81,6 +82,7 @@ type LocalCseState =
     | callCache: List(((Str, Int, Int, Int, Bool), IrTemp))
     | valueOf: List((IrTemp, Int))
     | slotValue: List((IrLocal, Int))
+    | freshPointers: List(IrTemp)
 
 let defaultOptimizerOptions =
     IrOptimizerOptions(
@@ -1410,9 +1412,9 @@ let isLocalCseSafeInstruction inst =
         | SaveStackPointer(_) -> true
         | RestoreStackPointer(_) -> true
         | _ -> false
+
 // Negative, so it can never collide with a real temp: the identity of the value the backend's
 // entry prologue stores into env/arg slot 0/1 before any instruction this pass can see.
-
 let entrySlotIdentity (slot: IrLocal) = -1 - slot
 
 let emptyLocalCseState hasEnvAndArgParams =
@@ -1422,7 +1424,8 @@ let emptyLocalCseState hasEnvAndArgParams =
         valueOf = [],
         slotValue = if hasEnvAndArgParams
         then [(0, entrySlotIdentity(0)), (1, entrySlotIdentity(1))]
-        else []
+        else [],
+        freshPointers = []
     )
 
 let recursive resolveCseValue (valueOf: List((IrTemp, Int))) (temp: Int) =
@@ -1482,6 +1485,12 @@ let trackLocalCseAlias inst (state: LocalCseState) =
 
 // A cache hit becomes a Borrow copy of the first occurrence's result, exactly the idiom the
 // identity reduction uses, so the ownership-copy elision that follows forwards and erases it.
+// A pointer allocated in this same block is fresh: nothing that existed before it can hold or
+// derive a reference to it, so a SetAdtField through it populates the field cache with exactly
+// that one entry instead of invalidating everything, and the next read of the same field forwards
+// the stored value (the construct-then-destructure shape). The cached value is the write's raw
+// source temp, never its canonical identity: canonicalization can resolve to the env/arg slot
+// sentinel, which is only ever a key and must not be emitted.
 let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
     match inst with
         | GetAdtField(target, ptr, field) ->
@@ -1503,11 +1512,22 @@ let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
                                 | Some(cached) -> ((state with valueOf = setAssociation(dest)(cached)(state.valueOf)), IrInstruction(instruction = Borrow(dest)(cached), location = loc))
                                 | None -> ((state with callCache = ((label, env, arg, flag, stackAllocated), dest) :: state.callCache), IrInstruction(instruction = inst, location = loc))
             else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
+        | AllocAdt(target, _, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
+        | AllocAdtStack(target, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
+        | SetAdtField(ptr, field, source) ->
+            let key = resolveCseValue(state.valueOf)(ptr)
+            in
+                if listContains(key)(state.freshPointers)
+                then ((state with fieldCache = ((key, field), source) :: state.fieldCache), IrInstruction(instruction = inst, location = loc))
+                else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
         | _ ->
             if isLocalCseSafeInstruction(inst)
             then (state, IrInstruction(instruction = inst, location = loc))
             else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
 
+// Slots 0 (env) and 1 (arg) are populated by the backend's entry prologue, a native store never
+// visible as a StoreLocal, so they are seeded with a stable identity at function entry and again
+// at every label: without it every read of a function's own argument looks like an unknown value.
 let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParams instructions (state: LocalCseState) acc =
     match instructions with
         | [] -> reverse(acc)
@@ -1518,9 +1538,6 @@ let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParam
                 | None ->
                     match eliminateLocalCseInstruction(evaluable)(inst)(loc)(state) with
                         | (nextState, rewritten) -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(nextState)(rewritten :: acc)
-// Slots 0 (env) and 1 (arg) are populated by the backend's entry prologue, a native store never
-// visible as a StoreLocal, so they are seeded with a stable identity at function entry and again
-// at every label: without it every read of a function's own argument looks like an unknown value.
 
 let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions = eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
 

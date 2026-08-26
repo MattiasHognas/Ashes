@@ -1191,6 +1191,132 @@ let testDuplicateUnprovenCallKeepsBothCalls unit =
         then Unit
         else test.fail("testDuplicateUnprovenCallKeepsBothCalls: a call the purity oracle cannot prove must never be merged"))
 
+let recursive hasNegativeTempReference instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AddInt(_, left, right) } :: tail ->
+            if left < 0
+            then true
+            else
+                if right < 0
+                then true
+                else hasNegativeTempReference(tail)
+        | IrInstruction { instruction = Borrow(_, source) } :: tail ->
+            if source < 0
+            then true
+            else hasNegativeTempReference(tail)
+        | IrInstruction { instruction = Return(source) } :: tail ->
+            if source < 0
+            then true
+            else hasNegativeTempReference(tail)
+        | _ :: tail -> hasNegativeTempReference(tail)
+
+let recursive returnsTemp instructions temp =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Return(source) } :: tail ->
+            if source == temp
+            then true
+            else returnsTemp(tail)(temp)
+        | _ :: tail -> returnsTemp(tail)(temp)
+
+let testStoreToLoadForwardsThroughFreshRecord unit =
+    (let optimized =
+        optimizeArgumentFunction(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                false
+                |> AllocAdt(1)(0)(2)
+                |> makeInstruction,
+                0
+                |> SetAdtField(1)(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(2)(1)
+                |> makeInstruction,
+                2
+                |> AddInt(3)(2)
+                |> makeInstruction,
+                makeInstruction(Return(3))
+            ]
+        )
+    in
+        if countGetAdtField(optimized) == 0
+        then
+            if hasNegativeTempReference(optimized)
+            then test.fail("testStoreToLoadForwardsThroughFreshRecord: the forwarded value must be the write's raw source temp, never the env/arg slot sentinel")
+            else Unit
+        else test.fail("testStoreToLoadForwardsThroughFreshRecord: a read of a field just written through a fresh allocation must forward the stored value"))
+
+let testLaterStoreThroughFreshRecordForwardsTheNewerValue unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                5
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                7
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                false
+                |> AllocAdt(2)(0)(1)
+                |> makeInstruction,
+                0
+                |> SetAdtField(2)(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(3)(2)
+                |> makeInstruction,
+                1
+                |> SetAdtField(2)(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(4)(2)
+                |> makeInstruction,
+                makeInstruction(Return(4))
+            ]
+        )(
+            2
+        )(
+            8
+        )
+    in
+        if countGetAdtField(optimized) == 0
+        then
+            if returnsTemp(optimized)(1)
+            then Unit
+            else test.fail("testLaterStoreThroughFreshRecordForwardsTheNewerValue: the read after the second write must forward the second value")
+        else test.fail("testLaterStoreThroughFreshRecordForwardsTheNewerValue: both reads of the fresh record must forward"))
+
+let testStoreThroughUnknownPointerDoesNotForward unit =
+    (let optimized =
+        optimizeArgumentFunction(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                0
+                |> LoadLocal(1)
+                |> makeInstruction,
+                0
+                |> SetAdtField(1)(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(2)(1)
+                |> makeInstruction,
+                2
+                |> AddInt(3)(2)
+                |> makeInstruction,
+                makeInstruction(Return(3))
+            ]
+        )
+    in
+        if countGetAdtField(optimized) == 1
+        then Unit
+        else test.fail("testStoreThroughUnknownPointerDoesNotForward: a write through a pointer not allocated in this block may alias anything, so its read must stay a load"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -1214,6 +1340,9 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testFieldReadMergedAcrossArenaBracket(Unit))
     |> (given (_) -> testDuplicatePureKnownCallMerges(Unit))
     |> (given (_) -> testDuplicateUnprovenCallKeepsBothCalls(Unit))
+    |> (given (_) -> testStoreToLoadForwardsThroughFreshRecord(Unit))
+    |> (given (_) -> testLaterStoreThroughFreshRecordForwardsTheNewerValue(Unit))
+    |> (given (_) -> testStoreThroughUnknownPointerDoesNotForward(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))

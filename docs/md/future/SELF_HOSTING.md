@@ -467,7 +467,7 @@ same public behavior.
   deny-by-default invalidation list with the arena/stack bookkeeping exemption, and the
   `computeEvaluableFunctions` oracle reused for known-call merging; the fresh-allocation
   store-to-load forwarding is the next item.
-- [ ] Extend the local common-subexpression pass above with store-to-load/projection forwarding:
+- [x] Extend the local common-subexpression pass above with store-to-load/projection forwarding:
   when a `SetAdtField` writes through a pointer proven fresh in the same block (an `AllocAdt`/
   `AllocAdtStack` target — nothing that existed before it could hold or derive a reference to memory
   that didn't exist yet), record the field cache entry directly from the write instead of only from a
@@ -484,7 +484,10 @@ same public behavior.
   emitting one produces an out-of-range temp reference that crashes at codegen. This pattern (a fresh
   record's field set from a value that itself traces back to the enclosing function's own argument)
   is completely ordinary real code and was not exercised by any of this pass's own unit tests, only by
-  compiling actual source and running the result.
+  compiling actual source and running the result. Pure Ashes now tracks `AllocAdt`/`AllocAdtStack`
+  targets as fresh per block, populates the field cache from a `SetAdtField` through one with the
+  write's raw source temp, and its test covers the sentinel edge directly (a fresh record's field
+  set from the function's own argument, read back and added).
 - [ ] Add closure environment scalarization for a single scalar capture: when a stack-allocated
   closure's environment holds exactly one 8-byte value and its only use is already a devirtualized
   `CallKnown`, skip the environment allocation entirely and pass the captured value directly as the
