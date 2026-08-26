@@ -1232,6 +1232,31 @@ let expectGuardedMatchStaysLinear unit =
         |> switchCaseCount
         |> test.assertEqual(None))
 
+let bareNullaryPatternMatch =
+    ExprMatch(
+        ExprCall(
+            ExprVar("Some"),
+            ExprInt(7),
+            false,
+            callArgumentsInline
+        ),
+        [
+            (PatternVar("None"), ExprInt(0), None),
+            (PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None)
+        ],
+        None
+    )
+
+let expectBareNullaryConstructorPatternTestsItsTag unit =
+    (let instructions =
+        bareNullaryPatternMatch
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        instructions
+        |> countGetAdtTag
+        |> test.assertEqual(2))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -1261,4 +1286,5 @@ let runCoreLoweringTests unit =
     |> (given (_) -> expectRepeatedTagSharesOneTagTest(Unit))
     |> (given (_) -> expectFailedNestedCaseFallsThroughToDefaultArm(Unit))
     |> (given (_) -> expectGuardedMatchStaysLinear(Unit))
+    |> (given (_) -> expectBareNullaryConstructorPatternTestsItsTag(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))

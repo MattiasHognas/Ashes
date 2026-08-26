@@ -1297,6 +1297,14 @@ let recursive coreRecordPatterns fields =
         | [] -> []
         | (_fieldName, pattern) :: rest -> pattern :: coreRecordPatterns(rest)
 
+// A bare name the parser wrote as a variable pattern but that names a nullary constructor is
+// that constructor's pattern, never a binder.
+let isNullaryConstructorPatternName (name: Str) state =
+    match constructorLayout(name)(state) with
+        | Some(CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_, _, _) } }) -> false
+        | Some(_) -> true
+        | None -> false
+
 let recursive prepareCorePatternBindings pending seen state =
     match pending with
         | [] -> state
@@ -1307,13 +1315,16 @@ let recursive prepareCorePatternBindings pending seen state =
                     if containsName(name)(seen)
                     then prepareCorePatternBindings(rest)(seen)(state)
                     else
-                        match freshType(state) with
-                            | FreshType { state = typedState, semanticType = semanticType } ->
-                                match freshLocal(typedState) with
-                                    | FreshLocal { state = localState, local = local } ->
-                                        localState
-                                        |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
-                                        |> prepareCorePatternBindings(rest)(name :: seen)
+                        if isNullaryConstructorPatternName(name)(state)
+                        then prepareCorePatternBindings(rest)(seen)(state)
+                        else
+                            match freshType(state) with
+                                | FreshType { state = typedState, semanticType = semanticType } ->
+                                    match freshLocal(typedState) with
+                                        | FreshLocal { state = localState, local = local } ->
+                                            localState
+                                            |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
+                                            |> prepareCorePatternBindings(rest)(name :: seen)
                 | PatternCons(head, tail) -> prepareCorePatternBindings(head :: tail :: rest)(seen)(state)
                 | PatternTuple(elements) ->
                     prepareCorePatternBindings(append(elements)(rest))(seen)(state)
@@ -1672,7 +1683,10 @@ let recursive lowerPattern pattern valueTemp valueType failLabel state =
     match pattern with
         | PatternAt(_span, inner) -> lowerPattern(inner)(valueTemp)(valueType)(failLabel)(state)
         | PatternWildcard -> LoweredCorePattern(state = state, error = None)
-        | PatternVar(name) -> lowerPatternVariable(name)(valueTemp)(valueType)(state)
+        | PatternVar(name) ->
+            if isNullaryConstructorPatternName(name)(state)
+            then lowerConstructorPattern(name)([])(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
+            else lowerPatternVariable(name)(valueTemp)(valueType)(state)
         | PatternEmptyList -> lowerEmptyListPattern(valueTemp)(valueType)(failLabel)(state)
         | PatternCons(head, tail) -> lowerConsPattern(head)(tail)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
         | PatternTuple(_elements) -> lowerTuplePattern(pattern)(valueTemp)(valueType)(failLabel)(lowerPattern)(state)
@@ -1897,18 +1911,18 @@ let recursive unwrapPatternAt pattern =
         | PatternAt(_span, inner) -> unwrapPatternAt(inner)
         | other -> other
 
-let isCatchAllPattern pattern =
+let isCatchAllPattern state pattern =
     match unwrapPatternAt(pattern) with
         | PatternWildcard -> true
-        | PatternVar(_) -> true
+        | PatternVar(name) -> !isNullaryConstructorPatternName(name)(state)
         | _ -> false
 
-let recursive allCatchAllPatterns patterns =
+let recursive allCatchAllPatterns state patterns =
     match patterns with
         | [] -> true
         | pattern :: rest ->
-            if isCatchAllPattern(pattern)
-            then allCatchAllPatterns(rest)
+            if isCatchAllPattern(state)(pattern)
+            then allCatchAllPatterns(state)(rest)
             else false
 
 let recursive schemeResultName (semanticType: SemanticType) =
@@ -1917,24 +1931,29 @@ let recursive schemeResultName (semanticType: SemanticType) =
         | SemNamed(_, name, _) -> Some(name)
         | _ -> None
 
+let classifyConstructorCase (name: Str) patterns state =
+    match constructorLayout(name)(state) with
+        | None -> CaseReject
+        | Some(CoreConstructorLayout { isZeroCost = true }) -> CaseReject
+        | Some(CoreConstructorLayout { tag = tag, scheme = TypeScheme { body = body } }) ->
+            match schemeResultName(body) with
+                | Some(adtName) ->
+                    patterns
+                    |> allCatchAllPatterns(state)
+                    |> CaseConstructor(name)(tag)(adtName)
+                | None -> CaseReject
+
 let classifyMatchCase (matchCase: (Pattern, Expr, Maybe(Expr))) state =
     match matchCase with
         | (_pattern, _body, Some(_guard)) -> CaseReject
         | (pattern, _body, None) ->
             match unwrapPatternAt(pattern) with
                 | PatternWildcard -> CaseDefault
-                | PatternVar(_) -> CaseDefault
-                | PatternConstructor(name, patterns) ->
-                    match constructorLayout(name)(state) with
-                        | None -> CaseReject
-                        | Some(CoreConstructorLayout { isZeroCost = true }) -> CaseReject
-                        | Some(CoreConstructorLayout { tag = tag, scheme = TypeScheme { body = body } }) ->
-                            match schemeResultName(body) with
-                                | Some(adtName) ->
-                                    patterns
-                                    |> allCatchAllPatterns
-                                    |> CaseConstructor(name)(tag)(adtName)
-                                | None -> CaseReject
+                | PatternVar(name) ->
+                    if isNullaryConstructorPatternName(name)(state)
+                    then classifyConstructorCase(name)([])(state)
+                    else CaseDefault
+                | PatternConstructor(name, patterns) -> classifyConstructorCase(name)(patterns)(state)
                 | _ -> CaseReject
 
 let recursive addCaseToTagGroups (groups: List(CoreTagGroup)) (tag: Int) (name: Str) (index: Int) (trivial: Bool) =
@@ -2018,8 +2037,13 @@ let finishKnownTagConstructorPattern patterns valueTemp valueType failLabel lowe
                     | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                     | (typedState, None) -> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)(LoweredCorePattern(state = typedState, error = None))
 
-let lowerKnownTagPattern pattern valueTemp valueType failLabel state =
+let recursive lowerKnownTagPattern pattern valueTemp valueType failLabel state =
     match unwrapPatternAt(pattern) with
+        | PatternVar(name) ->
+            if isNullaryConstructorPatternName(name)(state)
+            then
+                lowerKnownTagPattern(PatternConstructor(name)([]))(valueTemp)(valueType)(failLabel)(state)
+            else lowerPattern(pattern)(valueTemp)(valueType)(failLabel)(state)
         | PatternConstructor(name, patterns) ->
             match constructorLayout(name)(state) with
                 | None -> LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("unknown constructor " + name)))

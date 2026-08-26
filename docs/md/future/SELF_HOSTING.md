@@ -666,7 +666,11 @@ same public behavior.
   binding their payload with no tag re-test, linear testing within any other group, stage 0's
   four-arm linear threshold for an all-trivial match, and a decline for guards, zero-cost
   constructors, or a second ADT. Dead-arm elimination and its recursive coverage query are carried
-  by the next item, which the pure-Ashes lowering does not have yet.
+  by the next item, which the pure-Ashes lowering does not have yet. A bare `None`/`NoVal` arm is a
+  variable pattern in the syntax tree (the parser cannot tell a binder from a nullary constructor);
+  pure-Ashes inference, pattern-binding preparation, lowering, and the group planner now resolve such
+  a name against the constructor table exactly as stage 0 does, so it is a tag test rather than a
+  catch-all binder that silently absorbed every later arm.
 - [ ] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
   "Missing case" engine is a deliberate under-approximation of what is missing — correct for a
   diagnostic, which must never report a false "Missing case", and unsound as a proof that a trailing
