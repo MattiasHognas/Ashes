@@ -127,10 +127,29 @@ same public behavior.
 - [x] Preserve intentional source spellings where the formatter contract requires them and sort only
   semantically unordered surfaces such as requirement sets.
 - [x] Cover golden output, parse-format-parse behavior, and formatter idempotence.
-- [ ] Preserve written import headers and leading/standalone comments around the formatted AST body.
+- [x] Preserve written import headers and leading/standalone comments around the formatted AST body.
+  Pure Ashes now formats a whole file the way the `fmt` command does (`formatSource` in
+  `SourceFormatting.ash`): the leading `//` comment block and blank lines are split off verbatim,
+  every `import` line is lifted out and re-rendered canonically (`import Path[.selector][ as Alias]`,
+  with a malformed `import ` line reported as `InvalidImportLine`), the remaining body is parsed and
+  formatted, and each standalone comment line is reinserted before the formatted line whose
+  whitespace-insensitive lexer-token signature (and occurrence number) matches its original next
+  anchor, falling back to after its previous anchor and then to the top of the file, so no comment
+  text is ever dropped. Comment lines keep their written text and indentation; the join uses the
+  requested line ending.
 - [ ] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
   made from the source form.
-- [ ] Compare the full formatter corpus and malformed-input behavior with the C# formatter.
+- [ ] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
+  whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
+  `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
+  known layout differences (`else if` chains, parenthesized `let` bodies, pipeline layout) and one
+  crash: formatting `StandardTraits.ash` segfaults inside the synthesized `TypeExpr` deep-copier
+  while rendering a top-level `let` whose annotation is an arrow type (`formatterType`'s
+  `TypeArrow` arm), with the parser having reported no diagnostics — the parsed annotation already
+  holds a released node, so the frontend or formatter is hitting a stage-0 retain gap on real input.
+  The top-level boundary splitter no longer cuts a declaration value at an indented `then`/`else`/
+  `in`/pipe line after a completed call (only a token that can start a whitespace-application
+  argument begins the trailing expression, as in stage 0); that gate was found by the same pass.
 
 #### Semantic foundations and ordinary inference
 
@@ -833,6 +852,23 @@ same public behavior.
   `(left :: rights, absorbed)` all read back freed cells once later allocations reused them.
   **Found only by compiling and running the self-hosted optimizer's concatenation-chain walk.**
   Regression: `tests/aggregate_result_retains_runtime_managed_children.ash`.
+- [ ] Keep a heap aggregate alive when it is stored through a generic parameter of a function that
+  is neither inlined nor persistently specialized: `HashMap.set(key)([text])(map)` (a tuple, record,
+  or `Some(text)` value behaves the same) and a user `setTree key value tree` storing `value` into
+  an RC node both end up holding a dangling pointer, while a bare `Str` or scalar value and an
+  assoc list built with `::` in the caller are correct. Two halves: the in-place reuse
+  specialization allocates every fresh cell into persistent to-space but
+  `MaterializeSpecializationField` persists only `Str`/`Bytes` and all-scalar tuples, leaving any
+  other fresh input as a raw pointer into the call's reclaimed arena window (the rule
+  `AccumulatorIsFullyPersistent` already states, but it gates only the loop reset); and the ordinary
+  curried path lowers arguments in arena form and applies the adopt-or-retain protocol only to
+  arguments that are already RC temps, while a stage whose direct parameter has a type-variable type
+  can neither normalize an arena graph on entry (no layout) nor, as observed, adopt an RC argument,
+  so even a loop-built RC list argument had its elements released by the caller. Small programs read
+  back correctly; a string-allocating churn loop between the inserts and the reads exposes it.
+  **Found by the self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion
+  texts and `List(Int)` anchor indices in `HashMap` values.** Its pure-Ashes code now keeps only
+  `Int`/`Str` map values (composite keys such as `signature#occurrence`).
 - [ ] Release a TCO loop's aggregate result in its caller: a call to a loop whose result is a
   tuple or an ADT built from its accumulators (`walk(50)([])([])` returning `(xs, ys)` or
   `Pair(xs, ys)`) is never dropped by the consumer that destructures it, so every call leaks the

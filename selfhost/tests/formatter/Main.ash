@@ -3,6 +3,7 @@ import Ashes.Text.join
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Formatter.Formatter
+import AshesCompiler.Formatter.SourceFormatting
 let expressionFrom source =
     match parseExpression(source) with
         | ExpressionParseResult { expression = expression, diagnostics = [] } -> expression
@@ -95,8 +96,105 @@ let assertPattern expected pattern =
                 )
             ))
 
+let assertReinserted expected original formatted lineEnding =
+    (let actual = reinsertStandaloneCommentLines(original)(formatted)(lineEnding)
+    in
+        if expected == actual
+        then Unit
+        else test.fail("expected reinserted source:\n" + expected + "actual reinserted source:\n" + actual))
+
+let assertFormattedSource expected source =
+    match formatSource(source) with
+        | Ok(actual) ->
+            if expected != actual
+            then test.fail("expected formatted source:\n" + expected + "actual formatted source:\n" + actual)
+            else
+                match formatSource(actual) with
+                    | Ok(again) -> test.assertEqual(actual)(again)
+                    | Error(error) -> test.fail("formatted source must format again: " + Ashes.Trait.Show.show(error))
+        | Error(error) -> test.fail("source must format: " + Ashes.Trait.Show.show(error))
+
+let expectSplitSourceLinesDropsTheTerminalNewlineAndCarriageReturns unit =
+    unit
+    |> (given (_) ->
+        "a\r\n\r\nb\r\n"
+        |> splitSourceLines
+        |> test.assertEqual(["a", "", "b"]))
+    |> (given (_) ->
+        "a\n\n"
+        |> splitSourceLines
+        |> test.assertEqual(["a", ""]))
+    |> (given (_) ->
+        ""
+        |> splitSourceLines
+        |> test.assertEqual([]))
+
+let expectCommentFollowsItsNextAnchor unit = assertReinserted("let a = 1\n\n// about b\nlet b = 2\n")("let a=1\n// about b\nlet b=2\n")("let a = 1\n\nlet b = 2\n")("\n")
+
+let expectCommentFallsBackToThePreviousAnchor unit = assertReinserted("let a = 1\n// trailing note\n")("let a=1\n// trailing note\nlet b=2\n")("let a = 1\n")("\n")
+
+let expectCommentWithoutAnchorsGoesToTheTop unit = assertReinserted("// only\nbar\n")("// only\nfoo\n")("bar\n")("\n")
+
+let expectRepeatedLinesAnchorByOccurrence unit = assertReinserted("x\nx\n// second\nx\n// after last\n")("x\nx\n// second\nx\n// after last\n")("x\nx\nx\n")("\n")
+
+let expectReinsertionJoinsWithTheRequestedLineEnding unit = assertReinserted("let a = 1\r\n\r\n// about b\r\nlet b = 2\r\n")("let a=1\r\n// about b\r\nlet b=2\r\n")("let a = 1\n\nlet b = 2\n")("\r\n")
+
+let expectCommentTextIsPreservedVerbatim unit = assertReinserted("let f x =\n      // inner\n    x\n")("let f x =\n      // inner\n      x\n")("let f x =\n    x\n")("\n")
+
+let expectLeadingCommentsAreSplitFromTheBody unit =
+    match extractLeadingComments("// header\n\nlet a = 1\n// not leading\nlet b = 2\n") with
+        | (leading, body) ->
+            unit
+            |> (given (_) -> test.assertEqual(["// header", ""])(leading))
+            |> (given (_) -> test.assertEqual("let a = 1\n// not leading\nlet b = 2")(body))
+
+let expectImportsAreRenderedCanonically unit =
+    match extractImports("import   Ashes.Text\tas T\nimport Ashes.Collection.List.map\nlet a = 1\n  import Ashes.Test as test\nlet b = 2") with
+        | Ok((imports, body)) ->
+            unit
+            |> (given (_) -> test.assertEqual(["import Ashes.Text as T", "import Ashes.Collection.List.map", "import Ashes.Test as test"])(imports))
+            |> (given (_) -> test.assertEqual("let a = 1\nlet b = 2")(body))
+        | Error(error) -> test.fail("imports must extract: " + Ashes.Trait.Show.show(error))
+
+let expectMalformedImportLinesAreRejected unit =
+    match extractImports("let a = 1\nimport 9bad\n") with
+        | Error(InvalidImportLine(2, "import 9bad")) -> Unit
+        | Error(error) -> test.fail("a malformed import must name its line, got " + Ashes.Trait.Show.show(error))
+        | Ok(_) -> test.fail("a malformed import must be rejected")
+
+let expectFormatSourceKeepsHeaderImportsAndComments unit =
+    assertFormattedSource(
+        "// header\n\nimport Ashes.Text as T\nimport Ashes.Collection.List.map\nlet a = 1\n\n// about b\nlet b = 2\n",
+        "// header\n\nimport Ashes.Text as T\nimport   Ashes.Collection.List.map\nlet a=1\n// about b\nlet b=2\n"
+    )
+
+let expectFormatSourceWithoutTriviaIsPlainFormatting unit = assertFormattedSource("let a = 1\n\nlet b = 2\n")("let a=1\nlet b=2")
+
+let expectFormatSourceReportsParseFailures unit =
+    match formatSource("let a = \n") with
+        | Error(SourceParseFailure(_ :: _)) -> Unit
+        | Error(error) -> test.fail("a parse failure must carry diagnostics, got " + Ashes.Trait.Show.show(error))
+        | Ok(_) -> test.fail("an unparsable body must be rejected")
+
+let runSourceFormattingTests unit =
+    unit
+    |> expectSplitSourceLinesDropsTheTerminalNewlineAndCarriageReturns
+    |> expectCommentFollowsItsNextAnchor
+    |> expectCommentFallsBackToThePreviousAnchor
+    |> expectCommentWithoutAnchorsGoesToTheTop
+    |> expectRepeatedLinesAnchorByOccurrence
+    |> expectReinsertionJoinsWithTheRequestedLineEnding
+    |> expectCommentTextIsPreservedVerbatim
+    |> expectLeadingCommentsAreSplitFromTheBody
+    |> expectImportsAreRenderedCanonically
+    |> expectMalformedImportLinesAreRejected
+    |> expectFormatSourceKeepsHeaderImportsAndComments
+    |> expectFormatSourceWithoutTriviaIsPlainFormatting
+    |> expectFormatSourceReportsParseFailures
+
 let run unit =
     unit
+    |> runSourceFormattingTests
     |> (given (_) -> assertProgram("let a = 1\n\nlet b = 2\n")("let a=1\nlet b=2"))
     |> (given (_) ->
         assertProgram(

@@ -328,6 +328,14 @@ let parserPreviousCompletesCall (reversedTokens: List(Token)) =
                 else false
             | [] -> false)
 
+// An indented line after a completed call `f(x)` starts the trailing expression only when its first
+// token could begin a whitespace-application argument; a continuation such as `then`, `else`, `in`,
+// `with`, a pipe, or an operator keeps the value going.
+let parserStartsIndentedTrailingExpression (token: Token) (reversedTokens: List(Token)) =
+    if parserIsWhitespaceArgument(token.kind)
+    then parserPreviousCompletesCall(reversedTokens)
+    else false
+
 let parserStartsDeclarationBinding (tokens: List(Token)) =
     match tokens with
         | pipe :: name :: equals :: _ ->
@@ -375,11 +383,11 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens:
                                                     else
                                                         if column <= declarationColumn
                                                         then true
-                                                        else parserPreviousCompletesCall(reversed)
+                                                        else parserStartsIndentedTrailingExpression(token)(reversed)
                                                 else
                                                     if column <= declarationColumn
                                                     then true
-                                                    else parserPreviousCompletesCall(reversed)
+                                                    else parserStartsIndentedTrailingExpression(token)(reversed)
                     in
                         if atBoundary
                         then (reverseList(reversed), remaining)

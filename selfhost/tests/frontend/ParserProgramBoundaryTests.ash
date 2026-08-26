@@ -62,12 +62,23 @@ let checkIndentedTrailingExpression unit =
                     | _ -> test.fail("expected trailing call")
         | _ -> test.fail("expected indented trailing expression")
 
+let checkContinuationAfterCompletedCall unit =
+    match "let f x =\n    if g(x)\n    then 1\n    else 2\n\nlet h y =\n    k(y)\n    |> m\n\nlet z = f(1)"
+    |> parseProgram
+    |> expectNoDiagnostics with
+        | ProgramSyntax { items = first :: second :: third :: [], body = None } ->
+            match (ParserProgramTests.unspanTopLevel(first), ParserProgramTests.unspanTopLevel(second), ParserProgramTests.unspanTopLevel(third)) with
+                | (TopLevelLet(LetBindingSyntax { name = "f" }, false), TopLevelLet(LetBindingSyntax { name = "h" }, false), TopLevelLet(LetBindingSyntax { name = "z" }, false)) -> Unit
+                | _ -> test.fail("expected the three flat declarations f, h, and z")
+        | _ -> test.fail("a then/else or pipe line after a completed call must continue the declaration value")
+
 let run unit =
     unit
     |> checkLoneExpression
     |> checkConsecutiveDeclarations
     |> checkNestedLetBody
     |> checkIndentedTrailingExpression
+    |> checkContinuationAfterCompletedCall
     |> (given (_) -> expectDiagnostics(""))
     |> (given (_) -> expectDiagnostics("and x = 1"))
     |> (given (_) -> expectDiagnostics("let x = 1 and y = 2"))

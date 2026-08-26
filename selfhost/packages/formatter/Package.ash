@@ -5,4 +5,5 @@
 // - Importing the package root makes the formatter module available without adding behavior.
 
 import AshesCompiler.Formatter.Formatter
+import AshesCompiler.Formatter.SourceFormatting
 Unit
