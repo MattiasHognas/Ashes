@@ -504,12 +504,26 @@ same public behavior.
   the same offset `emitDynamicPerform` reads from (`(globalCount + 1 + opIndex) * 8`); an arm calling
   `resume` anywhere else is rejected with `UnsupportedOperationArmResume` rather than silently
   producing wrong IR. Regressions: `testHandleExpressionLowering` (now also asserts the closure
-  store), `testHandleArmWithoutResumeIsRejected`. **Still unimplemented**: every other `resume`
-  position stage 0 accepts — `let x = resume(v) in body`, a match/if scrutinee resume — which need
-  the one-shot post-resume continuation split stage 0's `TryRewriteResume` variants build, and the
-  pre/post handler control-flow fold (`LowerHandleFoldPosts`/`BuildCapabilityPost`) that consumes it;
-  a handler whose arms only use tail-position `resume` now lowers correctly, anything else is
-  rejected rather than silently wrong.
+  store), `testHandleArmWithoutResumeIsRejected`. **One-shot `let`-position `resume` is now also
+  ported**: `let x = resume(v) in body` as an arm's whole body lowers by wrapping `body` (renamed to
+  a fresh post closure) as the actual continuation passed to the caller, and pushing that closure
+  onto a per-handle "posts" list at the `perform` call site (`collectCapabilityPost`, a 16-byte cons
+  cell allocated the same way list cells already are) rather than running it inline — the operation
+  arm itself still only ever returns the resume value `v`, matching `emitDynamicPerform`'s existing
+  call convention. `lowerHandle`'s exit path now folds that posts list against the handled body's
+  result before returning (`foldCapabilityPosts`/`foldCapabilityPostsLoop`/
+  `finishCapabilityPostsFold`, a hand-rolled loop over the list using `CallClosure`), so the post
+  closure actually runs and its result — not the raw handled-body value — becomes the `handle`
+  expression's value when no posts were queued (an unset post register is `0` and the fold is a
+  no-op passthrough). Non-variable patterns in a one-shot arm's parameters are still rejected with
+  `UnsupportedOperationArmResume`, same as the tail-position case. Regressions:
+  `testHandleOneShotResumeLowering` (arm closure + fold-loop shape, no `perform` in the handled
+  body), `testHandleOneShotResumeWithPerformLowering` (a real `perform` inside the handled body,
+  proving `collectCapabilityPost`'s cons-cell push fires at the call site, not just the arm-closure
+  and fold-loop halves). **Still unimplemented**: `resume` in a match/if scrutinee or a `let
+  recursive` binding, which need the rest of stage 0's `TryRewriteResume` continuation-split
+  variants; a handler whose arms only use tail-position or one-shot-`let`-position `resume` now
+  lowers correctly, anything else is rejected rather than silently wrong.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.

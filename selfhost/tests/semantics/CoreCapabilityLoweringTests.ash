@@ -1,4 +1,5 @@
 import Ashes.Test as test
+import Ashes.Collection.List.append
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreLowering
@@ -39,6 +40,12 @@ let recursive containsAddInt instructions =
         | IrInstruction { instruction = AddInt(_, _, _) } :: _ -> true
         | _ :: rest -> containsAddInt(rest)
 
+let recursive containsCallClosure instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallClosure(_, _, _, _) } :: _ -> true
+        | _ :: rest -> containsCallClosure(rest)
+
 let recursive containsStoreMemOffset offset instructions =
     match instructions with
         | [] -> false
@@ -48,6 +55,15 @@ let recursive containsStoreMemOffset offset instructions =
             else containsStoreMemOffset(offset)(rest)
         | _ :: rest -> containsStoreMemOffset(offset)(rest)
 
+let recursive containsAlloc size instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(_target, candidate, _zeroed) } :: rest ->
+            if size == candidate
+            then true
+            else containsAlloc(size)(rest)
+        | _ :: rest -> containsAlloc(size)(rest)
+
 let recursive containsAllocStack size instructions =
     match instructions with
         | [] -> false
@@ -56,6 +72,21 @@ let recursive containsAllocStack size instructions =
             then true
             else containsAllocStack(size)(rest)
         | _ :: rest -> containsAllocStack(size)(rest)
+
+let recursive appendAllFunctionInstructions functions collected =
+    match functions with
+        | [] -> collected
+        | IrFunction { instructions = instrs } :: rest ->
+            instrs
+            |> append(collected)
+            |> appendAllFunctionInstructions(rest)
+
+// Closure bodies (an operation arm, a post continuation) lower into their own separate IrFunction,
+// not into the entry function's own instruction list — a check that only looked at the entry
+// function would never see what a closure's body actually does.
+let allProgramInstructions program =
+    match program with
+        | IrProgram { entryFunction = IrFunction { instructions = entryInstrs }, functions = functions } -> appendAllFunctionInstructions(functions)(entryInstrs)
 
 let recursive containsRequestServerStop instructions =
     match instructions with
@@ -291,6 +322,98 @@ let testHandleArmWithoutResumeIsRejected unit =
                     | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
                     | _ -> test.fail("expected an operation arm without resume to be rejected"))
 
+let testHandleOneShotResumeLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let oneShotArmBody =
+                ExprLet(
+                    "x",
+                    ExprCall(ExprVar("resume"))(ExprAdd(ExprVar("u"))(ExprInt(1)))(false)(callArgumentsInline),
+                    ExprMultiply(ExprVar("x"))(ExprInt(2)),
+                    [],
+                    None,
+                    []
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], oneShotArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { program = Some(program), error = None } ->
+                            let instrs = allProgramInstructions(program)
+                            in
+                                instrs
+                                |> containsStoreCapabilityHandler(1)
+                                |> test.assertEqual(true)
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsCallClosure
+                                    |> test.assertEqual(true))
+                        | CoreLoweringResult { error = Some(error) } -> test.fail("one-shot resume lowering failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> test.fail("one-shot resume lowering produced no program"))
+
+// End-to-end: a perform inside the handled body reaching an operation arm that resumes in
+// one-shot-let position. Proves collectCapabilityPost (the perform-site half) runs, not just the
+// arm-closure and fold-loop halves testHandleOneShotResumeLowering already covers.
+let testHandleOneShotResumeWithPerformLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let oneShotArmBody =
+                ExprLet(
+                    "x",
+                    ExprCall(ExprVar("resume"))(ExprAdd(ExprVar("u"))(ExprInt(1)))(false)(callArgumentsInline),
+                    ExprMultiply(ExprVar("x"))(ExprInt(2)),
+                    [],
+                    None,
+                    []
+                )
+            in
+                let performBody =
+                    ExprPerform(
+                        ExprCall(
+                            ExprQualifiedVar("State")("get"),
+                            ExprInt(0),
+                            false,
+                            callArgumentsInline
+                        )
+                    )
+                in
+                    let handleExpr =
+                        ExprHandle(
+                            performBody,
+                            [
+                                (Some("State"), "get", [PatternVar("u")], oneShotArmBody)
+                            ]
+                        )
+                    in
+                        match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                            | CoreLoweringResult { program = Some(program), error = None } ->
+                                program
+                                |> allProgramInstructions
+                                |> containsAlloc(16)
+                                |> test.assertEqual(true)
+                            | CoreLoweringResult { error = Some(error) } -> test.fail("one-shot resume with perform lowering failed: " + Ashes.Trait.Show.show(error))
+                            | _ -> test.fail("one-shot resume with perform lowering produced no program"))
+
 let runCoreCapabilityLoweringTests unit =
     Unit
     |> testDynamicPerformEmission
@@ -302,4 +425,6 @@ let runCoreCapabilityLoweringTests unit =
     |> testHandleExpressionLowering
     |> testHandleReturnArmLowering
     |> testHandleArmWithoutResumeIsRejected
+    |> testHandleOneShotResumeLowering
+    |> testHandleOneShotResumeWithPerformLowering
     |> testDynamicPerformViaExpression
