@@ -869,6 +869,20 @@ same public behavior.
   **Found by the self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion
   texts and `List(Int)` anchor indices in `HashMap` values.** Its pure-Ashes code now keeps only
   `Int`/`Str` map values (composite keys such as `signature#occurrence`).
+- [ ] Keep a large string alive when a tail-recursive loop moves it from the list it consumes into
+  its accumulator: `walk(Ashes.Text.split(source)("\n"))([])`, where `walk` matches `line :: rest`
+  and conses `line` onto its accumulator, releases the line string with the consumed cell, so the
+  later `join` over the accumulator reads freed memory for any line longer than roughly 4 KB (one
+  arena chunk); lines under 3 KB only appear to work because the reclaimed chunk is still mapped.
+  Binding the `split` result at top level makes the program correct (the list is then a global,
+  never consumed), a `let` inside the function does not, and an inspecting call on the line
+  before the cons (`Ashes.Text.trimStart(line) == ""`) also hides it, so the release decision
+  depends on the element's ownership classification at the move. The self-hosted
+  `parseImportHeader` hits it on `tests/regress_readline_loop_depth.ash` (a 15 KB `// stdin:`
+  directive line) inside `finishHeader`'s join. **Found by the self-hosting phase benchmark's
+  corpus run**, which now bisects and excludes crashing files per phase and reports their count.
+  Twelve-line repro: build a 15 KB line with an affine-string loop, split it, walk it inline,
+  join the result.
 - [ ] Release a TCO loop's aggregate result in its caller: a call to a loop whose result is a
   tuple or an ADT built from its accumulators (`walk(50)([])([])` returning `(xs, ys)` or
   `Pair(xs, ys)`) is never dropped by the consumer that destructures it, so every call leaks the

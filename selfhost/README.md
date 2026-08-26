@@ -56,6 +56,14 @@ are audit input for these contracts, but C#-specific API narration and implement
 copied into the pure-Ashes sources. Migration status remains in this README and
 `docs/md/future/SELF_HOSTING.md`, not in module headers.
 
+## Phase benchmarks
+
+`selfhost/bench/` is the standing comparison between the .NET compiler and the self-hosted
+compiler, phase by phase (import header, lex, parse, format, inference, ...) over the same corpus
+of `.ash` files. `selfhost/bench/run.sh` builds both sides and prints one table; the results table
+in [`selfhost/bench/README.md`](bench/README.md) is refreshed with each self-hosting milestone and
+gains a row whenever a phase becomes available on the self-hosted side.
+
 ## Test discipline
 
 Each port starts with pure-Ashes tests derived from the current implementation's observable

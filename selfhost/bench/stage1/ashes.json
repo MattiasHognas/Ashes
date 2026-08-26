@@ -1,0 +1,13 @@
+{
+  "name": "ashes-selfhost-stage1-bench",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "semantics": { "path": "../../packages/semantics" },
+    "formatter": { "path": "../../packages/formatter" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" }
+  }
+}
