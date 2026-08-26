@@ -402,7 +402,7 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                     | Ok(value) ->
                                                         let valueForRange = Ashes.Internal.deepCopy(value)
                                                         in
-                                                            if valueForRange > lexerUnsignedMaximum(bits)
+                                                            if valueForRange > lexerUnsignedMaximum(64)
                                                             then
                                                                 (lexerToken(
                                                                     Int,
@@ -411,9 +411,7 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                                     0.0,
                                                                     start,
                                                                     fullLength
-                                                                ), "Unsigned integer literal out of range for u" + Ashes.Text.fromInt(
-                                                                    bits
-                                                                ) + ": " + lexerSlice(
+                                                                ), "Invalid unsigned integer literal: " + lexerSlice(
                                                                     bytes,
                                                                     start,
                                                                     fullLength
@@ -421,14 +419,33 @@ let lexerReadNumber (bytes: Bytes) (byteCount: Int) (start: Int) =
                                                                 |> lexerDiagnostic(start)(fullLength)
                                                                 |> Some)
                                                             else
-                                                                (lexerToken(
-                                                                    Int,
-                                                                    lexerSlice(bytes)(start)(fullLength),
-                                                                    lexerUnsignedToInt(value),
-                                                                    0.0,
-                                                                    start,
-                                                                    fullLength
-                                                                ), None)
+                                                                if valueForRange > lexerUnsignedMaximum(bits)
+                                                                then
+                                                                    (lexerToken(
+                                                                        Int,
+                                                                        lexerSlice(bytes)(start)(fullLength),
+                                                                        0,
+                                                                        0.0,
+                                                                        start,
+                                                                        fullLength
+                                                                    ), "Unsigned integer literal out of range for u" + Ashes.Text.fromInt(
+                                                                        bits
+                                                                    ) + ": " + lexerSlice(
+                                                                        bytes,
+                                                                        start,
+                                                                        fullLength
+                                                                    ) + "."
+                                                                    |> lexerDiagnostic(start)(fullLength)
+                                                                    |> Some)
+                                                                else
+                                                                    (lexerToken(
+                                                                        Int,
+                                                                        lexerSlice(bytes)(start)(fullLength),
+                                                                        lexerUnsignedToInt(value),
+                                                                        0.0,
+                                                                        start,
+                                                                        fullLength
+                                                                    ), None)
                                         else lexerReadInteger(bytes)(byteCount)(start)
                 else lexerReadInteger(bytes)(byteCount)(start))
 
