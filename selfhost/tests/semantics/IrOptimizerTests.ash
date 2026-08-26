@@ -1317,6 +1317,201 @@ let testStoreThroughUnknownPointerDoesNotForward unit =
         then Unit
         else test.fail("testStoreThroughUnknownPointerDoesNotForward: a write through a pointer not allocated in this block may alias anything, so its read must stay a load"))
 
+let recursive hasAllocStack instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AllocStack(_, _) } :: _ -> true
+        | _ :: tail -> hasAllocStack(tail)
+
+let recursive hasLoadEnv instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadEnv(_, _) } :: _ -> true
+        | _ :: tail -> hasLoadEnv(tail)
+
+let recursive hasLoadLocalOfSlot instructions slot =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(_, candidate) } :: tail ->
+            if candidate == slot
+            then true
+            else hasLoadLocalOfSlot(tail)(slot)
+        | _ :: tail -> hasLoadLocalOfSlot(tail)(slot)
+
+let recursive findFunction (functions: List(IrFunction)) label =
+    match functions with
+        | [] -> None
+        | (IrFunction { label = candidate } as fn) :: tail ->
+            if candidate == label
+            then Some(fn)
+            else findFunction(tail)(label)
+
+let recursive callKnownEnvTemp instructions label =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = CallKnown(_, candidate, envTemp, _, _, _) } :: tail ->
+            if candidate == label
+            then Some(envTemp)
+            else callKnownEnvTemp(tail)(label)
+        | _ :: tail -> callKnownEnvTemp(tail)(label)
+
+let captureAddingCallee label =
+    makeFunction(label)(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            1
+            |> LoadLocal(1)
+            |> makeInstruction,
+            1
+            |> AddInt(2)(0)
+            |> makeInstruction,
+            makeInstruction(Return(2))
+        ]
+    )(
+        2
+    )(
+        3
+    )(
+        true
+    )
+
+let rawEnvReadingCallee label =
+    makeFunction(label)(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            0
+            |> LoadLocal(1)
+            |> makeInstruction,
+            1
+            |> AddInt(2)(0)
+            |> makeInstruction,
+            makeInstruction(Return(2))
+        ]
+    )(
+        2
+    )(
+        3
+    )(
+        true
+    )
+
+let singleCaptureEntry callee envSize extraRead =
+    makeFunction("_start_main")(
+        Ashes.Collection.List.append(
+            [
+                7
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                envSize
+                |> AllocStack(1)
+                |> makeInstruction,
+                0
+                |> StoreMemOffset(1)(0)
+                |> makeInstruction,
+                35
+                |> LoadConstInt(2)
+                |> makeInstruction
+            ]
+        )(
+            Ashes.Collection.List.append(
+                if extraRead
+                then
+                    [0
+                    |> LoadMemOffset(5)(1)
+                    |> makeInstruction]
+                else []
+            )(
+                [
+                    true
+                    |> CallKnown(3)(callee)(1)(2)(-1)
+                    |> makeInstruction,
+                    makeInstruction(Return(3))
+                ]
+            )
+        )
+    )(
+        0
+    )(
+        6
+    )(
+        false
+    )
+
+let optimizeSingleCaptureProgram callee entry =
+    0
+    |> makeProgram(entry)([callee])([])
+    |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+
+let testSingleCaptureStackClosureScalarizes unit =
+    (let optimized =
+        false
+        |> singleCaptureEntry("adder")(8)
+        |> optimizeSingleCaptureProgram(captureAddingCallee("adder"))
+    in
+        let entry = entryInstructions(optimized)
+        in
+            if hasAllocStack(entry)
+            then test.fail("testSingleCaptureStackClosureScalarizes: the environment allocation must disappear")
+            else
+                match callKnownEnvTemp(entry)("adder__scalarenv0") with
+                    | Some(0) ->
+                        match findFunction(optimized.functions)("adder__scalarenv0") with
+                            | None -> test.fail("testSingleCaptureStackClosureScalarizes: the generated variant must be appended to the program")
+                            | Some(variant) ->
+                                if hasLoadEnv(variant.instructions)
+                                then test.fail("testSingleCaptureStackClosureScalarizes: the variant must read the capture as a raw parameter, not through LoadEnv")
+                                else
+                                    if hasLoadLocalOfSlot(variant.instructions)(0)
+                                    then
+                                        match findFunction(optimized.functions)("adder") with
+                                            | Some(original) ->
+                                                if hasLoadEnv(original.instructions)
+                                                then Unit
+                                                else test.fail("testSingleCaptureStackClosureScalarizes: the original callee must be left untouched")
+                                            | None -> test.fail("testSingleCaptureStackClosureScalarizes: the original callee must remain in the program")
+                                    else test.fail("testSingleCaptureStackClosureScalarizes: the variant must read slot 0 directly")
+                    | _ -> test.fail("testSingleCaptureStackClosureScalarizes: the call must target the variant and pass the captured word as its env argument"))
+
+let testCalleeReadingEnvPointerRawKeepsEnvironment unit =
+    (let optimized =
+        false
+        |> singleCaptureEntry("adder")(8)
+        |> optimizeSingleCaptureProgram(rawEnvReadingCallee("adder"))
+    in
+        if optimized
+        |> entryInstructions
+        |> hasAllocStack
+        then Unit
+        else test.fail("testCalleeReadingEnvPointerRawKeepsEnvironment: a callee that reads slot 0 as a raw pointer must keep its environment"))
+
+let testTwoWordEnvironmentKeepsEnvironment unit =
+    (let optimized =
+        false
+        |> singleCaptureEntry("adder")(16)
+        |> optimizeSingleCaptureProgram(captureAddingCallee("adder"))
+    in
+        if optimized
+        |> entryInstructions
+        |> hasAllocStack
+        then Unit
+        else test.fail("testTwoWordEnvironmentKeepsEnvironment: only a one-word environment is scalarized here"))
+
+let testEnvironmentReadElsewhereKeepsEnvironment unit =
+    (let optimized =
+        true
+        |> singleCaptureEntry("adder")(8)
+        |> optimizeSingleCaptureProgram(captureAddingCallee("adder"))
+    in
+        if optimized
+        |> entryInstructions
+        |> hasAllocStack
+        then Unit
+        else test.fail("testEnvironmentReadElsewhereKeepsEnvironment: an environment read anywhere but its store and its call must be kept"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -1343,6 +1538,10 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testStoreToLoadForwardsThroughFreshRecord(Unit))
     |> (given (_) -> testLaterStoreThroughFreshRecordForwardsTheNewerValue(Unit))
     |> (given (_) -> testStoreThroughUnknownPointerDoesNotForward(Unit))
+    |> (given (_) -> testSingleCaptureStackClosureScalarizes(Unit))
+    |> (given (_) -> testCalleeReadingEnvPointerRawKeepsEnvironment(Unit))
+    |> (given (_) -> testTwoWordEnvironmentKeepsEnvironment(Unit))
+    |> (given (_) -> testEnvironmentReadElsewhereKeepsEnvironment(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
