@@ -12,6 +12,9 @@ import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
+import AshesCompiler.Frontend.Syntax.LetBindingSyntax
+import AshesCompiler.Frontend.Syntax.TopLevelItem
+import AshesCompiler.Frontend.Syntax.ProgramSyntax
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreBuiltinLowering
@@ -37,6 +40,8 @@ export (
     value lowerCoreExpressionLocated,
     value lowerCoreRecursiveGroup,
     value pruneDeadCaptures,
+    value lowerCoreProgram,
+    value lowerCoreProgramWithSource,
 )
 
 type CoreLoweringError =
@@ -56,6 +61,7 @@ type CoreLoweringError =
     | UnsupportedCoreLoweringPattern(Str)
     | CoreRecursiveBindingRequiresFunction(Str)
     | UnsupportedCoreLoweringExpression(Str)
+    | DuplicateTopLevelBinding(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -2535,7 +2541,12 @@ let finishRecursiveGroupContinuation members outerBindings body lower loweredMem
                             error = error
                         )
 
-let lowerPreparedRecursiveGroup bindings body lower outerBindings prepared =
+// Splits the single `lower` continuation lowerPreparedRecursiveGroup uses into two: memberLower
+// lowers each recursive member's own body, continuationLower lowers what follows the group. A
+// whole-program driver needs the two to differ (member bodies always go through the ordinary
+// expression lowerer; the continuation is "the rest of the top-level items", which isn't an Expr
+// at all), so the plain single-`lower` form below is now a same-lowerer convenience wrapper.
+let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower outerBindings prepared =
     match prepared with
         | PreparedCoreRecursiveGroup { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | PreparedCoreRecursiveGroup { state = preparedState, members = members, error = None } ->
@@ -2558,9 +2569,11 @@ let lowerPreparedRecursiveGroup bindings body lower outerBindings prepared =
                                     selfBindings,
                                     captures,
                                     environmentTemp,
-                                    lower
+                                    memberLower
                                 )
-                                |> finishRecursiveGroupContinuation(members)(outerBindings)(body)(lower)
+                                |> finishRecursiveGroupContinuation(members)(outerBindings)(body)(continuationLower)
+
+let lowerPreparedRecursiveGroup bindings body lower outerBindings prepared = lowerPreparedRecursiveGroupWith(bindings)(body)(lower)(lower)(outerBindings)(prepared)
 
 let lowerRecursiveGroup bindings body lower state =
     match state with
@@ -4124,6 +4137,100 @@ let recursive collectCoreFunctionUses functions uses =
             |> collectCoreInstructionUses(instructions)
             |> collectCoreFunctionUses(rest)
 
+type TopLevelDuplicateCheck =
+    | seen: List(Str)
+    | duplicate: Maybe(Str)
+
+let recursive checkTopLevelNames names seen =
+    match names with
+        | [] -> TopLevelDuplicateCheck(seen = seen, duplicate = None)
+        | name :: rest ->
+            if containsName(name)(seen)
+            then TopLevelDuplicateCheck(seen = seen, duplicate = Some(name))
+            else checkTopLevelNames(rest)(name :: seen)
+
+let recursive letBindingSyntaxPairs bindings =
+    match bindings with
+        | [] -> []
+        | LetBindingSyntax { name = name, value = value } :: rest -> (name, value) :: letBindingSyntaxPairs(rest)
+
+let recursive letBindingSyntaxNames bindings =
+    match bindings with
+        | [] -> []
+        | LetBindingSyntax { name = name } :: rest -> name :: letBindingSyntaxNames(rest)
+
+// Handed to finishLetValue/lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
+// the continuation lower instead (the rest of the top-level items, not a literal expression) — the
+// continuation lower ignores it. A bare int literal needs no environment/binding resolution, so it
+// stays inert even if a future change accidentally lowers it before the continuation intercepts it.
+let topLevelContinuationBody = ExprInt(0)
+
+// Lowers a whole program's top-level items one at a time, threading lowering state through them,
+// rather than desugaring into one big nested-let expression up front: a top-level
+// `let recursive ... and ...` group has no expression-level representation (the language only
+// allows `and` groups as top-level declarations, never nested inside another expression), so its
+// members must go through lowerPreparedRecursiveGroupWith's own member/continuation split, with
+// "the rest of the program" supplied as the continuation lower rather than as a literal Expr — the
+// continuation lower ignores the placeholder body it's handed and lowers the remaining items
+// instead. Type, external, capability, provider, trait, and implementation declarations are
+// registered ahead of lowering by inference and are not part of the value chain, so they are
+// skipped here rather than lowered.
+let recursive lowerCoreProgramItems items trailingBody seen state =
+    match items with
+        | [] -> lowerCore(trailingBody)(state)
+        | TopLevelAt(_span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(state)
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+            match checkTopLevelNames([name])(seen) with
+                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                    match state with
+                        | CoreLoweringState { bindings = outerBindings } ->
+                            state
+                            |> lowerCore(value)
+                            |> finishLetValue(
+                                name,
+                                topLevelContinuationBody,
+                                given (_ignoredBody) ->
+                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                outerBindings
+                            )
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
+            match checkTopLevelNames([name])(seen) with
+                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                    match state with
+                        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
+                            []
+                            |> prepareRecursiveGroup([(name, value)])(state)
+                            |> relabelSingleRecursive(lambdaId)
+                            |> lowerPreparedRecursiveGroupWith(
+                                [(name, value)],
+                                topLevelContinuationBody,
+                                lowerCore,
+                                given (_ignoredBody) ->
+                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                outerBindings
+                            )
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            match checkTopLevelNames(letBindingSyntaxNames(bindings))(seen) with
+                | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
+                | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
+                    match state with
+                        | CoreLoweringState { bindings = outerBindings } ->
+                            let pairs = letBindingSyntaxPairs(bindings)
+                            in
+                                []
+                                |> prepareRecursiveGroup(pairs)(state)
+                                |> lowerPreparedRecursiveGroupWith(
+                                    pairs,
+                                    topLevelContinuationBody,
+                                    lowerCore,
+                                    given (_ignoredBody) ->
+                                        given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                    outerBindings
+                                )
+        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(state)
+
 let buildProgram lowered =
     match lowered with
         | LoweredCoreValue { error = Some(error) } -> failedCoreLowering(error)
@@ -4169,6 +4276,36 @@ let buildProgram lowered =
                                     semanticType = resolveType(state)(semanticType),
                                     error = None
                                 )
+
+let lowerCoreProgram (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialState
+                |> lowerCoreProgramItems(items)(trailingBody)([])
+                |> buildProgram
+
+// As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
+// non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.
+let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialState
+                |> (given (state: CoreLoweringState) ->
+                    state with sourceContext = Some(createSourceContext(filePath)(source)))
+                |> lowerCoreProgramItems(items)(trailingBody)([])
+                |> buildProgram
 
 let lowerCoreExpression expression =
     Unit

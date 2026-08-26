@@ -32,6 +32,7 @@ import IrTests
 import IrFunctionSelectionTests
 import IrTextTests
 import CoreLoweringTests
+import CoreProgramLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
 import CoreCapabilityLoweringTests
@@ -72,6 +73,7 @@ let run unit =
     |> (given (_) -> IrFunctionSelectionTests.runIrFunctionSelectionTests(Unit))
     |> (given (_) -> IrTextTests.runIrTextTests(Unit))
     |> (given (_) -> CoreLoweringTests.runCoreLoweringTests(Unit))
+    |> (given (_) -> CoreProgramLoweringTests.runCoreProgramLoweringTests(Unit))
     |> (given (_) -> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests(Unit))
     |> (given (_) -> CoreExternalLoweringTests.runCoreExternalLoweringTests(Unit))
     |> (given (_) -> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests(Unit))
