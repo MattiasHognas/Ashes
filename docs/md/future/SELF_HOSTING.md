@@ -139,8 +139,28 @@ same public behavior.
   anchor, falling back to after its previous anchor and then to the top of the file, so no comment
   text is ever dropped. Comment lines keep their written text and indentation; the join uses the
   requested line ending.
-- [ ] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
-  made from the source form.
+- [x] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
+  made from the source form. Pure Ashes exposes `FormattingOptions` (`indentSize`, `useTabs`,
+  `newLine`), `formattingOptionsDefault`, `formattingOptionsNormalize`, and
+  `formatProgramWithOptions`/`formatExpressionWithOptions`, applied as a post-processing rescale pass
+  (`formatterApplyOptions`) over the formatter's fixed-4-space, `\n`-terminated internal output
+  rather than threading options through every writer, exploiting the invariant that every leading
+  run of spaces in that output is an exact multiple of 4. Pipeline-layout preservation threads a
+  `preferPipelines : Bool` parameter through the whole expression-formatting chain and adds pipeline
+  collection (`formatterTryCollectPipeline`/`formatterCollectPipelineStages`): a nested call chain
+  `g(f(x))` collects into `x |> f |> g` when enabled, all-or-nothing (any non-eligible function
+  anywhere in the chain rejects the whole conversion), requiring at least two stages, and stopping
+  collection at a capitalized constructor call once an outer stage already exists so `h(Some(f(x)))`
+  renders as `h(x |> f |> Some)` rather than absorbing `h` into the chain. **Found while porting:**
+  stage 0's C# formatter (`Formatter.cs`) had a pre-existing double-conversion bug — 6 call sites in
+  `WriteMultilineCall`/`WriteListLiteral`/`WriteRecordLit` appended `options.NewLine` directly instead
+  of the internal `'\n'` convention used everywhere else, so `FinishOutput`'s single blanket
+  `"\n"` → `options.NewLine` pass converted an already-CRLF newline a second time (`\r\r\n`); fixed to
+  match the rest of the file, with a regression test. Also found while porting: the initial selfhost
+  port built pipeline stages by consing each newly discovered outer stage onto the front of the list
+  while walking outer to inner, which already leaves the list in the correct innermost-first render
+  order, then reversed it again before returning — flipping `x |> f |> g` into `x |> g |> f`; fixed by
+  dropping the redundant reversal.
 - [x] Keep the parentheses around a record update used as a record-literal field value: `fmt`
   rewrote `Value(state = (inner with currentSpan = previous), temp = temp)` to
   `Value(state = inner with currentSpan = previous, temp = temp)`, where the update absorbs the

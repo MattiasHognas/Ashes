@@ -1857,7 +1857,7 @@ public static class Formatter
 
         WriteCallFunction(sb, current.Func, indent, preferPipelines, options);
         sb.Append('(');
-        sb.Append(options.NewLine);
+        sb.Append('\n');
         for (int index = 0; index < reversedArguments.Count; index++)
         {
             WriteIndent(sb, indent + options.IndentSize, options);
@@ -1869,7 +1869,7 @@ public static class Formatter
                 sb.Append(',');
             }
 
-            sb.Append(options.NewLine);
+            sb.Append('\n');
         }
 
         WriteIndent(sb, indent, options);
@@ -1922,7 +1922,7 @@ public static class Formatter
         }
 
         sb.Append('[');
-        sb.Append(options.NewLine);
+        sb.Append('\n');
         for (int index = 0; index < list.Elements.Count; index++)
         {
             WriteIndent(sb, indent + options.IndentSize, options);
@@ -1934,7 +1934,7 @@ public static class Formatter
                 sb.Append(',');
             }
 
-            sb.Append(options.NewLine);
+            sb.Append('\n');
         }
 
         WriteIndent(sb, indent, options);
@@ -1952,7 +1952,7 @@ public static class Formatter
         sb.Append('(');
         if (rl.IsMultiline)
         {
-            sb.Append(options.NewLine);
+            sb.Append('\n');
             for (int index = 0; index < rl.Fields.Count; index++)
             {
                 WriteIndent(sb, indent + options.IndentSize, options);
@@ -1966,7 +1966,7 @@ public static class Formatter
                     sb.Append(',');
                 }
 
-                sb.Append(options.NewLine);
+                sb.Append('\n');
             }
 
             WriteIndent(sb, indent, options);
