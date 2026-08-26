@@ -441,6 +441,26 @@ same public behavior.
   substitutions through curried applications, generalizes lexical lets, interns strings, assigns
   independent function temp/local spaces, uses deterministic first-free-use capture layouts, emits
   stack closures for immediate lambdas, and retains nested lifted-function generation order.
+  `lowerCoreProgram`/`lowerCoreProgramWithSource` now drive a whole `ProgramSyntax` rather than only
+  a single expression — the production entry point stage 0's own `Lower(Program)` has and pure Ashes
+  previously lacked (`CoreLowering` was expression-level only, exercised solely by hand-built ASTs in
+  unit tests). It threads lowering state through each top-level item directly instead of desugaring
+  into one big nested-let expression first: a top-level `let recursive ... and ...` group has no
+  expression-level representation (the language allows `and` groups only as top-level declarations,
+  never nested), so `lowerPreparedRecursiveGroupWith` splits the single `lower` continuation the
+  existing recursive-group lowering used into a member lowerer (the ordinary expression lowerer, for
+  each member's own body) and a continuation lowerer (the rest of the top-level items, supplied as a
+  closure rather than a literal `Expr`); `lowerPreparedRecursiveGroup` is now a same-lowerer
+  convenience wrapper over it. Also reports `ASH013`-equivalent duplicate-top-level-binding rejection
+  (`DuplicateTopLevelBinding`) during the walk. Type, external, capability, provider, trait, and
+  implementation declarations are registered by inference ahead of lowering and are not part of the
+  value chain, so they are skipped rather than lowered — a program using them, or any construct whose
+  IR depends on the not-yet-ported ownership/reuse arena-bracketing pass (`selfhost/parity/semantics/
+  lowered-ir/let_bindings.ir` and its neighbors), is out of scope until those land. Covered by
+  `selfhost/tests/semantics/CoreProgramLoweringTests.ash` (plain/self-recursive/mutually-recursive
+  top-level lets, duplicate-name rejection) and a new whole-program IR parity fixture consumer
+  (`selfhost/tests/ir-program-parity`) comparing byte-for-byte against stage-0's already-recorded
+  `simple_arith` lowered-IR fixture, source locations included.
 - [x] Lower control flow, conditions, matches, guards, recursion, mutual recursion, and tail calls.
   Conditions and scalar matches preserve strict source order, one-time scrutinee/guard evaluation,
   branch-result joins, and arm-local bindings. Recursive functions use environment-relative self
