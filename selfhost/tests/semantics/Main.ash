@@ -38,6 +38,8 @@ import CoreCapabilityLoweringTests
 import StateMachineTransformTests
 import MetadataAndOriginsTests
 import TcoTests
+import IrValidationTests
+import IrOptimizerTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -76,6 +78,8 @@ let run unit =
     |> (given (_) -> StateMachineTransformTests.runStateMachineTransformTests(Unit))
     |> (given (_) -> MetadataAndOriginsTests.runMetadataAndOriginsTests(Unit))
     |> (given (_) -> TcoTests.runTcoTests(Unit))
+    |> (given (_) -> IrValidationTests.runIrValidationTests(Unit))
+    |> (given (_) -> IrOptimizerTests.runIrOptimizerTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)

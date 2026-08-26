@@ -367,9 +367,15 @@ same public behavior.
   devirtualization (CallClosure -> CallKnown), constant propagation and folding with single-predecessor
   label flow, identity elimination and strength reduction, unreachable code elimination, dead code
   elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
-- [ ] Extend constant propagation to compute a true meet-over-paths at multi-predecessor labels (a fact
+- [x] Extend constant propagation to compute a true meet-over-paths at multi-predecessor labels (a fact
   survives only if every incoming edge agrees on it), not just single-predecessor label flow, and to
-  local-slot state (StoreLocal/LoadLocal), not just raw temps. The C# optimizer computes the meet by
+  local-slot state (StoreLocal/LoadLocal), not just raw temps. Pure Ashes now records one fact
+  snapshot per predecessor edge (each `Jump`/`JumpIfFalse` target, each `SwitchTag` case and default)
+  keyed by target label, intersects them with the fall-through state at the label once every counted
+  edge has been observed, clears every fact at a label with an unobserved backward edge, tracks
+  `StoreLocal`/`LoadLocal` slot facts that a store of an unknown value kills, and folds a load of a
+  known slot into a literal; covered by `selfhost/tests/semantics/IrOptimizerTests.ash`, which this
+  milestone also wires into the semantics test entry along with `IrValidationTests.ash`. The C# optimizer computes the meet by
   accumulating a state snapshot per predecessor edge (explicit branches, plus one edge per `SwitchTag`
   case/default, plus fall-through) and, once every edge into a label has been observed, intersecting
   them; a label with an edge not yet observed at that point in a forward scan (e.g. a loop back-edge)
