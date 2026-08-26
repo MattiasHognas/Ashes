@@ -1300,8 +1300,17 @@ public sealed partial class Lowering
             TraitMethodParameterName(active.Metadata.Shape, method.Name))).AsPair();
     }
 
+    /// <summary>
+    /// The hidden dictionary parameter in scope that supplies <paramref name="constraint"/>: the
+    /// one bound to the same pruned constraint, or, unless <paramref name="exactOnly"/>, the sole
+    /// parameter of that trait when the requirement is still abstract and inference has not yet
+    /// identified its type variable with the parameter's. The fallback is only sound for
+    /// requirements that static resolution cannot supply; a concrete requirement must never take
+    /// it, since the parameter's evidence is for whatever type the caller instantiated.
+    /// </summary>
     private ActiveTraitDictionaryParameter? FindActiveTraitDictionaryParameter(
-        TraitConstraint constraint)
+        TraitConstraint constraint,
+        bool exactOnly = false)
     {
         if (!_activeTraitDictionaryParameters.TryGetValue(
                 constraint.Trait.QualifiedName,
@@ -1314,7 +1323,11 @@ public sealed partial class Lowering
             && TraitResolutionConstraintsEqual(
                 PruneTraitConstraint(activeConstraint),
                 PruneTraitConstraint(constraint)));
-        return exact ?? (activeParameters.Count == 1 ? activeParameters[0] : null);
+        if (exact is not null || exactOnly)
+        {
+            return exact;
+        }
+        return activeParameters.Count == 1 ? activeParameters[0] : null;
     }
 
     private (int Temp, TypeRef Type)? TryLowerTraitDictionaryFunctionCall(
@@ -1709,23 +1722,21 @@ public sealed partial class Lowering
             return null;
         }
 
-        ((int functionTemp, TypeRef exposedType) function, _) =
+        ((int functionTemp, TypeRef exposedType) function, IReadOnlyList<TraitConstraint> instantiatedConstraints) =
             LowerTraitDictionaryCallRoot(rootExpression);
 
-        int applied = function.functionTemp;
         TypeRef exposedType = function.exposedType;
-        bool typeIncludesHiddenParameters = Lookup(functionName) is Binding.Self;
-        for (int index = 0; index < info.Dictionaries.Count; index++)
+        if (Lookup(functionName) is Binding.Self)
         {
-            int dictionaryTemp = LowerExpr(arguments[index]).Temp;
-            applied = ApplyStaticEvidenceArguments(applied, [dictionaryTemp]);
-            if (typeIncludesHiddenParameters)
+            for (int index = 0; index < info.Dictionaries.Count; index++)
             {
                 exposedType = Prune(exposedType) is TypeRef.TFun hiddenParameter
                     ? hiddenParameter.Ret
                     : new TypeRef.TNever();
             }
         }
+        // The real arguments go first: unifying them pins the instantiated constraints, which
+        // decides whether the syntactically threaded evidence is the right supply for each one.
         IReadOnlyList<Expr> realArguments = arguments.Skip(info.Dictionaries.Count).ToArray();
         (List<int> Temps, TypeRef Result)? loweredArguments = LowerTraitDictionaryRealArguments(
             realArguments,
@@ -1736,6 +1747,16 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
+        List<int> dictionaries = [];
+        for (int index = 0; index < info.Dictionaries.Count; index++)
+        {
+            dictionaries.Add(LowerThreadedTraitDictionaryArgument(
+                arguments[index],
+                info.Dictionaries[index],
+                instantiatedConstraints,
+                span));
+        }
+        int applied = ApplyStaticEvidenceArguments(function.functionTemp, dictionaries);
         foreach (int argumentTemp in loweredArguments.Value.Temps)
         {
             int next = NewTemp();
@@ -1744,6 +1765,32 @@ public sealed partial class Lowering
         }
         TypeRef resultType = Prune(loweredArguments.Value.Result);
         return (NormalizeStaticEvidenceResult(applied, resultType), resultType);
+    }
+
+    /// <summary>
+    /// The dictionary for one requirement of a call whose evidence the enclosing function's
+    /// rewrite threaded syntactically. That rewrite matches by trait name alone, so the threaded
+    /// parameter is only the right supply while the requirement is still a bare type variable;
+    /// once the real arguments have pinned it to a concrete type, or to a structure over the
+    /// parameter's variable, the evidence is resolved from the requirement itself.
+    /// </summary>
+    private int LowerThreadedTraitDictionaryArgument(
+        Expr threadedEvidence,
+        TraitDictionaryShape shape,
+        IReadOnlyList<TraitConstraint> instantiatedConstraints,
+        TextSpan span)
+    {
+        TraitConstraint? constraint = shape.ConstraintOrdinal < instantiatedConstraints.Count
+            ? PruneTraitConstraint(instantiatedConstraints[shape.ConstraintOrdinal])
+            : null;
+        if (constraint is null
+            || !string.Equals(constraint.Trait.QualifiedName, shape.Trait.QualifiedName, StringComparison.Ordinal)
+            || constraint.TypeArgs.All(argument => Prune(argument) is TypeRef.TVar))
+        {
+            return LowerExpr(threadedEvidence).Temp;
+        }
+        TraitEvidencePlan? plan = ResolveTraitEvidence(constraint, span, [], 0);
+        return plan is null ? EmitDummyTemp() : BuildTraitDictionary(plan, span).Temp;
     }
 
     private (int Temp, TypeRef Type)? TryLowerActiveTraitDictionaryReference(
@@ -1992,7 +2039,11 @@ public sealed partial class Lowering
                 dictionaries.Add((EmitDummyTemp(), new TypeRef.TNever()));
                 continue;
             }
-            ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint);
+            // Only a parameter bound to this exact requirement short-circuits resolution. A
+            // requirement at a concrete type (or a structured type over the parameter's variable)
+            // resolves statically; an abstract one comes back as a Parameter plan, which
+            // BuildTraitDictionary supplies from the active parameters, lone fallback included.
+            ActiveTraitDictionaryParameter? active = FindActiveTraitDictionaryParameter(constraint, exactOnly: true);
             if (active is not null)
             {
                 dictionaries.Add(LowerExpr(new Expr.Var(active.ParameterName)).AsPair());

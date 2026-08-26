@@ -848,6 +848,39 @@ public sealed class TraitEvidenceLoweringTests
         diagnostics.StructuredErrors.ShouldBeEmpty();
     }
 
+    [Test]
+    public void ConcreteRequirementInsideAConstrainedFunctionResolvesStaticallyInsteadOfTakingItsDictionary()
+    {
+        // `lookup` is polymorphic in its key, so `both` (also polymorphic in `sourceTemp`) threads
+        // its own Eq dictionary to the first call. The second call instantiates the key at Str,
+        // which the enclosing dictionary (for whatever type the caller chose) cannot supply.
+        const string source = """
+            trait Eq(a) = | equal : a -> a -> Bool
+            implement Eq(Int) =
+                | equal = given (left) -> given (right) -> left == right
+            implement Eq(Str) =
+                | equal = given (left) -> given (right) -> left == right
+            let recursive lookup key entries =
+                match entries with
+                    | [] -> None
+                    | (k, v) :: tail -> if Eq.equal(k)(key) then Some(v) else lookup(key)(tail)
+            let both sourceTemp singleDefs knownLabels =
+                match lookup(sourceTemp)(singleDefs) with
+                    | Some(_) -> lookup("bui" + "ld")(knownLabels)
+                    | None -> None
+            both(2)([(2, 7)])([("build", "leaf")])
+            """;
+
+        IrProgram program = Lower(source, out Diagnostics diagnostics);
+
+        diagnostics.StructuredErrors.ShouldBeEmpty();
+        List<string> requirements = program.TraitEvidence.ResolvedImplementations
+            .Select(resolution => resolution.Requirement)
+            .ToList();
+        requirements.ShouldContain(requirement => requirement.EndsWith("Eq(Int)", StringComparison.Ordinal));
+        requirements.ShouldContain(requirement => requirement.EndsWith("Eq(Str)", StringComparison.Ordinal));
+    }
+
     private static IrProgram Lower(
         string source,
         out Diagnostics diagnostics,
