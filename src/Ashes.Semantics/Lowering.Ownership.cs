@@ -2138,8 +2138,16 @@ public sealed partial class Lowering
                 TypeRef.TBytes => CanMaterializeOwnedBytes(arguments[i]),
                 TypeRef.TBigInt => IsRuntimeRcBigIntProducer(arguments[i])
                     && IsRuntimeRcClosureCaptureSafeBigIntProducer(arguments[i]),
+                // An inline fresh list literal/cons chain is one way this field can be droppable; a
+                // reference to the ENCLOSING TCO loop's own accumulator parameter is another — the
+                // same structural fact RetainRuntimeManagedTcoConstructorArguments already keys its
+                // (always-firing) retain on. An arbitrary outer-scope Var (e.g. a plain `let values =
+                // [40, 2]` the constructor merely reads) is NOT accepted here: nothing retains it, so
+                // treating the shell as RC would create an owning reference nobody ever established
+                // (Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed).
                 TypeRef.TList list => CanArenaReset(Prune(list.Element))
-                    && IsFreshListConstructionExpression(arguments[i]),
+                    && (IsFreshListConstructionExpression(arguments[i])
+                        || IsEnclosingTcoLoopParameterReference(arguments[i])),
                 TypeRef.TTuple tuple => arguments[i] is Expr.TupleLit tupleExpression
                     && CanRuntimeManageFreshTupleExpression(tupleExpression, tuple),
                 TypeRef.TVar or TypeRef.TTypeParam => IsRuntimeManageableFreshGenericPayload(arguments[i]),
@@ -2164,7 +2172,37 @@ public sealed partial class Lowering
             || IsRuntimeRcBigIntProducer(expression)
                 && IsRuntimeRcClosureCaptureSafeBigIntProducer(expression)
             || IsFreshCopyListExpression(expression)
-            || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple);
+            || expression is Expr.TupleLit tuple && IsFreshGenericTupleExpression(tuple)
+            || TryGetEnclosingTcoLoopParameterLocal(expression, out Binding.Local genericListLocal)
+                && Prune(genericListLocal.Type) is TypeRef.TList genericList
+                && CanArenaReset(Prune(genericList.Element));
+    }
+
+    /// <summary>
+    /// True when <paramref name="expression"/> is a bare reference to one of the ENCLOSING TCO loop's
+    /// own parameter slots — the same structural fact
+    /// <see cref="RetainRuntimeManagedTcoConstructorArguments"/> already keys its (always-firing)
+    /// per-field retain on. Deliberately narrower than "any Expr.Var": an arbitrary outer-scope
+    /// variable a constructor merely reads (e.g. a plain `let values = [40, 2]` used, not moved, into
+    /// a constructor) is never retained by anything, so treating a shell built from it as RC would
+    /// fabricate an owning reference nobody established
+    /// (see Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed).
+    /// </summary>
+    private bool IsEnclosingTcoLoopParameterReference(Expr expression)
+        => TryGetEnclosingTcoLoopParameterLocal(expression, out _);
+
+    private bool TryGetEnclosingTcoLoopParameterLocal(Expr expression, out Binding.Local local)
+    {
+        if (expression is Expr.Var variable
+            && Lookup(variable.Name) is Binding.Local candidate
+            && _tcoCtx?.ParamSlots.Contains(candidate.Slot) == true)
+        {
+            local = candidate;
+            return true;
+        }
+
+        local = null!;
+        return false;
     }
 
     private bool IsFreshGenericTupleExpression(Expr.TupleLit tuple)

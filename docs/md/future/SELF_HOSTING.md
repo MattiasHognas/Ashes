@@ -1037,13 +1037,25 @@ same public behavior.
   the end for any string over the chunk size (the fresh tuple is an arena `Alloc` whose children are
   neither retained nor copied), so the parser-state shape above is only fast, not yet proven safe,
   for strings the arena reclaim actually unmaps.
-- [ ] Release a TCO loop's aggregate result in its caller: a call to a loop whose result is a
-  tuple or an ADT built from its accumulators (`walk(50)([])([])` returning `(xs, ys)` or
-  `Pair(xs, ys)`) is never dropped by the consumer that destructures it, so every call leaks the
-  result and its children (peak RSS grows linearly with the call count: 8 MB at 1,000 calls,
-  630 MB at 200,000), while a plain list result of the same loop and a tuple result of a non-TCO
-  function are released correctly. Pre-existing and independent of the retain above, which turned
-  this shape from a use-after-free into a leak; measure with a fixed-N driver and `/usr/bin/time -v`.
+- [x] Release a TCO loop's aggregate result in its caller: a call to a loop whose exit arm builds
+  an ADT directly from the loop's own runtime-managed accumulator parameters (`walk(50)([])([])`
+  returning `Pair(xs, ys)`) leaked one RC reference per field per call (peak RSS grew linearly with
+  the call count: 8 MB at 1,000 calls, 630 MB at 200,000). Root cause: the constructor's own field
+  retain (`RcDup` on the accumulator arguments) always fires, but the eligibility check deciding
+  whether the constructed shell itself becomes runtime-managed
+  (`CanRuntimeManageFreshHeapChildAdtConstructorApplication`'s `List` field case, and its
+  type-parameter-payload sibling `IsRuntimeManageableFreshGenericPayload`) only recognized an
+  inline fresh list literal, not a reference to an existing binding — so the shell stayed arena,
+  the retain was never balanced by a drop, and the reference leaked. Fixed by recognizing a
+  reference to the *enclosing TCO loop's own parameter slot* as droppable too (the same structural
+  fact the constructor's own retain was already keyed on), narrowly — not any arbitrary outer-scope
+  variable, which would fabricate ownership over a value nothing actually retains (see
+  `Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed`). The tuple analogue of
+  this shape (`(xs, ys)`) was already correct (fixed by the child-retain PR above); this closes the
+  ADT gap. Regression coverage:
+  `Linux_backend_llvm_tco_exit_adt_constructor_shell_is_runtime_managed` (mechanism) and
+  `Linux_backend_llvm_tco_exit_adt_constructor_memory_should_plateau` (behavior), both in
+  `LinuxBackendCoverageTests.cs`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping
