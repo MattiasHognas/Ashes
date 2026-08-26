@@ -3837,6 +3837,55 @@ let recursive emitSnapshotGlobals currentK globalCount frameTemp state =
                 |> emit(StoreMemOffset(frameTemp)(currentK * 8)(snapTemp))
                 |> emitSnapshotGlobals(currentK + 1)(globalCount)(frameTemp)
 
+// After a dynamic perform's arm closure returns, checks the well-known "pending post" capability
+// global (index globalCount, the same slot array StoreCapabilityHandler/LoadCapabilityHandler
+// already manage) a one-shot-resume arm stores its post continuation into
+// (buildOperationArmClosure's one-shot-let path). When non-zero, conses it onto the handler
+// frame's posts list (the same 16-byte head/tail cell shape allocateListCell already builds for
+// ordinary list cons) and resets the register to zero so a later, unrelated perform site never
+// mistakes a stale value for its own post.
+let collectCapabilityPost globalCount capabilityIndex state =
+    match freshTemp(state) with
+        | FreshTemp { state = regState, temp = postRegTemp } ->
+            match regState
+            |> emit(LoadCapabilityHandler(postRegTemp)(globalCount))
+            |> freshTemp with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    match zeroState
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> freshTemp with
+                        | FreshTemp { state = cmpState, temp = hasPostTemp } ->
+                            match freshLabel("capability_post_skip")(cmpState) with
+                                | FreshLabel { state = labeledState, label = skipLabel } ->
+                                    let checkedState =
+                                        labeledState
+                                        |> emit(CmpIntNe(hasPostTemp)(postRegTemp)(zeroTemp))
+                                        |> emit(JumpIfFalse(hasPostTemp)(skipLabel))
+                                    in
+                                        match freshTemp(checkedState) with
+                                            | FreshTemp { state = frameState, temp = frameTemp } ->
+                                                let withFrame =
+                                                    emit(LoadCapabilityHandler(frameTemp)(capabilityIndex))(frameState)
+                                                in
+                                                    match freshTemp(withFrame) with
+                                                        | FreshTemp { state = headAddrState, temp = postsHeadAddrTemp } ->
+                                                            let withHeadAddr =
+                                                                emit(LoadMemOffset(postsHeadAddrTemp)(frameTemp)(globalCount * 8))(headAddrState)
+                                                            in
+                                                                match freshTemp(withHeadAddr) with
+                                                                    | FreshTemp { state = prevHeadState, temp = previousHeadTemp } ->
+                                                                        let withPrevHead =
+                                                                            emit(LoadMemOffset(previousHeadTemp)(postsHeadAddrTemp)(0))(prevHeadState)
+                                                                        in
+                                                                            match allocateListCell(postRegTemp)(previousHeadTemp)(SemNever)(withPrevHead) with
+                                                                                | LoweredCoreValue { state = failedCellState, error = Some(error) } -> failure(failedCellState)(error)
+                                                                                | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
+                                                                                    cellState
+                                                                                    |> emit(StoreMemOffset(postsHeadAddrTemp)(0)(cellTemp))
+                                                                                    |> emit(StoreCapabilityHandler(globalCount)(zeroTemp))
+                                                                                    |> emit(Label(skipLabel))
+                                                                                    |> success(-1)(SemNever)
+
 let lowerPerform operation lower state =
     match collectCallSpine(operation) with
         | CoreCallSpine { root = ExprQualifiedVar(capName, opName), arguments = arguments } ->
@@ -3910,7 +3959,10 @@ let lowerPerform operation lower state =
                                                                                 |> emitInstructions(performInstrs)
                                                                                 |> withNextTemp(endTemp)
                                                                                 |> withNextLocal(endLocal)
-                                                                            in success(resTemp)(resultSemType)(emittedState)
+                                                                            in
+                                                                                match collectCapabilityPost(globalCount)(layout.index)(emittedState) with
+                                                                                    | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                                                                                    | LoweredCoreValue { state = postCollectedState, error = None } -> success(resTemp)(resultSemType)(postCollectedState)
                                                                         | _ ->
                                                                             opName
                                                                             |> CoreUnhandledCapabilityOperation(capName)
@@ -3945,6 +3997,16 @@ let tailResumeArgument body =
                 | _ -> None
         | _ -> None
 
+// `let x = resume(v) in body` — the one-shot post-resume position. Detected the same way as the
+// tail case, just one level deeper: the let's own VALUE (not the let itself) is the resume call.
+let oneShotLetResume body =
+    match unspanForResumeCheck(body) with
+        | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
+            match tailResumeArgument(value) with
+                | Some(resumeArgument) -> Some((name, resumeArgument, letBody))
+                | None -> None
+        | _ -> None
+
 // Wraps an operation arm's (already resume-rewritten) body in one lambda per parameter, matching
 // each non-variable pattern via a fresh synthetic parameter name — the ordinary lambda/match
 // lowering already handles the result like any other closure. Position-based names are safe here
@@ -3961,14 +4023,55 @@ let recursive buildArmParameterExpr index patterns body =
                 in
                     ExprLambda(paramName)(ExprMatch(ExprVar(paramName))([(pattern, innerBody, None)])(None))(None)
 
-let buildOperationArmClosure capName opName patterns armBody lower state =
-    match tailResumeArgument(armBody) with
-        | None ->
+// Lowers a one-shot-resume arm's parameters directly through lowerLambda, one at a time, rather
+// than building a plain Expr tree and handing it to `lower` in one call: lowerCore's own ExprLambda
+// case always recurses into a nested lambda's body via itself (never an injected `lower`), so
+// nothing below the outermost layer could be intercepted that way. lowerLambda has no such
+// hard-coded recursion — it always lowers the body through whatever `lower` it's given — so calling
+// it directly at every parameter layer, with the innermost layer's `lower` performing the real
+// "lower the resumed value, lower the post continuation, store it, return the resumed value" work,
+// reaches the same place. Every layer is handed the same placeholderBody (an ExprTuple pairing the
+// resumed value with the post lambda) purely so lowerLambda's own free-variable/capture analysis
+// (`collectFree`) sees the closure's true free variables; the placeholder itself is never lowered.
+let recursive lowerOneShotArmParameters patterns resumeArgument postName postBody placeholderBody lower postRegisterIndex capName opName state =
+    match patterns with
+        | [] ->
+            match lower(resumeArgument)(state) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
+                    match lowerLambda(postName)(postBody)(false)(lower)(valueState) with
+                        | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                        | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
+                            postState
+                            |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
+                            |> success(valueTemp)(valueType)
+        | PatternVar(name) :: rest ->
+            lowerLambda(
+                name,
+                placeholderBody,
+                false,
+                given (_ignoredBody) ->
+                    given (s) -> lowerOneShotArmParameters(rest)(resumeArgument)(postName)(postBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                state
+            )
+        | _pattern :: _rest ->
             opName
             |> UnsupportedOperationArmResume(capName)
             |> failure(state)
-        | Some(resumedValue) ->
-            lower(buildArmParameterExpr(0)(patterns)(resumedValue))(state)
+
+let buildOperationArmClosure capName opName patterns armBody lower postRegisterIndex state =
+    match oneShotLetResume(armBody) with
+        | Some((postName, resumeArgument, postBody)) ->
+            let placeholderBody = ExprTuple([resumeArgument, ExprLambda(postName)(postBody)(None)])
+            in lowerOneShotArmParameters(patterns)(resumeArgument)(postName)(postBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+        | None ->
+            match tailResumeArgument(armBody) with
+                | None ->
+                    opName
+                    |> UnsupportedOperationArmResume(capName)
+                    |> failure(state)
+                | Some(resumedValue) ->
+                    lower(buildArmParameterExpr(0)(patterns)(resumedValue))(state)
 
 // Lowers every operation arm of the single handled capability to a closure and stores each one
 // into the handler frame at the same offset emitDynamicPerform reads from
@@ -3984,12 +4087,87 @@ let recursive installOperationArmClosures capName ops opArms frameTemp globalCou
                 match findCapabilityOperationIndex(opName)(ops) with
                     | None -> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
                     | Some(opIndex) ->
-                        match buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(state) with
+                        match buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(globalCount)(state) with
                             | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                             | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } ->
                                 closureState
                                 |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
                                 |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
+
+// Folds every collected one-shot post continuation over the handle's current result, in
+// most-recently-collected-first order (the posts list is a stack, newest at the head — matching
+// the innermost `resume` completing first). Empty list: the loop's own JumpIfFalse skips straight
+// to reading the initial result back out, so a handle with no one-shot resumes pays one dead
+// compare-and-branch and nothing else. A real loop (labels/locals, not a pure Expr tree) because
+// the list length is only known at runtime.
+let recursive foldCapabilityPosts postsHeadPtrTemp initialResultTemp resultType state =
+    match freshLocal(state) with
+        | FreshLocal { state = resultLocalState, local = resultLocal } ->
+            match resultLocalState
+            |> emit(StoreLocal(resultLocal)(initialResultTemp))
+            |> freshLocal with
+                | FreshLocal { state = cellLocalState, local = cellLocal } ->
+                    match freshTemp(cellLocalState) with
+                        | FreshTemp { state = initHeadState, temp = initHeadTemp } ->
+                            let initState =
+                                initHeadState
+                                |> emit(LoadMemOffset(initHeadTemp)(postsHeadPtrTemp)(0))
+                                |> emit(StoreLocal(cellLocal)(initHeadTemp))
+                            in
+                                match freshLabel("capability_posts_loop")(initState) with
+                                    | FreshLabel { state = loopLabelState, label = loopLabel } ->
+                                        match freshLabel("capability_posts_done")(loopLabelState) with
+                                            | FreshLabel { state = doneLabelState, label = doneLabel } ->
+                                                doneLabelState
+                                                |> emit(Label(loopLabel))
+                                                |> foldCapabilityPostsLoop(loopLabel)(doneLabel)(cellLocal)(resultLocal)(resultType)
+and foldCapabilityPostsLoop loopLabel doneLabel cellLocal resultLocal resultType state =
+    match freshTemp(state) with
+        | FreshTemp { state = cellState, temp = cellTemp } ->
+            match cellState
+            |> emit(LoadLocal(cellTemp)(cellLocal))
+            |> freshTemp with
+                | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                    match zeroState
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> freshTemp with
+                        | FreshTemp { state = cmpState, temp = hasCellTemp } ->
+                            let checkedState =
+                                cmpState
+                                |> emit(CmpIntNe(hasCellTemp)(cellTemp)(zeroTemp))
+                                |> emit(JumpIfFalse(hasCellTemp)(doneLabel))
+                            in
+                                match freshTemp(checkedState) with
+                                    | FreshTemp { state = closureState, temp = postClosureTemp } ->
+                                        let loadedClosureState =
+                                            emit(LoadMemOffset(postClosureTemp)(cellTemp)(0))(closureState)
+                                        in
+                                            match freshTemp(loadedClosureState) with
+                                                | FreshTemp { state = currentResultState, temp = currentResultTemp } ->
+                                                    let loadedResultState =
+                                                        emit(LoadLocal(currentResultTemp)(resultLocal))(currentResultState)
+                                                    in
+                                                        match freshTemp(loadedResultState) with
+                                                            | FreshTemp { state = callState, temp = nextResultTemp } ->
+                                                                let calledState =
+                                                                    callState
+                                                                    |> emit(CallClosure(nextResultTemp)(postClosureTemp)(currentResultTemp)(-1))
+                                                                    |> emit(StoreLocal(resultLocal)(nextResultTemp))
+                                                                in
+                                                                    match freshTemp(calledState) with
+                                                                        | FreshTemp { state = nextCellState, temp = nextCellTemp } ->
+                                                                            nextCellState
+                                                                            |> emit(LoadMemOffset(nextCellTemp)(cellTemp)(8))
+                                                                            |> emit(StoreLocal(cellLocal)(nextCellTemp))
+                                                                            |> emit(Jump(loopLabel))
+                                                                            |> emit(Label(doneLabel))
+                                                                            |> finishCapabilityPostsFold(resultLocal)(resultType)
+and finishCapabilityPostsFold resultLocal resultType state =
+    match freshTemp(state) with
+        | FreshTemp { state = readState, temp = finalResultTemp } ->
+            readState
+            |> emit(LoadLocal(finalResultTemp)(resultLocal))
+            |> success(finalResultTemp)(resultType)
 
 let lowerHandle body arms lower state =
     match splitHandlerArms(arms) with
@@ -4039,16 +4217,21 @@ let lowerHandle body arms lower state =
                                                                                                             |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
                                                                                                             |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
                                                                                                 in
-                                                                                                    match returnArm with
-                                                                                                        | None -> success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                        | Some((returnPat, returnExpr)) ->
-                                                                                                            finishLetValue(
-                                                                                                                "__body_res",
-                                                                                                                ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None),
-                                                                                                                lower,
-                                                                                                                outerBindings,
-                                                                                                                success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                            )
+                                                                                                    let currentResultOutcome =
+                                                                                                        match returnArm with
+                                                                                                            | None -> success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                            | Some((returnPat, returnExpr)) ->
+                                                                                                                finishLetValue(
+                                                                                                                    "__body_res",
+                                                                                                                    ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None),
+                                                                                                                    lower,
+                                                                                                                    outerBindings,
+                                                                                                                    success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                                )
+                                                                                                    in
+                                                                                                        match currentResultOutcome with
+                                                                                                            | LoweredCoreValue { state = failedResultState, error = Some(error) } -> failure(failedResultState)(error)
+                                                                                                            | LoweredCoreValue { state = resultState, temp = resultTemp, semanticType = resultType, error = None } -> foldCapabilityPosts(postsHeadPtrTemp)(resultTemp)(resultType)(resultState)
                                                                                             | failed -> failed
 
 let expressionName expression =
