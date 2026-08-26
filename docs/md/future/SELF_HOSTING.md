@@ -162,10 +162,21 @@ same public behavior.
   whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
   `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
   known layout differences (`else if` chains, parenthesized `let` bodies, pipeline layout) and one
-  crash: formatting `StandardTraits.ash` segfaults inside the synthesized `TypeExpr` deep-copier
-  while rendering a top-level `let` whose annotation is an arrow type (`formatterType`'s
-  `TypeArrow` arm), with the parser having reported no diagnostics — the parsed annotation already
-  holds a released node, so the frontend or formatter is hitting a stage-0 retain gap on real input.
+  crash, re-diagnosed 2026-08-26 (the original note's "arrow-type annotation" theory does not hold:
+  `StandardTraits.ash` has no explicit arrow-typed `let` annotation at all). Formatting
+  `StandardTraits.ash` segfaults reproducibly at `--debug` inside `__deepcopy_1320`, a
+  compiler-synthesized `AdtDeepCopier` for the frontend's `Expr` type (confirmed from
+  `--emit-ir final`: 40+ tag arms, a binary-node arm recursing on itself twice matching the gdb
+  backtrace's alternating self-calls). The crash is a genuine invalid-pointer dereference reading a
+  list-cell tail (`mov 0x8(%rax),%rax` with `rax` a small integer, not stack overflow — the full
+  backtrace is only ~29 frames), reached from `formatProgram` → `formatterProgramItems` (16 nested
+  recursions, so roughly the file's 16th top-level item) → `formatterTopLevelItem` → the ownership
+  pass's own defensive independent-clone of that binding's `Expr` value. The clone is not the bug;
+  it is walking an already-corrupted `Expr` tree, so the corruption happened earlier (parsing or an
+  earlier lowering step) — same class as the open generic-parameter heap-value UAF item below
+  (`ProducesFreshRuntimeManageableList`/generic-argument retention), not yet narrowed to a specific
+  call site. Left open: this needs binary-search minimization of `StandardTraits.ash`'s ~16
+  candidate top-level bindings against a from-scratch driver, which was not completed this pass.
   The top-level boundary splitter no longer cuts a declaration value at an indented `then`/`else`/
   `in`/pipe line after a completed call (only a token that can start a whitespace-application
   argument begins the trailing expression, as in stage 0); that gate was found by the same pass.
