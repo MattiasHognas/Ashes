@@ -762,7 +762,7 @@ let recursive lexerScan (bytes: Bytes) (byteCount: Int) (position: Int) (tokens:
         else
             match lexerReadNext(bytes)(byteCount)(nextPosition) with
                 | (token, nextDiagnostic) ->
-                    let publishedToken = Ashes.Internal.deepCopy(token)
+                    let publishedToken = token
                     in
                         let nextDiagnostics =
                             match nextDiagnostic with

@@ -63,6 +63,24 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-08-26, after the per-token copy left the lexer
+
+The lexer deep-copied every token before consing it onto the token list, a workaround from its
+first port for a stage-0 ownership bug: a token's kind, returned as a reference-counted ADT and
+handed to the curried `lexerToken` builder, was freed by the caller after the call (see the
+compiler changelog). With the callee now taking ownership, the copy is gone. The lexer is within
+a quarter of the .NET one and the parse row, which includes lexing, is now faster than .NET; the
+corpus gained the fix's regression test.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 16 | 823 | 8 | 823 | 0.50x | |
+| lex | 37 | 360798 | 45 | 360811 | 1.22x | |
+| parse | 146 | 808 | 133 | 803 | 0.91x | |
+| format | 92 | 2337201 | 52 | 1493322 | 0.57x | 22 files crashed and were excluded |
+| infer (stage 1) vs infer+lower (stage 0) | 1060 | 377 | 6 | 35 | 0.01x | |
+| optimize IR (stage 0 only) | 502 | 1287 | - | - | - | |
+
 ### 2026-08-26, after the allocation-free header scan and lexer paths
 
 Three self-hosted frontend changes, each removing per-unit allocations from code the finished
