@@ -382,6 +382,14 @@ same public behavior.
   wrappers, coroutines, normalizers, droppers, and copiers. Hover and public authority collectors index
   inferred types and capability requirements, and compilation decision snapshots capture function ownership,
   value placements, and external authority records.
+- [ ] Resolve a dependency module's combined-source positions through the stitcher's fragment line
+  anchors rather than by counting lines inside the module's rendered region. A stitched module region
+  is a re-rendering (export block and header gone, declarations hoisted, binding values rendered with
+  renamed identifiers), so region-relative lines are wrong for every module but the entry; stage 0
+  now records a `SourceLineAnchor` (combined range, file line and column where the fragment's text
+  starts) for each rendered binding value and hoisted declaration and maps a position by line delta
+  from its anchor, leaving glue between anchors unlocated. Without this, breakpoints cannot be set in
+  dependency modules of a program compiled by the self-hosted compiler.
 - [x] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler. Pure Ashes
   IR validation enforces program-level invariants (entry label and non-closure contract, unique function
   and string literal labels, non-negative capability globals), function-level invariants (non-negative
@@ -817,6 +825,15 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Give a match arm whose whole body is one constructor allocation a line-table row of its own
+  (stage-0 backend, open). For `match text with | "abc" -> Alpha | ...` the lowered `AllocAdt` for
+  each arm carries the arm's line (`--emit-ir final` shows `file:28:20`), `EmitInstructionDebugLocation`
+  sets it on the builder before the instruction is emitted, and yet `llvm-dwarfdump --debug-line`
+  has rows for the `match` line and the surrounding `if`/`then` lines but none for the arm lines,
+  in single-file programs as much as in projects; a breakpoint on such an arm slides to the next
+  line with code. Find where the location is lost between the builder and the line table (a fused
+  emission that skips per-instruction locations is the first suspect) and add a line-table test
+  over a compiled `--debug` program.
 - [ ] Keep the string behind an `Ashes.Byte.fromText` view alive for as long as the view is used
   (stage-0 bug, open). `fromText` yields a borrowed view (`BytesOwnershipProvenance.BorrowedView`)
   and lifetime placement records no owner for it, so `let bytes = Ashes.Byte.fromText(source) in
