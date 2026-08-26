@@ -13,6 +13,7 @@ import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.TypeResolution
+import Ashes.Collection.List.append
 import Ashes.Collection.List.reverse
 export (
     type TypeEnvironment(..),
@@ -154,6 +155,9 @@ type TypeInferenceError =
     | UnjustifiedWrittenTraitRequirement(Str)
     | AmbiguousTraitRequirement(Str)
     | ExternalFunctionRequiresDirectCall(Str)
+    | NonExhaustiveMatch(Str)
+    | UnreachableMatchArm(Str)
+    | ConstructorPatternsFromDifferentAdts(List(Str))
     | UnsupportedInferencePattern(Str)
     | UnsupportedInferenceExpression(Str)
     deriving {Eq, Show}
@@ -1026,6 +1030,731 @@ let recursive splitConstructorType semanticType reversedParameters =
     match semanticType with
         | SemFunction(parameter, result, None) -> splitConstructorType(result)(parameter :: reversedParameters)
         | _ -> ConstructorTypeShape(parameters = reverse(reversedParameters), resultType = semanticType)
+
+// Match coverage. The patterns of every arm are examined once the arms are typed, against the
+// scrutinee type as far as it is resolved: a match over an ADT must name every constructor or end
+// in a catch-all, a list match needs both `[]` and a cons, a bool match both literals, and any
+// deeper hole is found by a per-field-position search that reports the first missing pattern it
+// can name. The search is a deliberate under-approximation of what is missing (each field
+// position is checked on its own), which is exactly right for a diagnostic that must never report
+// a false "Missing case". Unreachable arms (after a catch-all, a repeated literal, constructor, or
+// composite pattern) and constructor patterns from two ADTs are reported before coverage.
+let recursive coverageUnwrap pattern =
+    match pattern with
+        | PatternAt(_span, inner) -> coverageUnwrap(inner)
+        | other -> other
+
+let recursive coverageContainsText (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest ->
+            if candidate == name
+            then true
+            else coverageContainsText(name)(rest)
+
+let recursive coverageContainsInt (value: Int) (values: List(Int)) =
+    match values with
+        | [] -> false
+        | candidate :: rest ->
+            if candidate == value
+            then true
+            else coverageContainsInt(value)(rest)
+
+let recursive coverageLength items (acc: Int) =
+    match items with
+        | [] -> acc
+        | _ :: rest -> coverageLength(rest)(acc + 1)
+
+let recursive coverageWildcards (count: Int) acc =
+    if count <= 0
+    then acc
+    else coverageWildcards(count - 1)(PatternWildcard :: acc)
+
+let recursive coverageReplaceAt patterns (index: Int) replacement acc =
+    match patterns with
+        | [] -> reverse(acc)
+        | pattern :: rest ->
+            if index == 0
+            then coverageReplaceAt(rest)(index - 1)(replacement)(replacement :: acc)
+            else coverageReplaceAt(rest)(index - 1)(replacement)(pattern :: acc)
+
+let recursive coverageNth items (index: Int) =
+    match items with
+        | [] -> None
+        | item :: rest ->
+            if index == 0
+            then Some(item)
+            else coverageNth(rest)(index - 1)
+
+let environmentConstructors environment =
+    match environment with
+        | TypeEnvironment { constructors = constructors } -> constructors
+
+// (ADT name, arity) of a constructor.
+let coverageConstructorShape (name: Str) environment =
+    match resolveConstructorBinding(name)(environment) with
+        | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = body } }) ->
+            match splitConstructorType(body)([]) with
+                | ConstructorTypeShape { parameters = parameters, resultType = SemNamed(_id, adtName, _arguments) } -> Some((adtName, coverageLength(parameters)(0)))
+                | _ -> None
+        | None -> None
+
+// The constructor a pattern names, when it is a constructor pattern (a bare nullary name included).
+let coverageConstructorName pattern environment =
+    match coverageUnwrap(pattern) with
+        | PatternConstructor(name, _patterns) ->
+            match resolveConstructorBinding(name)(environment) with
+                | Some(_) -> Some(name)
+                | None -> None
+        | PatternVar(name) ->
+            if isNullaryConstructorName(name)(environment)
+            then Some(name)
+            else None
+        | _ -> None
+
+// Every constructor of an ADT, in declaration order, as (name, arity).
+let recursive coverageAdtConstructors (definitions: List(ConstructorInferenceDefinition)) (adtName: Str) acc =
+    match definitions with
+        | [] -> reverse(acc)
+        | ConstructorInferenceDefinition { name = name, scheme = TypeScheme { body = body } } :: rest ->
+            match splitConstructorType(body)([]) with
+                | ConstructorTypeShape { parameters = parameters, resultType = SemNamed(_id, candidate, _arguments) } ->
+                    if candidate == adtName
+                    then coverageAdtConstructors(rest)(adtName)((name, coverageLength(parameters)(0)) :: acc)
+                    else coverageAdtConstructors(rest)(adtName)(acc)
+                | _ -> coverageAdtConstructors(rest)(adtName)(acc)
+
+let recursive coverageIsCatchAll environment pattern =
+    match coverageUnwrap(pattern) with
+        | PatternWildcard -> true
+        | PatternVar(name) -> !isNullaryConstructorName(name)(environment)
+        | PatternTuple(elements) -> coverageAllCatchAll(environment)(elements)
+        | PatternAs(inner, _name) -> coverageIsCatchAll(environment)(inner)
+        | PatternOr(alternatives) -> coverageAnyCatchAll(environment)(alternatives)
+        | _ -> false
+and coverageAllCatchAll environment patterns =
+    match patterns with
+        | [] -> true
+        | pattern :: rest ->
+            if coverageIsCatchAll(environment)(pattern)
+            then coverageAllCatchAll(environment)(rest)
+            else false
+and coverageAnyCatchAll environment patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            if coverageIsCatchAll(environment)(pattern)
+            then true
+            else coverageAnyCatchAll(environment)(rest)
+
+let coverageHexDigit (digit: Int) =
+    match digit with
+        | 10 -> "A"
+        | 11 -> "B"
+        | 12 -> "C"
+        | 13 -> "D"
+        | 14 -> "E"
+        | 15 -> "F"
+        | other -> Ashes.Text.fromInt(other)
+
+let recursive coverageHexDigits (value: Int) (acc: Str) =
+    if value == 0
+    then acc
+    else coverageHexDigits(value / 16)(coverageHexDigit(value % 16) + acc)
+
+let coverageHex (value: Int) =
+    if value == 0
+    then "0"
+    else coverageHexDigits(value)("")
+
+let recursive coverageFormatPattern pattern =
+    match pattern with
+        | PatternAt(_span, inner) -> coverageFormatPattern(inner)
+        | PatternEmptyList -> "[]"
+        | PatternWildcard -> "_"
+        | PatternVar(name) -> name
+        | PatternCons(head, tail) -> coverageFormatPattern(head) + " :: " + coverageFormatPattern(tail)
+        | PatternTuple(elements) -> "(" + coverageJoinPatterns(elements)("") + ")"
+        | PatternConstructor(name, []) -> name
+        | PatternConstructor(name, patterns) -> name + "(" + coverageJoinPatterns(patterns)("") + ")"
+        | PatternInt(value) -> Ashes.Text.fromInt(value)
+        | PatternString(value) -> "\"" + value + "\""
+        | PatternRune(value) -> "U+" + coverageHex(value)
+        | PatternBool(true) -> "true"
+        | PatternBool(false) -> "false"
+        | _ -> "_"
+and coverageJoinPatterns patterns (acc: Str) =
+    match patterns with
+        | [] -> acc
+        | pattern :: rest ->
+            if acc == ""
+            then coverageJoinPatterns(rest)(coverageFormatPattern(pattern))
+            else coverageJoinPatterns(rest)(acc + ", " + coverageFormatPattern(pattern))
+
+let recursive coverageAnyEmptyList patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternEmptyList -> true
+                | _ -> coverageAnyEmptyList(rest)
+
+let recursive coverageConsPatterns patterns acc =
+    match patterns with
+        | [] -> reverse(acc)
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternCons(head, tail) -> coverageConsPatterns(rest)((head, tail) :: acc)
+                | _ -> coverageConsPatterns(rest)(acc)
+
+let recursive coverageConsHeads (conses: List((Pattern, Pattern))) acc =
+    match conses with
+        | [] -> reverse(acc)
+        | (head, _tail) :: rest -> coverageConsHeads(rest)(head :: acc)
+
+let recursive coverageConsTails (conses: List((Pattern, Pattern))) acc =
+    match conses with
+        | [] -> reverse(acc)
+        | (_head, tail) :: rest -> coverageConsTails(rest)(tail :: acc)
+
+let recursive coverageTuplePatterns patterns (arity: Int) acc =
+    match patterns with
+        | [] -> reverse(acc)
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternTuple(elements) ->
+                    if coverageLength(elements)(0) == arity
+                    then coverageTuplePatterns(rest)(arity)(elements :: acc)
+                    else coverageTuplePatterns(rest)(arity)(acc)
+                | _ -> coverageTuplePatterns(rest)(arity)(acc)
+
+let recursive coverageFirstTupleArity patterns =
+    match patterns with
+        | [] -> None
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternTuple(elements) -> Some(coverageLength(elements)(0))
+                | _ -> coverageFirstTupleArity(rest)
+
+let recursive coverageColumn (rows: List(List(Pattern))) (index: Int) acc =
+    match rows with
+        | [] -> reverse(acc)
+        | row :: rest ->
+            match coverageNth(row)(index) with
+                | Some(pattern) -> coverageColumn(rest)(index)(pattern :: acc)
+                | None -> coverageColumn(rest)(index)(acc)
+
+let coverageIsPatternForConstructor pattern (constructorName: Str) environment =
+    match coverageConstructorName(pattern)(environment) with
+        | Some(name) -> name == constructorName
+        | None -> false
+
+let recursive coveragePatternsForConstructor patterns (constructorName: Str) environment acc =
+    match patterns with
+        | [] -> reverse(acc)
+        | pattern :: rest ->
+            if coverageIsPatternForConstructor(pattern)(constructorName)(environment)
+            then coveragePatternsForConstructor(rest)(constructorName)(environment)(pattern :: acc)
+            else coveragePatternsForConstructor(rest)(constructorName)(environment)(acc)
+
+let recursive coverageConstructorArgumentRows patterns acc =
+    match patterns with
+        | [] -> reverse(acc)
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternConstructor(_name, arguments) -> coverageConstructorArgumentRows(rest)(arguments :: acc)
+                | _ -> coverageConstructorArgumentRows(rest)(acc)
+
+let coverageMissingConstructorPattern (constructorName: Str) (arity: Int) (fieldIndex: Int) (missingField: Maybe(Pattern)) =
+    if arity == 0
+    then PatternVar(constructorName)
+    else
+        match missingField with
+            | Some(field) -> PatternConstructor(constructorName)(coverageReplaceAt(coverageWildcards(arity)([]))(fieldIndex)(field)([]))
+            | None -> PatternConstructor(constructorName)(coverageWildcards(arity)([]))
+
+let recursive coverageAnyBoolPattern patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternBool(_value) -> true
+                | _ -> coverageAnyBoolPattern(rest)
+
+let recursive coverageHasBoolLiteral patterns (wanted: Bool) =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternBool(value) ->
+                    if value == wanted
+                    then true
+                    else coverageHasBoolLiteral(rest)(wanted)
+                | _ -> coverageHasBoolLiteral(rest)(wanted)
+
+let recursive coverageAnyLiteral patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternInt(_value) -> true
+                | PatternString(_value) -> true
+                | PatternRune(_value) -> true
+                | _ -> coverageAnyLiteral(rest)
+
+// The ADT the patterns name, when every constructor pattern belongs to one ADT.
+let recursive coverageSharedAdt patterns environment (seen: Maybe(Str)) =
+    match patterns with
+        | [] -> seen
+        | pattern :: rest ->
+            match coverageConstructorName(pattern)(environment) with
+                | None -> coverageSharedAdt(rest)(environment)(seen)
+                | Some(name) ->
+                    match coverageConstructorShape(name)(environment) with
+                        | None -> coverageSharedAdt(rest)(environment)(seen)
+                        | Some((adtName, _arity)) ->
+                            match seen with
+                                | None -> coverageSharedAdt(rest)(environment)(Some(adtName))
+                                | Some(previous) ->
+                                    if previous == adtName
+                                    then coverageSharedAdt(rest)(environment)(seen)
+                                    else None
+
+let recursive coverageMissing environment (valueType: Maybe(SemanticType)) patterns =
+    if coverageAnyCatchAll(environment)(patterns)
+    then None
+    else
+        match coverageMissingList(environment)(valueType)(patterns) with
+            | Some(missing) -> Some(missing)
+            | None ->
+                match coverageMissingTuple(environment)(valueType)(patterns) with
+                    | Some(missing) -> Some(missing)
+                    | None ->
+                        match coverageMissingAdt(environment)(valueType)(patterns) with
+                            | Some(missing) -> Some(missing)
+                            | None ->
+                                match coverageMissingBool(environment)(valueType)(patterns) with
+                                    | Some(missing) -> Some(missing)
+                                    | None ->
+                                        if coverageAnyLiteral(patterns)
+                                        then Some(PatternWildcard)
+                                        else None
+and coverageMissingList environment valueType patterns =
+    (let isListType =
+        match valueType with
+            | Some(SemList(_element)) -> true
+            | _ -> false
+    in
+        let conses = coverageConsPatterns(patterns)([])
+        in
+            if !isListType
+            then
+                if !coverageAnyEmptyList(patterns)
+                then
+                    match conses with
+                        | [] -> None
+                        | _ -> Some(PatternEmptyList)
+                else coverageMissingConsPart(environment)(valueType)(conses)
+            else
+                if !coverageAnyEmptyList(patterns)
+                then Some(PatternEmptyList)
+                else coverageMissingConsPart(environment)(valueType)(conses))
+and coverageMissingConsPart environment valueType conses =
+    match conses with
+        | [] -> Some(PatternCons(PatternWildcard)(PatternWildcard))
+        | _ ->
+            let elementType =
+                match valueType with
+                    | Some(SemList(element)) -> Some(element)
+                    | _ -> None
+            in
+                match coverageMissing(environment)(elementType)(coverageConsHeads(conses)([])) with
+                    | Some(missingHead) -> Some(PatternCons(missingHead)(PatternWildcard))
+                    | None ->
+                        match coverageMissing(environment)(valueType)(coverageConsTails(conses)([])) with
+                            | Some(missingTail) -> Some(PatternCons(PatternWildcard)(missingTail))
+                            | None -> None
+and coverageMissingTuple environment valueType patterns =
+    (let arity =
+        match valueType with
+            | Some(SemTuple(elements)) -> Some(coverageLength(elements)(0))
+            | _ -> coverageFirstTupleArity(patterns)
+    in
+        match arity with
+            | None -> None
+            | Some(count) ->
+                match coverageTuplePatterns(patterns)(count)([]) with
+                    | [] -> Some(PatternTuple(coverageWildcards(count)([])))
+                    | rows -> coverageMissingTupleColumn(environment)(valueType)(rows)(count)(0))
+and coverageMissingTupleColumn environment valueType rows (count: Int) (index: Int) =
+    if index >= count
+    then None
+    else
+        let elementType =
+            match valueType with
+                | Some(SemTuple(elements)) -> coverageNth(elements)(index)
+                | _ -> None
+        in
+            match coverageMissing(environment)(elementType)(coverageColumn(rows)(index)([])) with
+                | Some(missing) -> Some(PatternTuple(coverageReplaceAt(coverageWildcards(count)([]))(index)(missing)([])))
+                | None -> coverageMissingTupleColumn(environment)(valueType)(rows)(count)(index + 1)
+and coverageMissingAdt environment valueType patterns =
+    (let adtName =
+        match valueType with
+            | Some(SemNamed(_id, name, _arguments)) -> Some(name)
+            | _ -> coverageSharedAdt(patterns)(environment)(None)
+    in
+        match adtName with
+            | None -> None
+            | Some(name) -> coverageMissingConstructor(environment)(patterns)(coverageAdtConstructors(environmentConstructors(environment))(name)([])))
+and coverageMissingConstructor environment patterns (constructors: List((Str, Int))) =
+    match constructors with
+        | [] -> None
+        | (constructorName, arity) :: rest ->
+            match coveragePatternsForConstructor(patterns)(constructorName)(environment)([]) with
+                | [] -> Some(coverageMissingConstructorPattern(constructorName)(arity)(-1)(None))
+                | constructorPatterns ->
+                    if arity == 0
+                    then coverageMissingConstructor(environment)(patterns)(rest)
+                    else
+                        match coverageMissingConstructorField(environment)(coverageConstructorArgumentRows(constructorPatterns)([]))(constructorName)(arity)(0) with
+                            | Some(missing) -> Some(missing)
+                            | None -> coverageMissingConstructor(environment)(patterns)(rest)
+and coverageMissingConstructorField environment rows (constructorName: Str) (arity: Int) (index: Int) =
+    if index >= arity
+    then None
+    else
+        match coverageMissing(environment)(None)(coverageColumn(rows)(index)([])) with
+            | Some(missing) -> Some(coverageMissingConstructorPattern(constructorName)(arity)(index)(Some(missing)))
+            | None -> coverageMissingConstructorField(environment)(rows)(constructorName)(arity)(index + 1)
+and coverageMissingBool environment valueType patterns =
+    (let isBoolType =
+        match valueType with
+            | Some(SemBool) -> true
+            | _ -> false
+    in
+        if !isBoolType
+        then
+            if coverageAnyBoolPattern(patterns)
+            then coverageMissingBoolLiteral(patterns)
+            else None
+        else coverageMissingBoolLiteral(patterns))
+and coverageMissingBoolLiteral patterns =
+    if !coverageHasBoolLiteral(patterns)(true)
+    then Some(PatternBool(true))
+    else
+        if !coverageHasBoolLiteral(patterns)(false)
+        then Some(PatternBool(false))
+        else None
+
+// Every arm is examined as the set of plain patterns it stands for: or-alternatives are separate
+// arms, an as-pattern is its inner pattern, nested alternatives inside a cons, tuple, or
+// constructor multiply out, and a record pattern becomes the positional constructor pattern it
+// names, with a wildcard for every field it does not mention.
+let recursive coverageFieldIndex (fieldName: Str) (fieldNames: List(Str)) (index: Int) =
+    match fieldNames with
+        | [] -> None
+        | candidate :: rest ->
+            if candidate == fieldName
+            then Some(index)
+            else coverageFieldIndex(fieldName)(rest)(index + 1)
+
+let recursive coveragePlaceRecordFields (fields: List((Str, Pattern))) (fieldNames: List(Str)) positional =
+    match fields with
+        | [] -> positional
+        | (fieldName, fieldPattern) :: rest ->
+            match coverageFieldIndex(fieldName)(fieldNames)(0) with
+                | Some(index) -> coveragePlaceRecordFields(rest)(fieldNames)(coverageReplaceAt(positional)(index)(fieldPattern)([]))
+                | None -> coveragePlaceRecordFields(rest)(fieldNames)(positional)
+
+let recursive coverageExpandPattern pattern environment =
+    match pattern with
+        | PatternAt(_span, inner) -> coverageExpandPattern(inner)(environment)
+        | PatternOr(alternatives) -> coverageExpandAlternatives(alternatives)(environment)([])
+        | PatternAs(inner, _name) -> coverageExpandPattern(inner)(environment)
+        | PatternCons(head, tail) -> coverageConsCombinations(coverageCombineChildren([head, tail])(environment))([])
+        | PatternTuple(elements) -> coverageTupleCombinations(coverageCombineChildren(elements)(environment))([])
+        | PatternConstructor(name, patterns) -> coverageConstructorCombinations(name)(coverageCombineChildren(patterns)(environment))([])
+        | PatternRecord(name, fields) ->
+            match resolveConstructorBinding(name)(environment) with
+                | Some(ConstructorInferenceDefinition { fieldNames = fieldNames }) ->
+                    match fieldNames with
+                        | [] -> [pattern]
+                        | _ ->
+                            let positional = coveragePlaceRecordFields(fields)(fieldNames)(coverageWildcards(coverageLength(fieldNames)(0))([]))
+                            in coverageConstructorCombinations(name)(coverageCombineChildren(positional)(environment))([])
+                | None -> [pattern]
+        | other -> [other]
+and coverageExpandAlternatives alternatives environment acc =
+    match alternatives with
+        | [] -> acc
+        | alternative :: rest -> coverageExpandAlternatives(rest)(environment)(append(acc)(coverageExpandPattern(alternative)(environment)))
+and coverageCombineChildren children environment =
+    match children with
+        | [] -> [[]]
+        | child :: rest -> coverageProduct(coverageExpandPattern(child)(environment))(coverageCombineChildren(rest)(environment))([])
+and coverageProduct heads (tails: List(List(Pattern))) acc =
+    match heads with
+        | [] -> acc
+        | head :: rest -> coverageProduct(rest)(tails)(append(acc)(coveragePrefixAll(head)(tails)([])))
+and coveragePrefixAll head (tails: List(List(Pattern))) acc =
+    match tails with
+        | [] -> reverse(acc)
+        | tail :: rest -> coveragePrefixAll(head)(rest)((head :: tail) :: acc)
+and coverageConsCombinations (combinations: List(List(Pattern))) acc =
+    match combinations with
+        | [] -> reverse(acc)
+        | (head :: tail :: []) :: rest -> coverageConsCombinations(rest)(PatternCons(head)(tail) :: acc)
+        | _ :: rest -> coverageConsCombinations(rest)(acc)
+and coverageTupleCombinations (combinations: List(List(Pattern))) acc =
+    match combinations with
+        | [] -> reverse(acc)
+        | elements :: rest -> coverageTupleCombinations(rest)(PatternTuple(elements) :: acc)
+and coverageConstructorCombinations (name: Str) (combinations: List(List(Pattern))) acc =
+    match combinations with
+        | [] -> reverse(acc)
+        | arguments :: rest -> coverageConstructorCombinations(name)(rest)(PatternConstructor(name)(arguments) :: acc)
+
+let recursive coverageExpandCases cases environment acc =
+    match cases with
+        | [] -> reverse(acc)
+        | (pattern, body, guard) :: rest -> coverageExpandCases(rest)(environment)(coverageExpandedArms(coverageExpandPattern(pattern)(environment))(body)(guard)(acc))
+and coverageExpandedArms patterns body guard acc =
+    match patterns with
+        | [] -> acc
+        | pattern :: rest -> coverageExpandedArms(rest)(body)(guard)((pattern, body, guard) :: acc)
+
+let recursive coverageDistinctAdts cases environment (names: List(Str)) =
+    match cases with
+        | [] -> reverse(names)
+        | (pattern, _body, _guard) :: rest ->
+            match coverageConstructorName(pattern)(environment) with
+                | None -> coverageDistinctAdts(rest)(environment)(names)
+                | Some(name) ->
+                    match coverageConstructorShape(name)(environment) with
+                        | Some((adtName, _arity)) ->
+                            if coverageContainsText(adtName)(names)
+                            then coverageDistinctAdts(rest)(environment)(names)
+                            else coverageDistinctAdts(rest)(environment)(adtName :: names)
+                        | None -> coverageDistinctAdts(rest)(environment)(names)
+
+let coverageIsComposite pattern =
+    match coverageUnwrap(pattern) with
+        | PatternConstructor(_name, _patterns) -> true
+        | PatternCons(_head, _tail) -> true
+        | PatternTuple(_elements) -> true
+        | _ -> false
+
+// Walks the arms in order carrying what earlier arms already matched.
+let recursive coverageUnreachable cases environment (hasCatchAll: Bool) (composites: List(Str)) (ints: List(Int)) (texts: List(Str)) (seenTrue: Bool) (seenFalse: Bool) (constructors: List(Str)) =
+    match cases with
+        | [] -> None
+        | (pattern, _body, guard) :: rest ->
+            if hasCatchAll
+            then Some(UnreachableMatchArm("Unreachable match arm: a catch-all pattern was already matched earlier."))
+            else
+                match guard with
+                    | Some(_guard) -> coverageUnreachable(rest)(environment)(hasCatchAll)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+                    | None ->
+                        if coverageIsCatchAll(environment)(pattern)
+                        then coverageUnreachable(rest)(environment)(true)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+                        else
+                            if coverageIsComposite(pattern)
+                            then
+                                let key = coverageFormatPattern(pattern)
+                                in
+                                    if coverageContainsText(key)(composites)
+                                    then Some(UnreachableMatchArm("Unreachable match arm: pattern " + key + " is already matched earlier."))
+                                    else coverageUnreachableConstructor(pattern)(rest)(environment)(key :: composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+                            else coverageUnreachableLiteral(pattern)(rest)(environment)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+and coverageUnreachableLiteral pattern rest environment composites ints texts seenTrue seenFalse constructors =
+    match coverageUnwrap(pattern) with
+        | PatternInt(value) ->
+            if coverageContainsInt(value)(ints)
+            then Some(UnreachableMatchArm("Unreachable match arm: integer literal " + Ashes.Text.fromInt(value) + " is already matched earlier."))
+            else coverageUnreachable(rest)(environment)(false)(composites)(value :: ints)(texts)(seenTrue)(seenFalse)(constructors)
+        | PatternRune(value) ->
+            if coverageContainsInt(value)(ints)
+            then Some(UnreachableMatchArm("Unreachable match arm: rune literal U+" + coverageHex(value) + " is already matched earlier."))
+            else coverageUnreachable(rest)(environment)(false)(composites)(value :: ints)(texts)(seenTrue)(seenFalse)(constructors)
+        | PatternString(value) ->
+            if coverageContainsText(value)(texts)
+            then Some(UnreachableMatchArm("Unreachable match arm: string literal \"" + value + "\" is already matched earlier."))
+            else coverageUnreachable(rest)(environment)(false)(composites)(ints)(value :: texts)(seenTrue)(seenFalse)(constructors)
+        | PatternBool(true) ->
+            if seenTrue
+            then Some(UnreachableMatchArm("Unreachable match arm: 'true' is already matched earlier."))
+            else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(true)(seenFalse)(constructors)
+        | PatternBool(false) ->
+            if seenFalse
+            then Some(UnreachableMatchArm("Unreachable match arm: 'false' is already matched earlier."))
+            else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(true)(constructors)
+        | _ -> coverageUnreachableConstructor(pattern)(rest)(environment)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+and coverageUnreachableConstructor pattern rest environment composites ints texts seenTrue seenFalse constructors =
+    match coverageConstructorName(pattern)(environment) with
+        | None -> coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+        | Some(name) ->
+            match coverageConstructorShape(name)(environment) with
+                | Some((_adtName, 0)) ->
+                    if coverageContainsText(name)(constructors)
+                    then Some(UnreachableMatchArm("Unreachable match arm: constructor " + name + " is already matched earlier."))
+                    else coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(seenFalse)(name :: constructors)
+                | _ -> coverageUnreachable(rest)(environment)(false)(composites)(ints)(texts)(seenTrue)(seenFalse)(name :: constructors)
+
+let recursive coverageUnguardedPatterns cases acc =
+    match cases with
+        | [] -> reverse(acc)
+        | (pattern, _body, None) :: rest -> coverageUnguardedPatterns(rest)(pattern :: acc)
+        | (_pattern, _body, Some(_guard)) :: rest -> coverageUnguardedPatterns(rest)(acc)
+
+let recursive coverageSeenConstructors patterns environment acc =
+    match patterns with
+        | [] -> acc
+        | pattern :: rest ->
+            match coverageConstructorName(pattern)(environment) with
+                | Some(name) -> coverageSeenConstructors(rest)(environment)(name :: acc)
+                | None -> coverageSeenConstructors(rest)(environment)(acc)
+
+let recursive coverageMissingNames (constructors: List((Str, Int))) (seen: List(Str)) acc =
+    match constructors with
+        | [] -> reverse(acc)
+        | (name, _arity) :: rest ->
+            if coverageContainsText(name)(seen)
+            then coverageMissingNames(rest)(seen)(acc)
+            else coverageMissingNames(rest)(seen)(name :: acc)
+
+let recursive coverageQuoteNames (names: List(Str)) (limit: Int) (acc: Str) =
+    match names with
+        | [] -> acc
+        | name :: rest ->
+            if limit == 0
+            then acc
+            else
+                if acc == ""
+                then coverageQuoteNames(rest)(limit - 1)("'" + name + "'")
+                else coverageQuoteNames(rest)(limit - 1)(acc + ", '" + name + "'")
+
+let recursive coverageJoinWithAnd (names: List(Str)) (acc: Str) =
+    match names with
+        | [] -> acc
+        | name :: rest ->
+            if acc == ""
+            then coverageJoinWithAnd(rest)(name)
+            else coverageJoinWithAnd(rest)(acc + " and " + name)
+
+let coverageMissingConstructorsMessage (adtName: Str) (missing: List(Str)) =
+    if adtName == "Result"
+    then "Non-exhaustive match on Result: missing " + coverageJoinWithAnd(missing)("") + "."
+    else
+        let count = coverageLength(missing)(0)
+        in
+            if count <= 5
+            then "Non-exhaustive match expression. Missing constructor(s): " + coverageQuoteNames(missing)(count)("") + "."
+            else "Non-exhaustive match expression. Missing constructor(s): " + coverageQuoteNames(missing)(3)("") + ", ... and " + Ashes.Text.fromInt(count - 3) + " more."
+
+let recursive coverageAnyConstructorPattern patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternConstructor(_name, _patterns) -> true
+                | _ -> coverageAnyConstructorPattern(rest)
+
+let recursive coverageAnyTuplePattern patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternTuple(_elements) -> true
+                | _ -> coverageAnyTuplePattern(rest)
+
+let recursive coverageAnyCons patterns =
+    match patterns with
+        | [] -> false
+        | pattern :: rest ->
+            match coverageUnwrap(pattern) with
+                | PatternCons(_head, _tail) -> true
+                | _ -> coverageAnyCons(rest)
+
+let coverageDefinitelyExhaustive environment patterns =
+    if coverageAnyCatchAll(environment)(patterns)
+    then true
+    else
+        if coverageAnyEmptyList(patterns)
+        then coverageAnyCons(patterns)
+        else false
+
+let coverageBoolExhaustive environment patterns =
+    if coverageAnyCatchAll(environment)(patterns)
+    then true
+    else
+        if coverageHasBoolLiteral(patterns)(true)
+        then coverageHasBoolLiteral(patterns)(false)
+        else false
+
+let coverageMissingCaseError environment (valueType: SemanticType) patterns =
+    match coverageMissing(environment)(Some(valueType))(patterns) with
+        | Some(missing) -> Some(NonExhaustiveMatch("Non-exhaustive match expression. Missing case: " + coverageFormatPattern(missing) + "."))
+        | None -> None
+
+let coverageExhaustiveness environment (valueType: SemanticType) cases =
+    (let unguarded = coverageUnguardedPatterns(cases)([])
+    in
+        if coverageAnyCatchAll(environment)(unguarded)
+        then None
+        else
+            match valueType with
+                | SemNamed(_id, adtName, _arguments) ->
+                    match coverageAdtConstructors(environmentConstructors(environment))(adtName)([]) with
+                        | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
+                        | constructors ->
+                            match coverageMissingNames(constructors)(coverageSeenConstructors(unguarded)(environment)([]))([]) with
+                                | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
+                                | missing -> Some(NonExhaustiveMatch(coverageMissingConstructorsMessage(adtName)(missing)))
+                | SemList(_element) ->
+                    if !coverageAnyEmptyList(unguarded)
+                    then Some(NonExhaustiveMatch("Non-exhaustive match expression. Missing case: []."))
+                    else
+                        if !coverageAnyCons(unguarded)
+                        then Some(NonExhaustiveMatch("Non-exhaustive match expression. Missing case: x :: xs."))
+                        else coverageMissingCaseError(environment)(valueType)(unguarded)
+                | _ ->
+                    let hasTupleArm =
+                        match valueType with
+                            | SemTuple(_elements) -> coverageAnyTuplePattern(unguarded)
+                            | _ -> false
+                    in
+                        if hasTupleArm
+                        then coverageMissingCaseError(environment)(valueType)(unguarded)
+                        else
+                            if coverageAnyConstructorPattern(unguarded)
+                            then coverageMissingCaseError(environment)(valueType)(unguarded)
+                            else
+                                if coverageDefinitelyExhaustive(environment)(unguarded)
+                                then coverageMissingCaseError(environment)(valueType)(unguarded)
+                                else
+                                    if coverageBoolExhaustive(environment)(unguarded)
+                                    then coverageMissingCaseError(environment)(valueType)(unguarded)
+                                    else Some(NonExhaustiveMatch("Non-exhaustive match expression.")))
+
+// The first diagnostic a match's arms deserve, or None when they are consistent and complete.
+let matchCoverageError cases (valueType: SemanticType) environment =
+    (let expanded = coverageExpandCases(cases)(environment)([])
+    in
+        match coverageDistinctAdts(expanded)(environment)([]) with
+            | first :: second :: more -> Some(ConstructorPatternsFromDifferentAdts(first :: second :: more))
+            | _ ->
+                match coverageUnreachable(expanded)(environment)(false)([])([])([])(false)(false)([]) with
+                    | Some(error) -> Some(error)
+                    | None -> coverageExhaustiveness(environment)(valueType)(expanded))
+
+let checkMatchCoverage cases scrutineeType environment (result: TypeInferenceResult) =
+    match result with
+        | TypeInferenceResult { error = Some(_error) } -> result
+        | TypeInferenceResult { substitution = substitution } ->
+            match matchCoverageError(cases)(applySubstitution(substitution)(scrutineeType))(environment) with
+                | None -> result
+                | Some(error) -> result with error = Some(error)
 
 let recursive findRecordFieldType : Str -> List(Str) -> List(SemanticType) -> Maybe(SemanticType) =
     given (fieldName) ->
@@ -3133,15 +3862,17 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = scrutineeType, substitution = scrutineeSubstitution, supply = scrutineeSupply, constraints = scrutineeConstraints, error = None } ->
                     match freshTypeVariable(scrutineeSupply) with
                         | (resultType, resultSupply) ->
-                            inferMatchCases(
-                                cases,
-                                scrutineeType,
-                                resultType,
-                                environment,
-                                scrutineeSubstitution,
-                                resultSupply,
-                                ambientRow,
-                                scrutineeConstraints
+                            checkMatchCoverage(cases)(scrutineeType)(environment)(
+                                inferMatchCases(
+                                    cases,
+                                    scrutineeType,
+                                    resultType,
+                                    environment,
+                                    scrutineeSubstitution,
+                                    resultSupply,
+                                    ambientRow,
+                                    scrutineeConstraints
+                                )
                             )
                 | failure -> failure
         | ExprAdd(left, right) ->

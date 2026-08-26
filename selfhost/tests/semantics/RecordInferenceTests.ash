@@ -105,6 +105,102 @@ let expectPlainNameStaysABinder unit =
             else test.fail("a name that is not a constructor still binds the scrutinee")
         | _ -> test.fail("a plain variable pattern must infer")
 
+let optionCall (value: Int) = ExprCall(ExprVar("HasVal"))(ExprInt(value))(false)(callArgumentsInline)
+
+let expectCoverageError expression (expected: TypeInferenceError) (label: Str) =
+    match inferOptionExpression(expression) with
+        | ProgramInferenceResult { error = Some(error) } ->
+            if error == ProgramExpressionError(expected)
+            then Unit
+            else test.fail(label + ": unexpected diagnostic " + Ashes.Trait.Show.show(error))
+        | _ -> test.fail(label + ": the match must be rejected")
+
+let expectCovered expression (label: Str) =
+    match inferOptionExpression(expression) with
+        | ProgramInferenceResult { error = None } -> Unit
+        | ProgramInferenceResult { error = Some(error) } -> test.fail(label + ": " + Ashes.Trait.Show.show(error))
+
+let rejectMissingConstructorArm unit =
+    expectCoverageError(
+        ExprMatch(optionCall(1))([(PatternConstructor("HasVal")([PatternVar("n")]), ExprVar("n"), None)])(None)
+    )(
+        NonExhaustiveMatch("Non-exhaustive match expression. Missing constructor(s): 'NoVal'.")
+    )(
+        "rejectMissingConstructorArm"
+    )
+
+let rejectMissingNestedCase unit =
+    expectCoverageError(
+        ExprMatch(optionCall(1))([(PatternConstructor("HasVal")([PatternInt(1)]), ExprInt(1), None), (PatternVar("NoVal"), ExprInt(0), None)])(None)
+    )(
+        NonExhaustiveMatch("Non-exhaustive match expression. Missing case: HasVal(_).")
+    )(
+        "rejectMissingNestedCase"
+    )
+
+let rejectArmAfterCatchAll unit =
+    expectCoverageError(
+        ExprMatch(optionCall(1))([(PatternWildcard, ExprInt(0), None), (PatternVar("NoVal"), ExprInt(1), None)])(None)
+    )(
+        UnreachableMatchArm("Unreachable match arm: a catch-all pattern was already matched earlier.")
+    )(
+        "rejectArmAfterCatchAll"
+    )
+
+let rejectRepeatedLiteralArm unit =
+    expectCoverageError(
+        ExprMatch(ExprInt(1))([(PatternInt(1), ExprInt(1), None), (PatternInt(1), ExprInt(2), None), (PatternWildcard, ExprInt(0), None)])(None)
+    )(
+        UnreachableMatchArm("Unreachable match arm: integer literal 1 is already matched earlier.")
+    )(
+        "rejectRepeatedLiteralArm"
+    )
+
+let rejectListWithoutCons unit =
+    expectCoverageError(
+        ExprMatch(ExprList([ExprInt(1)])(false))([(PatternEmptyList, ExprInt(0), None)])(None)
+    )(
+        NonExhaustiveMatch("Non-exhaustive match expression. Missing case: x :: xs.")
+    )(
+        "rejectListWithoutCons"
+    )
+
+let rejectHalfCoveredBool unit =
+    expectCoverageError(
+        ExprMatch(ExprBool(true))([(PatternBool(true), ExprInt(1), None)])(None)
+    )(
+        NonExhaustiveMatch("Non-exhaustive match expression.")
+    )(
+        "rejectHalfCoveredBool"
+    )
+
+let acceptCompleteMatches unit =
+    unit
+    |> (given (_) ->
+        expectCovered(
+            ExprMatch(optionCall(1))([(PatternConstructor("HasVal")([PatternVar("n")]), ExprVar("n"), None), (PatternVar("NoVal"), ExprInt(0), None)])(None)
+        )(
+            "every constructor named"
+        ))
+    |> (given (_) ->
+        expectCovered(
+            ExprMatch(ExprList([ExprInt(1)])(false))([(PatternEmptyList, ExprInt(0), None), (PatternCons(PatternVar("x"))(PatternWildcard), ExprVar("x"), None)])(None)
+        )(
+            "empty list and cons"
+        ))
+    |> (given (_) ->
+        expectCovered(
+            ExprMatch(ExprBool(true))([(PatternBool(true), ExprInt(1), None), (PatternBool(false), ExprInt(0), None)])(None)
+        )(
+            "both bool literals"
+        ))
+    |> (given (_) ->
+        expectCovered(
+            ExprMatch(optionCall(1))([(PatternConstructor("HasVal")([PatternInt(1)]), ExprInt(1), Some(ExprBool(true))), (PatternWildcard, ExprInt(0), None)])(None)
+        )(
+            "guarded arm plus catch-all"
+        ))
+
 let runRecordInferenceTests unit =
     unit
     |> expectValidRecords
@@ -115,4 +211,11 @@ let runRecordInferenceTests unit =
     |> (given (_) -> expectBareNullaryConstructorPatternIsAConstructor(Unit))
     |> (given (_) -> rejectBareNullaryConstructorAgainstAnotherType(Unit))
     |> (given (_) -> expectPlainNameStaysABinder(Unit))
+    |> (given (_) -> rejectMissingConstructorArm(Unit))
+    |> (given (_) -> rejectMissingNestedCase(Unit))
+    |> (given (_) -> rejectArmAfterCatchAll(Unit))
+    |> (given (_) -> rejectRepeatedLiteralArm(Unit))
+    |> (given (_) -> rejectListWithoutCons(Unit))
+    |> (given (_) -> rejectHalfCoveredBool(Unit))
+    |> (given (_) -> acceptCompleteMatches(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted record inference tests passed"))
