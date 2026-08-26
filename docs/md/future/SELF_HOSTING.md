@@ -533,7 +533,7 @@ same public behavior.
   16-byte site gate with the free-flag-word condition, the `LoadArgumentOwnership` variant read
   and its callee exclusion, `LoadArgumentOwnership` as non-allocating, and slot-resolved
   devirtualization with dead-load and dropper-free cleanup removal.
-- [ ] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
+- [x] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
   not part of the `IrOptimizer` pipeline above, since a capture's environment is built at the
   creation site *before* the body is lowered and its used-set is known): record each capture's fill
   instruction range at construction time, then once the body's own instructions are available, delete
@@ -556,6 +556,11 @@ same public behavior.
   200,000,000-iteration driver repeatedly entering the same mutual-recursion group ran **14% faster at
   the CLI's default `-O2`** — unlike most passes in this pipeline, this `-O2` win is real because it
   removes an allocation LLVM has no way to reconstruct once Ashes has already chosen to omit it.
+  Pure Ashes now lowers a plain lambda's body before building its environment, so the pruning is a
+  filter over the capture list plus a `LoadEnv` renumbering of the finished body rather than a
+  deletion of already-emitted fills (`pruneDeadCaptures`, with the self-referential and group paths
+  untouched); its free-variable analysis is shadowing-exact, so no current lowering path produces a
+  dead capture and the mechanism is covered by direct tests over hand-built bodies.
 - [ ] Fold a left-nested chain of string-concatenation calls with single-use intermediates into one
   N-ary concatenation that allocates once for the sum of every part's length and copies each part
   directly into its final position, instead of paying one allocation and one growing copy per link
