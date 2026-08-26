@@ -65,6 +65,22 @@ let assertIdempotent source =
         |> formatExpression
         |> test.assertEqual(first))
 
+let assertExpressionWithOptions expected options source =
+    (let actual =
+        formatExpressionWithOptions(expressionFrom(source))(false)(options)
+    in
+        if expected == actual
+        then Unit
+        else test.fail("expected formatter output:\n" + expected + "actual formatter output:\n" + actual))
+
+let assertExpressionWithPipelines expected source =
+    (let actual =
+        formatExpressionWithOptions(expressionFrom(source))(true)(formattingOptionsDefault)
+    in
+        if expected == actual
+        then Unit
+        else test.fail("expected formatter output:\n" + expected + "actual formatter output:\n" + actual))
+
 let multilineRecordExpected =
     join("\n")([
         "ExternalFunctionAbi(",
@@ -278,6 +294,72 @@ let run unit =
         |> patternFrom
         |> assertPattern("Some(head :: tail) as items | None"))
     |> (given (_) -> assertIdempotent("match value with | Some(x) when x > 0 -> x | None -> 0"))
+    |> (given (_) ->
+        assertExpressionWithOptions(
+            "outer(\n    \"first\",\n    inner(\n        1,\n        2\n    ),\n    []\n)\n",
+            formattingOptionsDefault,
+            "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        ))
+    |> (given (_) ->
+        assertExpressionWithOptions(
+            "outer(\n  \"first\",\n  inner(\n    1,\n    2\n  ),\n  []\n)\n",
+            FormattingOptions(indentSize = 2, useTabs = false, newLine = "\n"),
+            "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        ))
+    |> (given (_) ->
+        assertExpressionWithOptions(
+            "outer(\n\t\"first\",\n\tinner(\n\t\t1,\n\t\t2\n\t),\n\t[]\n)\n",
+            FormattingOptions(indentSize = 4, useTabs = true, newLine = "\n"),
+            "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        ))
+    |> (given (_) ->
+        assertExpressionWithOptions(
+            "outer(\r\n    \"first\",\r\n    inner(\r\n        1,\r\n        2\r\n    ),\r\n    []\r\n)\r\n",
+            FormattingOptions(indentSize = 4, useTabs = false, newLine = "\r\n"),
+            "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        ))
+    |> (given (_) ->
+        assertExpressionWithOptions(
+            "given (left) ->\n    given (right) -> left + right\n",
+            FormattingOptions(indentSize = 0, useTabs = false, newLine = "not-a-newline"),
+            "given (left, right)->left+right"
+        ))
+    |> (given (_) ->
+        "outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"
+        |> expressionFrom
+        |> formatExpression
+        |> test.assertEqual(formatExpressionWithOptions(expressionFrom("outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)"))(false)(formattingOptionsDefault)))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n")("g(f(x))"))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n|> h\n")("h(g(f(x)))"))
+    |> (given (_) -> assertExpressionWithPipelines("f(x)\n")("f(x)"))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n")("x |> f |> g"))
+    |> (given (_) -> assertExpressionWithPipelines("h(x\n|> f\n|> Some)\n")("h(Some(f(x)))"))
+    |> (given (_) -> assertExpressionWithPipelines("f(Some(x))\n")("f(Some(x))"))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|?> f\n|?> g\n")("x |?> f |?> g"))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|!> f\n|!> g\n")("x |!> f |!> g"))
+    |> (given (_) -> assertExpressionWithPipelines("x\n|> f\n|> g\n|?> h\n")("g(f(x)) |?> h"))
+    |> (given (_) ->
+        assertExpressionWithPipelines(
+            "if cond\nthen\n    x\n    |> f\n    |> g\nelse h(x)\n",
+            "if cond then g(f(x)) else h(x)"
+        ))
+    |> (given (_) ->
+        assertExpressionWithPipelines(
+            "given (x) ->\n    x\n    |> f\n    |> g\n    |> h\n",
+            "given (x) -> h(g(f(x)))"
+        ))
+    |> (given (_) ->
+        assertExpressionWithPipelines(
+            "match v with\n    | x ->\n        x\n        |> f\n        |> g\n        |> h\n",
+            "match v with | x -> h(g(f(x)))"
+        ))
+    |> (given (_) ->
+        assertExpressionWithPipelines(
+            "let y =\n    x\n    |> f\n    |> g\n    |> h\nin y\n",
+            "let y = h(g(f(x))) in y"
+        ))
+    |> (given (_) -> assertExpressionWithPipelines("y\n|> f(x)\n|> g\n")("g(f(x, y))"))
+    |> (given (_) -> assertExpressionWithPipelines("y\n|> f(x)\n|> g\n")("g(f(x)(y))"))
     |> (given (_) -> Ashes.IO.print("all self-hosted formatter tests passed"))
 
 run(Unit)

@@ -7,11 +7,17 @@
 
 import AshesCompiler.Frontend.Syntax
 import Ashes.Collection.List.sortBy
+import Ashes.Collection.List.map as listMap
 export (
     value formatProgram,
     value formatExpression,
     value formatTypeExpression,
     value formatPattern,
+    type FormattingOptions(..),
+    value formattingOptionsDefault,
+    value formattingOptionsNormalize,
+    value formatProgramWithOptions,
+    value formatExpressionWithOptions,
 )
 
 let recursive formatterIndent : Int -> Str =
@@ -310,243 +316,387 @@ let formatterFieldPrecedence : Expr -> Int =
         else 0
 
 // Giving the right operand a tighter parent precedence preserves left associativity.
-let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Str =
+let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Bool -> Str =
     given (parent) ->
         given (precedence) ->
             given (operator) ->
                 given (left) ->
                     given (right) ->
-                        formatterWrap(
-                            parent,
-                            precedence,
-                            formatterExpr(left)(precedence)(0) + " " + operator + " " + formatterExpr(
-                                right,
-                                precedence + 1,
-                                0
+                        given (preferPipelines) ->
+                            formatterWrap(
+                                parent,
+                                precedence,
+                                formatterExpr(left)(precedence)(0)(preferPipelines) + " " + operator + " " + formatterExpr(
+                                    right,
+                                    precedence + 1,
+                                    0,
+                                    preferPipelines
+                                )
                             )
-                        )
-and formatterExpr : Expr -> Int -> Int -> Str =
+// A call/`|?>`/`|!>` chain at a top-level expression position (`parent == 0`) renders as a
+// multiline `|>` pipeline instead of nested calls when the file prefers that layout — mirroring
+// how the whole document already only reaches parent == 0 at exactly the syntactic positions
+// (let-bound values/bodies, if/match/lambda/handle bodies, case and arm bodies, the trailing
+// program expression) where stage 0's own WriteExprInline/WritePipeOperatorInline attempt the
+// same rewrite. Anywhere else (a call argument, a binary operand, ...) parent is never 0, so this
+// is never attempted mid-expression, exactly matching stage 0's own gating.
+and formatterTryPipelineRendering : Expr -> Int -> Int -> Bool -> Maybe(Str) =
     given (expression) ->
         given (parent) ->
             given (indent) ->
-                match formatterUnspanExpr(expression) with
-                    | ExprInt(value) -> Ashes.Text.fromInt(value)
-                    | ExprBigInt(value) -> value + "N"
-                    | ExprUInt(_value, _bits, text) -> text
-                    | ExprFloat(_value, text) -> text
-                    | ExprString(value) -> "\"" + formatterEscape(value) + "\""
-                    | ExprRune(value) ->
-                        "'" + formatterEscape(formatterRune(value)) + "'"
-                    | ExprBool(value) ->
-                        if value
-                        then "true"
-                        else "false"
-                    | ExprVar(name) -> name
-                    | ExprQualifiedVar(moduleName, name) -> moduleName + "." + name
-                    | ExprAdd(left, right) -> formatterBinary(parent)(10)("+")(left)(right)
-                    | ExprSubtract(left, right) -> formatterBinary(parent)(10)("-")(left)(right)
-                    | ExprMultiply(left, right) -> formatterBinary(parent)(11)("*")(left)(right)
-                    | ExprDivide(left, right) -> formatterBinary(parent)(11)("/")(left)(right)
-                    | ExprModulo(left, right) -> formatterBinary(parent)(11)("%")(left)(right)
-                    | ExprBitwiseAnd(left, right) -> formatterBinary(parent)(7)("&")(left)(right)
-                    | ExprBitwiseOr(left, right) -> formatterBinary(parent)(5)("|")(left)(right)
-                    | ExprBitwiseXor(left, right) -> formatterBinary(parent)(6)("^")(left)(right)
-                    | ExprShiftLeft(left, right) -> formatterBinary(parent)(9)("<<")(left)(right)
-                    | ExprShiftRight(left, right) -> formatterBinary(parent)(9)(">>")(left)(right)
-                    | ExprGreaterThan(left, right) -> formatterBinary(parent)(4)(">")(left)(right)
-                    | ExprLessThan(left, right) -> formatterBinary(parent)(4)("<")(left)(right)
-                    | ExprGreaterOrEqual(left, right) -> formatterBinary(parent)(4)(">=")(left)(right)
-                    | ExprLessOrEqual(left, right) -> formatterBinary(parent)(4)("<=")(left)(right)
-                    | ExprEqual(left, right) -> formatterBinary(parent)(4)("==")(left)(right)
-                    | ExprNotEqual(left, right) -> formatterBinary(parent)(4)("!=")(left)(right)
-                    | ExprResultPipe(left, right) -> formatterBinary(parent)(3)("|?>")(left)(right)
-                    | ExprResultMapErrorPipe(left, right) -> formatterBinary(parent)(3)("|!>")(left)(right)
-                    | ExprCons(head, tail) ->
-                        formatterWrap(
-                            parent,
-                            8,
-                            formatterExpr(head)(9)(indent) + " :: " + formatterExpr(tail)(8)(indent)
-                        )
-                    | ExprBitwiseNot(operand) -> formatterWrap(parent)(12)("~" + formatterExpr(operand)(12)(indent))
-                    | ExprLogicalNot(operand) -> formatterWrap(parent)(12)("!" + formatterExpr(operand)(12)(indent))
-                    | ExprCall(function, argument, whitespace, layout) ->
-                        let rendered =
-                            if whitespace
-                            then formatterExpr(function)(13)(indent) + " " + formatterExpr(argument)(14)(indent)
-                            else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)
-                        in formatterWrap(parent)(13)(rendered)
-                    | ExprTuple(elements) -> "(" + formatterJoin(", ")(formatterOperandInline)(elements) + ")"
-                    | ExprList(elements, isMultiline) ->
-                        if isMultiline
-                        then formatterMultilineList(elements)(indent)
-                        else "[" + formatterJoin(", ")(formatterOperandInline)(elements) + "]"
-                    | ExprRecord(name, fields, isMultiline) ->
-                        if isMultiline
-                        then formatterMultilineRecord(name)(fields)(indent)
-                        else name + "(" + formatterInlineFields(fields) + ")"
-                    | ExprRecordUpdate(target, fields) ->
-                        formatterWrap(
-                            parent,
-                            2,
-                            formatterExpr(
-                                target,
-                                3,
-                                indent
-                            ) + " with " + formatterJoin(", ")(formatterUpdateField)(fields)
-                        )
-                    | ExprAwait(task) -> formatterWrap(parent)(12)("await " + formatterExpr(task)(12)(indent))
-                    | ExprPerform(operation) ->
-                        formatterWrap(
-                            parent,
-                            12,
-                            "perform " + formatterExpr(operation)(12)(indent)
-                        )
-                    | ExprIf(condition, thenBranch, elseBranch) ->
-                        formatterWrap(
-                            parent,
-                            1,
-                            "if " + formatterExpr(
-                                condition,
-                                0,
-                                indent
-                            ) + "\n" + formatterIndent(indent) + "then " + formatterExpr(
-                                thenBranch,
-                                0,
-                                indent
-                            ) + "\n" + formatterIndent(indent) + "else " + formatterExpr(
-                                elseBranch,
-                                0,
-                                indent
+                given (preferPipelines) ->
+                    if preferPipelines
+                    then
+                        if parent == 0
+                        then formatterTryWritePipeline(expression)(indent)(preferPipelines)
+                        else None
+                    else None
+and formatterTryWritePipeline : Expr -> Int -> Bool -> Maybe(Str) =
+    given (expression) ->
+        given (indent) ->
+            given (preferPipelines) ->
+                match formatterTryCollectPipeline(expression) with
+                    | None -> None
+                    | Some((value, stages)) ->
+                        Some(
+                            formatterExpr(value)(4)(indent)(preferPipelines) + formatterPipelineStagesText(
+                                stages,
+                                indent,
+                                preferPipelines
                             )
                         )
-                    | ExprLambda(name, body, annotation) ->
-                        let parameter =
-                            match annotation with
-                                | None -> name
-                                | Some(typeExpression) -> name + ": " + formatterType(typeExpression)
-                        in
-                            if formatterExpressionIsMultiline(body)
-                            then
-                                formatterWrap(
-                                    parent,
-                                    1,
-                                    "given (" + parameter + ") ->\n" + formatterIndent(indent + 4) + formatterExpr(
-                                        body,
-                                        0,
-                                        indent + 4
-                                    )
-                                )
-                            else
-                                formatterWrap(
-                                    parent,
-                                    1,
-                                    "given (" + parameter + ") -> " + formatterExpr(body)(0)(indent)
-                                )
-                    | ExprLet(name, value, body, parameters, annotation, requirements) ->
-                        formatterLet(
-                            parent,
+and formatterPipelineStagesText : List((Str, Expr)) -> Int -> Bool -> Str =
+    given (stages) ->
+        given (indent) ->
+            given (preferPipelines) ->
+                match stages with
+                    | [] -> ""
+                    | (operatorText, func) :: tail ->
+                        "\n" + formatterIndent(indent) + operatorText + " " + formatterExpr(
+                            func,
+                            4,
                             indent,
-                            "let ",
-                            name,
-                            value,
-                            body,
-                            parameters,
-                            annotation,
-                            requirements
-                        )
-                    | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
-                        formatterLet(
-                            parent,
-                            indent,
-                            "let recursive ",
-                            name,
-                            value,
-                            body,
-                            parameters,
-                            annotation,
-                            requirements
-                        )
-                    | ExprLetResult(name, value, body) ->
-                        formatterWrap(
-                            parent,
-                            1,
-                            "let? " + name + " = " + formatterExpr(
-                                value,
-                                0,
-                                indent
-                            ) + "\nin " + formatterExpr(body)(0)(indent)
-                        )
-                    | ExprMatch(value, cases, _position) ->
-                        formatterWrap(
-                            parent,
-                            1,
-                            "match " + formatterExpr(value)(formatterOperandPrecedence(value))(indent) + " with\n" + formatterCases(cases)(indent + 4)
-                        )
-                    | ExprHandle(body, arms) ->
-                        formatterWrap(
-                            parent,
-                            1,
-                            "handle " + formatterExpr(body)(0)(indent) + " with\n" + formatterArms(arms)(indent + 4)
-                        )
-                    | ExprAt(_span, inner) -> formatterExpr(inner)(parent)(indent)
-and formatterExpressionInline : Expr -> Str =
-    given (expression) -> formatterExpr(expression)(0)(0)
-and formatterOperandInline : Expr -> Str =
+                            preferPipelines
+                        ) + formatterPipelineStagesText(tail)(indent)(preferPipelines)
+// Collects a call/`|?>`/`|!>` chain into (base value, ordered stages), or None when the chain is
+// not eligible for pipeline rendering at all — collection is all-or-nothing: hitting one
+// non-pipeline-eligible function anywhere along the chain (a let/if/match/handle) rejects the
+// whole expression rather than converting only part of it, and at least two stages are required
+// (a single call is not worth rewriting).
+and formatterTryCollectPipeline : Expr -> Maybe((Expr, List((Str, Expr)))) =
     given (expression) ->
-        formatterExpr(expression)(formatterOperandPrecedence(expression))(0)
-and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout -> Int -> Str =
+        match formatterCollectPipelineStages(expression)([]) with
+            | None -> None
+            | Some((value, stages)) ->
+                match stages with
+                    | [] -> None
+                    | _ :: [] -> None
+                    | _ -> Some((value, stages))
+// stagesSoFar is built by consing each newly discovered outer stage onto its front while walking
+// from the outermost call inward, so by the time collection reaches the innermost value the list
+// already reads innermost-stage-first — the exact order the pipeline renders in. No reversal step
+// is needed (or correct): reversing here would put the outermost stage first instead of last.
+and formatterCollectPipelineStages : Expr -> List((Str, Expr)) -> Maybe((Expr, List((Str, Expr)))) =
+    given (current) ->
+        given (stagesSoFar) ->
+            match formatterUnspanExpr(current) with
+                | ExprCall(function, argument, _whitespace, _layout) ->
+                    if formatterHasPipelineStages(stagesSoFar)
+                    then
+                        if formatterIsCapitalizedVarFunction(function)
+                        then Some((current, stagesSoFar))
+                        else
+                            if formatterCanBePipelineFunction(function)
+                            then formatterCollectPipelineStages(argument)(("|>", function) :: stagesSoFar)
+                            else None
+                    else
+                        if formatterCanBePipelineFunction(function)
+                        then formatterCollectPipelineStages(argument)(("|>", function) :: stagesSoFar)
+                        else None
+                | ExprResultPipe(left, right) ->
+                    if formatterCanBePipelineFunction(right)
+                    then formatterCollectPipelineStages(left)(("|?>", right) :: stagesSoFar)
+                    else None
+                | ExprResultMapErrorPipe(left, right) ->
+                    if formatterCanBePipelineFunction(right)
+                    then formatterCollectPipelineStages(left)(("|!>", right) :: stagesSoFar)
+                    else None
+                | _ -> Some((current, stagesSoFar))
+and formatterHasPipelineStages : List((Str, Expr)) -> Bool =
+    given (stages) ->
+        match stages with
+            | [] -> false
+            | _ -> true
+// Stops pipeline collection at a constructor call (e.g. `Some(x)`) once at least one outer stage
+// is already collected, so `g(f(Some(x)))` becomes `Some(x) |> f |> g` rather than decomposing the
+// constructor's own argument into a further stage.
+and formatterIsCapitalizedVarFunction : Expr -> Bool =
+    given (expression) ->
+        match formatterUnspanExpr(expression) with
+            | ExprVar(name) ->
+                match Ashes.Text.uncons(name) with
+                    | None -> false
+                    | Some((head, _tail)) ->
+                        let code = Ashes.Rune.toInt(head)
+                        in
+                            if code >= 65
+                            then code <= 90
+                            else false
+            | _ -> false
+and formatterCanBePipelineFunction : Expr -> Bool =
+    given (expression) ->
+        match formatterUnspanExpr(expression) with
+            | ExprLet(_, _, _, _, _, _) -> false
+            | ExprLetRecursive(_, _, _, _, _, _) -> false
+            | ExprLetResult(_, _, _) -> false
+            | ExprIf(_, _, _) -> false
+            | ExprMatch(_, _, _) -> false
+            | ExprHandle(_, _) -> false
+            | _ -> true
+and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
+    given (expression) ->
+        given (parent) ->
+            given (indent) ->
+                given (preferPipelines) ->
+                    match formatterTryPipelineRendering(expression)(parent)(indent)(preferPipelines) with
+                        | Some(rendered) -> rendered
+                        | None ->
+                            match formatterUnspanExpr(expression) with
+                                | ExprInt(value) -> Ashes.Text.fromInt(value)
+                                | ExprBigInt(value) -> value + "N"
+                                | ExprUInt(_value, _bits, text) -> text
+                                | ExprFloat(_value, text) -> text
+                                | ExprString(value) -> "\"" + formatterEscape(value) + "\""
+                                | ExprRune(value) ->
+                                    "'" + formatterEscape(formatterRune(value)) + "'"
+                                | ExprBool(value) ->
+                                    if value
+                                    then "true"
+                                    else "false"
+                                | ExprVar(name) -> name
+                                | ExprQualifiedVar(moduleName, name) -> moduleName + "." + name
+                                | ExprAdd(left, right) -> formatterBinary(parent)(10)("+")(left)(right)(preferPipelines)
+                                | ExprSubtract(left, right) -> formatterBinary(parent)(10)("-")(left)(right)(preferPipelines)
+                                | ExprMultiply(left, right) -> formatterBinary(parent)(11)("*")(left)(right)(preferPipelines)
+                                | ExprDivide(left, right) -> formatterBinary(parent)(11)("/")(left)(right)(preferPipelines)
+                                | ExprModulo(left, right) -> formatterBinary(parent)(11)("%")(left)(right)(preferPipelines)
+                                | ExprBitwiseAnd(left, right) -> formatterBinary(parent)(7)("&")(left)(right)(preferPipelines)
+                                | ExprBitwiseOr(left, right) -> formatterBinary(parent)(5)("|")(left)(right)(preferPipelines)
+                                | ExprBitwiseXor(left, right) -> formatterBinary(parent)(6)("^")(left)(right)(preferPipelines)
+                                | ExprShiftLeft(left, right) -> formatterBinary(parent)(9)("<<")(left)(right)(preferPipelines)
+                                | ExprShiftRight(left, right) -> formatterBinary(parent)(9)(">>")(left)(right)(preferPipelines)
+                                | ExprGreaterThan(left, right) -> formatterBinary(parent)(4)(">")(left)(right)(preferPipelines)
+                                | ExprLessThan(left, right) -> formatterBinary(parent)(4)("<")(left)(right)(preferPipelines)
+                                | ExprGreaterOrEqual(left, right) -> formatterBinary(parent)(4)(">=")(left)(right)(preferPipelines)
+                                | ExprLessOrEqual(left, right) -> formatterBinary(parent)(4)("<=")(left)(right)(preferPipelines)
+                                | ExprEqual(left, right) -> formatterBinary(parent)(4)("==")(left)(right)(preferPipelines)
+                                | ExprNotEqual(left, right) -> formatterBinary(parent)(4)("!=")(left)(right)(preferPipelines)
+                                | ExprResultPipe(left, right) -> formatterBinary(parent)(3)("|?>")(left)(right)(preferPipelines)
+                                | ExprResultMapErrorPipe(left, right) -> formatterBinary(parent)(3)("|!>")(left)(right)(preferPipelines)
+                                | ExprCons(head, tail) ->
+                                    formatterWrap(
+                                        parent,
+                                        8,
+                                        formatterExpr(head)(9)(indent)(preferPipelines) + " :: " + formatterExpr(tail)(8)(indent)(preferPipelines)
+                                    )
+                                | ExprBitwiseNot(operand) -> formatterWrap(parent)(12)("~" + formatterExpr(operand)(12)(indent)(preferPipelines))
+                                | ExprLogicalNot(operand) -> formatterWrap(parent)(12)("!" + formatterExpr(operand)(12)(indent)(preferPipelines))
+                                | ExprCall(function, argument, whitespace, layout) ->
+                                    let rendered =
+                                        if whitespace
+                                        then formatterExpr(function)(13)(indent)(preferPipelines) + " " + formatterExpr(argument)(14)(indent)(preferPipelines)
+                                        else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)(preferPipelines)
+                                    in formatterWrap(parent)(13)(rendered)
+                                | ExprTuple(elements) ->
+                                    "(" + formatterJoin(", ")(given (item) -> formatterOperandInline(item)(preferPipelines))(elements) + ")"
+                                | ExprList(elements, isMultiline) ->
+                                    if isMultiline
+                                    then formatterMultilineList(elements)(indent)(preferPipelines)
+                                    else
+                                        "[" + formatterJoin(", ")(given (item) -> formatterOperandInline(item)(preferPipelines))(elements) + "]"
+                                | ExprRecord(name, fields, isMultiline) ->
+                                    if isMultiline
+                                    then formatterMultilineRecord(name)(fields)(indent)(preferPipelines)
+                                    else name + "(" + formatterInlineFields(fields)(preferPipelines) + ")"
+                                | ExprRecordUpdate(target, fields) ->
+                                    formatterWrap(
+                                        parent,
+                                        2,
+                                        formatterExpr(
+                                            target,
+                                            3,
+                                            indent,
+                                            preferPipelines
+                                        ) + " with " + formatterJoin(", ")(given (field) -> formatterUpdateField(field)(preferPipelines))(fields)
+                                    )
+                                | ExprAwait(task) -> formatterWrap(parent)(12)("await " + formatterExpr(task)(12)(indent)(preferPipelines))
+                                | ExprPerform(operation) ->
+                                    formatterWrap(
+                                        parent,
+                                        12,
+                                        "perform " + formatterExpr(operation)(12)(indent)(preferPipelines)
+                                    )
+                                | ExprIf(condition, thenBranch, elseBranch) ->
+                                    formatterWrap(
+                                        parent,
+                                        1,
+                                        "if " + formatterExpr(
+                                            condition,
+                                            0,
+                                            indent,
+                                            preferPipelines
+                                        ) + "\n" + formatterIndent(indent) + "then" + formatterBranchSuffix(
+                                            thenBranch,
+                                            indent,
+                                            preferPipelines
+                                        ) + "\n" + formatterIndent(indent) + "else" + formatterBranchSuffix(
+                                            elseBranch,
+                                            indent,
+                                            preferPipelines
+                                        )
+                                    )
+                                | ExprLambda(name, body, annotation) ->
+                                    let parameter =
+                                        match annotation with
+                                            | None -> name
+                                            | Some(typeExpression) -> name + ": " + formatterType(typeExpression)
+                                    in
+                                        if formatterExpressionIsMultilineOrPipeline(body)(preferPipelines)
+                                        then
+                                            formatterWrap(
+                                                parent,
+                                                1,
+                                                "given (" + parameter + ") ->\n" + formatterIndent(indent + 4) + formatterExpr(
+                                                    body,
+                                                    0,
+                                                    indent + 4,
+                                                    preferPipelines
+                                                )
+                                            )
+                                        else
+                                            formatterWrap(
+                                                parent,
+                                                1,
+                                                "given (" + parameter + ") -> " + formatterExpr(body)(0)(indent)(preferPipelines)
+                                            )
+                                | ExprLet(name, value, body, parameters, annotation, requirements) ->
+                                    formatterLet(
+                                        parent,
+                                        indent,
+                                        "let ",
+                                        name,
+                                        value,
+                                        body,
+                                        parameters,
+                                        annotation,
+                                        requirements,
+                                        preferPipelines
+                                    )
+                                | ExprLetRecursive(name, value, body, parameters, annotation, requirements) ->
+                                    formatterLet(
+                                        parent,
+                                        indent,
+                                        "let recursive ",
+                                        name,
+                                        value,
+                                        body,
+                                        parameters,
+                                        annotation,
+                                        requirements,
+                                        preferPipelines
+                                    )
+                                | ExprLetResult(name, value, body) ->
+                                    formatterWrap(
+                                        parent,
+                                        1,
+                                        "let? " + name + " = " + formatterExpr(
+                                            value,
+                                            0,
+                                            indent,
+                                            preferPipelines
+                                        ) + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
+                                    )
+                                | ExprMatch(value, cases, _position) ->
+                                    formatterWrap(
+                                        parent,
+                                        1,
+                                        "match " + formatterExpr(value)(formatterOperandPrecedence(value))(indent)(preferPipelines) + " with\n" + formatterCases(cases)(indent + 4)(preferPipelines)
+                                    )
+                                | ExprHandle(body, arms) ->
+                                    formatterWrap(
+                                        parent,
+                                        1,
+                                        "handle " + formatterExpr(body)(0)(indent)(preferPipelines) + " with\n" + formatterArms(arms)(indent + 4)(preferPipelines)
+                                    )
+                                | ExprAt(_span, inner) -> formatterExpr(inner)(parent)(indent)(preferPipelines)
+and formatterExpressionInline : Expr -> Str =
+    given (expression) -> formatterExpr(expression)(0)(0)(false)
+and formatterOperandInline : Expr -> Bool -> Str =
+    given (expression) ->
+        given (preferPipelines) ->
+            formatterExpr(expression)(formatterOperandPrecedence(expression))(0)(preferPipelines)
+and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout -> Int -> Bool -> Str =
     given (expression) ->
         given (function) ->
             given (argument) ->
                 given (layout) ->
                     given (indent) ->
-                        if layout == callArgumentsInline
-                        then
-                            formatterExpr(function)(13)(indent) + "(" + formatterExpr(argument)(formatterOperandPrecedence(argument))(indent) + ")"
-                        else formatterMultilineCall(expression)(indent)
+                        given (preferPipelines) ->
+                            if layout == callArgumentsInline
+                            then
+                                formatterExpr(function)(13)(indent)(preferPipelines) + "(" + formatterExpr(argument)(formatterOperandPrecedence(argument))(indent)(preferPipelines) + ")"
+                            else formatterMultilineCall(expression)(indent)(preferPipelines)
 // Inline record-literal fields, comma-separated. Only a field with a following sibling needs
 // protection against an unparenthesized `with` absorbing the next `name = value` pair — the last
 // field's own closing `)` already ends the update unambiguously.
-and formatterInlineFields : List((Str, Expr)) -> Str =
+and formatterInlineFields : List((Str, Expr)) -> Bool -> Str =
     given (fields) ->
-        match fields with
-            | [] -> ""
-            | (name, value) :: [] -> name + " = " + formatterExpr(value)(0)(0)
-            | (name, value) :: tail ->
-                name + " = " + formatterExpr(value)(formatterFieldPrecedence(value))(0) + ", " + formatterInlineFields(tail)
-and formatterUpdateField : (Str, Expr) -> Str =
+        given (preferPipelines) ->
+            match fields with
+                | [] -> ""
+                | (name, value) :: [] -> name + " = " + formatterExpr(value)(0)(0)(preferPipelines)
+                | (name, value) :: tail ->
+                    name + " = " + formatterExpr(value)(formatterFieldPrecedence(value))(0)(preferPipelines) + ", " + formatterInlineFields(tail)(preferPipelines)
+and formatterUpdateField : (Str, Expr) -> Bool -> Str =
     given (field) ->
-        match field with
-            | (name, value) -> name + " = " + formatterExpr(value)(3)(0)
-and formatterMultilineRecord : Str -> List((Str, Expr)) -> Int -> Str =
+        given (preferPipelines) ->
+            match field with
+                | (name, value) -> name + " = " + formatterExpr(value)(3)(0)(preferPipelines)
+and formatterMultilineRecord : Str -> List((Str, Expr)) -> Int -> Bool -> Str =
     given (name) ->
         given (fields) ->
             given (indent) ->
-                name + "(\n" + formatterMultilineFields(
-                    fields,
-                    indent + 4
-                ) + "\n" + formatterIndent(indent) + ")"
-and formatterMultilineFields : List((Str, Expr)) -> Int -> Str =
+                given (preferPipelines) ->
+                    name + "(\n" + formatterMultilineFields(
+                        fields,
+                        indent + 4,
+                        preferPipelines
+                    ) + "\n" + formatterIndent(indent) + ")"
+and formatterMultilineFields : List((Str, Expr)) -> Int -> Bool -> Str =
     given (fields) ->
         given (indent) ->
-            match fields with
-                | [] -> ""
-                | (name, value) :: [] -> formatterIndent(indent) + name + " = " + formatterExpr(value)(0)(indent)
-                | (name, value) :: tail ->
-                    formatterIndent(indent) + name + " = " + formatterExpr(
-                        value,
-                        formatterFieldPrecedence(value),
-                        indent
-                    ) + ",\n" + formatterMultilineFields(tail)(indent)
-and formatterMultilineCall : Expr -> Int -> Str =
+            given (preferPipelines) ->
+                match fields with
+                    | [] -> ""
+                    | (name, value) :: [] -> formatterIndent(indent) + name + " = " + formatterExpr(value)(0)(indent)(preferPipelines)
+                    | (name, value) :: tail ->
+                        formatterIndent(indent) + name + " = " + formatterExpr(
+                            value,
+                            formatterFieldPrecedence(value),
+                            indent,
+                            preferPipelines
+                        ) + ",\n" + formatterMultilineFields(tail)(indent)(preferPipelines)
+and formatterMultilineCall : Expr -> Int -> Bool -> Str =
     given (expression) ->
         given (indent) ->
-            match formatterCollectMultilineCall(expression)([]) with
-                | (function, arguments) ->
-                    formatterExpr(function)(13)(indent) + "(\n" + formatterMultilineExpressions(
-                        arguments,
-                        indent + 4
-                    ) + "\n" + formatterIndent(indent) + ")"
+            given (preferPipelines) ->
+                match formatterCollectMultilineCall(expression)([]) with
+                    | (function, arguments) ->
+                        formatterExpr(function)(13)(indent)(preferPipelines) + "(\n" + formatterMultilineExpressions(
+                            arguments,
+                            indent + 4,
+                            preferPipelines
+                        ) + "\n" + formatterIndent(indent) + ")"
 and formatterCollectMultilineCall : Expr -> List(Expr) -> (Expr, List(Expr)) =
     given (expression) ->
         given (laterArguments) ->
@@ -557,24 +707,27 @@ and formatterCollectMultilineCall : Expr -> List(Expr) -> (Expr, List(Expr)) =
                         | (false, true) -> (function, argument :: laterArguments)
                         | _ -> (expression, laterArguments)
                 | _ -> (expression, laterArguments)
-and formatterMultilineList : List(Expr) -> Int -> Str =
+and formatterMultilineList : List(Expr) -> Int -> Bool -> Str =
     given (elements) ->
         given (indent) ->
-            let renderedElements = formatterMultilineExpressions(elements)(indent + 4)
-            in "[\n" + renderedElements + "\n" + formatterIndent(indent) + "]"
-and formatterMultilineExpressions : List(Expr) -> Int -> Str =
+            given (preferPipelines) ->
+                let renderedElements = formatterMultilineExpressions(elements)(indent + 4)(preferPipelines)
+                in "[\n" + renderedElements + "\n" + formatterIndent(indent) + "]"
+and formatterMultilineExpressions : List(Expr) -> Int -> Bool -> Str =
     given (expressions) ->
         given (indent) ->
-            match expressions with
-                | [] -> ""
-                | expression :: [] -> formatterIndent(indent) + formatterExpr(expression)(0)(indent)
-                | expression :: tail ->
-                    formatterIndent(indent) + formatterExpr(
-                        expression,
-                        formatterFieldPrecedence(expression),
-                        indent
-                    ) + ",\n" + formatterMultilineExpressions(tail)(indent)
-and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Maybe(TypeExpr) -> List(TraitConstraintSyntax) -> Str =
+            given (preferPipelines) ->
+                match expressions with
+                    | [] -> ""
+                    | expression :: [] -> formatterIndent(indent) + formatterExpr(expression)(0)(indent)(preferPipelines)
+                    | expression :: tail ->
+                        formatterIndent(indent) + formatterExpr(
+                            expression,
+                            formatterFieldPrecedence(expression),
+                            indent,
+                            preferPipelines
+                        ) + ",\n" + formatterMultilineExpressions(tail)(indent)(preferPipelines)
+and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Maybe(TypeExpr) -> List(TraitConstraintSyntax) -> Bool -> Str =
     given (parent) ->
         given (indent) ->
             given (prefix) ->
@@ -584,25 +737,26 @@ and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Mayb
                             given (parameters) ->
                                 given (annotation) ->
                                     given (requirements) ->
-                                        let annotationText =
-                                            match annotation with
-                                                | None -> ""
-                                                | Some(typeExpression) ->
-                                                    " : " + formatterType(
-                                                        typeExpression
-                                                    ) + formatterRequirements(requirements)
-                                        in
-                                            match formatterSugarParameters(parameters)(value)("") with
-                                                | (parameterText, formattedValue) ->
-                                                    formatterWrap(
-                                                        parent,
-                                                        1,
-                                                        prefix + name + parameterText + annotationText + " = " + formatterExpr(
-                                                            formattedValue,
-                                                            0,
-                                                            indent
-                                                        ) + "\nin " + formatterExpr(body)(0)(indent)
-                                                    )
+                                        given (preferPipelines) ->
+                                            let annotationText =
+                                                match annotation with
+                                                    | None -> ""
+                                                    | Some(typeExpression) ->
+                                                        " : " + formatterType(
+                                                            typeExpression
+                                                        ) + formatterRequirements(requirements)
+                                            in
+                                                match formatterSugarParameters(parameters)(value)("") with
+                                                    | (parameterText, formattedValue) ->
+                                                        formatterWrap(
+                                                            parent,
+                                                            1,
+                                                            prefix + name + parameterText + annotationText + " =" + formatterBranchSuffix(
+                                                                formattedValue,
+                                                                indent,
+                                                                preferPipelines
+                                                            ) + "\nin " + formatterExpr(body)(0)(indent)(preferPipelines)
+                                                        )
 and formatterSugarParameters : List(Str) -> Expr -> Str -> (Str, Expr) =
     given (parameters) ->
         given (value) ->
@@ -636,53 +790,57 @@ and formatterRequirement : TraitConstraintSyntax -> Str =
                     formatterType,
                     arguments
                 ) + ")"
-and formatterCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
+and formatterCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Bool -> Str =
     given (cases) ->
         given (indent) ->
-            match cases with
-                | [] -> ""
-                | (pattern, body, guard) :: tail ->
-                    let guardText =
-                        match guard with
-                            | None -> ""
-                            | Some(condition) -> " when " + formatterExpressionInline(condition)
-                    in
-                        formatterIndent(indent) + "| " + formatterPatternAt(
-                            pattern,
-                            0
-                        ) + guardText + " -> " + formatterExpr(
-                            body,
-                            0,
-                            indent
-                        ) + formatterFollowingCases(tail)(indent)
-and formatterFollowingCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Str =
+            given (preferPipelines) ->
+                match cases with
+                    | [] -> ""
+                    | (pattern, body, guard) :: tail ->
+                        let guardText =
+                            match guard with
+                                | None -> ""
+                                | Some(condition) -> " when " + formatterExpressionInline(condition)
+                        in
+                            formatterIndent(indent) + "| " + formatterPatternAt(
+                                pattern,
+                                0
+                            ) + guardText + " ->" + formatterBranchSuffix(
+                                body,
+                                indent,
+                                preferPipelines
+                            ) + formatterFollowingCases(tail)(indent)(preferPipelines)
+and formatterFollowingCases : List((Pattern, Expr, Maybe(Expr))) -> Int -> Bool -> Str =
     given (cases) ->
         given (indent) ->
-            match cases with
-                | [] -> ""
-                | _ -> "\n" + formatterCases(cases)(indent)
-and formatterArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Str =
+            given (preferPipelines) ->
+                match cases with
+                    | [] -> ""
+                    | _ -> "\n" + formatterCases(cases)(indent)(preferPipelines)
+and formatterArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Bool -> Str =
     given (arms) ->
         given (indent) ->
-            match arms with
-                | [] -> ""
-                | (moduleName, operationName, parameters, body) :: tail ->
-                    let prefix =
-                        match moduleName with
-                            | None -> operationName
-                            | Some(moduleValue) -> moduleValue + "." + operationName
-                    in
-                        formatterIndent(indent) + "| " + prefix + "(" + formatterJoin(
-                            ", ",
-                            given (item) -> formatterPatternAt(item)(0),
-                            parameters
-                        ) + ") -> " + formatterExpr(body)(0)(indent) + formatterFollowingArms(tail)(indent)
-and formatterFollowingArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Str =
+            given (preferPipelines) ->
+                match arms with
+                    | [] -> ""
+                    | (moduleName, operationName, parameters, body) :: tail ->
+                        let prefix =
+                            match moduleName with
+                                | None -> operationName
+                                | Some(moduleValue) -> moduleValue + "." + operationName
+                        in
+                            formatterIndent(indent) + "| " + prefix + "(" + formatterJoin(
+                                ", ",
+                                given (item) -> formatterPatternAt(item)(0),
+                                parameters
+                            ) + ") ->" + formatterBranchSuffix(body)(indent)(preferPipelines) + formatterFollowingArms(tail)(indent)(preferPipelines)
+and formatterFollowingArms : List((Maybe(Str), Str, List(Pattern), Expr)) -> Int -> Bool -> Str =
     given (arms) ->
         given (indent) ->
-            match arms with
-                | [] -> ""
-                | _ -> "\n" + formatterArms(arms)(indent)
+            given (preferPipelines) ->
+                match arms with
+                    | [] -> ""
+                    | _ -> "\n" + formatterArms(arms)(indent)(preferPipelines)
 and formatterExpressionIsMultiline : Expr -> Bool =
     given (expression) ->
         match formatterUnspanExpr(expression) with
@@ -697,8 +855,36 @@ and formatterExpressionIsMultiline : Expr -> Bool =
             | ExprList(_, isMultiline) -> isMultiline
             | ExprRecord(_, _, isMultiline) -> isMultiline
             | _ -> false
+// Like formatterExpressionIsMultiline, but also true when preferPipelines would rewrite this
+// expression into a multiline `|>` pipeline -- a fact formatterExpressionIsMultiline's own
+// static AST-shape check cannot see, since pipeline eligibility depends on preferPipelines and a
+// walk of the call chain, not a fixed flag on the expression node.
+and formatterExpressionIsMultilineOrPipeline : Expr -> Bool -> Bool =
+    given (expression) ->
+        given (preferPipelines) ->
+            if formatterExpressionIsMultiline(expression)
+            then true
+            else
+                if preferPipelines
+                then
+                    match formatterTryCollectPipeline(expression) with
+                        | Some(_) -> true
+                        | None -> false
+                else false
+// The single-line-or-multiline rendering shared by an `if` branch, a `let` value, a match-case
+// body, and a handler-arm body: a single-line value follows its introducer (`then`, `=`, `->`) on
+// the same line with a leading space; a multiline value starts on its own line, one indent level
+// deeper, with no trailing space left on the introducer's own line (the introducer never has a
+// dangling space that would need a separate trailing-whitespace trim to clean up).
+and formatterBranchSuffix : Expr -> Int -> Bool -> Str =
+    given (expression) ->
+        given (indent) ->
+            given (preferPipelines) ->
+                if formatterExpressionIsMultilineOrPipeline(expression)(preferPipelines)
+                then "\n" + formatterIndent(indent + 4) + formatterExpr(expression)(0)(indent + 4)(preferPipelines)
+                else " " + formatterExpr(expression)(0)(indent)(preferPipelines)
 
-let formatExpression expression = formatterExpr(expression)(0)(0) + "\n"
+let formatExpression expression = formatterExpr(expression)(0)(0)(false) + "\n"
 
 let formatTypeExpression typeExpression = formatterType(typeExpression)
 
@@ -914,34 +1100,35 @@ let formatterCapabilityDeclaration declaration =
 
 let formatterIsMultiline expression = formatterExpressionIsMultiline(expression)
 
-let formatterDeclarationValue expression indent =
+let formatterDeclarationValue expression indent preferPipelines =
     if formatterIsMultiline(expression)
-    then "\n" + formatterIndent(indent) + formatterExpr(expression)(0)(indent) + "\n"
-    else " " + formatterExpr(expression)(0)(0) + "\n"
+    then "\n" + formatterIndent(indent) + formatterExpr(expression)(0)(indent)(preferPipelines) + "\n"
+    else " " + formatterExpr(expression)(0)(0)(preferPipelines) + "\n"
 
-let formatterProvideBinding binding =
+let formatterProvideBinding binding preferPipelines =
     match binding with
         | ProvideBinding { operationName = name, implementation = implementation } ->
             "    | " + name + " =" + formatterDeclarationValue(
                 implementation,
-                8
+                8,
+                preferPipelines
             )
 
-let recursive formatterProvideBindings bindings =
+let recursive formatterProvideBindings bindings preferPipelines =
     match bindings with
         | [] -> ""
-        | binding :: tail -> formatterProvideBinding(binding) + formatterProvideBindings(tail)
+        | binding :: tail -> formatterProvideBinding(binding)(preferPipelines) + formatterProvideBindings(tail)(preferPipelines)
 
-let formatterProvideDeclaration declaration =
+let formatterProvideDeclaration declaration preferPipelines =
     match declaration with
         | ProvideDecl { capabilityName = name, typeArguments = arguments, bindings = bindings } ->
             let argumentsText =
                 match arguments with
                     | [] -> ""
                     | _ -> "(" + formatterJoin(", ")(formatterType)(arguments) + ")"
-            in "provide " + name + argumentsText + " =\n" + formatterProvideBindings(bindings)
+            in "provide " + name + argumentsText + " =\n" + formatterProvideBindings(bindings)(preferPipelines)
 
-let formatterTraitMethod method =
+let formatterTraitMethod method preferPipelines =
     match method with
         | TraitMethodDecl { name = name, signature = signature, defaultImplementation = None } ->
             "    | " + name + " : " + formatterType(
@@ -952,46 +1139,48 @@ let formatterTraitMethod method =
                 signature
             ) + " =" + formatterDeclarationValue(
                 implementation,
-                8
+                8,
+                preferPipelines
             )
 
-let recursive formatterTraitMethods methods =
+let recursive formatterTraitMethods methods preferPipelines =
     match methods with
         | [] -> ""
-        | method :: tail -> formatterTraitMethod(method) + formatterTraitMethods(tail)
+        | method :: tail -> formatterTraitMethod(method)(preferPipelines) + formatterTraitMethods(tail)(preferPipelines)
 
-let formatterTraitDeclaration declaration =
+let formatterTraitDeclaration declaration preferPipelines =
     match declaration with
         | TraitDecl { name = name, typeParameters = parameters, supertraits = supertraits, methods = methods } ->
             "trait " + name + formatterTypeParameters(
                 parameters
             ) + formatterRequirements(
                 supertraits
-            ) + " =\n" + formatterTraitMethods(methods)
+            ) + " =\n" + formatterTraitMethods(methods)(preferPipelines)
 
-let formatterImplementationBinding binding =
+let formatterImplementationBinding binding preferPipelines =
     match binding with
         | TraitImplementationMethodBinding { methodName = name, implementation = implementation } ->
             "    | " + name + " =" + formatterDeclarationValue(
                 implementation,
-                8
+                8,
+                preferPipelines
             )
 
-let recursive formatterImplementationBindings bindings =
+let recursive formatterImplementationBindings bindings preferPipelines =
     match bindings with
         | [] -> ""
-        | binding :: tail -> formatterImplementationBinding(binding) + formatterImplementationBindings(tail)
+        | binding :: tail -> formatterImplementationBinding(binding)(preferPipelines) + formatterImplementationBindings(tail)(preferPipelines)
 
-let formatterImplementationDeclaration declaration =
+let formatterImplementationDeclaration declaration preferPipelines =
     match declaration with
         | TraitImplementationDecl { traitName = name, typeArguments = arguments, requirements = requirements, bindings = bindings } ->
             "implement " + name + "(" + formatterJoin(
                 ", ",
                 formatterType,
                 arguments
-            ) + ")" + formatterRequirements(requirements) + " =\n" + formatterImplementationBindings(bindings)
+            ) + ")" + formatterRequirements(requirements) + " =\n" + formatterImplementationBindings(bindings)(preferPipelines)
 
-let formatterLetBinding prefix binding =
+let formatterLetBinding prefix binding preferPipelines =
     match binding with
         | LetBindingSyntax { name = name, value = value, sugarParameters = parameters, typeAnnotation = annotation, requirements = requirements } ->
             let annotationText =
@@ -1006,10 +1195,11 @@ let formatterLetBinding prefix binding =
                     | (parameterText, formattedValue) ->
                         prefix + name + parameterText + annotationText + " =" + formatterDeclarationValue(
                             formattedValue,
-                            4
+                            4,
+                            preferPipelines
                         )
 
-let recursive formatterRecursiveBindings bindings first =
+let recursive formatterRecursiveBindings bindings first preferPipelines =
     match bindings with
         | [] -> ""
         | binding :: tail ->
@@ -1017,7 +1207,7 @@ let recursive formatterRecursiveBindings bindings first =
                 if first
                 then "let recursive "
                 else "and "
-            in formatterLetBinding(prefix)(binding) + formatterRecursiveBindings(tail)(false)
+            in formatterLetBinding(prefix)(binding)(preferPipelines) + formatterRecursiveBindings(tail)(false)(preferPipelines)
 
 let recursive formatterUnspanTopLevel item =
     match item with
@@ -1029,7 +1219,7 @@ let formatterIsExternal item =
         | TopLevelExternal(_) -> true
         | _ -> false
 
-let recursive formatterTopLevelItem item =
+let recursive formatterTopLevelItem item preferPipelines =
     match formatterUnspanTopLevel(item) with
         | TopLevelExport(declaration) -> formatterExportDeclaration(declaration)
         | TopLevelType(declaration) -> formatterTypeDeclaration(declaration)
@@ -1037,18 +1227,18 @@ let recursive formatterTopLevelItem item =
         | TopLevelZeroCostType(declaration) -> formatterZeroCostTypeDeclaration(declaration)
         | TopLevelExternal(declaration) -> formatterExternalDeclaration(declaration)
         | TopLevelCapability(declaration) -> formatterCapabilityDeclaration(declaration)
-        | TopLevelProvide(declaration) -> formatterProvideDeclaration(declaration)
-        | TopLevelTrait(declaration) -> formatterTraitDeclaration(declaration)
-        | TopLevelImplementation(declaration) -> formatterImplementationDeclaration(declaration)
+        | TopLevelProvide(declaration) -> formatterProvideDeclaration(declaration)(preferPipelines)
+        | TopLevelTrait(declaration) -> formatterTraitDeclaration(declaration)(preferPipelines)
+        | TopLevelImplementation(declaration) -> formatterImplementationDeclaration(declaration)(preferPipelines)
         | TopLevelLet(binding, isRecursive) ->
             if isRecursive
-            then formatterLetBinding("let recursive ")(binding)
-            else formatterLetBinding("let ")(binding)
-        | TopLevelRecursiveGroup(bindings) -> formatterRecursiveBindings(bindings)(true)
-        | TopLevelAt(_span, inner) -> formatterTopLevelItem(inner)
+            then formatterLetBinding("let recursive ")(binding)(preferPipelines)
+            else formatterLetBinding("let ")(binding)(preferPipelines)
+        | TopLevelRecursiveGroup(bindings) -> formatterRecursiveBindings(bindings)(true)(preferPipelines)
+        | TopLevelAt(_span, inner) -> formatterTopLevelItem(inner)(preferPipelines)
 
 // Consecutive externals form one declaration block; every other top-level boundary gets a blank line.
-let recursive formatterProgramItems items first previousExternal =
+let recursive formatterProgramItems items first previousExternal preferPipelines =
     match items with
         | [] -> ""
         | item :: tail ->
@@ -1064,15 +1254,108 @@ let recursive formatterProgramItems items first previousExternal =
                             then ""
                             else "\n"
                         else "\n"
-                in separator + formatterTopLevelItem(item) + formatterProgramItems(tail)(false)(currentExternal)
+                in separator + formatterTopLevelItem(item)(preferPipelines) + formatterProgramItems(tail)(false)(currentExternal)(preferPipelines)
 
-let formatProgram program =
+let formatterProgramWith program preferPipelines =
     match program with
         | ProgramSyntax { items = items, body = body } ->
-            let declarations = formatterProgramItems(items)(true)(false)
+            let declarations = formatterProgramItems(items)(true)(false)(preferPipelines)
             in
                 match (items, body) with
                     | ([], None) -> "\n"
-                    | ([], Some(expression)) -> formatExpression(expression)
+                    | ([], Some(expression)) -> formatterExpr(expression)(0)(0)(preferPipelines) + "\n"
                     | (_, None) -> declarations
-                    | (_, Some(expression)) -> declarations + "\n" + formatExpression(expression)
+                    | (_, Some(expression)) -> declarations + "\n" + formatterExpr(expression)(0)(0)(preferPipelines) + "\n"
+
+let formatProgram program = formatterProgramWith(program)(false)
+
+// The whitespace conventions the formatter emits with: indent width, tabs versus spaces, and line
+// ending. Every writer above builds its output assuming 4-space indentation and "\n" line endings
+// (an invariant checked by the self-hosted formatter's own parity tests: every leading-whitespace
+// run in the canonical output is an exact multiple of 4, since the only ways `indent` is threaded
+// are "start at 0/4/8" and "+4 per nesting level"); formatterApplyOptions rescales that fixed
+// baseline to the requested options in one post-processing pass, mirroring how stage 0's
+// `FinishOutput` trims trailing whitespace and applies the configured newline as a final step
+// rather than threading them through every writer.
+type FormattingOptions =
+    | indentSize: Int
+    | useTabs: Bool
+    | newLine: Str
+
+let formattingOptionsDefault = FormattingOptions(indentSize = 4, useTabs = false, newLine = "\n")
+
+let formattingOptionsNormalize options =
+    match options with
+        | FormattingOptions { indentSize = indentSize, useTabs = useTabs, newLine = newLine } ->
+            let normalizedIndentSize =
+                if indentSize > 0
+                then indentSize
+                else 4
+            in
+                let normalizedNewLine =
+                    if newLine == "\n"
+                    then "\n"
+                    else
+                        if newLine == "\r\n"
+                        then "\r\n"
+                        else "\n"
+                in FormattingOptions(indentSize = normalizedIndentSize, useTabs = useTabs, newLine = normalizedNewLine)
+
+let recursive formatterRepeatUnit unit count =
+    if count <= 0
+    then ""
+    else unit + formatterRepeatUnit(unit)(count - 1)
+
+// The target indentation for a nesting depth (0, 1, 2, ...), not a raw column count: `formatterIndent`
+// above only ever produced spaces in multiples of 4, so a leading run's depth is that count divided
+// by 4, and re-rendering by depth (rather than by scaled column count) makes the tab case exact
+// rather than needing stage 0's separate tab/remainder-space split.
+let formatterIndentForDepth depth options =
+    match options with
+        | FormattingOptions { indentSize = indentSize, useTabs = useTabs } ->
+            if useTabs
+            then formatterRepeatUnit("\t")(depth)
+            else formatterRepeatUnit(" ")(depth * indentSize)
+
+let byteSpace = 32
+
+let recursive formatterLeadingSpaceByteCount bytes index total =
+    if index >= total
+    then index
+    else
+        if Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(index)) == byteSpace
+        then formatterLeadingSpaceByteCount(bytes)(index + 1)(total)
+        else index
+
+let formatterRescaleLine options line =
+    (let bytes = Ashes.Byte.fromText(line)
+    in
+        let total = Ashes.Byte.length(bytes)
+        in
+            let leadingSpaces = formatterLeadingSpaceByteCount(bytes)(0)(total)
+            in
+                let rest = Ashes.Byte.subText(bytes)(leadingSpaces)(total - leadingSpaces)
+                in
+                    let restTrimmed = Ashes.Text.trimEnd(rest)
+                    in
+                        if restTrimmed == ""
+                        then ""
+                        else formatterIndentForDepth(leadingSpaces / 4)(options) + restTrimmed)
+
+// Applies `options` to already-formatted (fixed 4-space, "\n") text: rescales every line's leading
+// indentation by nesting depth, trims trailing whitespace (mirroring stage 0's FinishOutput), and
+// joins with the configured line ending.
+let formatterApplyOptions options text =
+    (let normalized = formattingOptionsNormalize(options)
+    in
+        "\n"
+        |> Ashes.Text.split(text)
+        |> listMap(formatterRescaleLine(normalized))
+        |> Ashes.Text.join(normalized.newLine))
+
+let formatProgramWithOptions program preferPipelines options =
+    preferPipelines
+    |> formatterProgramWith(program)
+    |> formatterApplyOptions(options)
+
+let formatExpressionWithOptions expression preferPipelines options = formatterApplyOptions(options)(formatterExpr(expression)(0)(0)(preferPipelines) + "\n")

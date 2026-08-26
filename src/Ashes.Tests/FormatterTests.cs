@@ -555,6 +555,21 @@ public sealed class FormatterTests
         formatted.ShouldBe("let x = 1\r\nin x\r\n");
     }
 
+    // Every writer emits a plain '\n' internally; FinishOutput converts to the configured newline
+    // exactly once at the end, so a CRLF document must not double its carriage returns.
+    [Test]
+    public void Format_should_support_crlf_newlines_in_a_multiline_call()
+    {
+        var diagnostics = new Diagnostics();
+        var expr = new Parser("outer(\n\"first\",\ninner(\n1,\n2\n),\n[]\n)", diagnostics).ParseExpression();
+
+        var formatted = Ashes.Formatter.Formatter.Format(
+            expr,
+            options: new Ashes.Formatter.FormattingOptions { IndentSize = 4, UseTabs = false, NewLine = "\r\n" });
+
+        formatted.ShouldBe("outer(\r\n    \"first\",\r\n    inner(\r\n        1,\r\n        2\r\n    ),\r\n    []\r\n)\r\n");
+    }
+
     [Test]
     public void Format_should_write_whitespace_application_with_space()
     {
