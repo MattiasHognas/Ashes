@@ -121,25 +121,24 @@ let contains text needle =
         let tb = Ashes.Byte.fromText(text)
         in byteFind(tb)(needle)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(needle))(firstByteOf(needle)) >= 0
 
+let recursive reverseTexts remaining acc =
+    match remaining with
+        | [] -> acc
+        | head :: tail -> reverseTexts(tail)(head :: acc)
+
+let recursive piecesBetween tb separator from tlen slen sfirst acc =
+    (let idx = byteFind(tb)(separator)(from)(tlen)(slen)(sfirst)
+    in
+        if idx < 0
+        then reverseTexts(Ashes.Byte.subText(tb)(from)(tlen - from) :: acc)([])
+        else piecesBetween(tb)(separator)(idx + slen)(tlen)(slen)(sfirst)(Ashes.Byte.subText(tb)(from)(idx - from) :: acc))
+
 let split text separator =
     if separator == ""
     then [text]
     else
         let tb = Ashes.Byte.fromText(text)
-        in
-            let tlen = Ashes.Byte.length(tb)
-            in
-                let slen = Ashes.Text.byteLength(separator)
-                in
-                    let sfirst = firstByteOf(separator)
-                    in
-                        let recursive go from =
-                            let idx = byteFind(tb)(separator)(from)(tlen)(slen)(sfirst)
-                            in
-                                if idx < 0
-                                then [Ashes.Byte.subText(tb)(from)(tlen - from)]
-                                else Ashes.Byte.subText(tb)(from)(idx - from) :: go(idx + slen)
-                        in go(0)
+        in piecesBetween(tb)(separator)(0)(Ashes.Byte.length(tb))(Ashes.Text.byteLength(separator))(firstByteOf(separator))([])
 
 let isDigitText text =
     match text with
@@ -230,19 +229,17 @@ let isWhiteSpaceByte b =
             then true
             else b == 13
 
+let recursive dropLeadingWhiteSpace tb n i =
+    if i >= n
+    then ""
+    else
+        if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(i)))
+        then dropLeadingWhiteSpace(tb)(n)(i + 1)
+        else Ashes.Byte.subText(tb)(i)(n - i)
+
 let trimStart text =
     (let tb = Ashes.Byte.fromText(text)
-    in
-        let n = Ashes.Byte.length(tb)
-        in
-            let recursive go i =
-                if i >= n
-                then ""
-                else
-                    if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(i)))
-                    then go(i + 1)
-                    else Ashes.Byte.subText(tb)(i)(n - i)
-            in go(0))
+    in dropLeadingWhiteSpace(tb)(Ashes.Byte.length(tb))(0))
 
 let recursive lastAndInit text =
     match Ashes.Text.unconsText(text) with
@@ -255,17 +252,17 @@ let recursive lastAndInit text =
                         | None -> None
                         | Some((init, last)) -> Some((head + init, last))
 
+let recursive dropTrailingWhiteSpace tb j =
+    if j <= 0
+    then ""
+    else
+        if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(j - 1)))
+        then dropTrailingWhiteSpace(tb)(j - 1)
+        else Ashes.Byte.subText(tb)(0)(j)
+
 let trimEnd text =
     (let tb = Ashes.Byte.fromText(text)
-    in
-        let recursive go j =
-            if j <= 0
-            then ""
-            else
-                if isWhiteSpaceByte(Ashes.Number.UInt.toInt(Ashes.Byte.get(tb)(j - 1)))
-                then go(j - 1)
-                else Ashes.Byte.subText(tb)(0)(j)
-        in go(Ashes.Byte.length(tb)))
+    in dropTrailingWhiteSpace(tb)(Ashes.Byte.length(tb)))
 
 let trim text = trimEnd(trimStart(text))
 

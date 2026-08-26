@@ -8930,6 +8930,25 @@ public sealed partial class Lowering
     /// </summary>
     private bool InlinedBodyReferencesResolveHere(string inlineName, IReadOnlyList<string> parameters, Expr body)
     {
+        return InlinedBodyReferencesResolveHere(
+            inlineName,
+            parameters,
+            body,
+            new HashSet<string>(StringComparer.Ordinal) { inlineName });
+    }
+
+    // An inlined body lowers in an isolated scope, so every name it references must resolve there:
+    // lexically, by known label, as a constructor, or by being inlined in turn. That last case is
+    // only as good as the referenced helper's own body — a stitched stdlib helper that calls a
+    // module sibling through the stitcher's alias name (`trimEnd` calling `dropTrailingWhiteSpace`)
+    // resolves nowhere outside its module, so accepting it here would inline the outer helper and
+    // then fail on the inner call as a forward reference. Check the chain transitively instead.
+    private bool InlinedBodyReferencesResolveHere(
+        string inlineName,
+        IReadOnlyList<string> parameters,
+        Expr body,
+        HashSet<string> visited)
+    {
         if (!_inlinableBodyExternalReferences.TryGetValue(inlineName, out HashSet<string>? references))
         {
             references = FreeVars(body, [.. parameters]);
@@ -8938,13 +8957,24 @@ public sealed partial class Lowering
 
         foreach (string reference in references)
         {
-            if (Lookup(reference) is null
-                && !_topLevelFunctionRefs.ContainsKey(reference)
-                && !_constructorSymbols.ContainsKey(reference)
-                && !_inlinableFunctions.ContainsKey(reference))
+            if (Lookup(reference) is not null
+                || _topLevelFunctionRefs.ContainsKey(reference)
+                || _constructorSymbols.ContainsKey(reference))
             {
-                return false;
+                continue;
             }
+
+            // A helper already visited on this walk was accepted (or is being accepted) on the same
+            // scope; non-recursive lets cannot form a cycle, so revisiting it is a shared sibling, not
+            // a loop.
+            if (_inlinableFunctions.TryGetValue(reference, out var nested)
+                && (!visited.Add(reference)
+                    || InlinedBodyReferencesResolveHere(reference, nested.Params, nested.Body, visited)))
+            {
+                continue;
+            }
+
+            return false;
         }
 
         return true;
