@@ -141,6 +141,12 @@ same public behavior.
   requested line ending.
 - [ ] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
   made from the source form.
+- [ ] Keep the parentheses around a record update used as a record-literal field value (stage-0
+  formatter, open): `fmt` rewrites `Value(state = (inner with currentSpan = previous), temp = temp)`
+  to `Value(state = inner with currentSpan = previous, temp = temp)`, where the update absorbs the
+  following fields, so the formatted file no longer compiles (`Missing field 'temp' in record
+  literal`). Formatting must never change what a file parses to. **Found while porting the located
+  core lowering**; the self-hosted code binds the updated record with a `let` first.
 - [ ] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
   whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
   `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
@@ -384,14 +390,23 @@ same public behavior.
   wrappers, coroutines, normalizers, droppers, and copiers. Hover and public authority collectors index
   inferred types and capability requirements, and compilation decision snapshots capture function ownership,
   value placements, and external authority records.
-- [ ] Resolve a dependency module's combined-source positions through the stitcher's fragment line
+- [x] Resolve a dependency module's combined-source positions through the stitcher's fragment line
   anchors rather than by counting lines inside the module's rendered region. A stitched module region
   is a re-rendering (export block and header gone, declarations hoisted, binding values rendered with
   renamed identifiers), so region-relative lines are wrong for every module but the entry; stage 0
   now records a `SourceLineAnchor` (combined range, file line and column where the fragment's text
   starts) for each rendered binding value and hoisted declaration and maps a position by line delta
   from its anchor, leaving glue between anchors unlocated. Without this, breakpoints cannot be set in
-  dependency modules of a program compiled by the self-hosted compiler.
+  dependency modules of a program compiled by the self-hosted compiler. The self-hosted stitcher
+  combines syntax trees rather than re-rendered text, so a module's spans stay offsets into its own
+  file and need no anchors: pure Ashes resolves a span through the combined item it belongs to
+  (`StitchedItemRegion`, `createStitchedSourceContext`, `resolveItemSpanLocation` in
+  `SourceContext.ash`), using the item's module region to name the file and that file's own line
+  index for the line and column, and leaves an item outside every region unlocated as stitching
+  glue. The core lowerer now carries the innermost enclosing `ExprAt` span in its state (restored
+  when the node is left) and tags every emitted instruction through the item-aware context
+  (`lowerCoreExpressionLocated`), so a dependency item's instructions carry that module's file and
+  lines; covered by `selfhost/tests/semantics/MetadataAndOriginsTests.ash`.
 - [x] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler. Pure Ashes
   IR validation enforces program-level invariants (entry label and non-closure contract, unique function
   and string literal labels, non-negative capability globals), function-level invariants (non-negative
@@ -920,6 +935,20 @@ same public behavior.
   **Found by the self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion
   texts and `List(Int)` anchor indices in `HashMap` values.** Its pure-Ashes code now keeps only
   `Int`/`Str` map values (composite keys such as `signature#occurrence`).
+- [ ] Retain the record elements that `Ashes.Collection.List.reverse` (or any generic function
+  moving type-variable elements from a consumed list into the cells it builds) carries out of a
+  loop's accumulator: a tail-recursive loop that conses a callee's record result (a record holding a
+  `Str` and a `List(Int)` built by another loop) onto its accumulator and finishes with
+  `reverse(acc)` reads the records back clobbered once a string-allocating churn loop has run
+  (line-start counts `9 5` expected, `1 12` observed), at `-O2` and with `--debug` alike, while
+  dropping the `reverse`, collecting the records by ordinary recursion, or reversing through a
+  monomorphic local `reverseIndexes (xs: List(TextIndex))` is correct. The generic
+  `go(head :: acc)` allocates a plain arena cell around the type-variable `head` with no retain, so
+  the records survive only while nothing reclaims them; the same family as the generic-parameter
+  item above. Twelve-line repro: build two such records in a loop, `reverse` the accumulator, churn
+  20,000 string concatenations, print the list lengths. **Found by the self-hosted stitched source
+  context (`buildItemIndexes`)**, whose pre-existing `buildModuleIndexes` had the same latent shape;
+  both now collect their indexes by ordinary recursion.
 - [ ] Check an inlined helper's references transitively before inlining it inside a reuse arm or a
   reuse specialization: an inlinable free name only proves resolvable when that helper's own body
   resolves in the isolated scope too (a stitched stdlib helper calling a module sibling through the
