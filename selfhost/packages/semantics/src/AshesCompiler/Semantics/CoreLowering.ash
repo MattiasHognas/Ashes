@@ -25,6 +25,8 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
+import AshesCompiler.Semantics.TraitEvidenceRewriting
+import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Unification
@@ -42,6 +44,7 @@ export (
     value pruneDeadCaptures,
     value lowerCoreProgram,
     value lowerCoreProgramWithSource,
+    value lowerCoreProgramWithEnvironment,
 )
 
 type CoreLoweringError =
@@ -4676,6 +4679,35 @@ let recursive letBindingSyntaxNames bindings =
         | [] -> []
         | LetBindingSyntax { name = name } :: rest -> name :: letBindingSyntaxNames(rest)
 
+// Pure, no lowering: the trait constraints attached to a binding's own generalized TypeScheme, as
+// recorded by inference in the TypeEnvironment's flat (name, TypeScheme) binding list.
+let recursive findBindingScheme name bindings =
+    match bindings with
+        | [] -> None
+        | (candidate, scheme) :: rest ->
+            if name == candidate
+            then Some(scheme)
+            else findBindingScheme(name)(rest)
+
+let bindingTraitConstraints name environment =
+    match environment with
+        | TypeEnvironment { bindings = bindings } ->
+            match findBindingScheme(name)(bindings) with
+                | Some(TypeScheme { constraints = constraints }) -> constraints
+                | None -> []
+
+// When an inference environment is available, elaborates a constrained top-level binding's value
+// into ordinary syntax with hidden dictionary parameters (rewriteTraitConstrainedValue) before it
+// reaches lowering; a binding with no constraints, or no environment supplied at all (the existing
+// no-environment entry points), lowers unchanged.
+let traitRewrittenTopLevelValue name value environment =
+    match environment with
+        | None -> value
+        | Some(env) ->
+            match bindingTraitConstraints(name)(env) with
+                | [] -> value
+                | constraints -> rewriteTraitConstrainedValue(value)(constraints)(env)
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -4685,11 +4717,14 @@ let recursive letBindingSyntaxNames bindings =
 // continuation lower ignores the placeholder body it's handed and lowers the remaining items
 // instead. Type, external, capability, provider, trait, and implementation declarations are
 // registered ahead of lowering by inference and are not part of the value chain, so they are
-// skipped here rather than lowered.
-let recursive lowerCoreProgramItems items trailingBody seen state =
+// skipped here rather than lowered. `environment` is `Some` only from lowerCoreProgramWithEnvironment
+// — it enables trait-constrained-value rewriting for plain (non-recursive) top-level lets only;
+// recursive bindings and call-site trait-evidence forwarding (rewriteTraitConstrainedReference)
+// remain unwired, a deliberately narrower first slice of the trait-dictionary epic.
+let recursive lowerCoreProgramItems items trailingBody seen environment state =
     match items with
         | [] -> lowerCore(trailingBody)(state)
-        | TopLevelAt(_span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(state)
+        | TopLevelAt(_span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(state)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
@@ -4697,12 +4732,12 @@ let recursive lowerCoreProgramItems items trailingBody seen state =
                     match state with
                         | CoreLoweringState { bindings = outerBindings } ->
                             state
-                            |> lowerCore(value)
+                            |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
                             |> finishLetValue(
                                 name,
                                 topLevelContinuationBody,
                                 given (_ignoredBody) ->
-                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
                                 outerBindings
                             )
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
@@ -4719,7 +4754,7 @@ let recursive lowerCoreProgramItems items trailingBody seen state =
                                 topLevelContinuationBody,
                                 lowerCore,
                                 given (_ignoredBody) ->
-                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
                                 outerBindings
                             )
         | TopLevelRecursiveGroup(bindings) :: rest ->
@@ -4737,10 +4772,10 @@ let recursive lowerCoreProgramItems items trailingBody seen state =
                                     topLevelContinuationBody,
                                     lowerCore,
                                     given (_ignoredBody) ->
-                                        given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(s),
+                                        given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
                                     outerBindings
                                 )
-        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(state)
+        | _ :: rest -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(state)
 
 let buildProgram lowered =
     match lowered with
@@ -4798,7 +4833,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
             in
                 Unit
                 |> initialState
-                |> lowerCoreProgramItems(items)(trailingBody)([])
+                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
@@ -4815,7 +4850,27 @@ let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSy
                 |> initialState
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)))
-                |> lowerCoreProgramItems(items)(trailingBody)([])
+                |> lowerCoreProgramItems(items)(trailingBody)([])(None)
+                |> buildProgram
+
+// As lowerCoreProgram, but with a real inference TypeEnvironment supplied: a plain (non-recursive)
+// top-level binding whose own generalized TypeScheme carries trait constraints has its value
+// elaborated (rewriteTraitConstrainedValue) into hidden-dictionary-parameter form before lowering,
+// rather than lowering the unrewritten constrained value as if it needed no evidence at all.
+// Recursive top-level bindings and call-site trait-evidence forwarding
+// (rewriteTraitConstrainedReference) are not yet wired — a deliberately narrower first slice of
+// the trait-dictionary physical-lowering epic.
+let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: ProgramSyntax) =
+    match program with
+        | ProgramSyntax { items = items, body = body } ->
+            let trailingBody =
+                match body with
+                    | Some(expression) -> expression
+                    | None -> ExprVar("Unit")
+            in
+                Unit
+                |> initialState
+                |> lowerCoreProgramItems(items)(trailingBody)([])(Some(environment))
                 |> buildProgram
 
 let lowerCoreExpression expression =
