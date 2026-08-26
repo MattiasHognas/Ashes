@@ -497,8 +497,19 @@ same public behavior.
   -> ...` failed to lower at all (`UnknownLoweringBinding("__body_res")`). Fixed with the same
   `finishLetValue` binding path an ordinary `let` already uses. Regression:
   `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`'s
-  `testHandleReturnArmLowering`. Arm-closure installation and the `resume`/pre-post-handler
-  transform remain unimplemented; a program with any op-arm handler cannot lower to correct IR yet.
+  `testHandleReturnArmLowering`. **Arm-closure installation is now ported** for the tail-position
+  `resume` form: every operation arm's body must call `resume` exactly once, and only the simplest
+  case — `resume(e)` as the whole (unwrapped) arm body — rewrites (to plain `e`) and lowers, wrapped
+  in one lambda per parameter exactly like any other closure, then stored into the handler frame at
+  the same offset `emitDynamicPerform` reads from (`(globalCount + 1 + opIndex) * 8`); an arm calling
+  `resume` anywhere else is rejected with `UnsupportedOperationArmResume` rather than silently
+  producing wrong IR. Regressions: `testHandleExpressionLowering` (now also asserts the closure
+  store), `testHandleArmWithoutResumeIsRejected`. **Still unimplemented**: every other `resume`
+  position stage 0 accepts — `let x = resume(v) in body`, a match/if scrutinee resume — which need
+  the one-shot post-resume continuation split stage 0's `TryRewriteResume` variants build, and the
+  pre/post handler control-flow fold (`LowerHandleFoldPosts`/`BuildCapabilityPost`) that consumes it;
+  a handler whose arms only use tail-position `resume` now lowers correctly, anything else is
+  rejected rather than silently wrong.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.

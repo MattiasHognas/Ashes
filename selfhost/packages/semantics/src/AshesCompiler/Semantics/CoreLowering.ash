@@ -62,6 +62,7 @@ type CoreLoweringError =
     | CoreRecursiveBindingRequiresFunction(Str)
     | UnsupportedCoreLoweringExpression(Str)
     | DuplicateTopLevelBinding(Str)
+    | UnsupportedOperationArmResume(Str, Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -3924,6 +3925,72 @@ let lowerPerform operation lower state =
                                         |> failure(state)
         | _ -> lower(operation)(state)
 
+// An operation arm's body must call `resume` exactly once; only the tail-position form
+// `resume(e)` (the arm body itself, unwrapped of span nodes) is supported so far — it rewrites to
+// plain `e`, no continuation-splitting needed. `let x = resume(v) in body`, a match/if scrutinee
+// resume, and every other position stage 0 also accepts are not yet ported (they need the
+// one-shot post-resume continuation machinery `LowerHandleFoldPosts` builds, which selfhost
+// doesn't have yet); an arm using one of those is rejected with UnsupportedOperationArmResume
+// rather than silently producing wrong IR.
+let recursive unspanForResumeCheck expression =
+    match expression with
+        | ExprAt(_span, inner) -> unspanForResumeCheck(inner)
+        | other -> other
+
+let tailResumeArgument body =
+    match unspanForResumeCheck(body) with
+        | ExprCall(function, argument, _whitespace, _layout) ->
+            match unspanForResumeCheck(function) with
+                | ExprVar("resume") -> Some(argument)
+                | _ -> None
+        | _ -> None
+
+// Wraps an operation arm's (already resume-rewritten) body in one lambda per parameter, matching
+// each non-variable pattern via a fresh synthetic parameter name — the ordinary lambda/match
+// lowering already handles the result like any other closure. Position-based names are safe here
+// because each arm's parameters are wrapped in one call, never interleaved with another arm's.
+let recursive buildArmParameterExpr index patterns body =
+    match patterns with
+        | [] -> body
+        | PatternVar(name) :: rest ->
+            ExprLambda(name)(buildArmParameterExpr(index + 1)(rest)(body))(None)
+        | pattern :: rest ->
+            let paramName = "__arm_arg_" + Ashes.Text.fromInt(index)
+            in
+                let innerBody = buildArmParameterExpr(index + 1)(rest)(body)
+                in
+                    ExprLambda(paramName)(ExprMatch(ExprVar(paramName))([(pattern, innerBody, None)])(None))(None)
+
+let buildOperationArmClosure capName opName patterns armBody lower state =
+    match tailResumeArgument(armBody) with
+        | None ->
+            opName
+            |> UnsupportedOperationArmResume(capName)
+            |> failure(state)
+        | Some(resumedValue) ->
+            lower(buildArmParameterExpr(0)(patterns)(resumedValue))(state)
+
+// Lowers every operation arm of the single handled capability to a closure and stores each one
+// into the handler frame at the same offset emitDynamicPerform reads from
+// ((globalCount + 1 + opIndex) * 8), so a perform inside the handled body finds a real closure
+// instead of the frame's uninitialized allocation.
+let recursive installOperationArmClosures capName ops opArms frameTemp globalCount lower state =
+    match opArms with
+        | [] -> success(-1)(SemNever)(state)
+        | (armCapName, opName, patterns, armBody) :: rest ->
+            if armCapName != capName
+            then installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
+            else
+                match findCapabilityOperationIndex(opName)(ops) with
+                    | None -> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)(state)
+                    | Some(opIndex) ->
+                        match buildOperationArmClosure(capName)(opName)(patterns)(armBody)(lower)(state) with
+                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                            | LoweredCoreValue { state = closureState, temp = closureTemp, error = None } ->
+                                closureState
+                                |> emit(StoreMemOffset(frameTemp)((globalCount + 1 + opIndex) * 8)(closureTemp))
+                                |> installOperationArmClosures(capName)(ops)(rest)(frameTemp)(globalCount)(lower)
+
 let lowerHandle body arms lower state =
     match splitHandlerArms(arms) with
         | ParsedHandlerArms { opArms = opArms, returnArm = returnArm } ->
@@ -3960,26 +4027,29 @@ let lowerHandle body arms lower state =
                                                                                 |> emit(StoreMemOffset(frameTemp)(globalCount * 8)(postsHeadPtrTemp))
                                                                                 |> emit(StoreCapabilityHandler(capIdx)(frameTemp))
                                                                             in
-                                                                                match lower(body)(frameInitState) with
-                                                                                    | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
-                                                                                        let uninstallState =
-                                                                                            match freshTemp(bodyState) with
-                                                                                                | FreshTemp { state = unState, temp = prevTemp } ->
-                                                                                                    unState
-                                                                                                    |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
-                                                                                                    |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
-                                                                                        in
-                                                                                            match returnArm with
-                                                                                                | None -> success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                | Some((returnPat, returnExpr)) ->
-                                                                                                    finishLetValue(
-                                                                                                        "__body_res",
-                                                                                                        ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None),
-                                                                                                        lower,
-                                                                                                        outerBindings,
-                                                                                                        success(bodyTemp)(bodyType)(uninstallState)
-                                                                                                    )
-                                                                                    | failed -> failed
+                                                                                match installOperationArmClosures(capName)(ops)(opArms)(frameTemp)(globalCount)(lower)(frameInitState) with
+                                                                                    | LoweredCoreValue { state = _armsFailedState, error = Some(error) } -> failure(frameInitState)(error)
+                                                                                    | LoweredCoreValue { state = armsInstalledState, error = None } ->
+                                                                                        match lower(body)(armsInstalledState) with
+                                                                                            | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
+                                                                                                let uninstallState =
+                                                                                                    match freshTemp(bodyState) with
+                                                                                                        | FreshTemp { state = unState, temp = prevTemp } ->
+                                                                                                            unState
+                                                                                                            |> emit(LoadMemOffset(prevTemp)(frameTemp)(capIdx * 8))
+                                                                                                            |> emit(StoreCapabilityHandler(capIdx)(prevTemp))
+                                                                                                in
+                                                                                                    match returnArm with
+                                                                                                        | None -> success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                        | Some((returnPat, returnExpr)) ->
+                                                                                                            finishLetValue(
+                                                                                                                "__body_res",
+                                                                                                                ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None),
+                                                                                                                lower,
+                                                                                                                outerBindings,
+                                                                                                                success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                            )
+                                                                                            | failed -> failed
 
 let expressionName expression =
     match expression with

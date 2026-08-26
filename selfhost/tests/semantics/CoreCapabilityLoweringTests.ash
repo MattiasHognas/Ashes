@@ -39,6 +39,15 @@ let recursive containsAddInt instructions =
         | IrInstruction { instruction = AddInt(_, _, _) } :: _ -> true
         | _ :: rest -> containsAddInt(rest)
 
+let recursive containsStoreMemOffset offset instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreMemOffset(_target, candidate, _source) } :: rest ->
+            if offset == candidate
+            then true
+            else containsStoreMemOffset(offset)(rest)
+        | _ :: rest -> containsStoreMemOffset(offset)(rest)
+
 let recursive containsAllocStack size instructions =
     match instructions with
         | [] -> false
@@ -179,7 +188,7 @@ let testHandleExpressionLowering unit =
                 ExprHandle(
                     ExprInt(42),
                     [
-                        (Some("State"), "get", [PatternVar("u")], ExprInt(100))
+                        (Some("State"), "get", [PatternVar("u")], ExprCall(ExprVar("resume"))(ExprInt(100))(false)(callArgumentsInline))
                     ]
                 )
             in
@@ -190,7 +199,12 @@ let testHandleExpressionLowering unit =
                                 instrs
                                 |> containsStoreCapabilityHandler(0)
                                 |> test.assertEqual(true)
-                    | _ -> test.fail("handle expression lowering failed"))
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsStoreMemOffset((1 + 1 + 0) * 8)
+                                    |> test.assertEqual(true))
+                    | CoreLoweringResult { error = Some(error) } -> test.fail("handle expression lowering failed: " + Ashes.Trait.Show.show(error))
+                    | _ -> test.fail("handle expression lowering produced no program"))
 
 let testDynamicPerformViaExpression unit =
     (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
@@ -239,7 +253,7 @@ let testHandleReturnArmLowering unit =
                 ExprHandle(
                     ExprInt(42),
                     [
-                        (Some("State"), "get", [PatternVar("u")], ExprInt(100)),
+                        (Some("State"), "get", [PatternVar("u")], ExprCall(ExprVar("resume"))(ExprInt(100))(false)(callArgumentsInline)),
                         (None, "return", [PatternVar("x")], ExprAdd(ExprVar("x"))(ExprInt(1)))
                     ]
                 )
@@ -254,6 +268,29 @@ let testHandleReturnArmLowering unit =
                     | CoreLoweringResult { error = Some(error) } -> test.fail("handle return-arm lowering failed: " + Ashes.Trait.Show.show(error))
                     | _ -> test.fail("handle return-arm lowering produced no program"))
 
+let testHandleArmWithoutResumeIsRejected unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let handleExpr =
+                ExprHandle(
+                    ExprInt(42),
+                    [
+                        (Some("State"), "get", [PatternVar("u")], ExprInt(100))
+                    ]
+                )
+            in
+                match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                    | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
+                    | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                    | _ -> test.fail("expected an operation arm without resume to be rejected"))
+
 let runCoreCapabilityLoweringTests unit =
     Unit
     |> testDynamicPerformEmission
@@ -264,4 +301,5 @@ let runCoreCapabilityLoweringTests unit =
     |> testStopCapabilityLowering
     |> testHandleExpressionLowering
     |> testHandleReturnArmLowering
+    |> testHandleArmWithoutResumeIsRejected
     |> testDynamicPerformViaExpression
