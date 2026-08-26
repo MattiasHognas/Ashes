@@ -4030,6 +4030,10 @@ let recursive armBodyCapturePlaceholder body =
                     ExprLet(name)(value)(armBodyCapturePlaceholder(letBody))([])(None)([])
         | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
             ExprLetRecursive(name)(value)(armBodyCapturePlaceholder(letBody))([])(None)([])
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            elseBranch
+            |> armBodyCapturePlaceholder
+            |> ExprIf(condition)(armBodyCapturePlaceholder(thenBranch))
         | _ ->
             match tailResumeArgument(body) with
                 | Some(resumedValue) -> resumedValue
@@ -4052,15 +4056,20 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
 // Resolves an operation arm's body (after all of its own operation parameters have been peeled
 // off by lowerOperationArmParameters) to its final lowered value: recurses through any
 // non-resuming `let`/`let recursive` prefix — an ordinary binding evaluated before the arm
-// resumes, e.g. `let y = f(x) in resume(y)` — down to the eventual resume shape, bare tail
-// `resume(e)` or one-shot `let x = resume(v) in body`. Mirrors stage-0's TryRewriteResume family
-// (TryRewriteResumeLet/LetRecursive), but interleaves shape recognition with real lowering rather
-// than rewriting the Expr tree first and lowering the rewrite once: selfhost's Expr type is a
-// closed ADT with no synthetic "post" node to rewrite into, so each non-resuming prefix's own
-// value is lowered here, in place, through the ordinary let/let-recursive lowering path
-// (finishLetValue / lowerPreparedRecursiveGroupWith), with the recursive call into the rest of
-// the arm body supplied as the continuation — the same sentinel-placeholder-plus-custom-
-// continuation technique lowerCoreProgramItems already uses for top-level declarations.
+// resumes, e.g. `let y = f(x) in resume(y)` — and through an `if` whose condition doesn't resume
+// (each branch independently resolved, possibly to a different resume shape — tail in one arm,
+// one-shot in the other), down to the eventual resume shape, bare tail `resume(e)` or one-shot
+// `let x = resume(v) in body`. Mirrors stage-0's TryRewriteResume family
+// (TryRewriteResumeLet/LetRecursive/If), but interleaves shape recognition with real lowering
+// rather than rewriting the Expr tree first and lowering the rewrite once: selfhost's Expr type is
+// a closed ADT with no synthetic "post" node to rewrite into, so each non-resuming prefix's own
+// value is lowered here, in place, through the ordinary let/let-recursive/if lowering path
+// (finishLetValue / lowerPreparedRecursiveGroupWith / lowerIfThenBranch+finishIfElseBranch), with
+// the recursive call into the rest of the arm body supplied as the continuation — the same
+// sentinel-placeholder-plus-custom-continuation technique lowerCoreProgramItems already uses for
+// top-level declarations. `resume` in the `if`'s own condition is rejected outright, same as
+// stage-0's TryRewriteResumeIf — there is no one-shot if-condition-resume shape (unlike match,
+// which does have a one-shot scrutinee-resume shape — not yet ported).
 let recursive resolveOperationArmBody body lower postRegisterIndex capName opName state =
     match unspanForResumeCheck(body) with
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
@@ -4104,6 +4113,22 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                                 given (s) -> resolveOperationArmBody(letBody)(lower)(postRegisterIndex)(capName)(opName)(s),
                             outerBindings
                         )
+        | ExprIf(condition, thenBranch, elseBranch) ->
+            if exprReferencesResume(condition)
+            then
+                opName
+                |> UnsupportedOperationArmResume(capName)
+                |> failure(state)
+            else
+                let branchLower =
+                    given (branchBody) ->
+                        given (s) -> resolveOperationArmBody(branchBody)(lower)(postRegisterIndex)(capName)(opName)(s)
+                in
+                    state
+                    |> lower(condition)
+                    |> prepareIfPlan
+                    |> lowerIfThenBranch(thenBranch)(branchLower)
+                    |> finishIfElseBranch(elseBranch)(branchLower)
         | _ ->
             match tailResumeArgument(body) with
                 | Some(resumedValue) -> lower(resumedValue)(state)

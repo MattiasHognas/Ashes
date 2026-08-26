@@ -533,11 +533,25 @@ same public behavior.
   `TryRewriteResumeLet`/`TryRewriteResumeLetRecursive`, interleaved with real lowering rather than
   rewriting the Expr tree first (selfhost's closed `Expr` type has no synthetic node to rewrite a
   resume site into). Regressions: `testHandleLetPrefixBeforeTailResumeLowering`,
-  `testHandleLetRecursivePrefixBeforeOneShotResumeLowering`. **Still unimplemented**: `resume` in a
-  match/if scrutinee, which needs the rest of stage 0's `TryRewriteResume` continuation-split
-  variants; a handler whose arms only use tail-position or one-shot-`let`-position `resume` (with or
-  without a non-resuming `let`/`let recursive` prefix) now lowers correctly, anything else is
-  rejected rather than silently wrong.
+  `testHandleLetRecursivePrefixBeforeOneShotResumeLowering`. **`if` branches resuming
+  independently are now also supported**: `if cond then <resume-shape> else <resume-shape>`, where
+  `cond` must not reference `resume` (rejected otherwise, same rule stage 0's
+  `TryRewriteResumeIf` applies — there is no one-shot if-condition-resume shape, unlike match's
+  scrutinee, not yet ported) and each branch is independently resolved by the same
+  `resolveOperationArmBody` recursion, so one branch can resume in tail position while the other
+  resumes one-shot. This reused the *existing* if/branching lowering machinery unchanged
+  (`prepareIfPlan`/`lowerIfThenBranch`/`finishIfElseBranch`, already `lower`-parameterized) rather
+  than adding any new control-flow emission — `resolveOperationArmBody` just supplies a small
+  `given (branchBody) -> given (s) -> resolveOperationArmBody(branchBody)(...)` wrapper as the
+  `lower` those functions call per branch, so the pre-existing result-slot/label/join logic (a
+  `StoreLocal`/`Jump`/`Label`/`LoadLocal` join, the same shape any ordinary `if` compiles to)
+  handles the merge for free. Regressions: `testHandleIfBranchesWithDifferentResumeShapesLowering`
+  (mixed tail/one-shot branches), `testHandleIfConditionResumeIsRejected`. **Still unimplemented**:
+  `resume` in a match arm or scrutinee, which needs the rest of stage 0's `TryRewriteResume`
+  continuation-split variants (`TryRewriteResumeMatchCases`/`TryRewriteResumeOneShotMatch`); a
+  handler whose arms only use tail-position or one-shot-`let`-position `resume`, optionally behind a
+  non-resuming `let`/`let recursive` prefix or an `if` with independently-resolved branches, now
+  lowers correctly, anything else is rejected rather than silently wrong.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
