@@ -162,21 +162,34 @@ same public behavior.
   whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
   `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
   known layout differences (`else if` chains, parenthesized `let` bodies, pipeline layout) and one
-  crash, re-diagnosed 2026-08-26 (the original note's "arrow-type annotation" theory does not hold:
-  `StandardTraits.ash` has no explicit arrow-typed `let` annotation at all). Formatting
-  `StandardTraits.ash` segfaults reproducibly at `--debug` inside `__deepcopy_1320`, a
-  compiler-synthesized `AdtDeepCopier` for the frontend's `Expr` type (confirmed from
-  `--emit-ir final`: 40+ tag arms, a binary-node arm recursing on itself twice matching the gdb
-  backtrace's alternating self-calls). The crash is a genuine invalid-pointer dereference reading a
-  list-cell tail (`mov 0x8(%rax),%rax` with `rax` a small integer, not stack overflow — the full
-  backtrace is only ~29 frames), reached from `formatProgram` → `formatterProgramItems` (16 nested
-  recursions, so roughly the file's 16th top-level item) → `formatterTopLevelItem` → the ownership
-  pass's own defensive independent-clone of that binding's `Expr` value. The clone is not the bug;
-  it is walking an already-corrupted `Expr` tree, so the corruption happened earlier (parsing or an
-  earlier lowering step) — same class as the open generic-parameter heap-value UAF item below
-  (`ProducesFreshRuntimeManageableList`/generic-argument retention), not yet narrowed to a specific
-  call site. Left open: this needs binary-search minimization of `StandardTraits.ash`'s ~16
-  candidate top-level bindings against a from-scratch driver, which was not completed this pass.
+  crash, re-diagnosed and massively minimized 2026-08-26 (the original note's "arrow-type
+  annotation" theory did not hold: `StandardTraits.ash` has no explicit arrow-typed `let`
+  annotation at all). Formatting `StandardTraits.ash` segfaults reproducibly at `--debug` inside a
+  compiler-synthesized `AdtDeepCopier` for the frontend's `Expr` type, a genuine invalid-pointer
+  dereference reading a list-cell tail (not stack overflow — the full backtrace is only ~29
+  frames), reached from `formatProgram` through the ownership pass's own defensive
+  independent-clone of a top-level binding's `Expr` value. **Minimized to a standalone 3-line
+  repro**: `let dummyPadding = (let fillCases names = names in fillCases(1))` — any nested
+  `let name param = ...` binding — crashes identically when its `sugarParameters: List(Str)`
+  field is walked by anything (the deep-copier, or a plain `Ashes.Collection.List.length` call on
+  it), with the SAME crash reproducing whether reached through `formatProgram` or through bare
+  parse-then-inspect code with no formatter involved. A hand-built `Expr`/`Pattern` tree of the
+  identical shape (not produced by the parser) does **not** crash, isolating the corruption to
+  something the *parser* does while building this specific field. **Ruled out** over this
+  investigation: reuse-specialization (`--debug-disable-reuse` doesn't help), the whole IR
+  optimizer (temporarily bypassing `IrOptimizer.Optimize` entirely doesn't help — the crash is in
+  base lowering/codegen, not an optimization pass), two confirmed instances of the
+  generic-`reverse`-of-heap-composite-accumulator bug in the parser's own sugar-parameter and
+  top-level-item list construction (both fixed as a real but separate bug — see the item below —
+  neither fixed this crash when tested in isolation or together), and a premature-drop/
+  evaluation-order theory (reordering the two consumers of the parsed sugar-parameter list doesn't
+  help). A hardware watchpoint confirmed the corrupted list cell's tail word already holds garbage
+  the very first time it is read, not from a later overwrite — narrowing this to the cons-cell
+  construction for the sugar-parameter list itself (inside `parserParseSugarParameters` in
+  `selfhost/packages/frontend/src/AshesCompiler/Frontend/Parser.ash`), which needs deeper
+  C#-lowering-internals investigation (likely `Lowering.Ownership.cs`'s tuple/list construction or
+  `AdtDeepCopier`/`CopyOutList` codegen in `LlvmCodegenMemory.cs`) than this pass completed. Left
+  open for a dedicated session with this minimized repro, gdb, and `--emit-ir`.
   The top-level boundary splitter no longer cuts a declaration value at an indented `then`/`else`/
   `in`/pipe line after a completed call (only a token that can start a whitespace-application
   argument begins the trailing expression, as in stage 0); that gate was found by the same pass.
@@ -970,7 +983,15 @@ same public behavior.
   item above. Twelve-line repro: build two such records in a loop, `reverse` the accumulator, churn
   20,000 string concatenations, print the list lengths. **Found by the self-hosted stitched source
   context (`buildItemIndexes`)**, whose pre-existing `buildModuleIndexes` had the same latent shape;
-  both now collect their indexes by ordinary recursion.
+  both now collect their indexes by ordinary recursion. **Two more confirmed instances**, found
+  2026-08-26 while root-causing the `StandardTraits.ash` formatter crash below: the frontend
+  parser's `parserParseSugarParameters`/`parserBuildLambdas` (`List((Str, Maybe(TypeExpr)))`,
+  sugar-parameter name/annotation pairs — exercised by every `let name param = ...` binding in the
+  self-hosted sources) and `parserParseProgramItems`/`parserParseProgramBody`
+  (`List(TopLevelItem)`, the parsed program's top-level declarations); both fixed the same way
+  (monomorphic reverse over the concrete type). Neither instance was the cause of the
+  `StandardTraits.ash` crash when tested in isolation or together — that crash's root cause is
+  something else, narrowed but not found; see the formatter-corpus item below.
 - [ ] Check an inlined helper's references transitively before inlining it inside a reuse arm or a
   reuse specialization: an inlinable free name only proves resolvable when that helper's own body
   resolves in the isolated scope too (a stitched stdlib helper calling a module sibling through the
