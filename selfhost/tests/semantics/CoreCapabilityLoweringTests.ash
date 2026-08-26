@@ -427,6 +427,92 @@ let testHandleLetRecursivePrefixBeforeOneShotResumeLowering unit =
                                 | CoreLoweringResult { error = Some(error) } -> test.fail("let-recursive-prefix one-shot resume lowering failed: " + Ashes.Trait.Show.show(error))
                                 | _ -> test.fail("let-recursive-prefix one-shot resume lowering produced no program"))
 
+// An `if` whose branches resolve to different resume shapes — bare tail in one arm, one-shot
+// `let`-resume in the other — proves resolveOperationArmBody's ExprIf case handles each branch
+// independently (not forcing both down the same path) while reusing the ordinary
+// lowerIfThenBranch/finishIfElseBranch join machinery unchanged.
+let testHandleIfBranchesWithDifferentResumeShapesLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let ifArmBody =
+                ExprIf(
+                    ExprGreaterThan(ExprVar("u"))(ExprInt(0)),
+                    ExprCall(ExprVar("resume"))(ExprAdd(ExprVar("u"))(ExprInt(1)))(false)(callArgumentsInline),
+                    ExprLet(
+                        "y",
+                        ExprCall(ExprVar("resume"))(ExprInt(0))(false)(callArgumentsInline),
+                        ExprSubtract(ExprVar("y"))(ExprInt(1)),
+                        [],
+                        None,
+                        []
+                    )
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], ifArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { program = Some(program), error = None } ->
+                            let instrs = allProgramInstructions(program)
+                            in
+                                instrs
+                                |> containsAddInt
+                                |> test.assertEqual(true)
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsStoreCapabilityHandler(1)
+                                    |> test.assertEqual(true))
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsCallClosure
+                                    |> test.assertEqual(true))
+                        | CoreLoweringResult { error = Some(error) } -> test.fail("if-branch mixed resume shape lowering failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> test.fail("if-branch mixed resume shape lowering produced no program"))
+
+// resume in an if's own condition is rejected outright, mirroring stage-0's TryRewriteResumeIf —
+// there is no one-shot if-condition-resume shape (unlike match, which has one for its scrutinee).
+let testHandleIfConditionResumeIsRejected unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let ifArmBody =
+                ExprIf(
+                    ExprGreaterThan(ExprCall(ExprVar("resume"))(ExprVar("u"))(false)(callArgumentsInline))(ExprInt(0)),
+                    ExprInt(1),
+                    ExprInt(2)
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], ifArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
+                        | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                        | _ -> test.fail("expected resume in an if condition to be rejected"))
+
 let testHandleOneShotResumeLowering unit =
     (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
     in
@@ -532,6 +618,8 @@ let runCoreCapabilityLoweringTests unit =
     |> testHandleArmWithoutResumeIsRejected
     |> testHandleLetPrefixBeforeTailResumeLowering
     |> testHandleLetRecursivePrefixBeforeOneShotResumeLowering
+    |> testHandleIfBranchesWithDifferentResumeShapesLowering
+    |> testHandleIfConditionResumeIsRejected
     |> testHandleOneShotResumeLowering
     |> testHandleOneShotResumeWithPerformLowering
     |> testDynamicPerformViaExpression
