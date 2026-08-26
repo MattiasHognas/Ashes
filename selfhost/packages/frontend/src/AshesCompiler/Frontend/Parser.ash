@@ -65,6 +65,20 @@ let parserDiagnosticWithCode (state: ParserState) (token: Token) (message: Str) 
 
 let parserDiagnostic state token message = parserDiagnosticWithCode(state)(token)(message)("ASH003")
 
+let parserDiagnosticNoCode (state: ParserState) (token: Token) (message: Str) =
+    (let diagnostic = DiagnosticEntry(span = tokenSpan(token), message = message, code = None)
+    in
+        match state with
+            | (tokens, diagnostics, source) -> (tokens, diagnostic :: diagnostics, source))
+
+let parserDiagnosticAtSpanWithCode (state: ParserState) (span: TextSpan) (message: Str) (code: Str) =
+    (let diagnostic = DiagnosticEntry(span = span, message = message, code = Some(code))
+    in
+        match state with
+            | (tokens, diagnostics, source) -> (tokens, diagnostic :: diagnostics, source))
+
+let parserDiagnosticAtSpan state span message = parserDiagnosticAtSpanWithCode(state)(span)(message)("ASH003")
+
 let parserConsume (expected: TokenKind) (state: ParserState) =
     (let current = parserCurrent(state)
     in
@@ -342,6 +356,15 @@ let parserStartsDeclarationBinding (tokens: List(Token)) =
                     else equals.kind == Colon
         | _ -> false
 
+// Never lets a bracket/brace/paren depth counter go negative: a value expression can contain a
+// stray unmatched closing delimiter while it's being recovered from a parse error, and a negative
+// depth would permanently suppress boundary detection for the rest of the file (every following
+// declaration column check requires depth == 0) instead of just this one malformed declaration.
+let parserNonNegativeDepth depth =
+    if depth < 0
+    then 0
+    else depth
+
 let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens: List(Token)) =
     (let recursive split (remaining: List(Token)) reversed sawToken parenthesisDepth bracketDepth braceDepth =
         match remaining with
@@ -387,19 +410,19 @@ let parserSplitTopLevelTokens bytes declarationColumn splitBindingPipes (tokens:
                             let nextParenthesisDepth =
                                 match token.kind with
                                     | LParen -> parenthesisDepth + 1
-                                    | RParen -> parenthesisDepth - 1
+                                    | RParen -> parserNonNegativeDepth(parenthesisDepth - 1)
                                     | _ -> parenthesisDepth
                             in
                                 let nextBracketDepth =
                                     match token.kind with
                                         | LBracket -> bracketDepth + 1
-                                        | RBracket -> bracketDepth - 1
+                                        | RBracket -> parserNonNegativeDepth(bracketDepth - 1)
                                         | _ -> bracketDepth
                                 in
                                     let nextBraceDepth =
                                         match token.kind with
                                             | LBrace -> braceDepth + 1
-                                            | RBrace -> braceDepth - 1
+                                            | RBrace -> parserNonNegativeDepth(braceDepth - 1)
                                             | _ -> braceDepth
                                     in
                                         split(
@@ -2295,9 +2318,11 @@ and parserParseLetPattern state =
                         if parserPatternIsIrrefutable(pattern)
                         then afterPattern
                         else
-                            parserDiagnostic(
+                            parserDiagnosticAtSpan(
                                 afterPattern,
-                                parserCurrent(afterPattern),
+                                pattern
+                                |> parserPatternSpan
+                                |> Ashes.Internal.deepCopy,
                                 "Refutable pattern in let binding. Only irrefutable patterns (variable, wildcard, tuple, cons) are allowed — use 'match' for refutable patterns."
                             )
                     in
@@ -3178,7 +3203,7 @@ and parserParseAlgebraicType start typeName parameters state =
                 else
                     match constructors with
                         | [] ->
-                            parserDiagnostic(
+                            parserDiagnosticNoCode(
                                 afterBranches,
                                 parserCurrent(afterBranches),
                                 "Type '" + typeName + "' must have at least one constructor."
@@ -3514,6 +3539,16 @@ and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings r
                                     )
                                 in parserParseProgramItems(sourceBytes)(item :: reversedItems)(afterBinding))
 
+// Every top-level parse entry point reports the same generic message regardless of what kind of
+// unit it parsed (a whole program, one expression, or one type expression): a trailing token past
+// the parsed unit is always "unexpected... after end of expression".
+let parserEnsureEndOfInput state =
+    (let current = parserCurrent(state)
+    in
+        if current.kind == EOF
+        then state
+        else parserDiagnostic(state)(current)("Unexpected token after end of expression: " + tokenKindName(current.kind) + "."))
+
 let parseProgram source =
     (let lexed = tokenize(source)
     in
@@ -3523,27 +3558,16 @@ let parseProgram source =
             in
                 match parserParseProgramItems(sourceBytes)([])(initial) with
                     | (items, body, state) ->
-                        let current = parserCurrent(state)
+                        let parserDiagnostics =
+                            state
+                            |> parserEnsureEndOfInput
+                            |> parserStateDiagnostics
+                            |> reverseList
                         in
-                            let finalState =
-                                if current.kind == EOF
-                                then state
-                                else
-                                    parserDiagnostic(
-                                        state,
-                                        current,
-                                        "Unexpected token after end of program: " + tokenKindName(current.kind) + "."
-                                    )
-                            in
-                                let parserDiagnostics =
-                                    finalState
-                                    |> parserStateDiagnostics
-                                    |> reverseList
-                                in
-                                    ProgramParseResult(program = ProgramSyntax(items = items, body = body), diagnostics = appendList(
-                                        lexed.diagnostics,
-                                        parserDiagnostics
-                                    )))
+                            ProgramParseResult(program = ProgramSyntax(items = items, body = body), diagnostics = appendList(
+                                lexed.diagnostics,
+                                parserDiagnostics
+                            )))
 
 let parseExpression source =
     (let lexed = tokenize(source)
@@ -3552,27 +3576,16 @@ let parseExpression source =
         in
             match parserParseExpression(initial) with
                 | (expression, state) ->
-                    let current = parserCurrent(state)
+                    let parserDiagnostics =
+                        state
+                        |> parserEnsureEndOfInput
+                        |> parserStateDiagnostics
+                        |> reverseList
                     in
-                        let finalState =
-                            if current.kind == EOF
-                            then state
-                            else
-                                parserDiagnostic(
-                                    state,
-                                    current,
-                                    "Unexpected token after end of expression: " + tokenKindName(current.kind) + "."
-                                )
-                        in
-                            let parserDiagnostics =
-                                finalState
-                                |> parserStateDiagnostics
-                                |> reverseList
-                            in
-                                ExpressionParseResult(expression = expression, diagnostics = appendList(
-                                    lexed.diagnostics,
-                                    parserDiagnostics
-                                )))
+                        ExpressionParseResult(expression = expression, diagnostics = appendList(
+                            lexed.diagnostics,
+                            parserDiagnostics
+                        )))
 
 let parseTypeExpression source =
     (let lexed = tokenize(source)
@@ -3581,24 +3594,13 @@ let parseTypeExpression source =
         in
             match parserParseTypeExpressionState(initial) with
                 | (typeExpression, state) ->
-                    let current = parserCurrent(state)
+                    let parserDiagnostics =
+                        state
+                        |> parserEnsureEndOfInput
+                        |> parserStateDiagnostics
+                        |> reverseList
                     in
-                        let finalState =
-                            if current.kind == EOF
-                            then state
-                            else
-                                parserDiagnostic(
-                                    state,
-                                    current,
-                                    "Unexpected token after end of type expression: " + tokenKindName(current.kind) + "."
-                                )
-                        in
-                            let parserDiagnostics =
-                                finalState
-                                |> parserStateDiagnostics
-                                |> reverseList
-                            in
-                                TypeExpressionParseResult(typeExpression = typeExpression, diagnostics = appendList(
-                                    lexed.diagnostics,
-                                    parserDiagnostics
-                                )))
+                        TypeExpressionParseResult(typeExpression = typeExpression, diagnostics = appendList(
+                            lexed.diagnostics,
+                            parserDiagnostics
+                        )))

@@ -6,6 +6,7 @@
 
 import AshesCompiler.Frontend.Token
 import AshesCompiler.Frontend.TokenSerialization
+import AshesCompiler.Frontend.DiagnosticSerialization
 import AshesCompiler.Frontend.Lexer
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Parser

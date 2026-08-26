@@ -119,8 +119,32 @@ same public behavior.
   supertraits, requirements, defaults, and deriving clauses.
 - [x] Preserve source-ordered recovery diagnostics and the current declaration-boundary behavior for
   incomplete editor input and project-stitched programs.
-- [ ] Compare the complete frontend diagnostic corpus with the C# frontend by diagnostic code, span,
-  ordering, and recovery result rather than only by accepted syntax.
+- [x] Compare the complete frontend diagnostic corpus with the C# frontend by diagnostic code, span,
+  ordering, and recovery result rather than only by accepted syntax. Adds a versioned
+  `ashes-diagnostic-v1` parity fixture format (`DiagnosticSerialization` in both stage 0 and pure
+  Ashes, mirroring the existing `ashes-token-v1` token-parity format) under `parity/frontend/diagnostics`,
+  covering representative lexer and parser malformed-input fixtures — unterminated strings, invalid
+  and out-of-range numeric literals, unexpected characters, missing expressions/patterns, trailing
+  tokens, a refutable let-pattern, `and` without `let recursive`, and a constructor-less type — each
+  serializing the diagnostic code, span, message, and the count of top-level items still recovered
+  despite the error, comparing to stage 0 via `SelfhostDiagnosticParityTests` and to the pure-Ashes
+  parser via `selfhost/tests/frontend-diagnostic-parity`. **Found while porting:** the pure-Ashes
+  lexer picked the wrong one of two distinct unsigned-integer-literal diagnostics for a value that
+  overflows 64 bits (it validated only against the target suffix width, never against whether the
+  value fits an unsigned 64-bit integer at all, which stage 0's `ulong.TryParse` checks first); an
+  unmatched closing paren/bracket/brace in a malformed top-level value drove the declaration-boundary
+  token-splitter's depth counter negative, permanently disabling boundary detection for the rest of
+  the file instead of just the one malformed declaration; `parseProgram`/`parseExpression`/
+  `parseTypeExpression` each invented their own "unexpected token after end of program/expression/type
+  expression" wording where stage 0 reports one generic "...after end of expression" message from a
+  single shared check, now unified the same way (`parserEnsureEndOfInput`); the refutable-let-pattern
+  diagnostic reported a one-token span read from the diagnostic list well after the pattern's own
+  span had been reclaimed by later parsing, rather than the pattern's own span — fixed with the same
+  `Ashes.Internal.deepCopy` idiom already established elsewhere in this port for values that must
+  outlive their enclosing arena scope; and one parser diagnostic (a constructor-less type declaration)
+  always attached the `ASH003` code where stage 0 attaches none. A pre-existing pure-Ashes lexer test
+  asserting the wrong message for a `u64` literal one past its maximum was corrected to match stage 0
+  once the fix above surfaced it.
 
 #### Formatter
 

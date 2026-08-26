@@ -131,7 +131,7 @@ let rejectInvalidLiterals unit =
     |> (given (_) ->
         assertDiagnosticMessage(
             "18446744073709551616u64",
-            "Unsigned integer literal out of range for u64: 18446744073709551616u64."
+            "Invalid unsigned integer literal: 18446744073709551616u64."
         ))
     |> (given (_) ->
         assertDiagnosticMessage(

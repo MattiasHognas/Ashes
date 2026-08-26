@@ -25,7 +25,25 @@ decoded its spelling incorrectly. Non-float tokens serialize their zero float pa
 
 The shared fixtures currently cover every keyword, every operator and delimiter, decoded numeric,
 string, and rune payloads, comments, and Unicode identifiers and byte spans. Malformed input belongs
-to the future structured-diagnostic parity format rather than the token-only format.
+to the structured-diagnostic parity format below rather than the token-only format.
+
+## Diagnostics
+
+Diagnostic fixtures live in `frontend/diagnostics` as matching `<name>.source` and `<name>.diagnostics`
+files. The `ashes-diagnostic-v1` format starts with its schema marker, then a `recovered-items\t<N>`
+line — the number of top-level items a program parse still recovered despite any diagnostics, proving
+recovery continued past an error rather than aborting the parse — then one LF-terminated record per
+diagnostic, in collection order. Each record has these tab-separated fields:
+
+1. the diagnostic's stable code, or `-` when it has none;
+2. lowercase hex of the diagnostic message's UTF-8 bytes;
+3. the diagnostic span's start as a UTF-8 byte offset;
+4. the diagnostic span's length in UTF-8 bytes.
+
+The shared fixtures cover representative lexer diagnostics (unterminated strings, invalid and
+out-of-range numeric literals, unexpected characters) and parser diagnostics (missing expressions and
+patterns, a trailing token past the end of a program, a refutable let-pattern, `and` without a
+preceding `let recursive`, and a constructor-less type declaration).
 
 ## Lowered IR
 
