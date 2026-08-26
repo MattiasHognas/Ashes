@@ -3928,7 +3928,7 @@ let lowerHandle body arms lower state =
     match splitHandlerArms(arms) with
         | ParsedHandlerArms { opArms = opArms, returnArm = returnArm } ->
             match state with
-                | CoreLoweringState { capabilityLayouts = capLayouts, capabilityGlobalCount = globalCount } ->
+                | CoreLoweringState { capabilityLayouts = capLayouts, capabilityGlobalCount = globalCount, bindings = outerBindings } ->
                     match freshTemp(state) with
                         | FreshTemp { state = stackState, temp = postsHeadPtrTemp } ->
                             let initPostsState =
@@ -3972,7 +3972,13 @@ let lowerHandle body arms lower state =
                                                                                             match returnArm with
                                                                                                 | None -> success(bodyTemp)(bodyType)(uninstallState)
                                                                                                 | Some((returnPat, returnExpr)) ->
-                                                                                                    lower(ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None))(uninstallState)
+                                                                                                    finishLetValue(
+                                                                                                        "__body_res",
+                                                                                                        ExprMatch(ExprVar("__body_res"))([(returnPat, returnExpr, None)])(None),
+                                                                                                        lower,
+                                                                                                        outerBindings,
+                                                                                                        success(bodyTemp)(bodyType)(uninstallState)
+                                                                                                    )
                                                                                     | failed -> failed
 
 let expressionName expression =

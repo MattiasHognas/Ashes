@@ -33,6 +33,12 @@ let recursive containsPanicStr instructions =
         | IrInstruction { instruction = PanicStr(_) } :: _ -> true
         | _ :: rest -> containsPanicStr(rest)
 
+let recursive containsAddInt instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AddInt(_, _, _) } :: _ -> true
+        | _ :: rest -> containsAddInt(rest)
+
 let recursive containsAllocStack size instructions =
     match instructions with
         | [] -> false
@@ -219,6 +225,35 @@ let testDynamicPerformViaExpression unit =
                                     |> test.assertEqual(true))
                     | _ -> test.fail("dynamic perform lowering failed"))
 
+let testHandleReturnArmLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let handleExpr =
+                ExprHandle(
+                    ExprInt(42),
+                    [
+                        (Some("State"), "get", [PatternVar("u")], ExprInt(100)),
+                        (None, "return", [PatternVar("x")], ExprAdd(ExprVar("x"))(ExprInt(1)))
+                    ]
+                )
+            in
+                match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                    | CoreLoweringResult { program = Some(program), error = None } ->
+                        match program with
+                            | IrProgram { entryFunction = IrFunction { instructions = instrs } } ->
+                                instrs
+                                |> containsAddInt
+                                |> test.assertEqual(true)
+                    | CoreLoweringResult { error = Some(error) } -> test.fail("handle return-arm lowering failed: " + Ashes.Trait.Show.show(error))
+                    | _ -> test.fail("handle return-arm lowering produced no program"))
+
 let runCoreCapabilityLoweringTests unit =
     Unit
     |> testDynamicPerformEmission
@@ -228,4 +263,5 @@ let runCoreCapabilityLoweringTests unit =
     |> testFindCapabilityOperationIndex
     |> testStopCapabilityLowering
     |> testHandleExpressionLowering
+    |> testHandleReturnArmLowering
     |> testDynamicPerformViaExpression
