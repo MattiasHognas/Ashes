@@ -784,6 +784,25 @@ same public behavior.
   is why a plain `n + sumTo(n - 1)` never caught it. **Found only by compiling and running the
   self-hosted optimizer's own tests**, whose `1 + count(tail)` / `count(tail)` list walk returned
   0. Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
+- [ ] Retain every runtime-managed child an escaping or owning aggregate stores, whatever the
+  aggregate: the ADT constructor path retains owned bindings and loop parameters it stores, and
+  tuples, list literals, and cons cells must do exactly the same — a runtime-RC tuple owns its
+  children, and an escaping arena tuple or cell carries them out of the scopes that own them (a
+  `let`'s scope exit, a TCO loop's exit drop, which recognizes only a parameter that *is* the
+  result). A loop parameter's placement is decided after its body is lowered, so the retain is a
+  marker upgraded at finalization when the placement is runtime-RC, and never inside a tail
+  self-call's arguments where the back edge moves the parameter into the successor. `(xs, ys)`
+  from a two-accumulator loop, `(ys, zs)` of two let-bound lists, `[xs, ys]`, and
+  `(left :: rights, absorbed)` all read back freed cells once later allocations reused them.
+  **Found only by compiling and running the self-hosted optimizer's concatenation-chain walk.**
+  Regression: `tests/aggregate_result_retains_runtime_managed_children.ash`.
+- [ ] Release a TCO loop's aggregate result in its caller: a call to a loop whose result is a
+  tuple or an ADT built from its accumulators (`walk(50)([])([])` returning `(xs, ys)` or
+  `Pair(xs, ys)`) is never dropped by the consumer that destructures it, so every call leaks the
+  result and its children (peak RSS grows linearly with the call count: 8 MB at 1,000 calls,
+  630 MB at 200,000), while a plain list result of the same loop and a tuple result of a non-TCO
+  function are released correctly. Pre-existing and independent of the retain above, which turned
+  this shape from a use-after-free into a leak; measure with a fixed-N driver and `/usr/bin/time -v`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping

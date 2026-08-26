@@ -163,6 +163,54 @@ public sealed class OwnershipTests
             "a constructor field must never take the owned binding's own reference, which the back edge releases");
     }
 
+    [Test]
+    public void Tuple_result_of_a_tco_loop_retains_its_runtime_managed_parameters()
+    {
+        // Both accumulators are runtime-managed loop parameters that the loop's exit drops
+        // unconditionally unless the parameter itself is the result. A tuple that stores them is a
+        // different pointer, so each stored parameter needs its own retained reference or the
+        // returned tuple holds freed lists.
+        IrProgram ir = LowerProgram(
+            """
+            let recursive walk n xs ys =
+                if n == 0
+                then (xs, ys)
+                else walk(n - 1)(n :: xs)(n :: ys)
+
+            match walk(3)([])([]) with
+                | (a, _) ->
+                    match a with
+                        | [] -> Ashes.IO.print(0)
+                        | _ -> Ashes.IO.print(1)
+            """);
+
+        IrFunction loop = ir.Functions.Single(function =>
+            string.Equals(function.Origin?.Source?.SourceName, "walk", StringComparison.Ordinal)
+            && function.Instructions.Any(inst => inst is IrInst.Label { Name: var name }
+                && name.EndsWith("_body", StringComparison.Ordinal)));
+        HashSet<int> retained = loop.Instructions
+            .OfType<IrInst.RcDup>()
+            .Where(dup => dup.RuntimeManaged)
+            .Select(dup => dup.Target)
+            .ToHashSet();
+        // The successor cons cells store the Int `n` in their first word, so the only 16-byte
+        // aggregate whose two words are both retained references is the returned tuple.
+        bool tupleStoresRetainedParameters = loop.Instructions
+            .OfType<IrInst.Alloc>()
+            .Where(alloc => alloc.SizeBytes == 16)
+            .Any(alloc =>
+            {
+                List<IrInst.StoreMemOffset> stores = loop.Instructions
+                    .OfType<IrInst.StoreMemOffset>()
+                    .Where(store => store.BasePtr == alloc.Target)
+                    .ToList();
+                return stores.Count == 2 && stores.All(store => retained.Contains(store.Source));
+            });
+        tupleStoresRetainedParameters.ShouldBeTrue(
+            "each loop parameter stored into the returned tuple must be a retained runtime-managed reference; loop:\n"
+            + string.Join("\n", loop.Instructions.Select(inst => inst.ToString())));
+    }
+
     /// <summary>
     /// For every function, tracks the temps naming an owned slot's value (loads and borrows of them)
     /// versus the retained duplicates made from those temps, and reports whether any constructor

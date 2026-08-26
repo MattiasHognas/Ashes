@@ -6579,6 +6579,7 @@ public sealed partial class Lowering
     {
         LowerLambdaCoreRefreshRuntimeManagedTcoParams(tco);
         FinalizePerceusPatternBindingOwners(tco);
+        FinalizeTcoParameterAggregateRetains(tco);
         ResolvePendingRuntimeArgumentFlags(tco);
         LowerLambdaCoreSpliceTcoEntryOwnership(
             reuseEntryCopies,
@@ -11600,12 +11601,15 @@ public sealed partial class Lowering
                 : NewTypeVar();
         var (tailTemp, tailType) = LowerEmptyList();
         Unify(tailType, new TypeRef.TList(elemType));
+        LoweredValueRequest elementRequest = savedTailPos && _tcoCtx is not null
+            ? request with { TransfersRuntimeManagedChildren = true }
+            : request;
 
         for (int i = list.Elements.Count - 1; i >= 0; i--)
         {
             LoweredValue head = LowerRuntimeManagedListElement(
                 list.Elements[i],
-                request,
+                elementRequest,
                 elemType);
             using (PushDiagnosticCode(DiagnosticCodes.ListElementTypeMismatch))
             {
@@ -11662,9 +11666,11 @@ public sealed partial class Lowering
             lowered = NormalizeRuntimeManagedBytesValue(lowered);
         }
         lowered = NormalizeRuntimeManagedListElement(lowered, listRequest);
-        if (runtimeManagedList)
+        // An arena list that escapes (a function result) carries its runtime-managed heads out of
+        // the scopes that own them just like a runtime-RC list owns them, so both retain here.
+        if (runtimeManagedList || listRequest.TransfersRuntimeManagedChildren)
         {
-            int retainedTemp = DuplicateRuntimeManagedOwnedValueForTransfer(
+            int retainedTemp = RetainRuntimeManagedAggregateChild(
                 element,
                 lowered.Temp,
                 lowered.Type);
@@ -11758,11 +11764,23 @@ public sealed partial class Lowering
         var savedTailPos = _tcoCtx?.InTailPosition ?? false;
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
+        // The tuple carries its children out of the scopes that own them when it is a function
+        // result (the transfer flag, or the tail position of a TCO loop body, whose result request
+        // does not carry the flag) or when it will own them as a runtime-RC value. The decision is
+        // made before the elements are lowered so a nested aggregate (a cons inside the tuple)
+        // retains its own runtime-managed children the same way.
+        bool transfersChildren = request.TransfersRuntimeManagedChildren
+            || (savedTailPos && _tcoCtx is not null)
+            || request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple);
+        LoweredValueRequest elementRequest = transfersChildren
+            ? request with { TransfersRuntimeManagedChildren = true }
+            : request;
+
         var elements = new List<LoweredValue>(tuple.Elements.Count);
         for (int i = 0; i < tuple.Elements.Count; i++)
         {
             Expr element = tuple.Elements[i];
-            LoweredValue loweredElement = LowerTupleElement(element, request);
+            LoweredValue loweredElement = LowerTupleElement(element, elementRequest);
             if (request.EmitsRuntime(LoweredValueRuntimeRepresentation.Tuple))
             {
                 loweredElement = NormalizeRuntimeManagedBytesValue(loweredElement);
@@ -11788,6 +11806,7 @@ public sealed partial class Lowering
             elements,
             request,
             runtimeManaged);
+        RetainRuntimeManagedTupleChildren(tuple, elements, elementRequest, runtimeManaged);
         Emit(new IrInst.Alloc(tupleTemp, tuple.Elements.Count * 8, runtimeManaged));
         for (int i = 0; i < elements.Count; i++)
         {
@@ -11800,6 +11819,32 @@ public sealed partial class Lowering
         return (
             tupleTemp,
             new TypeRef.TTuple(elements.Select(element => element.Type).ToList()));
+    }
+
+    // A runtime-RC tuple owns its children (its drop releases them), and an escaping arena tuple
+    // outlives the scopes that own them: a child read from a runtime-managed owned binding or loop
+    // parameter must be retained here, or the owner's own release (a let's scope exit, the loop's
+    // exit drop) frees a value the tuple still holds — exactly what the constructor and list paths
+    // already do for their children.
+    private void RetainRuntimeManagedTupleChildren(
+        Expr.TupleLit tuple,
+        List<LoweredValue> elements,
+        LoweredValueRequest request,
+        bool runtimeManaged)
+    {
+        if (!runtimeManaged && !request.TransfersRuntimeManagedChildren)
+        {
+            return;
+        }
+
+        for (int i = 0; i < elements.Count; i++)
+        {
+            int retainedTemp = RetainRuntimeManagedAggregateChild(
+                tuple.Elements[i],
+                elements[i].Temp,
+                elements[i].Type);
+            elements[i] = CreateLoweredValue(retainedTemp, elements[i].Type);
+        }
     }
 
     private void MaterializeEscapingArenaTupleElements(
@@ -12002,9 +12047,14 @@ public sealed partial class Lowering
             && Prune(request.ExpectedType) is TypeRef.TList expectedList
                 ? expectedList.Element
                 : null;
+        bool transfersChildren = request.TransfersRuntimeManagedChildren
+            || (savedTailPos && _tcoCtx is not null);
+        LoweredValueRequest cellRequest = transfersChildren
+            ? request with { TransfersRuntimeManagedChildren = true }
+            : request;
         LoweredValue head = LowerRuntimeManagedListElement(
             cons.Head,
-            request,
+            cellRequest,
             expectedElementType);
         TypeRef listType = new TypeRef.TList(head.Type);
         LoweredValueRequest tailRequest = LoweredValueRequest.None.WithExpectedType(listType);
@@ -12017,6 +12067,12 @@ public sealed partial class Lowering
             && IsRuntimeManageableListElement(head.Type, head.Temp))
         {
             tailTemp = PrepareRuntimeRcListTail(cons.Tail, tailTemp, request);
+        }
+        else if (transfersChildren)
+        {
+            // An arena cell that escapes carries a runtime-managed tail (an owned binding or a loop
+            // parameter) out of the scope that owns it, exactly like an escaping arena tuple element.
+            tailTemp = RetainRuntimeManagedAggregateChild(cons.Tail, tailTemp, tailType);
         }
         MarkResourceArgMoved(cons.Head);
         MarkResourceArgMoved(cons.Tail);
