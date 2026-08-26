@@ -20,7 +20,12 @@
 //      reference inside an unreachable region is dropped with its body)
 //   9. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   10. Erased RcDrop marker elision
-//   11. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
+//   11. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
+//       functions whose every Return is one heap MakeClosure label (directly, or transitively
+//       through a CallKnown to a function already proven), then a per-function local fixpoint
+//       rewriting each CallClosure on such a call's result into an environment-word read plus
+//       a direct CallKnown, so a curry of any depth resolves fully
+//   12. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
@@ -1094,6 +1099,111 @@ let recursive lookupFunction label (functions: List(IrFunction)) =
             then Some(fn)
             else lookupFunction(label)(tail)
 
+let functionLabel (fn: IrFunction) = fn.label
+
+let functionInstructions (fn: IrFunction) = fn.instructions
+
+// Every single-defined temp mapped to its defining instruction.
+let recursive collectSingleDefiningInstructions instructions defCounts acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = inst } :: tail ->
+            let recursive addDefs ds entries =
+                match ds with
+                    | [] -> entries
+                    | d :: dTail ->
+                        if lookupAssociation(d)(defCounts) == Some(1)
+                        then addDefs(dTail)(setAssociation(d)(inst)(entries))
+                        else addDefs(dTail)(entries)
+            in collectSingleDefiningInstructions(tail)(defCounts)(addDefs(getDefinedTemps(inst))(acc))
+
+// The heap closure label a temp provably holds: directly from a MakeClosure (never a
+// MakeClosureStack, whose environment lives in its defining function's own frame and is gone once
+// that function returns), or transitively through a CallKnown to a function already proven to
+// return one label.
+let knownClosureLabelOf sourceTemp singleDefs knownLabels =
+    match lookupAssociation(sourceTemp)(singleDefs) with
+        | Some(MakeClosure(_, fnLabel, _, _, _, _, _)) -> Some(fnLabel)
+        | Some(CallKnown(_, fnLabel, _, _, _, _)) -> lookupAssociation(fnLabel)(knownLabels)
+        | _ -> None
+
+let recursive returnedClosureLabel instructions singleDefs knownLabels current sawReturn =
+    match instructions with
+        | [] ->
+            if sawReturn
+            then current
+            else None
+        | IrInstruction { instruction = Return(source) } :: tail ->
+            match knownClosureLabelOf(source)(singleDefs)(knownLabels) with
+                | None -> None
+                | Some(label) ->
+                    match current with
+                        | None -> returnedClosureLabel(tail)(singleDefs)(knownLabels)(Some(label))(true)
+                        | Some(previous) ->
+                            if previous == label
+                            then returnedClosureLabel(tail)(singleDefs)(knownLabels)(current)(true)
+                            else None
+        | _ :: tail -> returnedClosureLabel(tail)(singleDefs)(knownLabels)(current)(sawReturn)
+
+// The one heap closure label every Return of the function provably yields, if any.
+let tryDetermineKnownReturnedClosureLabel (fn: IrFunction) knownLabels =
+    (let defCounts = countDefinitions(fn.instructions)([])
+    in
+        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
+        in returnedClosureLabel(fn.instructions)(singleDefs)(knownLabels)(None)(false))
+
+let recursive addKnownReturnedClosureLabels functions knownLabels changed =
+    match functions with
+        | [] -> (knownLabels, changed)
+        | fn :: rest ->
+            match lookupAssociation(functionLabel(fn))(knownLabels) with
+                | Some(_) -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
+                | None ->
+                    match tryDetermineKnownReturnedClosureLabel(fn)(knownLabels) with
+                        | Some(label) -> addKnownReturnedClosureLabels(rest)(setAssociation(functionLabel(fn))(label)(knownLabels))(true)
+                        | None -> addKnownReturnedClosureLabels(rest)(knownLabels)(changed)
+
+// Whole-program least fixpoint: each pass admits the functions whose returns resolve against the
+// labels known so far, so a chain of curried helpers converges over several passes while a
+// genuine cycle never does.
+let recursive computeKnownReturnedClosureLabels (functions: List(IrFunction)) knownLabels =
+    match addKnownReturnedClosureLabels(functions)(knownLabels)(false) with
+        | (nextLabels, true) -> computeKnownReturnedClosureLabels(functions)(nextLabels)
+        | (nextLabels, false) -> nextLabels
+
+// A CallClosure whose closure temp is the result of a CallKnown to a function with a known
+// returned label becomes a plain read of the closure object's environment word (offset 8, the
+// layout the ordinary closure call reads) followed by a direct CallKnown of that label. The read
+// neither consumes nor extends the closure object's lifetime, so drop placement is undisturbed.
+let recursive devirtualizeReturnedClosureCallsOnce insts singleDefs knownLabels nextTemp acc changed =
+    match insts with
+        | [] -> (reverse(acc), nextTemp, changed)
+        | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
+            match lookupAssociation(closureTemp)(singleDefs) with
+                | Some(CallKnown(_, calleeLabel, _, _, _, _)) ->
+                    match lookupAssociation(calleeLabel)(knownLabels) with
+                        | Some(label) ->
+                            devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp + 1)(
+                                IrInstruction(instruction = CallKnown(dest)(label)(nextTemp)(argTemp)(flagTemp)(false), location = loc) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(closureTemp)(8), location = loc) :: acc
+                            )(
+                                true
+                            )
+                        | None -> devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp)(irInst :: acc)(changed)
+                | _ -> devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp)(irInst :: acc)(changed)
+        | head :: tail -> devirtualizeReturnedClosureCallsOnce(tail)(singleDefs)(knownLabels)(nextTemp)(head :: acc)(changed)
+
+// Iterates to the function's own local fixed point so a curry deeper than two arguments resolves
+// fully in one optimization: each rewrite turns a CallClosure into a CallKnown that the next
+// CallClosure in the chain can resolve through.
+let recursive devirtualizeReturnedClosureCallsInFunction knownLabels (fn: IrFunction) =
+    (let defCounts = countDefinitions(fn.instructions)([])
+    in
+        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
+        in
+            match devirtualizeReturnedClosureCallsOnce(fn.instructions)(singleDefs)(knownLabels)(fn.tempCount)([])(false) with
+                | (_, _, false) -> fn
+                | (rewritten, nextTemp, true) -> devirtualizeReturnedClosureCallsInFunction(knownLabels)((fn with instructions = rewritten, tempCount = nextTemp)))
+
 let computeNonAllocatingFunctions (functions: List(IrFunction)) =
     (let initialCandidates =
         map(given (f) ->
@@ -1262,26 +1372,32 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
         in
             let optFuncs = map(optimizeIrFunction)(programAfterCtEval.functions)
             in
-                let nonAllocating = computeNonAllocatingFunctions(optFuncs)
+                let knownLabels = computeKnownReturnedClosureLabels(optFuncs)([])
                 in
-                    let finalEntry = stripRedundantArenaBrackets(nonAllocating)(optEntry)
+                    let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(optEntry)
                     in
-                        let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(optFuncs)
+                        let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(optFuncs)
                         in
-                            IrProgram(
-                                entryFunction = finalEntry,
-                                functions = finalFuncs,
-                                stringLiterals = programAfterCtEval.stringLiterals,
-                                externalFunctions = programAfterCtEval.externalFunctions,
-                                externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
-                                usesPrintInt = programAfterCtEval.usesPrintInt,
-                                usesPrintStr = programAfterCtEval.usesPrintStr,
-                                usesPrintBool = programAfterCtEval.usesPrintBool,
-                                usesConcatStr = programAfterCtEval.usesConcatStr,
-                                usesClosures = programAfterCtEval.usesClosures,
-                                usesAsync = programAfterCtEval.usesAsync,
-                                capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
-                                traitEvidence = programAfterCtEval.traitEvidence
-                            ))
+                            let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
+                            in
+                                let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
+                                in
+                                    let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                    in
+                                        IrProgram(
+                                            entryFunction = finalEntry,
+                                            functions = finalFuncs,
+                                            stringLiterals = programAfterCtEval.stringLiterals,
+                                            externalFunctions = programAfterCtEval.externalFunctions,
+                                            externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
+                                            usesPrintInt = programAfterCtEval.usesPrintInt,
+                                            usesPrintStr = programAfterCtEval.usesPrintStr,
+                                            usesPrintBool = programAfterCtEval.usesPrintBool,
+                                            usesConcatStr = programAfterCtEval.usesConcatStr,
+                                            usesClosures = programAfterCtEval.usesClosures,
+                                            usesAsync = programAfterCtEval.usesAsync,
+                                            capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
+                                            traitEvidence = programAfterCtEval.traitEvidence
+                                        ))
 
 let optimizeIrProgram program = optimizeIrProgramWithOptions(defaultOptimizerOptions)(program)

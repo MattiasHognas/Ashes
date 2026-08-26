@@ -790,6 +790,183 @@ let testIdentityCopyErasedAfterReduction unit =
             then test.fail("testIdentityCopyErasedAfterReduction: the copy introduced by identity reduction must be erased by the second elision")
             else Unit)
 
+let recursive hasCallClosure instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallClosure(_, _, _, _) } :: _ -> true
+        | _ :: tail -> hasCallClosure(tail)
+
+let recursive hasCallKnownTo instructions label =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CallKnown(_, candidate, _, _, _, _) } :: tail ->
+            if candidate == label
+            then true
+            else hasCallKnownTo(tail)(label)
+        | _ :: tail -> hasCallKnownTo(tail)(label)
+
+let recursive hasLoadMemOffset instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadMemOffset(_, _, _) } :: _ -> true
+        | _ :: tail -> hasLoadMemOffset(tail)
+
+let noCompileTimeEvalOptions =
+    IrOptimizerOptions(
+        enableCompileTimeEval = false,
+        enableInlining = true,
+        enableDeadCodeElision = true,
+        enableIdentityReduction = true
+    )
+
+let closureReturningFunction label inner =
+    makeFunction(label)(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            false
+            |> MakeClosure(1)(inner)(0)(0)(false)(false)
+            |> makeInstruction,
+            makeInstruction(Return(1))
+        ]
+    )(
+        2
+    )(
+        2
+    )(
+        true
+    )
+
+let stackClosureReturningFunction label inner =
+    makeFunction(label)(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            false
+            |> MakeClosureStack(1)(inner)(0)(0)(false)
+            |> makeInstruction,
+            makeInstruction(Return(1))
+        ]
+    )(
+        2
+    )(
+        2
+    )(
+        true
+    )
+
+let constantFunction label value =
+    makeFunction(label)([value
+    |> LoadConstInt(0)
+    |> makeInstruction, makeInstruction(Return(0))])(2)(1)(true)
+
+let curriedCallEntry outer =
+    makeFunction("_start_main")(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            10
+            |> LoadConstInt(1)
+            |> makeInstruction,
+            false
+            |> CallKnown(2)(outer)(0)(1)(-1)
+            |> makeInstruction,
+            32
+            |> LoadConstInt(3)
+            |> makeInstruction,
+            -1
+            |> CallClosure(4)(2)(3)
+            |> makeInstruction,
+            makeInstruction(Return(4))
+        ]
+    )(
+        0
+    )(
+        5
+    )(
+        false
+    )
+
+let testReturnedClosureCallDevirtualizes unit =
+    (let program =
+        makeProgram(curriedCallEntry("add_outer"))([closureReturningFunction("add_outer")("add_inner"), constantFunction("add_inner")(42)])([])(0)
+    in
+        let entry =
+            program
+            |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+            |> entryInstructions
+        in
+            if hasCallClosure(entry)
+            then test.fail("testReturnedClosureCallDevirtualizes: the second application of a curried call must become direct")
+            else
+                if hasCallKnownTo(entry)("add_inner")
+                then
+                    if hasLoadMemOffset(entry)
+                    then Unit
+                    else test.fail("testReturnedClosureCallDevirtualizes: the direct call must read the closure's environment word")
+                else test.fail("testReturnedClosureCallDevirtualizes: the direct call must target the returned closure's label"))
+
+let testReturnedStackClosureKeepsIndirectCall unit =
+    (let program =
+        makeProgram(curriedCallEntry("add_outer"))([stackClosureReturningFunction("add_outer")("add_inner"), constantFunction("add_inner")(42)])([])(0)
+    in
+        let entry =
+            program
+            |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+            |> entryInstructions
+        in
+            if hasCallClosure(entry)
+            then Unit
+            else test.fail("testReturnedStackClosureKeepsIndirectCall: a stack closure's environment dies with its frame, so its label must never be a known returned label"))
+
+let transitiveReturningFunction label callee =
+    makeFunction(label)(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            0
+            |> LoadConstInt(1)
+            |> makeInstruction,
+            false
+            |> CallKnown(2)(callee)(0)(1)(-1)
+            |> makeInstruction,
+            makeInstruction(Return(2))
+        ]
+    )(
+        2
+    )(
+        3
+    )(
+        true
+    )
+
+let testTransitivelyReturnedClosureCallDevirtualizes unit =
+    (let program =
+        makeProgram(curriedCallEntry("forward"))(
+            [
+                transitiveReturningFunction("forward")("build"),
+                closureReturningFunction("build")("leaf"),
+                constantFunction("leaf")(9)
+            ]
+        )(
+            []
+        )(
+            0
+        )
+    in
+        let entry =
+            program
+            |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+            |> entryInstructions
+        in
+            if hasCallKnownTo(entry)("leaf")
+            then Unit
+            else test.fail("testTransitivelyReturnedClosureCallDevirtualizes: a function returning another proven function's result must resolve in a later fixpoint pass"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -804,6 +981,9 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testKnownSwitchTagBecomesJump(Unit))
     |> (given (_) -> testUnreferencedLabelInUnreachableRegionIsDropped(Unit))
     |> (given (_) -> testIdentityCopyErasedAfterReduction(Unit))
+    |> (given (_) -> testReturnedClosureCallDevirtualizes(Unit))
+    |> (given (_) -> testReturnedStackClosureKeepsIndirectCall(Unit))
+    |> (given (_) -> testTransitivelyReturnedClosureCallDevirtualizes(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))

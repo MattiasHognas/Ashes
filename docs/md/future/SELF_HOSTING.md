@@ -411,7 +411,7 @@ same public behavior.
   `reduceIdentitiesAndStrength` (its copy-type producers and use counts are recomputed on every call,
   so the second run needs no shared state), erasing the `Borrow` copies the identity rewrites
   introduce; covered by `selfhost/tests/semantics/IrOptimizerTests.ash`.
-- [ ] Extend closure devirtualization (`CallClosure -> CallKnown`) past a single `MakeClosure`
+- [x] Extend closure devirtualization (`CallClosure -> CallKnown`) past a single `MakeClosure`
   definition: a curried call's second and later applications (`add(10)(32)`) never devirtualize
   today because the closure temp being called is defined by a `CallKnown` (the first application),
   not a `MakeClosure`, so the existing single-definition-count test never fires past the first
@@ -435,7 +435,14 @@ same public behavior.
   small direct-call-per-arm dispatch when a closure temp's reaching definitions disagree across a
   small closed set, rather than declining outright) was scoped as a stretch extension to this same
   capability and was not implemented in the C# compiler either — treat it as a separate, larger unit
-  of work, not something this checklist item's own `[x]` should imply.
+  of work, not something this checklist item's own `[x]` should imply. Pure Ashes now computes the
+  known-returned-label map as a whole-program least fixpoint over every function's `Return` sources
+  (a single-defined heap `MakeClosure`, or a `CallKnown` to a function already in the map; a
+  `MakeClosureStack` never qualifies), then rewrites each `CallClosure` whose closure temp is such a
+  `CallKnown` result into a `LoadMemOffset` of the closure object's environment word at offset 8
+  plus a direct `CallKnown`, iterating every function to its own local fixed point after the
+  per-function pipeline and before arena-bracket elimination; covered by
+  `selfhost/tests/semantics/IrOptimizerTests.ash` (direct, transitive, and stack-closure-declined).
 - [ ] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
   at every label, never across control flow): forward a duplicate `GetAdtField` read or a duplicate
   `CallKnown` call to a function proven pure by the compile-time-evaluation purity oracle (reused, not
