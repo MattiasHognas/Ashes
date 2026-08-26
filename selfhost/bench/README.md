@@ -63,6 +63,22 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-08-26, after the `Ashes.Text.split` rewrite
+
+The first run's header row was almost entirely the stdlib `split`: its nested recursive closure
+captured the whole text and copied it once per piece (see the compiler changelog). With the walk
+rewritten to take the buffer as a parameter, the header phase over the corpus drops from 1142 ms
+to 31 ms and the 190 KB `TypeInference.ash` from 195 ms to 2 ms. The parser is now the hotspot.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 17 | 822 | 31 | 821 | 1.82x | 1 file crashed and was excluded |
+| lex | 39 | 360776 | 230 | 360744 | 5.90x | 1 file crashed and was excluded |
+| parse | 149 | 807 | 2781 | 801 | 18.66x | 1 file crashed and was excluded |
+| format | 89 | 2346986 | 55 | 1493607 | 0.62x | 23 files crashed and were excluded |
+| infer (stage 1) vs infer+lower (stage 0) | 1086 | 376 | 7 | 35 | 0.01x | 1 file crashed and was excluded |
+| optimize IR (stage 0 only) | 285 | 1176 | - | - | - | |
+
 ### 2026-08-26 (first run, main after #616)
 
 | Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |

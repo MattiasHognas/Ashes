@@ -2657,6 +2657,54 @@ public sealed class LinuxBackendCoverageTests
             Ashes.IO.print(loop({{iterations}})(0))
             """;
 
+    [Test]
+    public async Task Linux_backend_llvm_text_split_of_a_large_text_memory_stays_bounded()
+    {
+        // Ashes.Text.split once walked its text with a nested recursive closure that captured the
+        // whole byte buffer, and every recursive call (one per piece) copied that capture: splitting
+        // a 100 KB text into 4,000 lines mapped 3,300 chunks and peaked above 600 MB. The walk now
+        // takes the buffer as an explicit parameter, so the program must stay near the runtime floor.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        const string source = """
+            import Ashes.Text
+            let recursive grow count acc =
+                if count == 0 then acc else grow(count - 1)(acc + "some source line of text\n")
+
+            let recursive count lines total =
+                match lines with
+                    | [] -> total
+                    | _ :: rest -> count(rest)(total + 1)
+
+            let text = grow(4000)("")
+
+            Ashes.IO.print(count(Ashes.Text.split(text)("\n"))(0))
+            """;
+
+        ParsedImportHeader parsed = ProjectSupport.ParseImportHeader(source, "<memory>");
+        CombinedCompilationLayout layout = ProjectSupport.BuildStandaloneCompilationLayout(
+            parsed.SourceWithoutImports,
+            parsed.ImportNames,
+            "<memory>");
+        Diagnostics diagnostics = new();
+        Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(
+            diagnostics,
+            new HashSet<string>(parsed.ImportNames, StringComparer.Ordinal),
+            parsed.ImportAliases,
+            layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+        IrProgram ir = IrOptimizer.Optimize(lowering.Lower(program));
+        diagnostics.ThrowIfAny();
+        MemoryExecutionResult result = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+        result.Stdout.ShouldBe("4001\n");
+        result.MaxRssKb.ShouldBeLessThan(65_536, "splitting a 100 KB text must not copy the text once per piece");
+    }
+
     // Two counted operands, with the result bound so a scope owns it. The binding's own drop covers
     // the result, never the operands consumed to build it.
     private static string BuildConcatBoundResultMemoryProgram(int iterations)

@@ -869,6 +869,13 @@ same public behavior.
   **Found by the self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion
   texts and `List(Int)` anchor indices in `HashMap` values.** Its pure-Ashes code now keeps only
   `Int`/`Str` map values (composite keys such as `signature#occurrence`).
+- [ ] Check an inlined helper's references transitively before inlining it inside a reuse arm or a
+  reuse specialization: an inlinable free name only proves resolvable when that helper's own body
+  resolves in the isolated scope too (a stitched stdlib helper calling a module sibling through the
+  stitcher's alias name does not), and a helper already visited on the walk counts as resolved. Stage
+  0 otherwise inlined the outer helper, declined the inner call, and reported the stdlib name as not
+  yet declared. **Found by the `Ashes.Text.split` rewrite the phase benchmark motivated.** Regression:
+  `ReuseInlineResolutionTests`.
 - [ ] Keep a large string alive when a tail-recursive loop moves it from the list it consumes into
   its accumulator: `walk(Ashes.Text.split(source)("\n"))([])`, where `walk` matches `line :: rest`
   and conses `line` onto its accumulator, releases the line string with the consumed cell, so the
