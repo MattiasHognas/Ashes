@@ -293,9 +293,15 @@ internal static class PerceusLifetimePlacement
             Block block = blocks[blockIndex];
             for (int i = block.Start; i < block.End; i++)
             {
-                if (instructions[i] is IrInst.CallClosure call)
+                switch (instructions[i])
                 {
-                    applied.Add(call.ClosureTemp);
+                    case IrInst.CallClosure call:
+                        applied.Add(call.ClosureTemp);
+                        break;
+                    case IrInst.CallKnown known:
+                        // A devirtualized stage receives the previous stage's result as its environment.
+                        applied.Add(known.EnvTemp);
+                        break;
                 }
             }
         }
@@ -325,8 +331,12 @@ internal static class PerceusLifetimePlacement
         // itself applied again, so the returned closure captured the alias). A transient closure holds
         // the borrow in its arena/stack env until applied, so the owner must stay live until that
         // application — else its drop lands right after the capture, a use-after-free (benign for a
-        // recycled small string, a segfault for an OS-backed >4 KiB string). All only lengthen
-        // liveness, so the drop lands after the last real use, never earlier.
+        // recycled small string, a segfault for an OS-backed >4 KiB string). Every later stage of a
+        // curried chain copies the captured alias into the environment of the closure it returns, so
+        // applying an alias-holding closure (by CallClosure, or by CallKnown over an alias-holding
+        // environment) yields an alias too while that result is applied again; the final application
+        // is a plain use. All only lengthen liveness, so the drop lands after the last real use, never
+        // earlier.
         HashSet<int> partialApplicationResults = CollectAppliedClosureTemps(instructions, blocks, region);
         var aliasHoldingSlots = new HashSet<int>();
         var aliasHoldingEnvs = new HashSet<int>();
@@ -339,35 +349,47 @@ internal static class PerceusLifetimePlacement
                 Block block = blocks[blockIndex];
                 for (int i = block.Start; i < block.End; i++)
                 {
-                    switch (instructions[i])
-                    {
-                        case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
-                            changed |= aliases.Add(borrow.Target);
-                            break;
-                        case IrInst.StoreLocal store when aliases.Contains(store.Source):
-                            changed |= aliasHoldingSlots.Add(store.Slot);
-                            break;
-                        case IrInst.LoadLocal load when aliasHoldingSlots.Contains(load.Slot):
-                            changed |= aliases.Add(load.Target);
-                            break;
-                        case IrInst.StoreMemOffset envStore when aliases.Contains(envStore.Source):
-                            changed |= aliasHoldingEnvs.Add(envStore.BasePtr);
-                            break;
-                        case IrInst.MakeClosure mc when aliasHoldingEnvs.Contains(mc.EnvPtrTemp):
-                            changed |= aliases.Add(mc.Target);
-                            break;
-                        case IrInst.MakeClosureStack mcs when aliasHoldingEnvs.Contains(mcs.EnvPtrTemp):
-                            changed |= aliases.Add(mcs.Target);
-                            break;
-                        case IrInst.CallClosure partialCall when aliases.Contains(partialCall.ArgTemp) && partialApplicationResults.Contains(partialCall.Target):
-                            changed |= aliases.Add(partialCall.Target);
-                            break;
-                    }
+                    changed |= PropagateAlias(
+                        instructions[i], aliases, aliasHoldingSlots, aliasHoldingEnvs, partialApplicationResults);
                 }
             }
         }
 
         return aliases;
+    }
+
+    // One propagation step over a single instruction; returns whether it discovered a new alias,
+    // alias-holding slot, or alias-holding environment.
+    private static bool PropagateAlias(
+        IrInst instruction,
+        HashSet<int> aliases,
+        HashSet<int> aliasHoldingSlots,
+        HashSet<int> aliasHoldingEnvs,
+        HashSet<int> partialApplicationResults)
+    {
+        switch (instruction)
+        {
+            case IrInst.Borrow borrow when aliases.Contains(borrow.SourceTemp):
+                return aliases.Add(borrow.Target);
+            case IrInst.StoreLocal store when aliases.Contains(store.Source):
+                return aliasHoldingSlots.Add(store.Slot);
+            case IrInst.LoadLocal load when aliasHoldingSlots.Contains(load.Slot):
+                return aliases.Add(load.Target);
+            case IrInst.StoreMemOffset envStore when aliases.Contains(envStore.Source):
+                return aliasHoldingEnvs.Add(envStore.BasePtr);
+            case IrInst.MakeClosure mc when aliasHoldingEnvs.Contains(mc.EnvPtrTemp):
+                return aliases.Add(mc.Target);
+            case IrInst.MakeClosureStack mcs when aliasHoldingEnvs.Contains(mcs.EnvPtrTemp):
+                return aliases.Add(mcs.Target);
+            case IrInst.CallClosure call when partialApplicationResults.Contains(call.Target)
+                && (aliases.Contains(call.ArgTemp) || aliases.Contains(call.ClosureTemp)):
+                return aliases.Add(call.Target);
+            case IrInst.CallKnown known when partialApplicationResults.Contains(known.Target)
+                && (aliases.Contains(known.ArgTemp) || aliasHoldingEnvs.Contains(known.EnvTemp)):
+                return aliases.Add(known.Target);
+            default:
+                return false;
+        }
     }
 
     private static List<int> FindOwnerUses(

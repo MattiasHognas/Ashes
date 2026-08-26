@@ -10753,9 +10753,14 @@ public sealed partial class Lowering
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
         int originalArgumentTemp = argumentTemp;
         bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);
-        bool transfersFreshRuntimeArgument = !borrowsOnly
-            && argument is not Expr.Var
+        // A non-variable argument temp that is a borrowed read of an owned binding (a byte view of
+        // it, a borrowed forward) is that binding's reference, not a fresh result: the binding's own
+        // release covers it, so it is neither transferred to the callee nor released after the call.
+        bool freshRuntimeArgument = argument is not Expr.Var
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
+            && !IsBorrowedOwnershipTemp(originalArgumentTemp);
+        bool transfersFreshRuntimeArgument = !borrowsOnly
+            && freshRuntimeArgument
             && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
@@ -10767,9 +10772,7 @@ public sealed partial class Lowering
         if (!borrowsOnly)
         {
             MarkResourceArgMoved(argument);
-            if (argument is not Expr.Var
-                && IsRuntimeManagedResultTemp(originalArgumentTemp)
-                && !transfersFreshRuntimeArgument)
+            if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
             {
                 consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType)));
             }
