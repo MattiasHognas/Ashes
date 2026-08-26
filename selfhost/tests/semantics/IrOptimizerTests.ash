@@ -326,12 +326,198 @@ let recursive hasLoadLocal instructions =
         | IrInstruction { instruction = LoadLocal(_, _) } :: _ -> true
         | _ :: tail -> hasLoadLocal(tail)
 
+let recursive hasJumpIfFalse instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = JumpIfFalse(_, _) } :: _ -> true
+        | _ :: tail -> hasJumpIfFalse(tail)
+
+let recursive hasSwitchTag instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SwitchTag(_, _, _) } :: _ -> true
+        | _ :: tail -> hasSwitchTag(tail)
+
+let recursive hasLabel instructions name =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Label(candidate) } :: tail ->
+            if candidate == name
+            then true
+            else hasLabel(tail)(name)
+        | _ :: tail -> hasLabel(tail)(name)
+
+let recursive firstJumpTarget instructions =
+    match instructions with
+        | [] -> "<none>"
+        | IrInstruction { instruction = Jump(candidate) } :: _ -> candidate
+        | IrInstruction { instruction = SwitchTag(_, _, _) } :: _ -> "<switch>"
+        | _ :: tail -> firstJumpTarget(tail)
+
+let recursive hasJumpTo instructions name =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Jump(candidate) } :: tail ->
+            if candidate == name
+            then true
+            else hasJumpTo(tail)(name)
+        | _ :: tail -> hasJumpTo(tail)(name)
+
 let optimizeInstructions instructions localCount tempCount =
     (let optimized =
         false
         |> makeFunction("_start_main")(instructions)(localCount)(tempCount)
         |> optimizeIrFunction
     in optimized.instructions)
+
+let testKnownTrueBranchDropsElseArm unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                true
+                |> LoadConstBool(0)
+                |> makeInstruction,
+                "else"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Return(1)),
+                makeInstruction(Label("else")),
+                2
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                makeInstruction(Return(2))
+            ]
+        )(
+            0
+        )(
+            3
+        )
+    in
+        if hasJumpIfFalse(optimized)
+        then test.fail("testKnownTrueBranchDropsElseArm: a branch on a known-true condition must be dropped")
+        else
+            if hasLabel(optimized)("else")
+            then test.fail("testKnownTrueBranchDropsElseArm: the orphaned else label must vanish with its body")
+            else
+                if hasLoadConstInt(optimized)(2)(2)
+                then test.fail("testKnownTrueBranchDropsElseArm: the else body survived")
+                else Unit)
+
+let testKnownFalseBranchBecomesJump unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                false
+                |> LoadConstBool(0)
+                |> makeInstruction,
+                "else"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Return(1)),
+                makeInstruction(Label("else")),
+                2
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                makeInstruction(Return(2))
+            ]
+        )(
+            0
+        )(
+            3
+        )
+    in
+        if hasJumpTo(optimized)("else")
+        then
+            if hasLoadConstInt(optimized)(1)(1)
+            then test.fail("testKnownFalseBranchBecomesJump: the then body after the folded jump must be unreachable")
+            else
+                if hasLoadConstInt(optimized)(2)(2)
+                then Unit
+                else test.fail("testKnownFalseBranchBecomesJump: the else body must survive")
+        else test.fail("testKnownFalseBranchBecomesJump: a branch on a known-false condition must become a jump"))
+
+let testKnownSwitchTagBecomesJump unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                1
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                "other"
+                |> SwitchTag(0)([IrSwitchCase(tag = 0, label = "zero"), IrSwitchCase(tag = 1, label = "one")])
+                |> makeInstruction,
+                makeInstruction(Label("zero")),
+                10
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Return(1)),
+                makeInstruction(Label("one")),
+                11
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                makeInstruction(Return(2)),
+                makeInstruction(Label("other")),
+                12
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                makeInstruction(Return(3))
+            ]
+        )(
+            0
+        )(
+            4
+        )
+    in
+        if hasSwitchTag(optimized)
+        then test.fail("testKnownSwitchTagBecomesJump: a switch on a known tag must fold to a jump")
+        else
+            if hasJumpTo(optimized)("one")
+            then
+                if hasLabel(optimized)("zero")
+                then test.fail("testKnownSwitchTagBecomesJump: the orphaned zero case must vanish")
+                else
+                    if hasLabel(optimized)("other")
+                    then test.fail("testKnownSwitchTagBecomesJump: the orphaned default case must vanish")
+                    else Unit
+            else test.fail("testKnownSwitchTagBecomesJump: the jump must target the taken case, first jump: " + firstJumpTarget(optimized)))
+
+let testUnreferencedLabelInUnreachableRegionIsDropped unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                1
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                makeInstruction(Return(0)),
+                makeInstruction(Label("orphan")),
+                2
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Return(1)),
+                makeInstruction(Label("target")),
+                3
+                |> LoadConstInt(2)
+                |> makeInstruction,
+                makeInstruction(Jump("target"))
+            ]
+        )(
+            0
+        )(
+            3
+        )
+    in
+        if hasLabel(optimized)("orphan")
+        then test.fail("testUnreferencedLabelInUnreachableRegionIsDropped: a label nothing branches to cannot re-establish reachability")
+        else
+            if hasLabel(optimized)("target")
+            then Unit
+            else test.fail("testUnreferencedLabelInUnreachableRegionIsDropped: a label a branch still targets must survive"))
 
 let testMeetOverPathsAgreeingEdges unit =
     (let optimized =
@@ -340,8 +526,8 @@ let testMeetOverPathsAgreeingEdges unit =
                 7
                 |> LoadConstInt(0)
                 |> makeInstruction,
-                true
-                |> LoadConstBool(1)
+                0
+                |> LoadLocal(1)
                 |> makeInstruction,
                 "else"
                 |> JumpIfFalse(1)
@@ -359,7 +545,7 @@ let testMeetOverPathsAgreeingEdges unit =
                 makeInstruction(Return(3))
             ]
         )(
-            0
+            1
         )(
             4
         )
@@ -375,8 +561,8 @@ let testMeetOverPathsLocalSlotAgreeing unit =
     (let optimized =
         optimizeInstructions(
             [
-                true
-                |> LoadConstBool(0)
+                1
+                |> LoadLocal(0)
                 |> makeInstruction,
                 "else"
                 |> JumpIfFalse(0)
@@ -408,7 +594,7 @@ let testMeetOverPathsLocalSlotAgreeing unit =
                 makeInstruction(Return(5))
             ]
         )(
-            1
+            2
         )(
             6
         )
@@ -421,8 +607,8 @@ let testMeetOverPathsLocalSlotDisagreeing unit =
     (let optimized =
         optimizeInstructions(
             [
-                true
-                |> LoadConstBool(0)
+                1
+                |> LoadLocal(0)
                 |> makeInstruction,
                 "else"
                 |> JumpIfFalse(0)
@@ -454,7 +640,7 @@ let testMeetOverPathsLocalSlotDisagreeing unit =
                 makeInstruction(Return(5))
             ]
         )(
-            1
+            2
         )(
             6
         )
@@ -579,6 +765,10 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testLocalSlotConstantFolds(Unit))
     |> (given (_) -> testLocalSlotUnknownStoreKills(Unit))
     |> (given (_) -> testLoopHeaderClearsFacts(Unit))
+    |> (given (_) -> testKnownTrueBranchDropsElseArm(Unit))
+    |> (given (_) -> testKnownFalseBranchBecomesJump(Unit))
+    |> (given (_) -> testKnownSwitchTagBecomesJump(Unit))
+    |> (given (_) -> testUnreferencedLabelInUnreachableRegionIsDropped(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
