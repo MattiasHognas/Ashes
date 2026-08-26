@@ -635,7 +635,7 @@ same public behavior.
   iteration. Pure Ashes now carries `ConcatStrN` through its IR model, text dump, validation, and
   temp scans, and folds as the last program-level step with the same single-use chain walk, the
   runtime-managed flag agreement, and the bracket/branch decline over the innermost-part-to-root span.
-- [ ] Port the two whole-program closure-environment passes that run between the per-function
+- [x] Port the two whole-program closure-environment passes that run between the per-function
   pipeline and scalarization in the C# optimizer (`IrOptimizer.ClosureEnvironments.cs`).
   `DevirtualizeCapturedClosureCalls` resolves a `CallClosure` through a `LoadEnv` slot when every
   creation site of the enclosing function's environment stores the same closure label into that
@@ -653,7 +653,17 @@ same public behavior.
   benchmark) and every saturated curried call paid a heap environment per stage; the passes took
   the benchmark's lexer row from 7.6x to 3.1x of the .NET lexer and the parser row from 2.9x to
   1.4x. Both keep every rewritten instruction at the original call's position so the ownership
-  placement of the extracted environment stays valid.
+  placement of the extracted environment stays valid. Pure Ashes now ports both passes in the
+  stage-0 order (captured devirtualization, returned devirtualization, stage inlining,
+  scalarization, returned devirtualization again): capture sites are collected per environment
+  word from every `MakeClosure`/`MakeClosureStack`/`CallKnown` over a single fresh allocation,
+  grouped by (label, word), and settled by a whole-program fixpoint whose resolution follows the
+  same single-definition, single-store-slot, `Borrow`, `LoadEnv`, and known-returned paths; a
+  stage shape is matched instruction by instruction and the chain rewrite is keyed by body
+  position so the environment-word load is dropped and the next call retargeted in place;
+  covered by `selfhost/tests/semantics/IrOptimizerTests.ash` (captured call devirtualized,
+  disagreeing sites declined, pure stage inlined into a caller-frame environment, retaining
+  stage declined).
 - [ ] Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound
   accumulator form `let acc2 = acc + rhs in loop(...)(acc2)`, as the C# compiler now does. Four
   coordinated pieces, three of them in the not-yet-ported move-analysis/ownership side (see the

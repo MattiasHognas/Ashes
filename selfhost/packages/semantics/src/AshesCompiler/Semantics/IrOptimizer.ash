@@ -33,18 +33,30 @@
 //      inside an unreachable region is dropped with its body)
 //   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   11. Erased RcDrop marker elision
-//   12. Closure environment scalarization for one or two scalar captures: a devirtualized call
-//       of a stack closure whose 8- or 16-byte environment is filled by one store per word and
-//       used nowhere else passes the captured words directly in the call's env word and (when
-//       the call carries no ownership flag) its flag word, to a generated callee variant that
-//       reads them as raw parameters, so the environment allocation disappears
+//   12. Program-level captured-closure devirtualization: a CallClosure through a LoadEnv slot
+//       becomes a direct CallKnown over the closure object's environment word when every creation
+//       site of the enclosing function's environment stores the same closure label into that slot
+//       (resolved through single-definition temps, single-store local slots, Borrow copies,
+//       known-returned call results, and the creating function's own captured slots, to a
+//       whole-program fixpoint)
 //   13. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
 //       functions whose every Return is one heap MakeClosure label (directly, or transitively
 //       through a CallKnown to a function already proven), then a per-function local fixpoint
 //       rewriting each CallClosure on such a call's result into an environment-word read plus
 //       a direct CallKnown, so a curry of any depth resolves fully
-//   14. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
-//   15. String-concatenation chain folding (last, over the whole program): a left-nested ConcatStr
+//   14. Currying-stage inlining: a direct call of a stage that only copies its captures and its
+//       argument into a fresh environment and returns the next stage's closure, followed by the
+//       environment-word read and the direct call of that next stage, becomes a caller-frame
+//       AllocStack filled directly plus the next call over it, iterated to a fixpoint per function
+//   15. Closure environment scalarization for one or two scalar captures: a devirtualized call
+//       of a stack closure whose 8- or 16-byte environment is filled by one store per word and
+//       used nowhere else passes the captured words directly in the call's env word and (when
+//       the call carries no ownership flag) its flag word, to a generated callee variant that
+//       reads them as raw parameters, so the environment allocation disappears
+//   16. Returned-closure devirtualization again, so a call made direct by the passes above is
+//       visible to the non-allocation summary
+//   17. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
+//   18. String-concatenation chain folding (last, over the whole program): a left-nested ConcatStr
 //       chain whose intermediates are each used once becomes one ConcatStrN, declined whenever an
 //       arena or stack bracket, a label, or a branch lies between the innermost part and the root
 
@@ -114,6 +126,41 @@ type ClosureDefinitionFacts =
     | storeCountBySlot: List((IrLocal, Int))
     | singleStoreSourceBySlot: List((IrLocal, IrTemp))
     | closureTempsWithDropper: List(IrTemp)
+
+// One environment word filled at one closure creation site: the created closure's label, the
+// word index, the creating function's label and definition facts, and the temp stored there.
+type CaptureSite =
+    | targetLabel: Str
+    | index: Int
+    | creatorLabel: Str
+    | creator: ClosureDefinitionFacts
+    | sourceTemp: IrTemp
+
+// The outcome of resolving the closure label a captured word holds: proven, still waiting on a
+// slot of the creating function that the fixpoint has not resolved yet, or unresolvable.
+type CaptureResolution =
+    | CaptureKnown(Str)
+    | CapturePending
+    | CaptureUnknown
+
+// A currying stage's shape: its environment size, one (offset, capture index) per environment
+// word where -1 stands for the stage's own argument, and the label of the closure it returns.
+type CurryingStage =
+    | envSizeBytes: Int
+    | stores: List((Int, Int))
+    | nextLabel: Str
+
+// The instruction-by-instruction state of matching a stage body: the environment temp and size
+// (-1 before the allocation), the closure temp (-1 before the construction) and its label, the
+// capture index each loaded temp carries (-1 for the stage's own argument), and the stores seen
+// in reverse order.
+type CurryingStageScan =
+    | scanEnvTemp: IrTemp
+    | scanEnvSize: Int
+    | scanClosureTemp: IrTemp
+    | scanNextLabel: Maybe(Str)
+    | sourceIndexByTemp: List((IrTemp, Int))
+    | scanStores: List((Int, Int))
 
 let defaultOptimizerOptions =
     IrOptimizerOptions(
@@ -1864,6 +1911,569 @@ let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrF
                 match scalarizeCallSitesInFunctions(functions)(entryState)(functions)([]) with
                     | (newFunctions, finalState) -> (newEntry, append(newFunctions)(reverse(finalState.newFunctions))))
 
+// Captured-closure devirtualization. A stitched module refers to its sibling functions through
+// alias bindings that lambdas capture, so a call such as `parserCurrent(state)` inside another
+// parser function loads the callee from its own environment and calls it indirectly. Every site
+// that creates that lambda's closure stores the same known closure into the same environment
+// word (the alias is bound once), so the call target is statically known after all: a
+// CallClosure on a LoadEnv whose word resolves, at every creation site of the enclosing
+// function, to one closure label becomes a CallKnown with the closure object's own environment
+// word, exactly as the returned-closure devirtualization does for a curried second application.
+// Resolution follows single-definition temps, single-store local slots, Borrow copies,
+// known-returned call results, and the creating function's own captured words (to a
+// whole-program fixpoint). A word with a disagreeing or unresolvable site is never rewritten.
+let recursive lookupSlotEntry (label: Str) (index: Int) entries =
+    match entries with
+        | [] -> None
+        | ((candidateLabel, candidateIndex), value) :: tail ->
+            if candidateLabel == label
+            then
+                if candidateIndex == index
+                then Some(value)
+                else lookupSlotEntry(label)(index)(tail)
+            else lookupSlotEntry(label)(index)(tail)
+
+let recursive setSlotEntry (label: Str) (index: Int) value entries =
+    match entries with
+        | [] -> [((label, index), value)]
+        | ((candidateLabel, candidateIndex), existing) :: tail ->
+            if candidateLabel == label
+            then
+                if candidateIndex == index
+                then ((label, index), value) :: tail
+                else ((candidateLabel, candidateIndex), existing) :: setSlotEntry(label)(index)(value)(tail)
+            else ((candidateLabel, candidateIndex), existing) :: setSlotEntry(label)(index)(value)(tail)
+
+let recursive containsSlot (label: Str) (index: Int) (slots: List((Str, Int))) =
+    match slots with
+        | [] -> false
+        | (candidateLabel, candidateIndex) :: tail ->
+            if candidateLabel == label
+            then
+                if candidateIndex == index
+                then true
+                else containsSlot(label)(index)(tail)
+            else containsSlot(label)(index)(tail)
+
+// Every temp stored through each (base pointer, offset) pair of a function body.
+let recursive lookupEnvironmentStores (basePtr: IrTemp) (offset: Int) (entries: List(((IrTemp, Int), List(IrTemp)))) =
+    match entries with
+        | [] -> None
+        | ((candidateBase, candidateOffset), sources) :: tail ->
+            if candidateBase == basePtr
+            then
+                if candidateOffset == offset
+                then Some(sources)
+                else lookupEnvironmentStores(basePtr)(offset)(tail)
+            else lookupEnvironmentStores(basePtr)(offset)(tail)
+
+let recursive collectEnvironmentStores instructions (acc: List(((IrTemp, Int), List(IrTemp)))) =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = StoreMemOffset(basePtr, offset, source) } :: tail ->
+            let sources =
+                match lookupEnvironmentStores(basePtr)(offset)(acc) with
+                    | Some(existing) -> source :: existing
+                    | None -> [source]
+            in collectEnvironmentStores(tail)(((basePtr, offset), sources) :: acc)
+        | _ :: tail -> collectEnvironmentStores(tail)(acc)
+
+// A closure whose only use was an immediate call has already been devirtualized into a
+// CallKnown over its environment, so such a call is a creation site too. The environment size
+// comes from the fresh allocation when there is one (a CallKnown carries none itself):
+// (label, environment temp, environment size, whether the environment is a fresh allocation).
+let describeCreationSite (facts: ClosureDefinitionFacts) inst =
+    (let described =
+        match inst with
+            | MakeClosure(_, label, envTemp, size, _, _, _) -> Some((label, envTemp, size))
+            | MakeClosureStack(_, label, envTemp, size, _, _) -> Some((label, envTemp, size))
+            | CallKnown(_, label, envTemp, _, _, _) -> Some((label, envTemp, 0))
+            | _ -> None
+    in
+        match described with
+            | None -> None
+            | Some((label, envTemp, declaredSize)) ->
+                match lookupAssociation(envTemp)(facts.singleDefs) with
+                    | Some(Alloc(_, size, _)) -> Some((label, envTemp, size, true))
+                    | Some(AllocStack(_, size)) -> Some((label, envTemp, size, true))
+                    | _ -> Some((label, envTemp, declaredSize, false)))
+
+// Every closure creation with a non-empty environment contributes one site per environment
+// word; a word stored more than once, not at all, or through an environment pointer that is not
+// a single fresh allocation marks the whole (label, word) pair unresolvable.
+let recursive addCaptureSitesForWords (label: Str) (envTemp: IrTemp) (fresh: Bool) (index: Int) (wordCount: Int) stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) sites unresolvable =
+    if index >= wordCount
+    then (sites, unresolvable)
+    else
+        let single =
+            if fresh
+            then
+                match lookupEnvironmentStores(envTemp)(index * 8)(stores) with
+                    | Some(source :: []) -> Some(source)
+                    | _ -> None
+            else None
+        in
+            match single with
+                | Some(source) ->
+                    addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(
+                        CaptureSite(targetLabel = label, index = index, creatorLabel = creatorLabel, creator = facts, sourceTemp = source) :: sites
+                    )(
+                        unresolvable
+                    )
+                | None -> addCaptureSitesForWords(label)(envTemp)(fresh)(index + 1)(wordCount)(stores)(creatorLabel)(facts)(sites)((label, index) :: unresolvable)
+
+let recursive collectCaptureSitesInBody instructions stores (creatorLabel: Str) (facts: ClosureDefinitionFacts) sites unresolvable =
+    match instructions with
+        | [] -> (sites, unresolvable)
+        | IrInstruction { instruction = inst } :: tail ->
+            match describeCreationSite(facts)(inst) with
+                | Some((label, envTemp, envSize, fresh)) ->
+                    if envSize > 0
+                    then
+                        match addCaptureSitesForWords(label)(envTemp)(fresh)(0)(envSize / 8)(stores)(creatorLabel)(facts)(sites)(unresolvable) with
+                            | (nextSites, nextUnresolvable) -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(nextSites)(nextUnresolvable)
+                    else collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(sites)(unresolvable)
+                | None -> collectCaptureSitesInBody(tail)(stores)(creatorLabel)(facts)(sites)(unresolvable)
+
+let recursive collectCaptureSites (functions: List(IrFunction)) sites unresolvable =
+    match functions with
+        | [] -> (sites, unresolvable)
+        | fn :: tail ->
+            match collectCaptureSitesInBody(fn.instructions)(collectEnvironmentStores(fn.instructions)([]))(fn.label)(collectClosureDefinitionFacts(fn.instructions))(sites)(unresolvable) with
+                | (nextSites, nextUnresolvable) -> collectCaptureSites(tail)(nextSites)(nextUnresolvable)
+
+// The sites grouped by the (label, word) pair they fill.
+let recursive groupCaptureSites (sites: List(CaptureSite)) (groups: List(((Str, Int), List(CaptureSite)))) =
+    match sites with
+        | [] -> groups
+        | site :: tail ->
+            let members =
+                match lookupSlotEntry(site.targetLabel)(site.index)(groups) with
+                    | Some(existing) -> site :: existing
+                    | None -> [site]
+            in groupCaptureSites(tail)(setSlotEntry(site.targetLabel)(site.index)(members)(groups))
+
+let recursive resolveCaptureLabel (creatorLabel: Str) (facts: ClosureDefinitionFacts) (temp: IrTemp) known knownReturned (depth: Int) =
+    if depth > 16
+    then CaptureUnknown
+    else
+        match lookupAssociation(temp)(facts.singleDefs) with
+            | Some(MakeClosure(_, label, _, _, _, _, _)) -> CaptureKnown(label)
+            | Some(MakeClosureStack(_, label, _, _, _, _)) -> CaptureKnown(label)
+            | Some(Borrow(_, source)) -> resolveCaptureLabel(creatorLabel)(facts)(source)(known)(knownReturned)(depth + 1)
+            | Some(LoadLocal(_, slot)) ->
+                if lookupAssociation(slot)(facts.storeCountBySlot) == Some(1)
+                then
+                    match lookupAssociation(slot)(facts.singleStoreSourceBySlot) with
+                        | Some(source) -> resolveCaptureLabel(creatorLabel)(facts)(source)(known)(knownReturned)(depth + 1)
+                        | None -> CaptureUnknown
+                else CaptureUnknown
+            | Some(LoadEnv(_, index)) ->
+                match lookupSlotEntry(creatorLabel)(index)(known) with
+                    | Some(label) -> CaptureKnown(label)
+                    | None -> CapturePending
+            | Some(CallKnown(_, callee, _, _, _, _)) ->
+                match lookupAssociation(callee)(knownReturned) with
+                    | Some(label) -> CaptureKnown(label)
+                    | None -> CaptureUnknown
+            | _ -> CaptureUnknown
+
+// A group is known once every site resolves to the same label; one unresolvable or disagreeing
+// site settles it as unknown, and an unresolved captured word of a creator leaves it pending.
+let recursive resolveCaptureGroup (sites: List(CaptureSite)) known knownReturned (agreed: Maybe(Str)) (pending: Bool) =
+    match sites with
+        | [] ->
+            if pending
+            then CapturePending
+            else
+                match agreed with
+                    | Some(label) -> CaptureKnown(label)
+                    | None -> CapturePending
+        | site :: tail ->
+            match resolveCaptureLabel(site.creatorLabel)(site.creator)(site.sourceTemp)(known)(knownReturned)(0) with
+                | CaptureUnknown -> CaptureUnknown
+                | CapturePending -> resolveCaptureGroup(tail)(known)(knownReturned)(agreed)(true)
+                | CaptureKnown(label) ->
+                    match agreed with
+                        | None -> resolveCaptureGroup(tail)(known)(knownReturned)(Some(label))(pending)
+                        | Some(previous) ->
+                            if previous == label
+                            then resolveCaptureGroup(tail)(known)(knownReturned)(agreed)(pending)
+                            else CaptureUnknown
+
+let recursive resolveCaptureGroups (groups: List(((Str, Int), List(CaptureSite)))) known (conflicting: List((Str, Int))) knownReturned (changed: Bool) =
+    match groups with
+        | [] -> (known, conflicting, changed)
+        | ((label, index), sites) :: tail ->
+            if containsSlot(label)(index)(conflicting)
+            then resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
+            else
+                match lookupSlotEntry(label)(index)(known) with
+                    | Some(_) -> resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
+                    | None ->
+                        match resolveCaptureGroup(sites)(known)(knownReturned)(None)(false) with
+                            | CaptureUnknown -> resolveCaptureGroups(tail)(known)((label, index) :: conflicting)(knownReturned)(true)
+                            | CaptureKnown(resolved) -> resolveCaptureGroups(tail)(setSlotEntry(label)(index)(resolved)(known))(conflicting)(knownReturned)(true)
+                            | CapturePending -> resolveCaptureGroups(tail)(known)(conflicting)(knownReturned)(changed)
+
+// Whole-program fixpoint over the capture graph: each pass settles the groups whose sites resolve
+// against the words known so far, so a chain of captured aliases converges while a word that
+// depends on an unresolvable one stays pending and is never rewritten.
+let recursive computeKnownCapturedClosureLabels groups known conflicting knownReturned =
+    match resolveCaptureGroups(groups)(known)(conflicting)(knownReturned)(false) with
+        | (nextKnown, nextConflicting, true) -> computeKnownCapturedClosureLabels(groups)(nextKnown)(nextConflicting)(knownReturned)
+        | (nextKnown, _, false) -> nextKnown
+
+let recursive resolveCapturedWordIndex singleDefs (temp: IrTemp) (depth: Int) =
+    if depth > 8
+    then None
+    else
+        match lookupAssociation(temp)(singleDefs) with
+            | Some(LoadEnv(_, index)) -> Some(index)
+            | Some(Borrow(_, source)) -> resolveCapturedWordIndex(singleDefs)(source)(depth + 1)
+            | _ -> None
+
+// A CallClosure through a known captured word becomes a read of the closure object's environment
+// word (offset 8) and a direct CallKnown of the proven label at the same position.
+let recursive devirtualizeCapturedClosureCallsPass (fnLabel: Str) singleDefs knownCaptured insts (nextTemp: Int) acc =
+    match insts with
+        | [] -> (reverse(acc), nextTemp)
+        | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
+            let resolved =
+                match resolveCapturedWordIndex(singleDefs)(closureTemp)(0) with
+                    | Some(index) -> lookupSlotEntry(fnLabel)(index)(knownCaptured)
+                    | None -> None
+            in
+                match resolved with
+                    | Some(label) ->
+                        devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp + 1)(
+                            IrInstruction(instruction = CallKnown(dest)(label)(nextTemp)(argTemp)(flagTemp)(false), location = loc) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(closureTemp)(8), location = loc) :: acc
+                        )
+                    | None -> devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp)(irInst :: acc)
+        | head :: tail -> devirtualizeCapturedClosureCallsPass(fnLabel)(singleDefs)(knownCaptured)(tail)(nextTemp)(head :: acc)
+
+let devirtualizeCapturedClosureCallsInFunction knownCaptured (fn: IrFunction) =
+    if fn.hasEnvAndArgParams
+    then
+        match fn.coroutine with
+            | Some(_) -> fn
+            | None ->
+                let defCounts = countDefinitions(fn.instructions)([])
+                in
+                    let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
+                    in
+                        match devirtualizeCapturedClosureCallsPass(fn.label)(singleDefs)(knownCaptured)(fn.instructions)(fn.tempCount)([]) with
+                            | (rewritten, nextTemp) ->
+                                if nextTemp == fn.tempCount
+                                then fn
+                                else fn with instructions = rewritten, tempCount = nextTemp
+    else fn
+
+let devirtualizeCapturedClosureCalls (entry: IrFunction) (functions: List(IrFunction)) =
+    (let all = entry :: functions
+    in
+        let knownReturned = computeKnownReturnedClosureLabels(all)([])
+        in
+            match collectCaptureSites(all)([])([]) with
+                | (sites, unresolvable) ->
+                    match computeKnownCapturedClosureLabels(groupCaptureSites(sites)([]))([])(unresolvable)(knownReturned) with
+                        | [] -> (entry, functions)
+                        | knownCaptured -> (devirtualizeCapturedClosureCallsInFunction(knownCaptured)(entry), map(devirtualizeCapturedClosureCallsInFunction(knownCaptured))(functions)))
+
+// Currying-stage inlining. A curried function of several parameters lowers to a chain of stages,
+// each of which only copies its captures and its argument into a fresh environment and returns
+// the next stage's closure. Once the calls along a saturated chain are direct, the caller still
+// pays one heap environment and one closure object per stage. When the stage's whole body is
+// that copy, the caller can build the next stage's environment itself, on its own stack, and
+// call the next function directly with it: the stage's closure object is never needed, and the
+// environment dies with the caller's frame. The next function must read its environment only
+// through LoadEnv (no raw read of the environment pointer, no coroutine frame rewrite), and the
+// call must not become a native sibling tail call, which the stack-allocated flag on CallKnown
+// already enforces. Repeated to a fixpoint so a chain of stages collapses into the innermost call.
+let acceptStageClosure (scan: CurryingStageScan) (target: IrTemp) (label: Str) (envPtr: IrTemp) (size: Int) =
+    if scan.scanClosureTemp < 0
+    then
+        if envPtr == scan.scanEnvTemp
+        then
+            if size == scan.scanEnvSize
+            then Some((scan with scanClosureTemp = target, scanNextLabel = Some(label)))
+            else None
+        else None
+    else None
+
+// A pure stage: one fresh environment allocation, loads of its own captures and argument,
+// exactly one store per environment word from those loads, one closure construction over that
+// environment (not itself reference-counted, so skipping it drops no release), and a return of
+// that closure as the last instruction. Anything else disqualifies the function.
+let acceptCurryingStageInstruction (scan: CurryingStageScan) inst (last: Bool) =
+    match inst with
+        | Alloc(target, size, runtimeManaged) ->
+            if runtimeManaged
+            then None
+            else
+                if scan.scanEnvTemp < 0
+                then Some((scan with scanEnvTemp = target, scanEnvSize = size))
+                else None
+        | AllocStack(target, size) ->
+            if scan.scanEnvTemp < 0
+            then Some((scan with scanEnvTemp = target, scanEnvSize = size))
+            else None
+        | LoadEnv(target, index) -> Some((scan with sourceIndexByTemp = setAssociation(target)(index)(scan.sourceIndexByTemp)))
+        | LoadLocal(target, slot) ->
+            if slot == 1
+            then Some((scan with sourceIndexByTemp = setAssociation(target)(-1)(scan.sourceIndexByTemp)))
+            else None
+        | StoreMemOffset(basePtr, offset, source) ->
+            if scan.scanEnvTemp >= 0
+            then
+                if basePtr == scan.scanEnvTemp
+                then
+                    match lookupAssociation(source)(scan.sourceIndexByTemp) with
+                        | Some(captureIndex) -> Some((scan with scanStores = (offset, captureIndex) :: scan.scanStores))
+                        | None -> None
+                else None
+            else None
+        | MakeClosure(target, label, envPtr, size, runtimeManaged, _, _) ->
+            if runtimeManaged
+            then None
+            else acceptStageClosure(scan)(target)(label)(envPtr)(size)
+        | MakeClosureStack(target, label, envPtr, size, _, _) -> acceptStageClosure(scan)(target)(label)(envPtr)(size)
+        | Return(source) ->
+            if last
+            then
+                if scan.scanClosureTemp >= 0
+                then
+                    if source == scan.scanClosureTemp
+                    then Some(scan)
+                    else None
+                else None
+            else None
+        | _ -> None
+
+let recursive stageStoresAreWellFormed (envSize: Int) (stores: List((Int, Int))) (seenOffsets: List(Int)) =
+    match stores with
+        | [] -> true
+        | (offset, _) :: tail ->
+            if offset < 0
+            then false
+            else
+                if offset >= envSize
+                then false
+                else
+                    if offset % 8 != 0
+                    then false
+                    else
+                        if listContains(offset)(seenOffsets)
+                        then false
+                        else stageStoresAreWellFormed(envSize)(tail)(offset :: seenOffsets)
+
+let finishCurryingStageScan (scan: CurryingStageScan) =
+    match scan.scanNextLabel with
+        | None -> None
+        | Some(label) ->
+            if scan.scanEnvSize <= 0
+            then None
+            else
+                let stores = reverse(scan.scanStores)
+                in
+                    if length(stores) != scan.scanEnvSize / 8
+                    then None
+                    else
+                        if stageStoresAreWellFormed(scan.scanEnvSize)(stores)([])
+                        then Some(CurryingStage(envSizeBytes = scan.scanEnvSize, stores = stores, nextLabel = label))
+                        else None
+
+let recursive scanCurryingStage (scan: CurryingStageScan) instructions =
+    match instructions with
+        | [] -> finishCurryingStageScan(scan)
+        | IrInstruction { instruction = inst } :: tail ->
+            let last =
+                match tail with
+                    | [] -> true
+                    | _ -> false
+            in
+                match acceptCurryingStageInstruction(scan)(inst)(last) with
+                    | None -> None
+                    | Some(next) -> scanCurryingStage(next)(tail)
+
+let tryMatchCurryingStage (fn: IrFunction) =
+    if fn.hasEnvAndArgParams
+    then
+        match fn.coroutine with
+            | Some(_) -> None
+            | None ->
+                if length(fn.instructions) < 3
+                then None
+                else
+                    scanCurryingStage(
+                        CurryingStageScan(scanEnvTemp = -1, scanEnvSize = 0, scanClosureTemp = -1, scanNextLabel = None, sourceIndexByTemp = [], scanStores = [])
+                    )(
+                        fn.instructions
+                    )
+    else None
+
+// The stage shape of every function that has one, computed once from the bodies as they are
+// before this pass rewrites any caller.
+let recursive collectCurryingStages (functions: List(IrFunction)) (acc: List((Str, CurryingStage))) =
+    match functions with
+        | [] -> acc
+        | fn :: tail ->
+            match tryMatchCurryingStage(fn) with
+                | Some(stage) -> collectCurryingStages(tail)(setAssociation(fn.label)(stage)(acc))
+                | None -> collectCurryingStages(tail)(acc)
+
+let calleeAcceptsCallerFrameEnvironment (callee: IrFunction) =
+    if callee.hasEnvAndArgParams
+    then
+        match callee.coroutine with
+            | Some(_) -> false
+            | None -> !readsEnvPointerRaw(callee.instructions)
+    else false
+
+let recursive indexInstructions instructions (position: Int) acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | head :: tail -> indexInstructions(tail)(position + 1)((position, head) :: acc)
+
+// The position of the LoadMemOffset that reads each closure temp's environment word, and the
+// position of the CallKnown that passes each environment temp.
+let recursive indexStageChainSites (indexed: List((Int, IrInstruction))) envLoads calls =
+    match indexed with
+        | [] -> (envLoads, calls)
+        | (position, irInst) :: tail ->
+            match irInst with
+                | IrInstruction { instruction = LoadMemOffset(_, basePtr, 8) } -> indexStageChainSites(tail)(setAssociation(basePtr)(position)(envLoads))(calls)
+                | IrInstruction { instruction = CallKnown(_, _, envTemp, _, _, _) } -> indexStageChainSites(tail)(envLoads)(setAssociation(envTemp)(position)(calls))
+                | _ -> indexStageChainSites(tail)(envLoads)(calls)
+
+let instructionKindAt (position: Int) (indexed: List((Int, IrInstruction))) =
+    match lookupAssociation(position)(indexed) with
+        | Some(IrInstruction { instruction = inst }) -> Some(inst)
+        | None -> None
+
+// The chain: `r = CallKnown(stage, env, a)`, `e = LoadMemOffset(r, 8)`, `CallKnown(next, e, b)`,
+// with r and e each used exactly once, next being the label the stage returns, and next able to
+// take a caller-frame environment: (load position, next call position, stage).
+let tryMatchInlinableStageChain (stageLabel: Str) (resultTemp: IrTemp) indexed useCounts envLoads calls (stages: List((Str, CurryingStage))) (functions: List(IrFunction)) =
+    match lookupAssociation(stageLabel)(stages) with
+        | None -> None
+        | Some(stage) ->
+            if lookupAssociation(resultTemp)(useCounts) == Some(1)
+            then
+                match lookupAssociation(resultTemp)(envLoads) with
+                    | None -> None
+                    | Some(loadPosition) ->
+                        match instructionKindAt(loadPosition)(indexed) with
+                            | Some(LoadMemOffset(envWord, _, _)) ->
+                                if lookupAssociation(envWord)(useCounts) == Some(1)
+                                then
+                                    match lookupAssociation(envWord)(calls) with
+                                        | None -> None
+                                        | Some(callPosition) ->
+                                            match instructionKindAt(callPosition)(indexed) with
+                                                | Some(CallKnown(_, nextLabel, _, _, _, _)) ->
+                                                    if nextLabel == stage.nextLabel
+                                                    then
+                                                        match lookupFunction(nextLabel)(functions) with
+                                                            | Some(next) ->
+                                                                if calleeAcceptsCallerFrameEnvironment(next)
+                                                                then Some((loadPosition, callPosition, stage))
+                                                                else None
+                                                            | None -> None
+                                                    else None
+                                                | _ -> None
+                                else None
+                            | _ -> None
+            else None
+
+// Emits the stack environment the stage would have built: its captures come from the stage's
+// own environment (the pointer the call passes), its argument from the call's argument temp.
+let recursive buildStageEnvironmentStores (stageEnv: IrTemp) (argTemp: IrTemp) (stackEnv: IrTemp) (stores: List((Int, Int))) (nextTemp: Int) acc =
+    match stores with
+        | [] -> (reverse(acc), nextTemp)
+        | (offset, captureIndex) :: tail ->
+            if captureIndex < 0
+            then buildStageEnvironmentStores(stageEnv)(argTemp)(stackEnv)(tail)(nextTemp)(IrInstruction(instruction = StoreMemOffset(stackEnv)(offset)(argTemp), location = None) :: acc)
+            else
+                buildStageEnvironmentStores(stageEnv)(argTemp)(stackEnv)(tail)(nextTemp + 1)(
+                    IrInstruction(instruction = StoreMemOffset(stackEnv)(offset)(nextTemp), location = None) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(stageEnv)(captureIndex * 8), location = None) :: acc
+                )
+
+let buildStageEnvironment (stageEnv: IrTemp) (argTemp: IrTemp) location (stage: CurryingStage) (nextTemp: Int) =
+    (let stackEnv = nextTemp
+    in
+        match buildStageEnvironmentStores(stageEnv)(argTemp)(stackEnv)(stage.stores)(nextTemp + 1)([]) with
+            | (stores, finalTemp) -> (IrInstruction(instruction = AllocStack(stackEnv)(stage.envSizeBytes), location = location) :: stores, stackEnv, finalTemp))
+
+let retargetKnownCallEnvironment (stackEnv: IrTemp) irInst =
+    match irInst with
+        | IrInstruction { instruction = CallKnown(dest, label, _, argTemp, flagTemp, _), location = loc } -> IrInstruction(instruction = CallKnown(dest)(label)(stackEnv)(argTemp)(flagTemp)(true), location = loc)
+        | other -> other
+
+// Each accepted site: the stage call's position mapped to its replacement, the position of the
+// environment-word load to drop, and the next call's position mapped to its retargeted form. A
+// call already retargeted in this pass is left for the next iteration.
+let recursive collectStageExpansions indexed remaining useCounts envLoads calls stages functions (nextTemp: Int) expansions (removed: List(Int)) rewrites =
+    match remaining with
+        | [] -> (expansions, removed, rewrites, nextTemp)
+        | (position, irInst) :: tail ->
+            match irInst with
+                | IrInstruction { instruction = CallKnown(resultTemp, stageLabel, envTemp, argTemp, _, _), location = loc } ->
+                    match lookupAssociation(position)(rewrites) with
+                        | Some(_) -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                        | None ->
+                            match tryMatchInlinableStageChain(stageLabel)(resultTemp)(indexed)(useCounts)(envLoads)(calls)(stages)(functions) with
+                                | None -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                                | Some((loadPosition, callPosition, stage)) ->
+                                    match buildStageEnvironment(envTemp)(argTemp)(loc)(stage)(nextTemp) with
+                                        | (replacement, stackEnv, finalTemp) ->
+                                            let retargeted =
+                                                match lookupAssociation(callPosition)(indexed) with
+                                                    | Some(nextCall) -> retargetKnownCallEnvironment(stackEnv)(nextCall)
+                                                    | None -> irInst
+                                            in
+                                                collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(finalTemp)(setAssociation(position)(replacement)(expansions))(loadPosition :: removed)(
+                                                    setAssociation(callPosition)(retargeted)(rewrites)
+                                                )
+                | _ -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+
+let recursive rebuildWithStageExpansions (indexed: List((Int, IrInstruction))) expansions (removed: List(Int)) rewrites acc =
+    match indexed with
+        | [] -> reverse(acc)
+        | (position, irInst) :: tail ->
+            if listContains(position)(removed)
+            then rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(acc)
+            else
+                match lookupAssociation(position)(expansions) with
+                    | Some(replacement) -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(append(reverse(replacement))(acc))
+                    | None ->
+                        match lookupAssociation(position)(rewrites) with
+                            | Some(rewritten) -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(rewritten :: acc)
+                            | None -> rebuildWithStageExpansions(tail)(expansions)(removed)(rewrites)(irInst :: acc)
+
+let inlineCurryingStagesOnce stages functions (fn: IrFunction) =
+    (let indexed = indexInstructions(fn.instructions)(0)([])
+    in
+        let useCounts = countUses(fn.instructions)([])
+        in
+            match indexStageChainSites(indexed)([])([]) with
+                | (envLoads, calls) ->
+                    match collectStageExpansions(indexed)(indexed)(useCounts)(envLoads)(calls)(stages)(functions)(fn.tempCount)([])([])([]) with
+                        | ([], _, _, _) -> (fn, false)
+                        | (expansions, removed, rewrites, nextTemp) -> ((fn with instructions = rebuildWithStageExpansions(indexed)(expansions)(removed)(rewrites)([]), tempCount = nextTemp), true))
+
+let recursive inlineCurryingStagesInFunction stages functions (fn: IrFunction) =
+    match inlineCurryingStagesOnce(stages)(functions)(fn) with
+        | (_, false) -> fn
+        | (rewritten, true) -> inlineCurryingStagesInFunction(stages)(functions)(rewritten)
+
+let inlineCurryingStages (entry: IrFunction) (functions: List(IrFunction)) =
+    (let all = entry :: functions
+    in
+        match collectCurryingStages(all)([]) with
+            | [] -> (entry, functions)
+            | stages -> (inlineCurryingStagesInFunction(stages)(all)(entry), map(inlineCurryingStagesInFunction(stages)(all))(functions)))
+
 // Control-flow simplification. Three locally safe rewrites that need no reachability analysis:
 // a branch aimed at a label that is immediately followed by nothing but an unconditional Jump is
 // redirected straight to that chain's final destination; a label with no remaining branch
@@ -2138,34 +2748,40 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
             in
                 let optFuncs = map(optimizeIrFunctionWithEvaluable(evaluable))(programAfterCtEval.functions)
                 in
-                    match scalarizeSingleCaptureStackClosures(optEntry)(optFuncs) with
-                        | (scalEntry, scalFuncs) ->
-                            let knownLabels = computeKnownReturnedClosureLabels(scalFuncs)([])
+                    match devirtualizeCapturedClosureCalls(optEntry)(optFuncs) with
+                        | (capturedEntry, capturedFuncs) ->
+                            let firstKnownLabels = computeKnownReturnedClosureLabels(capturedFuncs)([])
                             in
-                                let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(scalEntry)
-                                in
-                                    let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(scalFuncs)
-                                    in
-                                        let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
-                                        in
-                                            let finalEntry = foldConcatStrChains(stripRedundantArenaBrackets(nonAllocating)(devirtEntry))
-                                            in
-                                                let finalFuncs = map(foldConcatStrChains)(map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs))
+                                match inlineCurryingStages(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels)(capturedEntry))(map(devirtualizeReturnedClosureCallsInFunction(firstKnownLabels))(capturedFuncs)) with
+                                    | (inlinedEntry, inlinedFuncs) ->
+                                        match scalarizeSingleCaptureStackClosures(inlinedEntry)(inlinedFuncs) with
+                                            | (scalEntry, scalFuncs) ->
+                                                let knownLabels = computeKnownReturnedClosureLabels(scalFuncs)([])
                                                 in
-                                                    IrProgram(
-                                                        entryFunction = finalEntry,
-                                                        functions = finalFuncs,
-                                                        stringLiterals = programAfterCtEval.stringLiterals,
-                                                        externalFunctions = programAfterCtEval.externalFunctions,
-                                                        externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
-                                                        usesPrintInt = programAfterCtEval.usesPrintInt,
-                                                        usesPrintStr = programAfterCtEval.usesPrintStr,
-                                                        usesPrintBool = programAfterCtEval.usesPrintBool,
-                                                        usesConcatStr = programAfterCtEval.usesConcatStr,
-                                                        usesClosures = programAfterCtEval.usesClosures,
-                                                        usesAsync = programAfterCtEval.usesAsync,
-                                                        capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
-                                                        traitEvidence = programAfterCtEval.traitEvidence
-                                                    ))
+                                                    let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(scalEntry)
+                                                    in
+                                                        let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(scalFuncs)
+                                                        in
+                                                            let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
+                                                            in
+                                                                let finalEntry = foldConcatStrChains(stripRedundantArenaBrackets(nonAllocating)(devirtEntry))
+                                                                in
+                                                                    let finalFuncs = map(foldConcatStrChains)(map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs))
+                                                                    in
+                                                                        IrProgram(
+                                                                            entryFunction = finalEntry,
+                                                                            functions = finalFuncs,
+                                                                            stringLiterals = programAfterCtEval.stringLiterals,
+                                                                            externalFunctions = programAfterCtEval.externalFunctions,
+                                                                            externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
+                                                                            usesPrintInt = programAfterCtEval.usesPrintInt,
+                                                                            usesPrintStr = programAfterCtEval.usesPrintStr,
+                                                                            usesPrintBool = programAfterCtEval.usesPrintBool,
+                                                                            usesConcatStr = programAfterCtEval.usesConcatStr,
+                                                                            usesClosures = programAfterCtEval.usesClosures,
+                                                                            usesAsync = programAfterCtEval.usesAsync,
+                                                                            capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
+                                                                            traitEvidence = programAfterCtEval.traitEvidence
+                                                                        ))
 
 let optimizeIrProgram program = optimizeIrProgramWithOptions(defaultOptimizerOptions)(program)
