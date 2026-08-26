@@ -10,9 +10,12 @@
 //   5. Known closure devirtualization (CallClosure -> CallKnown)
 //   6. Constant propagation and folding (arithmetic, bitwise, comparison; temp and local-slot facts
 //      with a true meet over every predecessor edge at a label once all edges are observed, and a
-//      conservative clear at a label with a not-yet-observed backward edge)
+//      conservative clear at a label with a not-yet-observed backward edge; a JumpIfFalse whose
+//      condition is known folds to a fall-through or an unconditional Jump, and a SwitchTag whose
+//      tag is known folds to a Jump to the taken case)
 //   7. Identity elimination and strength reduction (x+0, x-0, x*0, x*1, x*2, x/1)
-//   8. Unreachable code elimination (after Jump, Return, SwitchTag)
+//   8. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
+//      reference inside an unreachable region is dropped with its body)
 //   9. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   10. Erased RcDrop marker elision
 //   11. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
@@ -396,6 +399,10 @@ let devirtualizeKnownClosureCalls instructions =
                     | head :: tail -> devirtualize(tail)(head :: acc)
             in devirtualize(instructions)([]))
 
+let switchCaseTag (switchCase: IrSwitchCase) = switchCase.tag
+
+let switchCaseLabel (switchCase: IrSwitchCase) = switchCase.label
+
 let recursive countBranchRefsToLabels instructions acc =
     match instructions with
         | [] -> acc
@@ -417,12 +424,14 @@ let recursive countBranchRefsToLabels instructions acc =
                     let recursive addCases cs entries =
                         match cs with
                             | [] -> entries
-                            | IrSwitchCase { label = l } :: cTail ->
-                                let c =
-                                    match lookupAssociation(l)(entries) with
-                                        | Some(n) -> n + 1
-                                        | None -> 1
-                                in addCases(cTail)(setAssociation(l)(c)(entries))
+                            | switchCase :: cTail ->
+                                let l = switchCaseLabel(switchCase)
+                                in
+                                    let c =
+                                        match lookupAssociation(l)(entries) with
+                                            | Some(n) -> n + 1
+                                            | None -> 1
+                                    in addCases(cTail)(setAssociation(l)(c)(entries))
                     in
                         let mapWithCases = addCases(cases)(acc)
                         in
@@ -524,7 +533,16 @@ let recordEdgeSnapshot target facts saved =
 let recursive recordSwitchCaseSnapshots cases facts saved =
     match cases with
         | [] -> saved
-        | IrSwitchCase { label = caseLabel } :: tail -> recordSwitchCaseSnapshots(tail)(facts)(recordEdgeSnapshot(caseLabel)(facts)(saved))
+        | switchCase :: tail -> recordSwitchCaseSnapshots(tail)(facts)(recordEdgeSnapshot(switchCaseLabel(switchCase))(facts)(saved))
+
+// The case a switch on an already-known tag takes: the first case carrying that tag, else the default.
+let recursive switchTakenLabel tag cases defaultLabel =
+    match cases with
+        | [] -> defaultLabel
+        | switchCase :: rest ->
+            if switchCaseTag(switchCase) == tag
+            then switchCaseLabel(switchCase)
+            else switchTakenLabel(tag)(rest)(defaultLabel)
 
 // The facts entering a label. When every predecessor edge (each explicit branch plus fall-through,
 // if any) has been observed by this forward scan, the entering facts are the meet over those edges;
@@ -689,8 +707,15 @@ let foldConstants instructions =
                                                 | None -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc)
                         | Label(name) -> foldLoop(tail)(factsAtLabel(name)(branchRefs)(facts)(saved)(prevIsTerminator))(removeAssociation(name)(saved))(false)(irInst :: acc)
                         | Jump(target) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(irInst :: acc)
-                        | JumpIfFalse(_, target) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
-                        | SwitchTag(_, cases, defaultLabel) -> foldLoop(tail)(facts)(recordEdgeSnapshot(defaultLabel)(facts)(recordSwitchCaseSnapshots(cases)(facts)(saved)))(true)(irInst :: acc)
+                        | JumpIfFalse(condition, target) ->
+                            match lookupAssociation(condition)(facts.bools) with
+                                | Some(true) -> foldLoop(tail)(facts)(saved)(false)(acc)
+                                | Some(false) -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(true)(IrInstruction(instruction = Jump(target), location = loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(recordEdgeSnapshot(target)(facts)(saved))(false)(irInst :: acc)
+                        | SwitchTag(tagTemp, cases, defaultLabel) ->
+                            match lookupAssociation(tagTemp)(facts.ints) with
+                                | Some(tag) -> foldLoop(tail)(facts)(recordEdgeSnapshot(switchTakenLabel(tag)(cases)(defaultLabel))(facts)(saved))(true)(IrInstruction(instruction = Jump(switchTakenLabel(tag)(cases)(defaultLabel)), location = loc) :: acc)
+                                | None -> foldLoop(tail)(facts)(recordEdgeSnapshot(defaultLabel)(facts)(recordSwitchCaseSnapshots(cases)(facts)(saved)))(true)(irInst :: acc)
                         | Return(_) -> foldLoop(tail)(facts)(saved)(true)(irInst :: acc)
                         | _ -> foldLoop(tail)(facts)(saved)(false)(irInst :: acc))
         in foldLoop(instructions)(emptyFoldFacts)([])(false)([]))
@@ -835,25 +860,42 @@ let reduceIdentitiesAndStrength instructions =
                         | _ -> reduceLoop(tail)(knownInts)(savedInts)(false)(irInst :: acc)
         in reduceLoop(instructions)([])([])(false)([]))
 
+// Predecessor counts are rebuilt from this pass's own input rather than shared with the folding
+// pass: branch folding above can remove the only edge that used to target a label, so a label with
+// zero remaining branch references that sits inside an unreachable region cannot be entered at all
+// and is dropped together with its body, instead of surviving as emitted-but-dead code.
 let elideUnreachableCode instructions =
-    (let recursive elideLoop insts unreachable acc =
-        match insts with
-            | [] -> reverse(acc)
-            | (IrInstruction { instruction = inst } as irInst) :: tail ->
-                match inst with
-                    | Label(_) -> elideLoop(tail)(false)(irInst :: acc)
-                    | _ ->
-                        if unreachable
-                        then elideLoop(tail)(true)(acc)
-                        else
-                            let isTerm =
-                                match inst with
-                                    | Jump(_) -> true
-                                    | Return(_) -> true
-                                    | SwitchTag(_, _, _) -> true
-                                    | _ -> false
-                            in elideLoop(tail)(isTerm)(irInst :: acc)
-    in elideLoop(instructions)(false)([]))
+    (let branchRefs = countBranchRefsToLabels(instructions)([])
+    in
+        let recursive elideLoop insts unreachable acc =
+            match insts with
+                | [] -> reverse(acc)
+                | (IrInstruction { instruction = inst } as irInst) :: tail ->
+                    match inst with
+                        | Label(name) ->
+                            let referenced =
+                                match lookupAssociation(name)(branchRefs) with
+                                    | Some(count) -> count > 0
+                                    | None -> false
+                            in
+                                if unreachable
+                                then
+                                    if referenced
+                                    then elideLoop(tail)(false)(irInst :: acc)
+                                    else elideLoop(tail)(true)(acc)
+                                else elideLoop(tail)(false)(irInst :: acc)
+                        | _ ->
+                            if unreachable
+                            then elideLoop(tail)(true)(acc)
+                            else
+                                let isTerm =
+                                    match inst with
+                                        | Jump(_) -> true
+                                        | Return(_) -> true
+                                        | SwitchTag(_, _, _) -> true
+                                        | _ -> false
+                                in elideLoop(tail)(isTerm)(irInst :: acc)
+        in elideLoop(instructions)(false)([]))
 
 let recursive collectAllUsedTemps instructions acc =
     match instructions with
