@@ -394,6 +394,63 @@ let expectExpansionBeforeCoherence unit =
                     "derived implementation should infer before coherence: " + Ashes.Trait.Show.show(error)
                 ))
 
+let inferAwaitExpression expression =
+    inferProgramFromPackage(
+        "await-tests",
+        standardTraitEnvironment(Unit),
+        ProgramSyntax(items = [], body = Some(expression))
+    )
+
+let taskAnnotation =
+    [TypeNamed("Str"), TypeNamed("Int")]
+    |> TypeApplied("Task")
+    |> Some
+
+let renderAwaitFunction (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(argument, result, _row) -> formatSemanticType(argument) + " -> " + formatSemanticType(result)
+        | other -> formatSemanticType(other)
+
+let expectAwaitRunsATaskToItsResult unit =
+    match taskAnnotation
+    |> ExprLambda("task")(ExprAwait(ExprVar("task")))
+    |> inferAwaitExpression with
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, error = None } ->
+            let rendered =
+                semanticType
+                |> applySubstitution(substitution)
+                |> renderAwaitFunction
+            in
+                if rendered == "Task(Str, Int) -> Result(Str, Int)"
+                then Unit
+                else test.fail("await must run a Task(e, a) to its Result(e, a), got " + rendered)
+        | ProgramInferenceResult { error = Some(error) } -> test.fail("await must infer: " + Ashes.Trait.Show.show(error))
+
+let expectAwaitBindsThroughLetBang unit =
+    match inferAwaitExpression(
+        ExprLambda(
+            "task",
+            ExprLet("outcome")(ExprAwait(ExprVar("task")))(ExprVar("outcome"))([])(None)([]),
+            taskAnnotation
+        )
+    ) with
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, error = None } ->
+            let rendered =
+                semanticType
+                |> applySubstitution(substitution)
+                |> renderAwaitFunction
+            in
+                if rendered == "Task(Str, Int) -> Result(Str, Int)"
+                then Unit
+                else test.fail("a let! binding (let over await) must expose the Result to its body, got " + rendered)
+        | ProgramInferenceResult { error = Some(error) } -> test.fail("let over await must infer: " + Ashes.Trait.Show.show(error))
+
+let rejectAwaitOnANonTask unit =
+    match inferAwaitExpression(ExprAwait(ExprInt(1))) with
+        | ProgramInferenceResult { error = Some(ProgramExpressionError(ExpectedTaskType(SemInt))) } -> Unit
+        | ProgramInferenceResult { error = Some(error) } -> test.fail("awaiting a non-task must name the operand type, got " + Ashes.Trait.Show.show(error))
+        | _ -> test.fail("awaiting an Int must be rejected")
+
 let runDerivingExpansionTests unit =
     unit
     |> expectOrdinaryExpansion
@@ -407,4 +464,7 @@ let runDerivingExpansionTests unit =
     |> rejectSemanticallyUnsupportedFields
     |> rejectUnsupportedFieldFromSeparateUnit
     |> expectExpansionBeforeCoherence
+    |> (given (_) -> expectAwaitRunsATaskToItsResult(Unit))
+    |> (given (_) -> expectAwaitBindsThroughLetBang(Unit))
+    |> (given (_) -> rejectAwaitOnANonTask(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted deriving expansion tests passed"))

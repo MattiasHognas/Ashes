@@ -143,6 +143,7 @@ type TypeInferenceError =
     | UnknownRecordField(Str, Str)
     | DuplicateRecordField(Str)
     | ExpectedResultType(SemanticType)
+    | ExpectedTaskType(SemanticType)
     | PerformRequiresCapabilityOperation
     | UnknownCapabilityOperation(Str, Str)
     | UnsignedCapabilityOperationRequiresSignature(Str, Str)
@@ -1783,6 +1784,36 @@ let resultTypeShape semanticType =
             )
         | _ -> None
 
+// `await` runs a `Task(e, a)` to its `Result(e, a)`: the operand must already resolve to a task
+// (a fresh error/success pair is unified into it first), and the result's symbol is the standard
+// Result definition the same environment seeds.
+let taskTypeShape semanticType =
+    match semanticType with
+        | SemNamed(symbolId, "Task", errorType :: successType :: []) ->
+            Some(
+                ResultTypeShape(symbolId = symbolId, errorType = errorType, successType = successType)
+            )
+        | _ -> None
+
+let recursive standardTypeSymbolId (name: Str) (definitions: List(ConstructorInferenceDefinition)) (fallback: Int) =
+    match definitions with
+        | [] -> fallback
+        | ConstructorInferenceDefinition { scheme = TypeScheme { body = body } } :: rest ->
+            match splitConstructorType(body)([]) with
+                | ConstructorTypeShape { resultType = SemNamed(symbolId, candidate, _arguments) } ->
+                    if candidate == name
+                    then symbolId
+                    else standardTypeSymbolId(name)(rest)(fallback)
+                | _ -> standardTypeSymbolId(name)(rest)(fallback)
+
+let resolveResultSymbolId environment =
+    match environment with
+        | TypeEnvironment { constructors = constructors } -> standardTypeSymbolId("Result")(constructors)(2)
+
+let resolveTaskSymbolId environment =
+    match environment with
+        | TypeEnvironment { constructors = constructors } -> standardTypeSymbolId("Task")(constructors)(3)
+
 let recursive allPatternNamesPresent : List(Str) -> List(Str) -> Bool =
     given (names) ->
         given (candidates) ->
@@ -2491,6 +2522,38 @@ and inferResultErrorPipe left right environment substitution supply ambientRow =
                                                                 )
                                                             | failure -> failure
                             | failure -> failure
+        | failure -> failure
+and inferAwait task environment substitution supply ambientRow =
+    match inferWith(task)(environment)(substitution)(supply)(ambientRow) with
+        | TypeInferenceResult { semanticType = taskType, substitution = taskSubstitution, supply = taskSupply, constraints = taskConstraints, error = None } ->
+            match freshTypeVariable(taskSupply) with
+                | (errorType, errorSupply) ->
+                    match freshTypeVariable(errorSupply) with
+                        | (successType, successSupply) ->
+                            let expectedTask = SemNamed(resolveTaskSymbolId(environment))("Task")([errorType, successType])
+                            in
+                                match mergeUnification(
+                                    taskSubstitution,
+                                    unify(applySubstitution(taskSubstitution)(taskType))(expectedTask),
+                                    successSupply,
+                                    expectedTask
+                                ) with
+                                    | TypeInferenceResult { substitution = unifiedSubstitution, supply = unifiedSupply, error = None } ->
+                                        addConstraints(
+                                            taskConstraints,
+                                            inferenceSuccess(
+                                                applySubstitution(unifiedSubstitution)(SemNamed(resolveResultSymbolId(environment))("Result")([errorType, successType])),
+                                                unifiedSubstitution,
+                                                unifiedSupply
+                                            )
+                                        )
+                                    | TypeInferenceResult { substitution = failedSubstitution, supply = failedSupply } ->
+                                        inferenceFailure(
+                                            SemNever,
+                                            failedSubstitution,
+                                            failedSupply,
+                                            ExpectedTaskType(applySubstitution(taskSubstitution)(taskType))
+                                        )
         | failure -> failure
 and inferLetResult name value body environment substitution supply ambientRow =
     match inferWith(value)(environment)(substitution)(supply)(ambientRow) with
@@ -3847,6 +3910,7 @@ and inferWith expression environment substitution supply ambientRow =
                 supply,
                 ambientRow
             )
+        | ExprAwait(task) -> inferAwait(task)(environment)(substitution)(supply)(ambientRow)
         | ExprLetResult(name, value, body) ->
             inferLetResult(
                 name,
