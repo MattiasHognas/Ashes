@@ -514,7 +514,7 @@ same public behavior.
   store at offset 0, two uses), the `LoadEnv`-only callee gate with the coroutine and raw-slot-0
   exclusions, the memoized `__scalarenvN` variant that reads slot 0 directly, and the original
   callee left untouched; the two-capture extension is the next item.
-- [ ] Extend closure environment scalarization to two scalar captures, and reach let-bound local
+- [x] Extend closure environment scalarization to two scalar captures, and reach let-bound local
   helpers with it. A second capture travels in the call's ownership-flag word, which is free
   whenever the `CallKnown` passes no flag and the callee's body never reads one: the variant reads
   it through `LoadArgumentOwnership` (a raw read of that same parameter), the caller-side gate
@@ -529,7 +529,10 @@ same public behavior.
   construction, and the environment die and a `let step = given x -> ...` helper scalarizes like an
   immediately-applied lambda. Measured **2.76x at `-O2` / 1.57x at `-O0`** on a 20,000,000-iteration
   loop building and calling a two-capture let-bound helper per iteration; the already-scalarized
-  single-capture immediately-applied shape is unchanged.
+  single-capture immediately-applied shape is unchanged. Pure Ashes now ports both halves: the
+  16-byte site gate with the free-flag-word condition, the `LoadArgumentOwnership` variant read
+  and its callee exclusion, `LoadArgumentOwnership` as non-allocating, and slot-resolved
+  devirtualization with dead-load and dropper-free cleanup removal.
 - [ ] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
   not part of the `IrOptimizer` pipeline above, since a capture's environment is built at the
   creation site *before* the body is lowered and its used-set is known): record each capture's fill

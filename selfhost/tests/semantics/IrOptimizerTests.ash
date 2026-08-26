@@ -1512,6 +1512,290 @@ let testEnvironmentReadElsewhereKeepsEnvironment unit =
         then Unit
         else test.fail("testEnvironmentReadElsewhereKeepsEnvironment: an environment read anywhere but its store and its call must be kept"))
 
+let recursive hasLoadArgumentOwnership instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadArgumentOwnership(_) } :: _ -> true
+        | _ :: tail -> hasLoadArgumentOwnership(tail)
+
+let recursive hasCleanupResource instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CleanupResource(_, _, _) } :: _ -> true
+        | _ :: tail -> hasCleanupResource(tail)
+
+let recursive hasStoreLocal instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = StoreLocal(_, _) } :: _ -> true
+        | _ :: tail -> hasStoreLocal(tail)
+
+let recursive callKnownFlagTemp instructions label =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = CallKnown(_, candidate, _, _, flagTemp, _) } :: tail ->
+            if candidate == label
+            then Some(flagTemp)
+            else callKnownFlagTemp(tail)(label)
+        | _ :: tail -> callKnownFlagTemp(tail)(label)
+
+let twoCaptureAddingCallee label =
+    makeFunction(label)(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            1
+            |> LoadEnv(1)
+            |> makeInstruction,
+            1
+            |> AddInt(2)(0)
+            |> makeInstruction,
+            1
+            |> LoadLocal(3)
+            |> makeInstruction,
+            3
+            |> AddInt(4)(2)
+            |> makeInstruction,
+            makeInstruction(Return(4))
+        ]
+    )(
+        2
+    )(
+        5
+    )(
+        true
+    )
+
+let flagReadingTwoCaptureCallee label =
+    makeFunction(label)(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            1
+            |> LoadEnv(1)
+            |> makeInstruction,
+            makeInstruction(LoadArgumentOwnership(2)),
+            1
+            |> AddInt(3)(0)
+            |> makeInstruction,
+            makeInstruction(Return(3))
+        ]
+    )(
+        2
+    )(
+        4
+    )(
+        true
+    )
+
+let twoCaptureEntry callee flagTemp =
+    makeFunction("_start_main")(
+        [
+            7
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            9
+            |> LoadConstInt(1)
+            |> makeInstruction,
+            16
+            |> AllocStack(2)
+            |> makeInstruction,
+            0
+            |> StoreMemOffset(2)(0)
+            |> makeInstruction,
+            1
+            |> StoreMemOffset(2)(8)
+            |> makeInstruction,
+            35
+            |> LoadConstInt(3)
+            |> makeInstruction,
+            true
+            |> CallKnown(4)(callee)(2)(3)(flagTemp)
+            |> makeInstruction,
+            makeInstruction(Return(4))
+        ]
+    )(
+        0
+    )(
+        6
+    )(
+        false
+    )
+
+let testTwoCaptureStackClosureScalarizes unit =
+    (let optimized =
+        -1
+        |> twoCaptureEntry("adder2")
+        |> optimizeSingleCaptureProgram(twoCaptureAddingCallee("adder2"))
+    in
+        let entry = entryInstructions(optimized)
+        in
+            if hasAllocStack(entry)
+            then test.fail("testTwoCaptureStackClosureScalarizes: the two-word environment allocation must disappear")
+            else
+                match (callKnownEnvTemp(entry)("adder2__scalarenv0"), callKnownFlagTemp(entry)("adder2__scalarenv0")) with
+                    | (Some(0), Some(1)) ->
+                        match findFunction(optimized.functions)("adder2__scalarenv0") with
+                            | None -> test.fail("testTwoCaptureStackClosureScalarizes: the generated variant must be appended to the program")
+                            | Some(variant) ->
+                                if hasLoadEnv(variant.instructions)
+                                then test.fail("testTwoCaptureStackClosureScalarizes: the variant must not read its environment")
+                                else
+                                    if hasLoadArgumentOwnership(variant.instructions)
+                                    then Unit
+                                    else test.fail("testTwoCaptureStackClosureScalarizes: the variant must read the second capture through the flag word")
+                    | _ -> test.fail("testTwoCaptureStackClosureScalarizes: the call must pass the first capture as env and the second as the flag word"))
+
+let testTwoCaptureCallWithOwnershipFlagKeepsEnvironment unit =
+    (let optimized =
+        3
+        |> twoCaptureEntry("adder2")
+        |> optimizeSingleCaptureProgram(twoCaptureAddingCallee("adder2"))
+    in
+        if optimized
+        |> entryInstructions
+        |> hasAllocStack
+        then Unit
+        else test.fail("testTwoCaptureCallWithOwnershipFlagKeepsEnvironment: a call that already passes an ownership flag has no free word for a second capture"))
+
+let testFlagReadingCalleeKeepsTwoCaptureEnvironment unit =
+    (let optimized =
+        -1
+        |> twoCaptureEntry("adder2")
+        |> optimizeSingleCaptureProgram(flagReadingTwoCaptureCallee("adder2"))
+    in
+        if optimized
+        |> entryInstructions
+        |> hasAllocStack
+        then Unit
+        else test.fail("testFlagReadingCalleeKeepsTwoCaptureEnvironment: a callee that reads the ownership flag cannot receive a capture in it"))
+
+let letBoundHelperInstructions =
+    [
+        0
+        |> LoadConstInt(0)
+        |> makeInstruction,
+        true
+        |> MakeClosureStack(1)("helper")(0)(0)(false)
+        |> makeInstruction,
+        1
+        |> StoreLocal(2)
+        |> makeInstruction,
+        2
+        |> LoadLocal(2)
+        |> makeInstruction,
+        5
+        |> LoadConstInt(3)
+        |> makeInstruction,
+        -1
+        |> CallClosure(4)(2)(3)
+        |> makeInstruction,
+        2
+        |> LoadLocal(5)
+        |> makeInstruction,
+        None
+        |> CleanupResource(5)("Function")
+        |> makeInstruction,
+        makeInstruction(Return(4))
+    ]
+
+let testLetBoundHelperCallDevirtualizesThroughItsSlot unit =
+    (let optimized = optimizeInstructions(letBoundHelperInstructions)(3)(6)
+    in
+        if hasCallClosure(optimized)
+        then test.fail("testLetBoundHelperCallDevirtualizesThroughItsSlot: a call through a single-store slot must resolve to its closure construction")
+        else
+            if hasCallKnownTo(optimized)("helper")
+            then
+                if hasCleanupResource(optimized)
+                then test.fail("testLetBoundHelperCallDevirtualizesThroughItsSlot: the scope-exit cleanup of a dropper-free stack closure is a runtime no-op and must go")
+                else
+                    if hasStoreLocal(optimized)
+                    then test.fail("testLetBoundHelperCallDevirtualizesThroughItsSlot: once every load is gone the slot store must die in the dead-code sweep")
+                    else Unit
+            else test.fail("testLetBoundHelperCallDevirtualizesThroughItsSlot: the direct call must target the helper's label"))
+
+let testLetBoundHelperWithDropperKeepsCleanup unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                0
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                true
+                |> MakeClosureStack(1)("helper")(0)(0)(false)
+                |> makeInstruction,
+                0
+                |> StoreMemOffset(1)(24)
+                |> makeInstruction,
+                1
+                |> StoreLocal(2)
+                |> makeInstruction,
+                2
+                |> LoadLocal(2)
+                |> makeInstruction,
+                5
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                -1
+                |> CallClosure(4)(2)(3)
+                |> makeInstruction,
+                2
+                |> LoadLocal(5)
+                |> makeInstruction,
+                None
+                |> CleanupResource(5)("Function")
+                |> makeInstruction,
+                makeInstruction(Return(4))
+            ]
+        )(
+            3
+        )(
+            6
+        )
+    in
+        if hasCleanupResource(optimized)
+        then Unit
+        else test.fail("testLetBoundHelperWithDropperKeepsCleanup: a closure that received a dropper still needs its scope-exit cleanup"))
+
+let twoStoreSlotInstructions =
+    [
+        0
+        |> LoadConstInt(0)
+        |> makeInstruction,
+        true
+        |> MakeClosureStack(1)("helper")(0)(0)(false)
+        |> makeInstruction,
+        1
+        |> StoreLocal(2)
+        |> makeInstruction,
+        true
+        |> MakeClosureStack(6)("other")(0)(0)(false)
+        |> makeInstruction,
+        6
+        |> StoreLocal(2)
+        |> makeInstruction,
+        2
+        |> LoadLocal(2)
+        |> makeInstruction,
+        5
+        |> LoadConstInt(3)
+        |> makeInstruction,
+        -1
+        |> CallClosure(4)(2)(3)
+        |> makeInstruction,
+        makeInstruction(Return(4))
+    ]
+
+let testTwiceStoredSlotKeepsIndirectCall unit =
+    (let optimized = optimizeInstructions(twoStoreSlotInstructions)(3)(7)
+    in
+        if hasCallClosure(optimized)
+        then Unit
+        else test.fail("testTwiceStoredSlotKeepsIndirectCall: a slot written twice holds no single known closure"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -1542,6 +1826,12 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testCalleeReadingEnvPointerRawKeepsEnvironment(Unit))
     |> (given (_) -> testTwoWordEnvironmentKeepsEnvironment(Unit))
     |> (given (_) -> testEnvironmentReadElsewhereKeepsEnvironment(Unit))
+    |> (given (_) -> testTwoCaptureStackClosureScalarizes(Unit))
+    |> (given (_) -> testTwoCaptureCallWithOwnershipFlagKeepsEnvironment(Unit))
+    |> (given (_) -> testFlagReadingCalleeKeepsTwoCaptureEnvironment(Unit))
+    |> (given (_) -> testLetBoundHelperCallDevirtualizesThroughItsSlot(Unit))
+    |> (given (_) -> testLetBoundHelperWithDropperKeepsCleanup(Unit))
+    |> (given (_) -> testTwiceStoredSlotKeepsIndirectCall(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
