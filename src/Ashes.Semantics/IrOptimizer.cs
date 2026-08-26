@@ -5,7 +5,7 @@ namespace Ashes.Semantics;
 /// Runs after semantic lowering, before the backend.
 /// All optimizations are invisible to the user — observable behaviour is identical.
 /// </summary>
-public static class IrOptimizer
+public static partial class IrOptimizer
 {
     /// <summary>
     /// Runs the full optimization pipeline on the given IR program.
@@ -34,22 +34,7 @@ public static class IrOptimizer
         var optimizedEntry = OptimizeFunction(program.EntryFunction, evaluableFunctions);
         var optimizedFuncs = program.Functions.Select(f => OptimizeFunction(f, evaluableFunctions)).ToList();
 
-        // Interprocedural: skip the environment allocation entirely for a single-scalar-capture
-        // stack closure whose only use is already a devirtualized CallKnown. Runs after
-        // the per-function passes so devirtualization has already resolved CallClosure -> CallKnown
-        // and dead-code elimination has already swept the now-unused MakeClosureStack, leaving the
-        // residual AllocStack/StoreMemOffset/CallKnown shape this pass looks for. May append newly
-        // generated scalar-parameter callee variants to the function list, so it runs before the
-        // non-allocation summary below (a scalarized callee is strictly less allocating, never more).
-        (optimizedEntry, optimizedFuncs) = ScalarizeSingleCaptureStackClosures(optimizedEntry, optimizedFuncs);
-
-        // Interprocedural: devirtualize a CallClosure whose closure temp reaches a CallKnown to a
-        // function already proven to always return one specific closure label (a curried call's
-        // second and later applications — DevirtualizeKnownClosureCalls above only looks at a
-        // MakeClosure definition, never at what a called function is known to return). Runs after
-        // ScalarizeSingleCaptureStackClosures (its own scalarization target shape is unaffected by
-        // this) and before the non-allocation summary below, so a newly-direct call is visible to it.
-        (optimizedEntry, optimizedFuncs) = DevirtualizeReturnedClosureCalls(optimizedEntry, optimizedFuncs);
+        (optimizedEntry, optimizedFuncs) = RunInterproceduralClosurePasses(optimizedEntry, optimizedFuncs);
 
         // Interprocedural: strip arena save/restore/reclaim brackets that provably guard no
         // allocation. Runs after the per-function passes so devirtualized calls (CallKnown) and
@@ -72,6 +57,37 @@ public static class IrOptimizer
             EntryFunction = optimizedEntry,
             Functions = optimizedFuncs,
         };
+    }
+
+    // The whole-program closure passes, in dependency order.
+    private static (IrFunction Entry, List<IrFunction> Functions) RunInterproceduralClosurePasses(
+        IrFunction entry, List<IrFunction> functions)
+    {
+        // A call through a captured closure whose label every creation site of the enclosing
+        // function agrees on becomes direct (a stitched module's alias bindings are the common
+        // case), then a saturated chain of now-direct curried stages collapses into one call with a
+        // caller-frame environment. Both run before scalarization, whose target shape (a stack
+        // environment feeding a devirtualized CallKnown) the stage inlining produces.
+        (entry, functions) = DevirtualizeCapturedClosureCalls(entry, functions);
+        (entry, functions) = DevirtualizeReturnedClosureCalls(entry, functions);
+        (entry, functions) = InlineCurryingStages(entry, functions);
+
+        // Skip the environment allocation entirely for a single-scalar-capture stack closure whose
+        // only use is already a devirtualized CallKnown. Runs after the per-function passes so
+        // devirtualization has already resolved CallClosure -> CallKnown and dead-code elimination
+        // has already swept the now-unused MakeClosureStack, leaving the residual
+        // AllocStack/StoreMemOffset/CallKnown shape this pass looks for. May append newly generated
+        // scalar-parameter callee variants to the function list, so it runs before the
+        // non-allocation summary (a scalarized callee is strictly less allocating, never more).
+        (entry, functions) = ScalarizeSingleCaptureStackClosures(entry, functions);
+
+        // Devirtualize a CallClosure whose closure temp reaches a CallKnown to a function already
+        // proven to always return one specific closure label (a curried call's second and later
+        // applications — DevirtualizeKnownClosureCalls only looks at a MakeClosure definition, never
+        // at what a called function is known to return). Runs again after scalarization (its own
+        // scalarization target shape is unaffected by this) and before the non-allocation summary,
+        // so a newly-direct call is visible to it.
+        return DevirtualizeReturnedClosureCalls(entry, functions);
     }
 
     // String-concatenation chain folding
@@ -677,7 +693,22 @@ public static class IrOptimizer
                 : new IrInst.LoadArgumentOwnership(loadEnv.Target);
         }
 
-        return callee with { Label = $"{callee.Label}__scalarenv{cloneCounter}", Instructions = newBody };
+        return CloneAsScalarEnvVariant(callee, newBody, cloneCounter);
+    }
+
+    // The variant names itself and points at the callee it was cloned from, so a report selector
+    // that matches the callee also finds the variant.
+    private static IrFunction CloneAsScalarEnvVariant(IrFunction callee, List<IrInst> newBody, int cloneCounter)
+    {
+        string cloneLabel = $"{callee.Label}__scalarenv{cloneCounter}";
+        return callee with
+        {
+            Label = cloneLabel,
+            Instructions = newBody,
+            Origin = callee.Origin is { } origin
+                ? origin with { GeneratedLabel = cloneLabel, ParentGeneratedLabel = callee.Label }
+                : null,
+        };
     }
 
     private static IrFunction OptimizeFunction(IrFunction function, HashSet<string> evaluableFunctions)
