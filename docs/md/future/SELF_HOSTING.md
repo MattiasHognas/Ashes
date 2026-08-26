@@ -488,7 +488,7 @@ same public behavior.
   targets as fresh per block, populates the field cache from a `SetAdtField` through one with the
   write's raw source temp, and its test covers the sentinel edge directly (a fresh record's field
   set from the function's own argument, read back and added).
-- [ ] Add closure environment scalarization for a single scalar capture: when a stack-allocated
+- [x] Add closure environment scalarization for a single scalar capture: when a stack-allocated
   closure's environment holds exactly one 8-byte value and its only use is already a devirtualized
   `CallKnown`, skip the environment allocation entirely and pass the captured value directly as the
   call's existing "env" argument, generating a scalar-reading callee variant (memoized per target
@@ -509,7 +509,11 @@ same public behavior.
   pass touches directly — measured **1.51x faster at `-O0` and 2.65x faster at `-O2`** on a
   20,000,000-iteration hot loop building and calling a single-capture closure per iteration; unlike
   most passes in this pipeline, the `-O2` win is real (not subsumed by LLVM) because it comes from
-  removing genuine arena-cursor runtime bookkeeping, not the allocation itself.
+  removing genuine arena-cursor runtime bookkeeping, not the allocation itself. Pure Ashes now
+  ports the one-capture form: the caller-side gate (single-definition 8-byte `AllocStack`, one
+  store at offset 0, two uses), the `LoadEnv`-only callee gate with the coroutine and raw-slot-0
+  exclusions, the memoized `__scalarenvN` variant that reads slot 0 directly, and the original
+  callee left untouched; the two-capture extension is the next item.
 - [ ] Extend closure environment scalarization to two scalar captures, and reach let-bound local
   helpers with it. A second capture travels in the call's ownership-flag word, which is free
   whenever the `CallKnown` passes no flag and the callee's body never reads one: the variant reads

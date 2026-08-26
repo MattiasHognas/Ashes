@@ -29,12 +29,16 @@
 //      reference inside an unreachable region is dropped with its body)
 //   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   11. Erased RcDrop marker elision
-//   12. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
+//   12. Closure environment scalarization for a single scalar capture: a devirtualized call of a
+//       stack closure whose 8-byte environment is filled by one store and used nowhere else
+//       passes the captured word directly as the call's env argument to a generated callee
+//       variant that reads it as a raw parameter, so the environment allocation disappears
+//   13. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
 //       functions whose every Return is one heap MakeClosure label (directly, or transitively
 //       through a CallKnown to a function already proven), then a per-function local fixpoint
 //       rewriting each CallClosure on such a call's result into an environment-word read plus
 //       a direct CallKnown, so a curry of any depth resolves fully
-//   13. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
+//   14. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
@@ -83,6 +87,14 @@ type LocalCseState =
     | valueOf: List((IrTemp, Int))
     | slotValue: List((IrLocal, Int))
     | freshPointers: List(IrTemp)
+
+// Scalarization bookkeeping threaded through every caller: the variant label generated per
+// callee (None once a callee proved ineligible), the variants to append to the program, and the
+// counter that keeps generated labels unique.
+type ScalarizeState =
+    | variantByCallee: List((Str, Maybe(Str)))
+    | newFunctions: List(IrFunction)
+    | counter: Int
 
 let defaultOptimizerOptions =
     IrOptimizerOptions(
@@ -1541,6 +1553,174 @@ let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParam
 
 let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions = eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
 
+// Closure environment scalarization for a single scalar capture. A stack closure with one 8-byte
+// capture whose only use is already a devirtualized CallKnown packs that value through an
+// AllocStack + StoreMemOffset + LoadEnv round trip although it never needs to leave a register.
+// When the callee touches its environment only through LoadEnv of index 0, the captured value is
+// passed directly in the call's existing env word and a generated callee variant reads it with a
+// LoadLocal of slot 0 (the raw parameter). The variant is memoized per callee label and the
+// original callee is never rewritten: another use of the same label may still need the
+// pointer-based form, and safety here does not depend on proving there is none. Removing the
+// environment allocation lets the arena-bracket elimination that follows also strip the bracket
+// around the call. Scope stays at one capture: every callable function shares one fixed
+// three-word signature, and a second word is a separate extension.
+let recursive countUses instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = inst } :: tail ->
+            let recursive addUses us entries =
+                match us with
+                    | [] -> entries
+                    | u :: uTail ->
+                        let count =
+                            match lookupAssociation(u)(entries) with
+                                | Some(c) -> c + 1
+                                | None -> 1
+                        in addUses(uTail)(setAssociation(u)(count)(entries))
+            in countUses(tail)(addUses(getUsedTemps(inst))(acc))
+
+let recursive findStoredWord (basePtr: IrTemp) (offset: Int) instructions =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = StoreMemOffset(storeBase, storeOffset, source) } :: tail ->
+            if storeBase == basePtr
+            then
+                if storeOffset == offset
+                then Some(source)
+                else findStoredWord(basePtr)(offset)(tail)
+            else findStoredWord(basePtr)(offset)(tail)
+        | _ :: tail -> findStoredWord(basePtr)(offset)(tail)
+
+let recursive readsEnvPointerRaw instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadLocal(_, 0) } :: _ -> true
+        | _ :: tail -> readsEnvPointerRaw(tail)
+
+// (all LoadEnv indices are 0, at least one LoadEnv seen)
+let recursive loadEnvShape instructions sawLoadEnv =
+    match instructions with
+        | [] -> (true, sawLoadEnv)
+        | IrInstruction { instruction = LoadEnv(_, index) } :: tail ->
+            if index == 0
+            then loadEnvShape(tail)(true)
+            else (false, sawLoadEnv)
+        | _ :: tail -> loadEnvShape(tail)(sawLoadEnv)
+
+let recursive replaceLoadEnvWithParameterReads instructions acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | IrInstruction { instruction = LoadEnv(target, _), location = loc } :: tail -> replaceLoadEnvWithParameterReads(tail)(IrInstruction(instruction = LoadLocal(target)(0), location = loc) :: acc)
+        | head :: tail -> replaceLoadEnvWithParameterReads(tail)(head :: acc)
+
+// A real lowered closure reads a capture only through LoadEnv, which dereferences slot 0 inside
+// its own codegen; a raw LoadLocal of slot 0 means the pointer serves some other purpose. A
+// coroutine's state-machine transform reads captures against its own frame instead, a shape this
+// pass does not attempt.
+let tryBuildScalarEnvVariant (callee: IrFunction) (counter: Int) =
+    if callee.hasEnvAndArgParams
+    then
+        match callee.coroutine with
+            | Some(_) -> None
+            | None ->
+                if readsEnvPointerRaw(callee.instructions)
+                then None
+                else
+                    match loadEnvShape(callee.instructions)(false) with
+                        | (true, true) ->
+                            Some(
+                                callee with label = callee.label + "__scalarenv" + Ashes.Trait.Show.show(counter), instructions = replaceLoadEnvWithParameterReads(callee.instructions)([])
+                            )
+                        | _ -> None
+    else None
+
+let getOrCreateScalarEnvVariant (label: Str) (functions: List(IrFunction)) (state: ScalarizeState) =
+    match lookupAssociation(label)(state.variantByCallee) with
+        | Some(memoized) -> (memoized, state)
+        | None ->
+            match lookupFunction(label)(functions) with
+                | None -> (None, (state with variantByCallee = setAssociation(label)(None)(state.variantByCallee)))
+                | Some(callee) ->
+                    match tryBuildScalarEnvVariant(callee)(state.counter) with
+                        | None -> (None, (state with variantByCallee = setAssociation(label)(None)(state.variantByCallee)))
+                        | Some(variant) -> (Some(variant.label), (state with variantByCallee = setAssociation(label)(Some(variant.label))(state.variantByCallee), newFunctions = variant :: state.newFunctions, counter = state.counter + 1))
+
+// The caller-side shape: the call's env temp is defined once by an 8-byte AllocStack, filled by
+// exactly one store at offset 0, and used nowhere else (that store and this call), so there is no
+// other read and no escape.
+let recursive collectScalarEnvCallSites allInsts insts singleDefs useCounts functions (state: ScalarizeState) acc =
+    match insts with
+        | [] -> (acc, state)
+        | IrInstruction { instruction = CallKnown(_, label, envTemp, _, _, true) } :: tail ->
+            match lookupAssociation(envTemp)(singleDefs) with
+                | Some(AllocStack(_, 8)) ->
+                    if lookupAssociation(envTemp)(useCounts) == Some(2)
+                    then
+                        match findStoredWord(envTemp)(0)(allInsts) with
+                            | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                            | Some(source) ->
+                                match getOrCreateScalarEnvVariant(label)(functions)(state) with
+                                    | (Some(variantLabel), nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)((envTemp, variantLabel, source) :: acc)
+                                    | (None, nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)(acc)
+                    else collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                | _ -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+        | _ :: tail -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+
+let recursive lookupScalarEnvSite (envTemp: IrTemp) (sites: List((IrTemp, Str, IrTemp))) =
+    match sites with
+        | [] -> None
+        | (siteEnv, variantLabel, source) :: tail ->
+            if siteEnv == envTemp
+            then Some((variantLabel, source))
+            else lookupScalarEnvSite(envTemp)(tail)
+
+// The env temp of an accepted site is used exactly by its store and its call, so dropping the
+// allocation and the store by env temp and retargeting the call is exact.
+let recursive rewriteScalarEnvCallSites insts sites acc =
+    match insts with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = AllocStack(target, _) } as irInst) :: tail ->
+            match lookupScalarEnvSite(target)(sites) with
+                | Some(_) -> rewriteScalarEnvCallSites(tail)(sites)(acc)
+                | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
+        | (IrInstruction { instruction = StoreMemOffset(basePtr, _, _) } as irInst) :: tail ->
+            match lookupScalarEnvSite(basePtr)(sites) with
+                | Some(_) -> rewriteScalarEnvCallSites(tail)(sites)(acc)
+                | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
+        | (IrInstruction { instruction = CallKnown(dest, _, envTemp, argTemp, flagTemp, true), location = loc } as irInst) :: tail ->
+            match lookupScalarEnvSite(envTemp)(sites) with
+                | Some((variantLabel, source)) -> rewriteScalarEnvCallSites(tail)(sites)(IrInstruction(instruction = CallKnown(dest)(variantLabel)(source)(argTemp)(flagTemp)(false), location = loc) :: acc)
+                | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
+        | head :: tail -> rewriteScalarEnvCallSites(tail)(sites)(head :: acc)
+
+let scalarizeCallSitesInFunction functions (state: ScalarizeState) (fn: IrFunction) =
+    (let defCounts = countDefinitions(fn.instructions)([])
+    in
+        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
+        in
+            let useCounts = countUses(fn.instructions)([])
+            in
+                match collectScalarEnvCallSites(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(functions)(state)([]) with
+                    | ([], nextState) -> (fn, nextState)
+                    | (sites, nextState) -> ((fn with instructions = rewriteScalarEnvCallSites(fn.instructions)(sites)([])), nextState))
+
+let recursive scalarizeCallSitesInFunctions functions (state: ScalarizeState) remaining acc =
+    match remaining with
+        | [] -> (reverse(acc), state)
+        | fn :: tail ->
+            match scalarizeCallSitesInFunction(functions)(state)(fn) with
+                | (rewritten, nextState) -> scalarizeCallSitesInFunctions(functions)(nextState)(tail)(rewritten :: acc)
+
+// Generated variants are appended after every caller has been rewritten; the callee lookup uses
+// the original list, since a variant is never itself a scalarization target.
+let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrFunction)) =
+    (let initialState = ScalarizeState(variantByCallee = [], newFunctions = [], counter = 0)
+    in
+        match scalarizeCallSitesInFunction(functions)(initialState)(entry) with
+            | (newEntry, entryState) ->
+                match scalarizeCallSitesInFunctions(functions)(entryState)(functions)([]) with
+                    | (newFunctions, finalState) -> (newEntry, append(newFunctions)(reverse(finalState.newFunctions))))
+
 let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
     (let insts0 = fn.instructions
     in
@@ -1590,32 +1770,34 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
             in
                 let optFuncs = map(optimizeIrFunctionWithEvaluable(evaluable))(programAfterCtEval.functions)
                 in
-                    let knownLabels = computeKnownReturnedClosureLabels(optFuncs)([])
-                    in
-                        let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(optEntry)
-                        in
-                            let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(optFuncs)
+                    match scalarizeSingleCaptureStackClosures(optEntry)(optFuncs) with
+                        | (scalEntry, scalFuncs) ->
+                            let knownLabels = computeKnownReturnedClosureLabels(scalFuncs)([])
                             in
-                                let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
+                                let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(scalEntry)
                                 in
-                                    let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
+                                    let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(scalFuncs)
                                     in
-                                        let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                        let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
                                         in
-                                            IrProgram(
-                                                entryFunction = finalEntry,
-                                                functions = finalFuncs,
-                                                stringLiterals = programAfterCtEval.stringLiterals,
-                                                externalFunctions = programAfterCtEval.externalFunctions,
-                                                externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
-                                                usesPrintInt = programAfterCtEval.usesPrintInt,
-                                                usesPrintStr = programAfterCtEval.usesPrintStr,
-                                                usesPrintBool = programAfterCtEval.usesPrintBool,
-                                                usesConcatStr = programAfterCtEval.usesConcatStr,
-                                                usesClosures = programAfterCtEval.usesClosures,
-                                                usesAsync = programAfterCtEval.usesAsync,
-                                                capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
-                                                traitEvidence = programAfterCtEval.traitEvidence
-                                            ))
+                                            let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
+                                            in
+                                                let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                                in
+                                                    IrProgram(
+                                                        entryFunction = finalEntry,
+                                                        functions = finalFuncs,
+                                                        stringLiterals = programAfterCtEval.stringLiterals,
+                                                        externalFunctions = programAfterCtEval.externalFunctions,
+                                                        externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
+                                                        usesPrintInt = programAfterCtEval.usesPrintInt,
+                                                        usesPrintStr = programAfterCtEval.usesPrintStr,
+                                                        usesPrintBool = programAfterCtEval.usesPrintBool,
+                                                        usesConcatStr = programAfterCtEval.usesConcatStr,
+                                                        usesClosures = programAfterCtEval.usesClosures,
+                                                        usesAsync = programAfterCtEval.usesAsync,
+                                                        capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
+                                                        traitEvidence = programAfterCtEval.traitEvidence
+                                                    ))
 
 let optimizeIrProgram program = optimizeIrProgramWithOptions(defaultOptimizerOptions)(program)
