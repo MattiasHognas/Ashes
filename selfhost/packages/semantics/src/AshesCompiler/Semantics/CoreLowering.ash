@@ -4034,10 +4034,16 @@ let recursive armBodyCapturePlaceholder body =
             elseBranch
             |> armBodyCapturePlaceholder
             |> ExprIf(condition)(armBodyCapturePlaceholder(thenBranch))
+        | ExprMatch(value, cases, position) ->
+            ExprMatch(value)(armBodyCapturePlaceholderCases(cases))(position)
         | _ ->
             match tailResumeArgument(body) with
                 | Some(resumedValue) -> resumedValue
                 | None -> body
+and armBodyCapturePlaceholderCases cases =
+    match cases with
+        | [] -> []
+        | (pattern, body, guard) :: rest -> (pattern, armBodyCapturePlaceholder(body), guard) :: armBodyCapturePlaceholderCases(rest)
 
 // The one-shot post-resume leaf: `v` is returned to the perform site immediately, and
 // `given postName -> postBody` is lowered as a fresh closure and stashed in the pending-post
@@ -4056,20 +4062,25 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
 // Resolves an operation arm's body (after all of its own operation parameters have been peeled
 // off by lowerOperationArmParameters) to its final lowered value: recurses through any
 // non-resuming `let`/`let recursive` prefix — an ordinary binding evaluated before the arm
-// resumes, e.g. `let y = f(x) in resume(y)` — and through an `if` whose condition doesn't resume
-// (each branch independently resolved, possibly to a different resume shape — tail in one arm,
-// one-shot in the other), down to the eventual resume shape, bare tail `resume(e)` or one-shot
-// `let x = resume(v) in body`. Mirrors stage-0's TryRewriteResume family
-// (TryRewriteResumeLet/LetRecursive/If), but interleaves shape recognition with real lowering
-// rather than rewriting the Expr tree first and lowering the rewrite once: selfhost's Expr type is
-// a closed ADT with no synthetic "post" node to rewrite into, so each non-resuming prefix's own
-// value is lowered here, in place, through the ordinary let/let-recursive/if lowering path
-// (finishLetValue / lowerPreparedRecursiveGroupWith / lowerIfThenBranch+finishIfElseBranch), with
-// the recursive call into the rest of the arm body supplied as the continuation — the same
-// sentinel-placeholder-plus-custom-continuation technique lowerCoreProgramItems already uses for
-// top-level declarations. `resume` in the `if`'s own condition is rejected outright, same as
-// stage-0's TryRewriteResumeIf — there is no one-shot if-condition-resume shape (unlike match,
-// which does have a one-shot scrutinee-resume shape — not yet ported).
+// resumes, e.g. `let y = f(x) in resume(y)` — through an `if` whose condition doesn't resume (each
+// branch independently resolved, possibly to a different resume shape — tail in one arm, one-shot
+// in the other), and through a `match` whose scrutinee and guards don't resume (same per-case
+// independence as `if`'s branches), down to the eventual resume shape, bare tail `resume(e)` or
+// one-shot `let x = resume(v) in body`. Mirrors stage-0's TryRewriteResume family
+// (TryRewriteResumeLet/LetRecursive/If/MatchCases), but interleaves shape recognition with real
+// lowering rather than rewriting the Expr tree first and lowering the rewrite once: selfhost's
+// Expr type is a closed ADT with no synthetic "post" node to rewrite into, so each non-resuming
+// prefix's own value is lowered here, in place, through the ordinary let/let-recursive/if/match
+// lowering path (finishLetValue / lowerPreparedRecursiveGroupWith /
+// lowerIfThenBranch+finishIfElseBranch / a resolveOperationArmMatchArm(s) mirror of
+// lowerMatchArm(s)), with the recursive call into the rest of the arm body supplied as the
+// continuation — the same sentinel-placeholder-plus-custom-continuation technique
+// lowerCoreProgramItems already uses for top-level declarations. `resume` in the `if`'s own
+// condition, or a match's scrutinee/any guard, is rejected outright, same as stage-0's
+// TryRewriteResumeIf/TryRewriteResumeMatchCases — there is no one-shot if-condition-resume shape,
+// but match DOES have a one-shot scrutinee-resume shape (stage-0's TryRewriteResumeOneShotMatch,
+// `match resume(v) with | ...`) that is not yet ported; a scrutinee that directly is a resume call
+// is rejected here the same as any other resume reference in the scrutinee.
 let recursive resolveOperationArmBody body lower postRegisterIndex capName opName state =
     match unspanForResumeCheck(body) with
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
@@ -4129,6 +4140,29 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                     |> prepareIfPlan
                     |> lowerIfThenBranch(thenBranch)(branchLower)
                     |> finishIfElseBranch(elseBranch)(branchLower)
+        // Case-body recursion only (mirrors stage-0's TryRewriteResumeMatchCases): the scrutinee
+        // and every guard must not reference resume at all, and each case body is independently
+        // resolved by this same recursion, same as an if's two branches. A scrutinee that IS
+        // itself a resume call (`match resume(v) with | ...`, stage-0's one-shot
+        // TryRewriteResumeOneShotMatch) is a distinct one-shot-like shape needing its own
+        // post-building, not yet ported — exprReferencesResume(value) already rejects it here,
+        // same as any other resume reference in the scrutinee. Always dispatches through the plain
+        // linear arm-by-arm path (resolveOperationArmMatchArms), never lowerMatch's own tag-group
+        // dispatch optimization (lowerMatchArmsViaTagGroups) — correct but potentially slower IR
+        // for a resume-containing match on constructor patterns; acceptable since operation arms
+        // are not hot paths the way ordinary pattern matching is.
+        | ExprMatch(value, cases, _position) ->
+            if exprReferencesResume(value)
+            then
+                opName
+                |> UnsupportedOperationArmResume(capName)
+                |> failure(state)
+            else
+                state
+                |> lower(value)
+                |> prepareMatchPlan
+                |> resolveOperationArmMatchArms(cases)(lower)(postRegisterIndex)(capName)(opName)
+                |> finishMatchPlan
         | _ ->
             match tailResumeArgument(body) with
                 | Some(resumedValue) -> lower(resumedValue)(state)
@@ -4136,6 +4170,51 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                     opName
                     |> UnsupportedOperationArmResume(capName)
                     |> failure(state)
+// Mirrors lowerMatchArm, except the guard (which must not reference resume, checked here) still
+// lowers via the arm's own ordinary `lower`, while the arm body lowers via a wrapper back into
+// resolveOperationArmBody — the same split lowerOperationArmParameters/resolveOperationArmBody
+// already use elsewhere, just applied per pipe stage instead of via a single injected `lower`
+// (lowerMatchGuard and finishMatchArm are separate pipe stages here, so each can be handed a
+// different `lower` directly, with no need to distinguish them inside one closure).
+and resolveOperationArmMatchArm pattern body guard failLabel lower postRegisterIndex capName opName plan =
+    match plan with
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType } ->
+            match state with
+                | CoreLoweringState { bindings = outerBindings } ->
+                    let guardRejected =
+                        match guard with
+                            | Some(guardExpr) -> exprReferencesResume(guardExpr)
+                            | None -> false
+                    in
+                        if guardRejected
+                        then
+                            opName
+                            |> UnsupportedOperationArmResume(capName)
+                            |> failure(state)
+                        else
+                            let bodyLower =
+                                given (armBody) ->
+                                    given (s) -> resolveOperationArmBody(armBody)(lower)(postRegisterIndex)(capName)(opName)(s)
+                            in
+                                state
+                                |> preparePattern(pattern)
+                                |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
+                                |> lowerMatchGuard(guard)(failLabel)(lower)
+                                |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(outerBindings)(bodyLower)
+and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
+    match (cases, plan) with
+        | (_cases, CoreMatchPlan { error = Some(_error) }) -> plan
+        | ([], _) -> plan
+        | ((pattern, body, guard) :: rest, CoreMatchPlan { state = state, noMatchLabel = noMatchLabel }) ->
+            match matchFailLabel(rest)(noMatchLabel)(state) with
+                | FreshLabel { state = failState, label = failLabel } ->
+                    let currentPlan = plan with state = failState
+                    in
+                        currentPlan
+                        |> resolveOperationArmMatchArm(pattern)(body)(guard)(failLabel)(lower)(postRegisterIndex)(capName)(opName)
+                        |> recastMatchPlan(currentPlan)
+                        |> labelNextMatchArm(rest)(failLabel)
+                        |> resolveOperationArmMatchArms(rest)(lower)(postRegisterIndex)(capName)(opName)
 
 // Wraps an operation arm's (already resume-rewritten) body in one lambda per parameter, matching
 // each non-variable pattern via a fresh synthetic parameter name — the ordinary lambda/match

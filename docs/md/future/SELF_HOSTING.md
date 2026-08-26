@@ -546,12 +546,32 @@ same public behavior.
   `lower` those functions call per branch, so the pre-existing result-slot/label/join logic (a
   `StoreLocal`/`Jump`/`Label`/`LoadLocal` join, the same shape any ordinary `if` compiles to)
   handles the merge for free. Regressions: `testHandleIfBranchesWithDifferentResumeShapesLowering`
-  (mixed tail/one-shot branches), `testHandleIfConditionResumeIsRejected`. **Still unimplemented**:
-  `resume` in a match arm or scrutinee, which needs the rest of stage 0's `TryRewriteResume`
-  continuation-split variants (`TryRewriteResumeMatchCases`/`TryRewriteResumeOneShotMatch`); a
-  handler whose arms only use tail-position or one-shot-`let`-position `resume`, optionally behind a
-  non-resuming `let`/`let recursive` prefix or an `if` with independently-resolved branches, now
-  lowers correctly, anything else is rejected rather than silently wrong.
+  (mixed tail/one-shot branches), `testHandleIfConditionResumeIsRejected`. **`match` case bodies
+  resuming independently are now also supported** (mirrors stage 0's
+  `TryRewriteResumeMatchCases`): the scrutinee and every case's guard must not reference `resume`
+  at all (rejected otherwise — this also covers stage 0's distinct one-shot-scrutinee shape,
+  `match resume(v) with | ...`, `TryRewriteResumeOneShotMatch`, which is a genuinely different
+  one-shot-like case needing its own post-building and is not yet ported; a scrutinee that directly
+  is a resume call is rejected the same as any other resume reference in the scrutinee), and each
+  case body is independently resolved by the same `resolveOperationArmBody` recursion — one case
+  can resume in tail position while another resumes one-shot, same independence as `if`'s two
+  branches. New `resolveOperationArmMatchArm`/`resolveOperationArmMatchArms` mirror
+  `lowerMatchArm`/`lowerMatchArms` exactly, splitting the guard (still lowered through the arm's
+  own ordinary `lower`) from the body (routed through `resolveOperationArmBody`) across the two
+  separate pipe stages those functions already call `lower` from (`lowerMatchGuard` then
+  `finishMatchArm`), rather than needing one `lower` to distinguish the two — simpler than the
+  `if` case's `branchLower` wrapper needed to be. Always dispatches through the plain linear
+  arm-by-arm path, never `lowerMatch`'s own tag-group dispatch optimization
+  (`lowerMatchArmsViaTagGroups`) for constructor-pattern matches — correct but potentially slower
+  IR for a resume-containing match on constructor patterns, acceptable since operation arms aren't
+  a hot path the way ordinary pattern matching is. Regressions:
+  `testHandleMatchCasesWithDifferentResumeShapesLowering`,
+  `testHandleMatchScrutineeResumeIsRejected`, `testHandleMatchGuardResumeIsRejected`. **Still
+  unimplemented**: the one-shot match-scrutinee-resume shape (`match resume(v) with | ...`); a
+  handler whose arms only use tail-position or one-shot-`let`-position `resume`, optionally behind
+  a non-resuming `let`/`let recursive` prefix, an `if` with independently-resolved branches, or a
+  `match` with independently-resolved case bodies, now lowers correctly, anything else is rejected
+  rather than silently wrong.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
