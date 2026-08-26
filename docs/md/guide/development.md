@@ -318,6 +318,15 @@ Record the before/after numbers and the exact program shape in the
 [Compiler Changelog](../internals/changelog.md); a pass whose only evidence is its own unit tests has
 not been shown to do anything.
 
+### Self-hosting phase benchmarks
+
+`selfhost/bench/run.sh` times the .NET compiler's phases and the self-hosted compiler's phases
+(import header, lex, parse, format, inference) over the same corpus and prints them side by side;
+`selfhost/bench/README.md` documents the phase mapping, how to add a phase, and keeps the
+refreshed results table. It is the compile-time counterpart of the `challenges/` runtime
+benchmarks: refresh it when a self-hosting milestone lands or when a change touches the
+self-hosted packages' hot paths.
+
 ## Formatting
 
 ### `.ash` Files
