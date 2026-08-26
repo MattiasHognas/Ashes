@@ -4,6 +4,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
+import AshesCompiler.Semantics.ProgramInference
 export (
     value runCoreProgramLoweringTests,
 )
@@ -69,6 +70,49 @@ let expectDuplicateAcrossPlainAndRecursiveIsRejected unit =
         | DuplicateTopLevelBinding(name) -> test.assertEqual("a")(name)
         | other -> test.fail("expected DuplicateTopLevelBinding, got " + Ashes.Trait.Show.show(other))
 
+let inferredProgramAndEnvironment source =
+    match parsedProgram(source) with
+        | program ->
+            match inferProgram(program) with
+                | ProgramInferenceResult { environment = environment, error = None } -> (program, environment)
+                | ProgramInferenceResult { error = Some(error) } -> test.fail("program should infer cleanly: " + Ashes.Trait.Show.show(error))
+
+// A one-method user trait, one concrete implementation, and a top-level binding whose OWN written
+// `requires` clause is the only thing making it generic over the trait — proves
+// lowerCoreProgramWithEnvironment threads a real inference TypeEnvironment (not a hand-built test
+// fixture, the way every other TraitEvidence*Tests.ash file constructs one) into
+// rewriteTraitConstrainedValue for the first time. No call site references `describe`: this first
+// wiring slice only rewrites a constrained BINDING's own value (extra hidden dictionary parameter
+// prepended, `Greet.greet` rewritten to read from it); a caller like `describe(5)` would need the
+// matching call-site rewrite (rewriteTraitConstrainedReference), deliberately out of scope here —
+// without it, `describe` now takes the dictionary as its real first argument, so a plain-looking
+// call would type-mismatch, which is exactly what a follow-up piece needs to fix, not this one.
+let traitConstrainedProgramSource unit = "trait Greet(a) =\n    | greet : a -> Str\n\nimplement Greet(Int) =\n    | greet = given (n) -> \"hi\"\n\nlet describe : a -> Str requires {Greet(a)} = given (x) -> Greet.greet(x)\n\n42"
+
+let expectTraitConstrainedBindingLowersWithEnvironment unit =
+    match Unit
+    |> traitConstrainedProgramSource
+    |> inferredProgramAndEnvironment with
+        | (program, environment) ->
+            match lowerCoreProgramWithEnvironment(environment)(program) with
+                | CoreLoweringResult { program = Some(_loweredProgram), error = None } -> Unit
+                | CoreLoweringResult { error = Some(error) } -> test.fail("trait-constrained program lowering with environment failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("trait-constrained program lowering with environment produced no program")
+
+// The same source through the environment-less entry point: `describe`'s body references
+// `Greet.greet` as an ordinary qualified name with no dictionary parameter ever introduced, since
+// rewriteTraitConstrainedValue never runs — proving lowerCoreProgramWithEnvironment's rewriting is
+// actually doing real work, not merely passing through a program that would have lowered fine
+// either way.
+let expectTraitConstrainedBindingFailsWithoutEnvironment unit =
+    match Unit
+    |> traitConstrainedProgramSource
+    |> inferredProgramAndEnvironment with
+        | (program, _environment) ->
+            match lowerCoreProgram(program) with
+                | CoreLoweringResult { error = Some(_error) } -> Unit
+                | CoreLoweringResult { error = None } -> test.fail("expected trait-constrained program lowering to fail without an environment, but it produced a program")
+
 let expectPlainTopLevelLetsProduceExpectedIr unit =
     "let a = 1\nlet b = 2\na + b"
     |> dumpSource
@@ -99,4 +143,6 @@ let runCoreProgramLoweringTests unit =
     |> expectDuplicateTopLevelBindingIsRejected
     |> expectDuplicateInsideRecursiveGroupIsRejected
     |> expectDuplicateAcrossPlainAndRecursiveIsRejected
+    |> expectTraitConstrainedBindingLowersWithEnvironment
+    |> expectTraitConstrainedBindingFailsWithoutEnvironment
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))

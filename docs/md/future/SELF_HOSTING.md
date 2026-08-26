@@ -300,9 +300,26 @@ same public behavior.
   implementations.
 - [x] Satisfy exact concrete capability requirements from providers while retaining abstract
   requirements and rejecting provider/handler ambiguity.
-- [ ] Lower dynamic handler evidence, one-shot continuation state, pre/post handler control flow, and
-  dynamically scoped handler globals into IR.
-- [ ] Lower static-provider dictionaries and generic capability evidence into IR.
+- [x] Lower dynamic handler evidence, one-shot continuation state, pre/post handler control flow, and
+  dynamically scoped handler globals into IR. Correcting a stale duplicate of this item: fully done
+  as of #646 — see the "Lower capability handlers/providers and trait evidence" entry below for the
+  detailed history (dynamically scoped handler globals and evidence save/switch/restore: #640/#641;
+  one-shot continuation state, the full `TryRewriteResume` family: #641-#646; pre/post handler
+  control flow, the posts-fold mechanism: #642, exercised end-to-end by every one-shot test since).
+- [~] Lower static-provider dictionaries and generic capability evidence into IR. Static-provider
+  dictionaries: done and tested (`emitStaticProviderCall`, `CoreCapabilityLowering.ash`). Generic
+  capability evidence: **verified gap, not yet fixed** — `CoreStaticProviderLayout.typeArguments:
+  List(SemanticType)` is a real field but is never read anywhere in `CoreCapabilityLowering.ash`/
+  `CoreLowering.ash`; `findStaticProvider` matches by `capabilityName` alone, so if two providers
+  for the same capability name at different concrete type arguments (e.g. `provide Log(Int)` vs.
+  `provide Log(Str)`) both reach lowering in the same `staticProviders` list, lowering cannot
+  distinguish them and would silently pick whichever matches by name first. Not yet determined
+  whether this is reachable in practice — inference's own ambiguity rejection (the item above this
+  section, "Satisfy exact concrete capability requirements... rejecting provider/handler ambiguity")
+  may already guarantee `staticProviders` never contains two same-named entries for one lowering
+  call, the same way handler-arm completeness turned out to already be enforced at the inference
+  phase rather than needing a lowering-side check (see the post-#646 audit note in project memory).
+  Needs verification before treating this as an active bug.
 - [ ] Validate capability explanations and observable behavior against normal, optimization-disabled,
   and reuse-disabled C# compilation.
 
@@ -340,7 +357,27 @@ same public behavior.
   closure captures, nested aggregate locations, and async frames. Rewrite constrained values with
   hidden dictionary parameters, deterministic dictionary destructuring, and unambiguous qualified
   method bindings. Rewrite constrained references with ABI-ordered exact or inherited active evidence.
-  Physically thread dictionaries through the corresponding lowered representations.
+  Physically thread dictionaries through the corresponding lowered representations. **First real
+  wiring step taken**: `rewriteTraitConstrainedValue`/`rewriteTraitConstrainedReference`
+  (`TraitEvidenceRewriting.ash`) — the elaboration functions this whole plan describes — were fully
+  built and unit-tested in isolation but had ZERO real call sites; `CoreLowering.ash`'s whole-program
+  entry points (`lowerCoreProgram`/`lowerCoreProgramWithSource`) also had no real caller and take
+  only raw `ProgramSyntax`, no inference-result input at all. New `lowerCoreProgramWithEnvironment`
+  takes a real `TypeEnvironment` (the same one `ProgramInferenceResult.environment` produces) and,
+  for a plain (non-recursive) top-level `let` whose own generalized `TypeScheme` carries trait
+  constraints, elaborates its value via `rewriteTraitConstrainedValue` before lowering — proven
+  against genuine `inferProgram` output (not a hand-built fixture, unlike every existing
+  `TraitEvidence*Tests.ash` file) for a user-declared trait, one `implement`, and one `requires`
+  binding whose body calls the trait method. **Deliberately narrow first slice, not the whole
+  epic**: recursive top-level bindings (`TopLevelLet(..., true)`/`TopLevelRecursiveGroup`) are not
+  yet rewritten, and — critically — `rewriteTraitConstrainedReference` (call-site dictionary
+  forwarding) is not wired at all, so a constrained binding now lowers correctly in isolation but
+  any CALLER of it does not: the binding's value gains a hidden leading dictionary parameter that no
+  call site supplies, so `describe(5)` against a `requires {Greet(a)}`-constrained `describe` fails
+  lowering with a type mismatch (the dictionary ends up unified against the real argument). Proven
+  by a regression that asserts exactly this failure mode without the rewrite, and sidesteps it by
+  testing only the binding's own value, not a call site. Wiring `rewriteTraitConstrainedReference`
+  into ordinary call/reference lowering is the natural next slice.
 - [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
   ABI-ordered fields, and recursively constructed inherited evidence. Lower those values, default
   dispatch, method selection, and safe concrete specialization into IR without changing unoptimized
