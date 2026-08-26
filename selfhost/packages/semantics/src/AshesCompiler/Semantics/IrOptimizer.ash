@@ -7,7 +7,9 @@
 //   2. Trivial ownership-copy elision (erased RcDup, copy-type / single-use Borrow)
 //   3. Runtime RcDup sinking into branch diamonds
 //   4. Adjacent runtime RcDup / RcDrop pair fusion
-//   5. Known closure devirtualization (CallClosure -> CallKnown)
+//   5. Known closure devirtualization (CallClosure -> CallKnown), also through a local slot
+//      written by exactly one StoreLocal, dropping the load it made dead and the scope-exit
+//      resource cleanup of a stack closure that never received a dropper
 //   6. Constant propagation and folding (arithmetic, bitwise, comparison; temp and local-slot facts
 //      with a true meet over every predecessor edge at a label once all edges are observed, and a
 //      conservative clear at a label with a not-yet-observed backward edge; a JumpIfFalse whose
@@ -29,10 +31,11 @@
 //      reference inside an unreachable region is dropped with its body)
 //   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   11. Erased RcDrop marker elision
-//   12. Closure environment scalarization for a single scalar capture: a devirtualized call of a
-//       stack closure whose 8-byte environment is filled by one store and used nowhere else
-//       passes the captured word directly as the call's env argument to a generated callee
-//       variant that reads it as a raw parameter, so the environment allocation disappears
+//   12. Closure environment scalarization for one or two scalar captures: a devirtualized call
+//       of a stack closure whose 8- or 16-byte environment is filled by one store per word and
+//       used nowhere else passes the captured words directly in the call's env word and (when
+//       the call carries no ownership flag) its flag word, to a generated callee variant that
+//       reads them as raw parameters, so the environment allocation disappears
 //   13. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
 //       functions whose every Return is one heap MakeClosure label (directly, or transitively
 //       through a CallKnown to a function already proven), then a per-function local fixpoint
@@ -95,6 +98,17 @@ type ScalarizeState =
     | variantByCallee: List((Str, Maybe(Str)))
     | newFunctions: List(IrFunction)
     | counter: Int
+
+// Per-function definition facts for closure devirtualization: how often each temp is defined and
+// used, the single defining instruction of each once-defined temp, how often each local slot is
+// stored and from which temp, and the closure temps that received a resource dropper.
+type ClosureDefinitionFacts =
+    | defCounts: List((IrTemp, Int))
+    | useCounts: List((IrTemp, Int))
+    | singleDefs: List((IrTemp, IrInstructionKind))
+    | storeCountBySlot: List((IrLocal, Int))
+    | singleStoreSourceBySlot: List((IrLocal, IrTemp))
+    | closureTempsWithDropper: List(IrTemp)
 
 let defaultOptimizerOptions =
     IrOptimizerOptions(
@@ -380,63 +394,164 @@ let recursive countDefinitions instructions acc =
                             in addDefs(dTail)(setAssociation(d)(count)(entries))
                 in countDefinitions(tail)(addDefs(defs)(acc))
 
-let recursive collectSingleDefinitions instructions defCounts acc =
+// Every single-defined temp mapped to its defining instruction.
+let recursive collectSingleDefiningInstructions instructions defCounts acc =
     match instructions with
         | [] -> acc
         | IrInstruction { instruction = inst } :: tail ->
-            match inst with
-                | MakeClosure(dest, fnLabel, envTemp, envSize, hasEnv, isClosure, isAsync) ->
-                    if lookupAssociation(dest)(defCounts) == Some(1)
-                    then collectSingleDefinitions(tail)(defCounts)(setAssociation(dest)(inst)(acc))
-                    else collectSingleDefinitions(tail)(defCounts)(acc)
-                | MakeClosureStack(dest, fnLabel, envTemp, envSize, hasEnv, isClosure) ->
-                    if lookupAssociation(dest)(defCounts) == Some(1)
-                    then collectSingleDefinitions(tail)(defCounts)(setAssociation(dest)(inst)(acc))
-                    else collectSingleDefinitions(tail)(defCounts)(acc)
-                | _ -> collectSingleDefinitions(tail)(defCounts)(acc)
+            let recursive addDefs ds entries =
+                match ds with
+                    | [] -> entries
+                    | d :: dTail ->
+                        if lookupAssociation(d)(defCounts) == Some(1)
+                        then addDefs(dTail)(setAssociation(d)(inst)(entries))
+                        else addDefs(dTail)(entries)
+            in collectSingleDefiningInstructions(tail)(defCounts)(addDefs(getDefinedTemps(inst))(acc))
 
-let devirtualizeKnownClosureCalls instructions =
+let recursive countUses instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = inst } :: tail ->
+            let recursive addUses us entries =
+                match us with
+                    | [] -> entries
+                    | u :: uTail ->
+                        let count =
+                            match lookupAssociation(u)(entries) with
+                                | Some(c) -> c + 1
+                                | None -> 1
+                        in addUses(uTail)(setAssociation(u)(count)(entries))
+            in countUses(tail)(addUses(getUsedTemps(inst))(acc))
+
+// Known-closure devirtualization. A CallClosure whose closure temp is produced by a
+// MakeClosure/MakeClosureStack with a statically known label becomes a direct CallKnown of that
+// label with the closure's captured environment pointer. Only single-definition temps are
+// rewritten (a unique definition dominates every use in well-formed IR), and the env temp must
+// itself be single-definition so its value at the call equals the value stored into the closure.
+// A local slot written by exactly one StoreLocal holds that store's value at every load, since
+// lowering only reads a binding's slot inside the binding's own scope, after the store; that is
+// what lets a let-bound local helper, whose call always goes through a StoreLocal/LoadLocal round
+// trip, resolve to its MakeClosure like an immediately-applied lambda does.
+let recursive countStoresBySlot instructions stores sources =
+    match instructions with
+        | [] -> (stores, sources)
+        | IrInstruction { instruction = StoreLocal(slot, source) } :: tail ->
+            let count =
+                match lookupAssociation(slot)(stores) with
+                    | Some(c) -> c + 1
+                    | None -> 1
+            in countStoresBySlot(tail)(setAssociation(slot)(count)(stores))(setAssociation(slot)(source)(sources))
+        | _ :: tail -> countStoresBySlot(tail)(stores)(sources)
+
+// The closure object's resource-dropper word: {code, env, packed size/ownership, dropper}.
+let closureDropperOffsetBytes = 24
+
+let recursive collectClosureTempsWithDropper instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = StoreMemOffset(basePtr, offset, _) } :: tail ->
+            if offset == closureDropperOffsetBytes
+            then collectClosureTempsWithDropper(tail)(basePtr :: acc)
+            else collectClosureTempsWithDropper(tail)(acc)
+        | _ :: tail -> collectClosureTempsWithDropper(tail)(acc)
+
+let collectClosureDefinitionFacts instructions =
     (let defCounts = countDefinitions(instructions)([])
     in
-        let singleDefs = collectSingleDefinitions(instructions)(defCounts)([])
-        in
-            let recursive devirtualize insts acc =
-                match insts with
-                    | [] -> reverse(acc)
-                    | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
-                        match lookupAssociation(closureTemp)(singleDefs) with
-                            | Some(MakeClosure(_, fnLabel, envTemp, _, _, _, _)) ->
-                                if lookupAssociation(envTemp)(defCounts) == Some(1)
+        match countStoresBySlot(instructions)([])([]) with
+            | (storeCounts, storeSources) ->
+                ClosureDefinitionFacts(
+                    defCounts = defCounts,
+                    useCounts = countUses(instructions)([]),
+                    singleDefs = collectSingleDefiningInstructions(instructions)(defCounts)([]),
+                    storeCountBySlot = storeCounts,
+                    singleStoreSourceBySlot = storeSources,
+                    closureTempsWithDropper = collectClosureTempsWithDropper(instructions)([])
+                ))
+
+// The instruction that produced a closure temp, seen through a single-store local slot; the flag
+// says whether the definition was reached through such a slot load.
+let resolveClosureDefinition (facts: ClosureDefinitionFacts) (closureTemp: IrTemp) =
+    match lookupAssociation(closureTemp)(facts.singleDefs) with
+        | None -> None
+        | Some(def) ->
+            match def with
+                | LoadLocal(_, slot) ->
+                    if lookupAssociation(slot)(facts.storeCountBySlot) == Some(1)
+                    then
+                        match lookupAssociation(slot)(facts.singleStoreSourceBySlot) with
+                            | Some(storedTemp) ->
+                                match lookupAssociation(storedTemp)(facts.singleDefs) with
+                                    | Some(storedDef) -> Some((storedDef, true))
+                                    | None -> Some((def, false))
+                            | None -> Some((def, false))
+                    else Some((def, false))
+                | _ -> Some((def, false))
+
+// A load of a single-store slot holding a stack closure that never had a resource dropper
+// installed: a resource cleanup of that value is a runtime no-op (the dropper word is zero).
+let isDropperFreeStackClosureSlotLoad (facts: ClosureDefinitionFacts) (temp: IrTemp) =
+    match resolveClosureDefinition(facts)(temp) with
+        | Some((MakeClosureStack(target, _, _, _, _, _), true)) -> !listContains(target)(facts.closureTempsWithDropper)
+        | _ -> false
+
+let tryBuildKnownCall (facts: ClosureDefinitionFacts) dest argTemp flagTemp definition =
+    match definition with
+        | MakeClosure(_, fnLabel, envTemp, _, _, _, _) ->
+            if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
+            then Some(CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)(false))
+            else None
+        | MakeClosureStack(_, fnLabel, envTemp, envSize, _, _) ->
+            if lookupAssociation(envTemp)(facts.defCounts) == Some(1)
+            then Some(CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)(envSize > 0))
+            else None
+        | _ -> None
+
+let recursive removeDeadSlotLoads instructions deadTemps acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = LoadLocal(target, _) } as irInst) :: tail ->
+            if listContains(target)(deadTemps)
+            then removeDeadSlotLoads(tail)(deadTemps)(acc)
+            else removeDeadSlotLoads(tail)(deadTemps)(irInst :: acc)
+        | head :: tail -> removeDeadSlotLoads(tail)(deadTemps)(head :: acc)
+
+// A slot load whose only use was a call rewritten here (or a removed no-op cleanup) is dead
+// afterwards; dropping it lets the slot's store and the closure construction die in the ordinary
+// dead-code sweep.
+let recursive devirtualizeKnownClosureCallsPass (facts: ClosureDefinitionFacts) insts deadLoads acc =
+    match insts with
+        | [] -> (reverse(acc), deadLoads)
+        | (IrInstruction { instruction = CleanupResource(source, "Function", None) } as irInst) :: tail ->
+            if isDropperFreeStackClosureSlotLoad(facts)(source)
+            then
+                if lookupAssociation(source)(facts.useCounts) == Some(1)
+                then devirtualizeKnownClosureCallsPass(facts)(tail)(source :: deadLoads)(acc)
+                else devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(acc)
+            else devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(irInst :: acc)
+        | (IrInstruction { instruction = CallClosure(dest, closureTemp, argTemp, flagTemp), location = loc } as irInst) :: tail ->
+            match resolveClosureDefinition(facts)(closureTemp) with
+                | Some((definition, throughSlot)) ->
+                    match tryBuildKnownCall(facts)(dest)(argTemp)(flagTemp)(definition) with
+                        | Some(known) ->
+                            let nextDead =
+                                if throughSlot
                                 then
-                                    let directCall =
-                                        IrInstruction(
-                                            instruction = CallKnown(dest)(fnLabel)(envTemp)(argTemp)(flagTemp)(false),
-                                            location = loc
-                                        )
-                                    in devirtualize(tail)(directCall :: acc)
-                                else devirtualize(tail)(irInst :: acc)
-                            | Some(MakeClosureStack(_, fnLabel, envTemp, envSize, _, _)) ->
-                                if lookupAssociation(envTemp)(defCounts) == Some(1)
-                                then
-                                    let isStack = envSize > 0
-                                    in
-                                        let directCall =
-                                            IrInstruction(
-                                                instruction = CallKnown(
-                                                    dest,
-                                                    fnLabel,
-                                                    envTemp,
-                                                    argTemp,
-                                                    flagTemp,
-                                                    isStack
-                                                ),
-                                                location = loc
-                                            )
-                                        in devirtualize(tail)(directCall :: acc)
-                                else devirtualize(tail)(irInst :: acc)
-                            | _ -> devirtualize(tail)(irInst :: acc)
-                    | head :: tail -> devirtualize(tail)(head :: acc)
-            in devirtualize(instructions)([]))
+                                    if lookupAssociation(closureTemp)(facts.useCounts) == Some(1)
+                                    then closureTemp :: deadLoads
+                                    else deadLoads
+                                else deadLoads
+                            in devirtualizeKnownClosureCallsPass(facts)(tail)(nextDead)(IrInstruction(instruction = known, location = loc) :: acc)
+                        | None -> devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(irInst :: acc)
+                | None -> devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(irInst :: acc)
+        | head :: tail -> devirtualizeKnownClosureCallsPass(facts)(tail)(deadLoads)(head :: acc)
+
+let devirtualizeKnownClosureCalls instructions =
+    (let facts = collectClosureDefinitionFacts(instructions)
+    in
+        match devirtualizeKnownClosureCallsPass(facts)(instructions)([])([]) with
+            | (rewritten, []) -> rewritten
+            | (rewritten, deadLoads) -> removeDeadSlotLoads(rewritten)(deadLoads)([]))
 
 let switchCaseTag (switchCase: IrSwitchCase) = switchCase.tag
 
@@ -1086,6 +1201,7 @@ let isNonAllocatingInst nonAllocatingFns inst =
         | CmpStrNe(_, _, _) -> true
         | LoadFuncAddr(_, _) -> true
         | GetAdtTag(_, _) -> true
+        | LoadArgumentOwnership(_) -> true
         | GetAdtField(_, _, _) -> true
         | SetAdtField(_, _, _) -> true
         | Borrow(_, _) -> true
@@ -1134,20 +1250,6 @@ let recursive lookupFunction label (functions: List(IrFunction)) =
 let functionLabel (fn: IrFunction) = fn.label
 
 let functionInstructions (fn: IrFunction) = fn.instructions
-
-// Every single-defined temp mapped to its defining instruction.
-let recursive collectSingleDefiningInstructions instructions defCounts acc =
-    match instructions with
-        | [] -> acc
-        | IrInstruction { instruction = inst } :: tail ->
-            let recursive addDefs ds entries =
-                match ds with
-                    | [] -> entries
-                    | d :: dTail ->
-                        if lookupAssociation(d)(defCounts) == Some(1)
-                        then addDefs(dTail)(setAssociation(d)(inst)(entries))
-                        else addDefs(dTail)(entries)
-            in collectSingleDefiningInstructions(tail)(defCounts)(addDefs(getDefinedTemps(inst))(acc))
 
 // The heap closure label a temp provably holds: directly from a MakeClosure (never a
 // MakeClosureStack, whose environment lives in its defining function's own frame and is gone once
@@ -1553,32 +1655,17 @@ let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParam
 
 let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions = eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
 
-// Closure environment scalarization for a single scalar capture. A stack closure with one 8-byte
-// capture whose only use is already a devirtualized CallKnown packs that value through an
-// AllocStack + StoreMemOffset + LoadEnv round trip although it never needs to leave a register.
-// When the callee touches its environment only through LoadEnv of index 0, the captured value is
-// passed directly in the call's existing env word and a generated callee variant reads it with a
-// LoadLocal of slot 0 (the raw parameter). The variant is memoized per callee label and the
-// original callee is never rewritten: another use of the same label may still need the
-// pointer-based form, and safety here does not depend on proving there is none. Removing the
-// environment allocation lets the arena-bracket elimination that follows also strip the bracket
-// around the call. Scope stays at one capture: every callable function shares one fixed
-// three-word signature, and a second word is a separate extension.
-let recursive countUses instructions acc =
-    match instructions with
-        | [] -> acc
-        | IrInstruction { instruction = inst } :: tail ->
-            let recursive addUses us entries =
-                match us with
-                    | [] -> entries
-                    | u :: uTail ->
-                        let count =
-                            match lookupAssociation(u)(entries) with
-                                | Some(c) -> c + 1
-                                | None -> 1
-                        in addUses(uTail)(setAssociation(u)(count)(entries))
-            in countUses(tail)(addUses(getUsedTemps(inst))(acc))
-
+// Closure environment scalarization. A stack closure with one or two 8-byte scalar captures
+// whose only use is already a devirtualized CallKnown packs those values through an AllocStack +
+// StoreMemOffset + LoadEnv round trip although they never need to leave a register. When the
+// callee touches its environment only through LoadEnv, the captured values are passed directly in
+// the call's existing three-word ABI: the first capture in the env word, a second in the
+// ownership-flag word, which is free whenever the call passes no flag and the callee never reads
+// one (LoadArgumentOwnership is a raw read of that same parameter, so the variant reads the second
+// capture through it). A generated callee variant, memoized per label and capture count, reads
+// them as raw parameters; the original callee is never rewritten, since another use of the same
+// label may still need the pointer-based form. Three or more captures keep their environment: the
+// shared signature has no further free word.
 let recursive findStoredWord (basePtr: IrTemp) (offset: Int) instructions =
     match instructions with
         | [] -> None
@@ -1597,27 +1684,47 @@ let recursive readsEnvPointerRaw instructions =
         | IrInstruction { instruction = LoadLocal(_, 0) } :: _ -> true
         | _ :: tail -> readsEnvPointerRaw(tail)
 
-// (all LoadEnv indices are 0, at least one LoadEnv seen)
-let recursive loadEnvShape instructions sawLoadEnv =
+let recursive readsArgumentOwnership instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadArgumentOwnership(_) } :: _ -> true
+        | _ :: tail -> readsArgumentOwnership(tail)
+
+// (every LoadEnv index is below the capture count, at least one LoadEnv seen)
+let recursive loadEnvShape (captureCount: Int) instructions sawLoadEnv =
     match instructions with
         | [] -> (true, sawLoadEnv)
         | IrInstruction { instruction = LoadEnv(_, index) } :: tail ->
-            if index == 0
-            then loadEnvShape(tail)(true)
+            if index < captureCount
+            then loadEnvShape(captureCount)(tail)(true)
             else (false, sawLoadEnv)
-        | _ :: tail -> loadEnvShape(tail)(sawLoadEnv)
+        | _ :: tail -> loadEnvShape(captureCount)(tail)(sawLoadEnv)
 
 let recursive replaceLoadEnvWithParameterReads instructions acc =
     match instructions with
         | [] -> reverse(acc)
-        | IrInstruction { instruction = LoadEnv(target, _), location = loc } :: tail -> replaceLoadEnvWithParameterReads(tail)(IrInstruction(instruction = LoadLocal(target)(0), location = loc) :: acc)
+        | IrInstruction { instruction = LoadEnv(target, index), location = loc } :: tail ->
+            let read =
+                if index == 0
+                then LoadLocal(target)(0)
+                else LoadArgumentOwnership(target)
+            in replaceLoadEnvWithParameterReads(tail)(IrInstruction(instruction = read, location = loc) :: acc)
         | head :: tail -> replaceLoadEnvWithParameterReads(tail)(head :: acc)
+
+let buildScalarEnvVariant (callee: IrFunction) (captureCount: Int) (counter: Int) =
+    match loadEnvShape(captureCount)(callee.instructions)(false) with
+        | (true, true) ->
+            Some(
+                callee with label = callee.label + "__scalarenv" + Ashes.Trait.Show.show(counter), instructions = replaceLoadEnvWithParameterReads(callee.instructions)([])
+            )
+        | _ -> None
 
 // A real lowered closure reads a capture only through LoadEnv, which dereferences slot 0 inside
 // its own codegen; a raw LoadLocal of slot 0 means the pointer serves some other purpose. A
 // coroutine's state-machine transform reads captures against its own frame instead, a shape this
-// pass does not attempt.
-let tryBuildScalarEnvVariant (callee: IrFunction) (counter: Int) =
+// pass does not attempt. When the second capture is to travel in the flag word, a callee that
+// reads the flag itself cannot take it.
+let tryBuildScalarEnvVariant (callee: IrFunction) (captureCount: Int) (counter: Int) =
     if callee.hasEnvAndArgParams
     then
         match callee.coroutine with
@@ -1626,56 +1733,81 @@ let tryBuildScalarEnvVariant (callee: IrFunction) (counter: Int) =
                 if readsEnvPointerRaw(callee.instructions)
                 then None
                 else
-                    match loadEnvShape(callee.instructions)(false) with
-                        | (true, true) ->
-                            Some(
-                                callee with label = callee.label + "__scalarenv" + Ashes.Trait.Show.show(counter), instructions = replaceLoadEnvWithParameterReads(callee.instructions)([])
-                            )
-                        | _ -> None
+                    if captureCount == 2
+                    then
+                        if readsArgumentOwnership(callee.instructions)
+                        then None
+                        else buildScalarEnvVariant(callee)(captureCount)(counter)
+                    else buildScalarEnvVariant(callee)(captureCount)(counter)
     else None
 
-let getOrCreateScalarEnvVariant (label: Str) (functions: List(IrFunction)) (state: ScalarizeState) =
-    match lookupAssociation(label)(state.variantByCallee) with
-        | Some(memoized) -> (memoized, state)
-        | None ->
-            match lookupFunction(label)(functions) with
-                | None -> (None, (state with variantByCallee = setAssociation(label)(None)(state.variantByCallee)))
-                | Some(callee) ->
-                    match tryBuildScalarEnvVariant(callee)(state.counter) with
-                        | None -> (None, (state with variantByCallee = setAssociation(label)(None)(state.variantByCallee)))
-                        | Some(variant) -> (Some(variant.label), (state with variantByCallee = setAssociation(label)(Some(variant.label))(state.variantByCallee), newFunctions = variant :: state.newFunctions, counter = state.counter + 1))
+let scalarEnvVariantKey (label: Str) (captureCount: Int) = label + "#" + Ashes.Trait.Show.show(captureCount)
 
-// The caller-side shape: the call's env temp is defined once by an 8-byte AllocStack, filled by
-// exactly one store at offset 0, and used nowhere else (that store and this call), so there is no
-// other read and no escape.
+let getOrCreateScalarEnvVariant (label: Str) (captureCount: Int) (functions: List(IrFunction)) (state: ScalarizeState) =
+    (let key = scalarEnvVariantKey(label)(captureCount)
+    in
+        match lookupAssociation(key)(state.variantByCallee) with
+            | Some(memoized) -> (memoized, state)
+            | None ->
+                match lookupFunction(label)(functions) with
+                    | None -> (None, (state with variantByCallee = setAssociation(key)(None)(state.variantByCallee)))
+                    | Some(callee) ->
+                        match tryBuildScalarEnvVariant(callee)(captureCount)(state.counter) with
+                            | None -> (None, (state with variantByCallee = setAssociation(key)(None)(state.variantByCallee)))
+                            | Some(variant) -> (Some(variant.label), (state with variantByCallee = setAssociation(key)(Some(variant.label))(state.variantByCallee), newFunctions = variant :: state.newFunctions, counter = state.counter + 1)))
+
+// The caller-side shape: the call's env temp is defined once by an 8- or 16-byte AllocStack,
+// filled by exactly one store per 8-byte capture, and used nowhere else (those stores and this
+// call), so there is no other read and no escape; a second capture can only travel in the flag
+// word when this call passes no ownership flag.
+let scalarEnvSiteShapeMatches (envSize: Int) (flagTemp: IrTemp) (useCount: Maybe(Int)) =
+    if envSize == 8
+    then useCount == Some(2)
+    else
+        if envSize == 16
+        then
+            if flagTemp < 0
+            then useCount == Some(3)
+            else false
+        else false
+
+// Each accepted site: (env temp, variant label, first captured word, second captured word or -1).
 let recursive collectScalarEnvCallSites allInsts insts singleDefs useCounts functions (state: ScalarizeState) acc =
     match insts with
         | [] -> (acc, state)
-        | IrInstruction { instruction = CallKnown(_, label, envTemp, _, _, true) } :: tail ->
+        | IrInstruction { instruction = CallKnown(_, label, envTemp, _, flagTemp, true) } :: tail ->
             match lookupAssociation(envTemp)(singleDefs) with
-                | Some(AllocStack(_, 8)) ->
-                    if lookupAssociation(envTemp)(useCounts) == Some(2)
+                | Some(AllocStack(_, envSize)) ->
+                    if scalarEnvSiteShapeMatches(envSize)(flagTemp)(lookupAssociation(envTemp)(useCounts))
                     then
                         match findStoredWord(envTemp)(0)(allInsts) with
                             | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
-                            | Some(source) ->
-                                match getOrCreateScalarEnvVariant(label)(functions)(state) with
-                                    | (Some(variantLabel), nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)((envTemp, variantLabel, source) :: acc)
-                                    | (None, nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)(acc)
+                            | Some(first) ->
+                                let second =
+                                    if envSize == 16
+                                    then findStoredWord(envTemp)(8)(allInsts)
+                                    else Some(-1)
+                                in
+                                    match second with
+                                        | None -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
+                                        | Some(secondWord) ->
+                                            match getOrCreateScalarEnvVariant(label)(envSize / 8)(functions)(state) with
+                                                | (Some(variantLabel), nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)((envTemp, variantLabel, first, secondWord) :: acc)
+                                                | (None, nextState) -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(nextState)(acc)
                     else collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
                 | _ -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
         | _ :: tail -> collectScalarEnvCallSites(allInsts)(tail)(singleDefs)(useCounts)(functions)(state)(acc)
 
-let recursive lookupScalarEnvSite (envTemp: IrTemp) (sites: List((IrTemp, Str, IrTemp))) =
+let recursive lookupScalarEnvSite (envTemp: IrTemp) (sites: List((IrTemp, Str, IrTemp, IrTemp))) =
     match sites with
         | [] -> None
-        | (siteEnv, variantLabel, source) :: tail ->
+        | (siteEnv, variantLabel, first, second) :: tail ->
             if siteEnv == envTemp
-            then Some((variantLabel, source))
+            then Some((variantLabel, first, second))
             else lookupScalarEnvSite(envTemp)(tail)
 
-// The env temp of an accepted site is used exactly by its store and its call, so dropping the
-// allocation and the store by env temp and retargeting the call is exact.
+// The env temp of an accepted site is used exactly by its stores and its call, so dropping the
+// allocation and the stores by env temp and retargeting the call is exact.
 let recursive rewriteScalarEnvCallSites insts sites acc =
     match insts with
         | [] -> reverse(acc)
@@ -1689,7 +1821,12 @@ let recursive rewriteScalarEnvCallSites insts sites acc =
                 | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
         | (IrInstruction { instruction = CallKnown(dest, _, envTemp, argTemp, flagTemp, true), location = loc } as irInst) :: tail ->
             match lookupScalarEnvSite(envTemp)(sites) with
-                | Some((variantLabel, source)) -> rewriteScalarEnvCallSites(tail)(sites)(IrInstruction(instruction = CallKnown(dest)(variantLabel)(source)(argTemp)(flagTemp)(false), location = loc) :: acc)
+                | Some((variantLabel, first, second)) ->
+                    let flag =
+                        if second < 0
+                        then flagTemp
+                        else second
+                    in rewriteScalarEnvCallSites(tail)(sites)(IrInstruction(instruction = CallKnown(dest)(variantLabel)(first)(argTemp)(flag)(false), location = loc) :: acc)
                 | None -> rewriteScalarEnvCallSites(tail)(sites)(irInst :: acc)
         | head :: tail -> rewriteScalarEnvCallSites(tail)(sites)(head :: acc)
 
