@@ -12,8 +12,10 @@ for package boundaries and commands.
 The new implementation lives entirely under `selfhost/`. It is pure Ashes: Python, shell, C#, and
 Node.js helpers are not part of its implementation or test path. The existing .NET toolchain remains
 in the repository permanently as a buildable, tested stage-0 and behavioral reference after the
-self-hosted compiler becomes the default. The Node.js VS Code extension also remains in the repository.
-Neither implementation may be removed or changed merely to make the self-hosted port easier.
+self-hosted compiler becomes the default. The Node.js VS Code extension also remains in the repository,
+and so does the .NET registry server (`src/Ashes.Registry`): it is a deployed service, not part of the
+toolchain a user runs, so only its client commands are ported. Neither implementation may be removed or
+changed merely to make the self-hosted port easier.
 
 | Area | Ported surface | State |
 |---|---|---|
@@ -1000,13 +1002,44 @@ same public behavior.
 #### LLVM code generation and runtime integration
 
 - [ ] Define pure-Ashes bindings to the required LLVM C API and load the installed-layout host
-  `libLLVM` without checkout-relative assumptions.
+  `libLLVM` without checkout-relative assumptions. Source of truth:
+  `src/Ashes.Backend/Llvm/Interop/LlvmApi.cs` — its `LibraryImport` surface is the complete list of
+  entry points the backend needs (no more are exposed on purpose; there is no `phi` binding, values
+  that merge across branches go through a slot allocated before the branch), and
+  `LlvmTargetSetup.cs` initializes the targets.
+- [ ] Locate the installed layout from the compiler binary itself: the shipped standard-library copies
+  (`dist/` per target, `lib/Ashes/` in a checkout), the vendored bitcode payloads under
+  `runtimes/<rid>/` with their `.version` markers (`HermeticRuntimeAssets.cs` validates them against
+  the version the compiler was built for and fails fast on a mismatch), and the native `libLLVM`
+  next to the executable — resolved relative to the running binary, never to a checkout or a working
+  directory, so a stage-1 compiler works from the release bundle layout the .NET one ships in (see
+  [Local CI/CD](../guide/local-ci.md) for the bundle shapes).
 - [ ] Select target triples, data layouts, CPUs, optimization levels, verification, object emission,
-  and host/target-independent compile options.
+  and host/target-independent compile options. Source of truth: `LlvmTargetSetup.cs`,
+  `LlvmCodegenPlatform.cs`, and the `Backends/` classes; contract in
+  [How to Add a New Target](../internals/architecture.md#how-to-add-a-new-target). `--target-cpu`, `--parallel-workers`,
+  and `--parallel-stack-size` reach codegen as compile options and must keep their documented
+  defaults ([CLI reference](../reference/cli.md)).
 - [ ] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
-  allocations, RC/drop/reuse, globals, and calls.
+  allocations, RC/drop/reuse, globals, and calls. Source of truth: `LlvmCodegen.cs`,
+  `LlvmCodegenExpressions.cs`, and `LlvmCodegenMemory.cs` (allocation, RC headers and free-list bins,
+  copy-out, string operations); the layout contracts are in
+  [Backend Architecture](../internals/architecture.md#backend-architecture), the
+  [IR reference](../internals/ir.md), and the [Memory Model](../internals/architecture.md#memory-model) sections on RC
+  allocation and layout, scoped arenas, runtime payload layouts, and stacks. Every value is an `i64`
+  word (pointers included) and every temp and local is an entry-block slot; the closure object layout
+  `{code, env, packed size and flag bits, dropper}` is read by both codegen and the optimizer.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
-  parameters, resources, destructors, and debug-safe symbol naming.
+  parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
+  `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
+  rules live in the [Linking](../internals/architecture.md#linking) sections (Linux syscalls go through
+  `ResolveSyscallNr`, with the AArch64 `clone`/`wait4` quirks recorded there; Windows `HANDLE`
+  values stay `i64` end to end).
+- [ ] Implement the Windows runtime side of the builtins: console handles and modes, `WSAPoll`-based
+  socket readiness, `CreateProcessA`/pipes for subprocesses, the certificate store for TLS, and the
+  KERNEL32/WS2_32/SHELL32/CRYPT32 import surface the PE linker must provide (an import is added in
+  three places of `LlvmImageLinkerPe.cs`, see [Linking](../internals/architecture.md#windows-pe32)). Source of truth:
+  the `Windows` branches of `LlvmCodegenBuiltins.*.cs` and `LlvmCodegenBuiltins.Directory.Windows.cs`.
 - [ ] Emit every fixed-size runtime-helper scratch `alloca` (RC-block acquisition, free-list bin
   lookup, dynamic allocation, copy-out/reclaim, BigInt formatting, and any future helper with the same
   shape) positioned in the function's **entry block**, never at the current insertion point inside a
@@ -1023,11 +1056,22 @@ same public behavior.
   do not route it through the same entry-block hoist.
 - [ ] Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
   terminal raw/poll operations, files/directories/memory maps, subprocesses, clocks/entropy, sockets,
-  HTTP/TLS, regex, math, and BigInt.
+  HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
+  area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
+  `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
+  [Standard Library reference](../reference/standard-library.md) and the architecture sections on
+  [external dependencies](../internals/architecture.md#external-dependencies), buffered standard output, the math runtime,
+  and BigInt. Each builtin's capability marker (§20.8 of the language reference) is part of its
+  contract.
 - [ ] Emit scheduler, task, async I/O, structured-parallelism, worker-stack, cancellation, and graceful
-  shutdown runtime support.
+  shutdown runtime support. Source of truth: `LlvmCodegenBuiltins.Async.cs` and
+  `LlvmCodegenParallel.cs`; contract in [Async & TLS runtime model](../internals/architecture.md#async-tls-runtime-model)
+  and the Memory Model sections on task and capability regions, threads and structured parallelism
+  (the per-thread arena behind the `%gs`/`%fs` thread control block), and stacks.
 - [ ] Select and link the shipped Mbed TLS, openlibm, and PCRE2 bitcode and any external library/resource
-  payloads hermetically.
+  payloads hermetically. Source of truth: `HermeticRuntimeAssets.cs` (a payload is linked only when the
+  program uses its ABI, after the program's own optimization so the pre-optimized bitcode is not
+  re-optimized); the `scripts/download-*.sh` provisioning stays shell and is not an implementation step.
 - [ ] Emit source-level debug information and preserve valid DWARF/target debug sections through every
   supported optimization level. Set each instruction's location from its IR source location before
   emitting it, give arena/ownership machinery the artificial line-0 location, and keep the current
@@ -1037,27 +1081,43 @@ same public behavior.
   instruction emitted afterwards for the same IR instruction loses its line, and a match arm whose
   whole body is one reference-counted allocation gets no line-table row (stage 0 had exactly this).
 - [ ] Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
-  corresponding native host compiler bundle.
+  corresponding native host compiler bundle (`LlvmTargetSetup.EnsureInitialized` per target,
+  `VerifyModule` before emission; `ASH_DBG_DUMP_IR` dumps the module text on a verifier failure).
 
 #### Object parsing and executable linking
 
 - [ ] Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
-  addends using immutable byte buffers.
-- [ ] Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode.
-- [ ] Lay out and relocate AArch64 ELF64 images with the complete supported relocation set.
-- [ ] Lay out AMD64 PE32+ images, imports, BSS, entry trampoline, stack probing, and relocations.
-- [ ] Lay out ARM64 PE32+ images, imports, unwind/runtime requirements, entry code, and relocations.
+  addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
+  `ParseCoffObject`); the image constants (base, alignment) are in
+  [Linking → Constants](../internals/architecture.md#constants).
+- [ ] Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
+  (`LlvmImageLinkerElf.cs`; [Linux x86-64](../internals/architecture.md#linux-x86-64-elf64) lists the relocation set and
+  the trampoline).
+- [ ] Lay out and relocate AArch64 ELF64 images with the complete supported relocation set
+  (`LlvmImageLinkerElfArm64.cs`; [Linux AArch64](../internals/architecture.md#linux-aarch64-elf64)).
+- [ ] Lay out AMD64 PE32+ images, imports, BSS, entry trampoline, stack probing, and relocations
+  (`LlvmImageLinkerPe.cs`; [Windows](../internals/architecture.md#windows-pe32) — import-table slots are positional, so
+  the hint array, the IAT address table, and the `__imp_` symbol map must change together).
+- [ ] Lay out ARM64 PE32+ images, imports, unwind/runtime requirements, entry code, and relocations
+  (`LlvmImageLinkerPeArm64.cs`; validated structurally on x64 hosts, see the win-arm64 note in
+  [Development](../guide/development.md)).
 - [ ] Resolve compiler runtime symbols, platform APIs, linked bitcode symbols, external libraries, and
   embedded resources deterministically.
 - [ ] Write final executables atomically, preserve installed-layout behavior, and produce deterministic
   structural diagnostics for malformed or unsupported objects.
 - [ ] Execute host-target outputs and preserve the current Wine/QEMU/native/structural validation policy
-  for non-host targets, including structural-only win-arm64 validation on x64 hosts.
+  for non-host targets, including structural-only win-arm64 validation on x64 hosts. Source of truth:
+  `src/Ashes.TestRunner/Runner.cs` and `src/Ashes.Tests/TestProcessHelper.cs` — a win-x64 binary
+  under Wine runs with `WINEDEBUG=-all` and `WINEDLLOVERRIDES="mscoree,mshtml=d"` (the emitted PE
+  never loads .NET or Gecko, and without the override a fresh prefix blocks on an installer dialog),
+  and `qemu-aarch64` is looked up on `PATH` and at the rootless user-tools location.
 
 #### CLI, package management, and registry client
 
 - [ ] Implement shared argument scanning, help, validation, exit codes, stdout/stderr discipline, target
-  selection, CPU/worker/stack options, optimization levels, and debug options.
+  selection, CPU/worker/stack options, optimization levels, and debug options. Source of truth:
+  `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` and `CliDiagnosticsTests` as the behavioral oracle;
+  the [CLI reference](../reference/cli.md) is the authoritative surface for every command and flag.
 - [ ] Implement `compile` for files, expressions, projects, output selection, IR dumps, and compiler
   reports.
 - [ ] Implement `run`, program argument forwarding, temporary outputs, and propagation of program exit
@@ -1067,20 +1127,30 @@ same public behavior.
 - [ ] Implement `fmt` discovery, preview/write behavior, project awareness, malformed-file handling, and
   canonical exit codes.
 - [ ] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
-  dependencies, lock files, frozen/offline modes, and the content-addressed source cache.
+  dependencies, lock files, frozen/offline modes, and the content-addressed source cache. Contract:
+  [Projects](../guide/projects.md) and [Package manager](../internals/architecture.md#package-manager); source of truth
+  `src/Ashes.Semantics/ProjectSupport.cs` (manifest, planning, stitching) and the CLI commands.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
-  hashes, archive validation, and package materialization.
+  hashes, archive validation, and package materialization
+  ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).
 - [ ] Implement registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and
-  `info`, including package capability extraction from compiler metadata.
+  `info`, including package capability extraction from compiler metadata, against the unchanged .NET
+  registry server ([Package registry](../internals/architecture.md#package-registry) documents the wire protocol).
 - [ ] Preserve the documented retired-`install` diagnostic and compatibility behavior for every current
   command and flag.
 - [ ] Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
-  `concurrency`, and `memory` reports with stable filtering and stderr behavior.
+  `concurrency`, and `memory` reports with stable filtering and stderr behavior. Source of truth:
+  `IrExplainReporter.cs`, `ExplainReportFormatter.cs`, `IrTextFormatter.cs`, and `IrFunctionSelector.cs` in
+  `src/Ashes.Semantics/`; the report shapes are documented under
+  [Compiler reports](../reference/cli.md#compiler-reports).
 
 #### TestRunner and validation infrastructure
 
 - [ ] Discover individual files, directories, and project tests with the documented project-mode rules
-  and deterministic ordering.
+  and deterministic ordering. Source of truth: `src/Ashes.TestRunner/Runner.cs`; the directive
+  surface and execution model are in [Testing](../guide/testing.md). The runner compiles the
+  unoptimized pipeline as well as the optimized one, so lowering bugs the optimizer would mask stay
+  visible (`--pipeline both` in CI).
 - [ ] Parse and enforce stdout, stderr, compile-error, exit-code, stdin, file/text, file/bytes,
   executable-directory, working-directory, TCP fixture, and formatter-skip directives.
 - [ ] Compile tests normally, with the requested raw/reuse-disabled pipeline, and for selected targets;
@@ -1095,20 +1165,26 @@ same public behavior.
 #### LSP, DAP, editor integration, and fuzzing
 
 - [ ] Implement Content-Length JSON-RPC transport, lifecycle, cancellation, document state, UTF-8/UTF-16
-  coordinate conversion, and structured error handling for the LSP.
+  coordinate conversion, and structured error handling for the LSP. Source of truth: `src/Ashes.Lsp/`
+  with `src/Ashes.Lsp.Tests/` as the oracle; the consumer-only boundary is stated in
+  [Tooling Servers](../internals/architecture.md#tooling-servers).
 - [ ] Provide compiler-backed diagnostics, hover schemes/effects/evidence, definitions, completions,
   references, semantic tokens, and canonical formatting without duplicating compiler logic.
 - [ ] Resolve projects, imports, dependencies, standard-library documentation, and multi-file updates in
   the LSP with deterministic invalidation.
 - [ ] Implement the standalone DAP transport and session lifecycle plus launch, breakpoints, stepping,
-  threads, stack frames, scopes, variables, termination, and disconnect requests.
+  threads, stack frames, scopes, variables, termination, and disconnect requests. Source of truth:
+  `src/Ashes.Dap/` with `DapServerTests`; the debugger workflow it must serve is in
+  [Debugging](../guide/debugging.md), and every module of a project must be breakpointable (the
+  source-map anchors item under IR model and lowering).
 - [ ] Broker GDB, LLDB, and `lldb-dap` processes with portable command/response parsing, timeouts, value
   formatting, and source-path mapping; keep the DAP independent of compiler implementation packages.
 - [ ] Preserve the existing VS Code extension's compiler/LSP/DAP acquisition and launch contracts; the
   extension itself remains JavaScript/TypeScript because it runs inside the VS Code extension host.
 - [ ] Port deterministic seeds, profiles, generation budgets, typed program generation, invalid-source
   mutation, AST/IR invariants, execution oracles, coverage guidance, and interaction templates to the
-  pure-Ashes fuzzing package.
+  pure-Ashes fuzzing package. Source of truth: `src/Ashes.Fuzzing/` with `src/Ashes.Fuzzing.Tests/`;
+  the campaign contract is in [Fuzz Testing](../guide/fuzz-testing.md).
 - [ ] Port shrinking, stable size metrics, corpus replay, artifact writing, failure classification,
   replay commands, isolated workers, timeouts, and campaign summaries.
 - [ ] Differentially fuzz the self-hosted and C# phases without making host-language helpers part of the
@@ -1130,8 +1206,18 @@ same public behavior.
   matrix.
 - [ ] Add deterministic bootstrap, parity, packaging, and release jobs to local CI and hosted CI with
   cached but reproducibly verifiable native assets.
+- [ ] Grow the standing phase benchmark (`selfhost/bench/`, see its README) with the port: add the
+  `lower` row when the self-hosted core lowering accepts a whole program and make `optimize`
+  two-sided, add the stage-2 column once stage 1 emits executables, and refresh the results table at
+  every milestone that changes a phase. The benchmark is also where stage-0 memory-model bugs surface
+  first (four were found through it in one week), so a crashing corpus file is a bug to record, not a
+  file to exclude silently.
 - [ ] Demonstrate acceptable compile time, peak memory, produced-code behavior, diagnostics, and tool
-  compatibility on representative projects before changing the default compiler.
+  compatibility on representative projects before changing the default compiler. Acceptance is
+  measured with the phase benchmark and the self-hosted package builds: no phase slower than the
+  .NET implementation by more than the ratio recorded in the benchmark README at the time of the
+  gate, and the semantics package compiling in the stage-1 compiler within the same peak memory as
+  stage 0.
 - [ ] Retire the .NET compiler and tooling servers from the default and release paths only after
   sustained bootstrap and release parity. Keep their sources buildable and tested in the repository as
   the permanent stage-0 and behavioral reference toolchain.

@@ -1366,6 +1366,12 @@ executable images.
    `mov x0, sp; bl entry; mov x0, #0; mov x8, #93; svc #0; brk #0; brk #0`.
 5. The ELF header uses `EM_AARCH64 (183)` as the machine type.
 6. The same two-segment layout (text + data) is used.
+7. Syscall numbers are translated through `ResolveSyscallNr`; two calls change shape rather than
+   number. `fork` has no AArch64 syscall and maps to `clone`, which takes `flags` first, so the
+   compiler emits `clone(SIGCHLD = 17, 0, 0)` unconditionally (x86-64's `fork` ignores its argument
+   registers). `waitpid` maps to `wait4`, whose fourth argument is an `rusage` pointer, so it is
+   always emitted through the four-argument syscall helper with an explicit NULL — the three-argument
+   helper leaves that register unconstrained and the kernel would write to whatever it held.
 
 ### Windows (PE32+)
 
@@ -1385,6 +1391,15 @@ executable images.
    The chkstk stub probes each 4 KB page for stack allocations >4096 bytes.
 7. A hand-rolled binary writer assembles the final PE32+ executable with
    `.text`, `.rdata`, optional `.bss` sections, and the import directory.
+
+Import-table slots are positional: KERNEL32 entries are declared in a fixed hint array, each slot's
+IAT address is computed from its index, and the `__imp_<Name>` symbol map points at that address.
+Adding an import changes all three together; skipping one leaves a symbol unresolved at link time.
+On the codegen side a Windows `HANDLE` is an `i64` throughout — the `ReadFile`/`WriteFile` wrappers
+take it as `i64`, so a pipe or process handle is never converted to a pointer first. On a Linux host
+a win-x64 executable runs under Wine with `WINEDEBUG=-all` and `WINEDLLOVERRIDES="mscoree,mshtml=d"`:
+the emitted PE never loads .NET or Gecko, and without the override a fresh Wine prefix blocks on an
+interactive installer dialog that looks like a hung test.
 
 ### Constants
 
