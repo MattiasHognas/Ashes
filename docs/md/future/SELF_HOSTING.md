@@ -515,15 +515,29 @@ same public behavior.
   `finishCapabilityPostsFold`, a hand-rolled loop over the list using `CallClosure`), so the post
   closure actually runs and its result — not the raw handled-body value — becomes the `handle`
   expression's value when no posts were queued (an unset post register is `0` and the fold is a
-  no-op passthrough). Non-variable patterns in a one-shot arm's parameters are still rejected with
-  `UnsupportedOperationArmResume`, same as the tail-position case. Regressions:
+  no-op passthrough). Non-variable patterns in a one-shot arm's parameters are rejected with
+  `UnsupportedOperationArmResume` — unlike the bare-tail-`resume(e)` case, which still supports them
+  via a synthetic parameter name plus `match` (`buildArmParameterExpr`). Regressions:
   `testHandleOneShotResumeLowering` (arm closure + fold-loop shape, no `perform` in the handled
   body), `testHandleOneShotResumeWithPerformLowering` (a real `perform` inside the handled body,
   proving `collectCapabilityPost`'s cons-cell push fires at the call site, not just the arm-closure
-  and fold-loop halves). **Still unimplemented**: `resume` in a match/if scrutinee or a `let
-  recursive` binding, which need the rest of stage 0's `TryRewriteResume` continuation-split
-  variants; a handler whose arms only use tail-position or one-shot-`let`-position `resume` now
-  lowers correctly, anything else is rejected rather than silently wrong.
+  and fold-loop halves). **A non-resuming `let`/`let recursive` prefix before either resume shape is
+  now also supported** — an ordinary arm body like `let y = f(x) in resume(y)` (do some work, then
+  resume) previously fell through to `UnsupportedOperationArmResume` even though it should lower
+  fine, since the old shape check only matched a bare tail `resume(e)` or a `let` whose value was
+  *directly* the resume call, not a `let` wrapping either shape one layer down.
+  `resolveOperationArmBody` now recurses through any prefix `ExprLet`/`ExprLetRecursive` whose own
+  value doesn't reference `resume` (rejected otherwise), lowering the prefix through the ordinary
+  `finishLetValue`/`lowerPreparedRecursiveGroupWith` paths with the recursive search for the
+  eventual resume shape supplied as the continuation — mirrors stage 0's
+  `TryRewriteResumeLet`/`TryRewriteResumeLetRecursive`, interleaved with real lowering rather than
+  rewriting the Expr tree first (selfhost's closed `Expr` type has no synthetic node to rewrite a
+  resume site into). Regressions: `testHandleLetPrefixBeforeTailResumeLowering`,
+  `testHandleLetRecursivePrefixBeforeOneShotResumeLowering`. **Still unimplemented**: `resume` in a
+  match/if scrutinee, which needs the rest of stage 0's `TryRewriteResume` continuation-split
+  variants; a handler whose arms only use tail-position or one-shot-`let`-position `resume` (with or
+  without a non-resuming `let`/`let recursive` prefix) now lowers correctly, anything else is
+  rejected rather than silently wrong.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.

@@ -322,6 +322,111 @@ let testHandleArmWithoutResumeIsRejected unit =
                     | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
                     | _ -> test.fail("expected an operation arm without resume to be rejected"))
 
+// A non-resuming `let` prefix before a bare tail resume (`let y = u + 1 in resume(y * 2)`) is an
+// ordinary way to write an operation arm — do some work, then resume — that oneShotLetResume's
+// exact-shape check alone would previously reject: neither "value IS a resume call" (one-shot) nor
+// "body unwraps directly to a resume call" (bare tail) held for the let-wrapped whole. Proves
+// resolveOperationArmBody's non-resuming ExprLet branch actually lowers the prefix and recurses
+// into the still-tail-position resume underneath, rather than mistaking the let for something
+// unsupported.
+let testHandleLetPrefixBeforeTailResumeLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let letPrefixArmBody =
+                ExprLet(
+                    "y",
+                    ExprAdd(ExprVar("u"))(ExprInt(1)),
+                    ExprCall(ExprVar("resume"))(ExprMultiply(ExprVar("y"))(ExprInt(2)))(false)(callArgumentsInline),
+                    [],
+                    None,
+                    []
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], letPrefixArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { program = Some(program), error = None } ->
+                            program
+                            |> allProgramInstructions
+                            |> containsAddInt
+                            |> test.assertEqual(true)
+                        | CoreLoweringResult { error = Some(error) } -> test.fail("let-prefix tail resume lowering failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> test.fail("let-prefix tail resume lowering produced no program"))
+
+// A non-resuming `let recursive` prefix before a one-shot resume (`let recursive fact = ... in let
+// x = resume(fact(u)) in x + 1`) proves resolveOperationArmBody's ExprLetRecursive branch, and that
+// a one-shot resume still reachable underneath a recursive prefix installs its post closure the
+// same as when there is no prefix at all.
+let testHandleLetRecursivePrefixBeforeOneShotResumeLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let factValue =
+                ExprLambda(
+                    "n",
+                    ExprIf(
+                        ExprEqual(ExprVar("n"))(ExprInt(0)),
+                        ExprInt(1),
+                        callArgumentsInline
+                        |> ExprCall(ExprVar("fact"))(ExprSubtract(ExprVar("n"))(ExprInt(1)))(false)
+                        |> ExprMultiply(ExprVar("n"))
+                    ),
+                    None
+                )
+            in
+                let oneShotBody =
+                    ExprLet(
+                        "x",
+                        ExprCall(ExprVar("resume"))(ExprCall(ExprVar("fact"))(ExprVar("u"))(false)(callArgumentsInline))(false)(callArgumentsInline),
+                        ExprAdd(ExprVar("x"))(ExprInt(1)),
+                        [],
+                        None,
+                        []
+                    )
+                in
+                    let letRecursivePrefixArmBody = ExprLetRecursive("fact")(factValue)(oneShotBody)([])(None)([])
+                    in
+                        let handleExpr =
+                            ExprHandle(
+                                ExprInt(42),
+                                [
+                                    (Some("State"), "get", [PatternVar("u")], letRecursivePrefixArmBody)
+                                ]
+                            )
+                        in
+                            match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                                | CoreLoweringResult { program = Some(program), error = None } ->
+                                    let instrs = allProgramInstructions(program)
+                                    in
+                                        instrs
+                                        |> containsStoreCapabilityHandler(1)
+                                        |> test.assertEqual(true)
+                                        |> (given (_) ->
+                                            instrs
+                                            |> containsCallClosure
+                                            |> test.assertEqual(true))
+                                | CoreLoweringResult { error = Some(error) } -> test.fail("let-recursive-prefix one-shot resume lowering failed: " + Ashes.Trait.Show.show(error))
+                                | _ -> test.fail("let-recursive-prefix one-shot resume lowering produced no program"))
+
 let testHandleOneShotResumeLowering unit =
     (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
     in
@@ -425,6 +530,8 @@ let runCoreCapabilityLoweringTests unit =
     |> testHandleExpressionLowering
     |> testHandleReturnArmLowering
     |> testHandleArmWithoutResumeIsRejected
+    |> testHandleLetPrefixBeforeTailResumeLowering
+    |> testHandleLetRecursivePrefixBeforeOneShotResumeLowering
     |> testHandleOneShotResumeLowering
     |> testHandleOneShotResumeWithPerformLowering
     |> testDynamicPerformViaExpression

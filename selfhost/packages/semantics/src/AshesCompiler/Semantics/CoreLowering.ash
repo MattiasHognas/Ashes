@@ -3997,15 +3997,120 @@ let tailResumeArgument body =
                 | _ -> None
         | _ -> None
 
-// `let x = resume(v) in body` — the one-shot post-resume position. Detected the same way as the
-// tail case, just one level deeper: the let's own VALUE (not the let itself) is the resume call.
-let oneShotLetResume body =
+// Handed to finishLetValue/lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
+// a continuation lower instead of a literal expression (the rest of a top-level program's items in
+// lowerCoreProgramItems, or the rest of an operation arm's body in resolveOperationArmBody below)
+// — the continuation lower ignores it. A bare int literal needs no environment/binding resolution,
+// so it stays inert even if a future change accidentally lowers it before the continuation
+// intercepts it.
+let topLevelContinuationBody = ExprInt(0)
+
+// Pure, no lowering: does `expr` reference the special `resume` marker anywhere, unshadowed.
+// Reuses collectFree since it already tracks shadowing via `bound` — `resume` is never a real
+// outer binding, so its presence in the free set means the expression calls or mentions it.
+let exprReferencesResume expr =
+    []
+    |> collectFree(expr)([])
+    |> containsName("resume")
+
+// Pure, no lowering: a resume-free stand-in for `body`, used only so lowerLambda's own capture
+// analysis (`collectFree`) sees an operation-arm closure's true free variables — the placeholder
+// itself is never lowered. Mirrors resolveOperationArmBody's shape recognition one layer at a
+// time: a non-resuming let/let-recursive prefix survives with its own body replaced by the
+// placeholder for what follows; a one-shot `let x = resume(v) in body` becomes the same
+// resume-free tuple-of-value-and-post-lambda shape the leaf case actually builds; anything else
+// falls back to its own (already resume-free, or rejected downstream) tail shape.
+let recursive armBodyCapturePlaceholder body =
     match unspanForResumeCheck(body) with
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
             match tailResumeArgument(value) with
-                | Some(resumeArgument) -> Some((name, resumeArgument, letBody))
-                | None -> None
-        | _ -> None
+                | Some(resumeArgument) ->
+                    ExprTuple([resumeArgument, ExprLambda(name)(armBodyCapturePlaceholder(letBody))(None)])
+                | None ->
+                    ExprLet(name)(value)(armBodyCapturePlaceholder(letBody))([])(None)([])
+        | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
+            ExprLetRecursive(name)(value)(armBodyCapturePlaceholder(letBody))([])(None)([])
+        | _ ->
+            match tailResumeArgument(body) with
+                | Some(resumedValue) -> resumedValue
+                | None -> body
+
+// The one-shot post-resume leaf: `v` is returned to the perform site immediately, and
+// `given postName -> postBody` is lowered as a fresh closure and stashed in the pending-post
+// register for collectCapabilityPost (at the perform call site) to pick up.
+let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex state =
+    match lower(resumeArgument)(state) with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
+            match lowerLambda(postName)(postBody)(false)(lower)(valueState) with
+                | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
+                | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
+                    postState
+                    |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
+                    |> success(valueTemp)(valueType)
+
+// Resolves an operation arm's body (after all of its own operation parameters have been peeled
+// off by lowerOperationArmParameters) to its final lowered value: recurses through any
+// non-resuming `let`/`let recursive` prefix — an ordinary binding evaluated before the arm
+// resumes, e.g. `let y = f(x) in resume(y)` — down to the eventual resume shape, bare tail
+// `resume(e)` or one-shot `let x = resume(v) in body`. Mirrors stage-0's TryRewriteResume family
+// (TryRewriteResumeLet/LetRecursive), but interleaves shape recognition with real lowering rather
+// than rewriting the Expr tree first and lowering the rewrite once: selfhost's Expr type is a
+// closed ADT with no synthetic "post" node to rewrite into, so each non-resuming prefix's own
+// value is lowered here, in place, through the ordinary let/let-recursive lowering path
+// (finishLetValue / lowerPreparedRecursiveGroupWith), with the recursive call into the rest of
+// the arm body supplied as the continuation — the same sentinel-placeholder-plus-custom-
+// continuation technique lowerCoreProgramItems already uses for top-level declarations.
+let recursive resolveOperationArmBody body lower postRegisterIndex capName opName state =
+    match unspanForResumeCheck(body) with
+        | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
+            match tailResumeArgument(value) with
+                | Some(resumeArgument) -> lowerOneShotPost(resumeArgument)(name)(letBody)(lower)(postRegisterIndex)(state)
+                | None ->
+                    if exprReferencesResume(value)
+                    then
+                        opName
+                        |> UnsupportedOperationArmResume(capName)
+                        |> failure(state)
+                    else
+                        match state with
+                            | CoreLoweringState { bindings = outerBindings } ->
+                                state
+                                |> lower(value)
+                                |> finishLetValue(
+                                    name,
+                                    topLevelContinuationBody,
+                                    given (_ignoredBody) ->
+                                        given (s) -> resolveOperationArmBody(letBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                                    outerBindings
+                                )
+        | ExprLetRecursive(name, value, letBody, _parameters, _annotation, _requirements) ->
+            if exprReferencesResume(value)
+            then
+                opName
+                |> UnsupportedOperationArmResume(capName)
+                |> failure(state)
+            else
+                match state with
+                    | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
+                        []
+                        |> prepareRecursiveGroup([(name, value)])(state)
+                        |> relabelSingleRecursive(lambdaId)
+                        |> lowerPreparedRecursiveGroupWith(
+                            [(name, value)],
+                            topLevelContinuationBody,
+                            lower,
+                            given (_ignoredBody) ->
+                                given (s) -> resolveOperationArmBody(letBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                            outerBindings
+                        )
+        | _ ->
+            match tailResumeArgument(body) with
+                | Some(resumedValue) -> lower(resumedValue)(state)
+                | None ->
+                    opName
+                    |> UnsupportedOperationArmResume(capName)
+                    |> failure(state)
 
 // Wraps an operation arm's (already resume-rewritten) body in one lambda per parameter, matching
 // each non-variable pattern via a fresh synthetic parameter name — the ordinary lambda/match
@@ -4023,35 +4128,26 @@ let recursive buildArmParameterExpr index patterns body =
                 in
                     ExprLambda(paramName)(ExprMatch(ExprVar(paramName))([(pattern, innerBody, None)])(None))(None)
 
-// Lowers a one-shot-resume arm's parameters directly through lowerLambda, one at a time, rather
-// than building a plain Expr tree and handing it to `lower` in one call: lowerCore's own ExprLambda
-// case always recurses into a nested lambda's body via itself (never an injected `lower`), so
-// nothing below the outermost layer could be intercepted that way. lowerLambda has no such
-// hard-coded recursion — it always lowers the body through whatever `lower` it's given — so calling
-// it directly at every parameter layer, with the innermost layer's `lower` performing the real
-// "lower the resumed value, lower the post continuation, store it, return the resumed value" work,
-// reaches the same place. Every layer is handed the same placeholderBody (an ExprTuple pairing the
-// resumed value with the post lambda) purely so lowerLambda's own free-variable/capture analysis
-// (`collectFree`) sees the closure's true free variables; the placeholder itself is never lowered.
-let recursive lowerOneShotArmParameters patterns resumeArgument postName postBody placeholderBody lower postRegisterIndex capName opName state =
+// Lowers an operation arm's non-tail-resume parameters directly through lowerLambda, one at a
+// time, rather than building a plain Expr tree and handing it to `lower` in one call: lowerCore's
+// own ExprLambda case always recurses into a nested lambda's body via itself (never an injected
+// `lower`), so nothing below the outermost layer could be intercepted that way. lowerLambda has no
+// such hard-coded recursion — it always lowers the body through whatever `lower` it's given — so
+// calling it directly at every parameter layer, with the innermost layer resolving the arm's
+// actual body (resolveOperationArmBody, which may itself recurse through non-resuming let
+// prefixes before reaching a resume shape), reaches the same place. Every layer is handed the same
+// placeholderBody purely so lowerLambda's own free-variable/capture analysis (`collectFree`) sees
+// the closure's true free variables; the placeholder itself is never lowered.
+let recursive lowerOperationArmParameters patterns armBody placeholderBody lower postRegisterIndex capName opName state =
     match patterns with
-        | [] ->
-            match lower(resumeArgument)(state) with
-                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
-                    match lowerLambda(postName)(postBody)(false)(lower)(valueState) with
-                        | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
-                        | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
-                            postState
-                            |> emit(StoreCapabilityHandler(postRegisterIndex)(postTemp))
-                            |> success(valueTemp)(valueType)
+        | [] -> resolveOperationArmBody(armBody)(lower)(postRegisterIndex)(capName)(opName)(state)
         | PatternVar(name) :: rest ->
             lowerLambda(
                 name,
                 placeholderBody,
                 false,
                 given (_ignoredBody) ->
-                    given (s) -> lowerOneShotArmParameters(rest)(resumeArgument)(postName)(postBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(s),
+                    given (s) -> lowerOperationArmParameters(rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(s),
                 state
             )
         | _pattern :: _rest ->
@@ -4059,19 +4155,20 @@ let recursive lowerOneShotArmParameters patterns resumeArgument postName postBod
             |> UnsupportedOperationArmResume(capName)
             |> failure(state)
 
+// A bare tail `resume(e)` (the arm's whole unwrapped body, no let/letrec prefix) reuses the plain
+// closure/match lowering machinery via buildArmParameterExpr, which — unlike
+// lowerOperationArmParameters — also supports non-variable operation parameters (synthetic name +
+// match), since `e` needs no lowering-time hook of its own. Everything else (a one-shot
+// `let x = resume(v) in body`, or any non-resuming let/letrec prefix before either shape) goes
+// through the general resolveOperationArmBody recursion, which only supports variable operation
+// parameters.
 let buildOperationArmClosure capName opName patterns armBody lower postRegisterIndex state =
-    match oneShotLetResume(armBody) with
-        | Some((postName, resumeArgument, postBody)) ->
-            let placeholderBody = ExprTuple([resumeArgument, ExprLambda(postName)(postBody)(None)])
-            in lowerOneShotArmParameters(patterns)(resumeArgument)(postName)(postBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
+    match tailResumeArgument(armBody) with
+        | Some(resumedValue) ->
+            lower(buildArmParameterExpr(0)(patterns)(resumedValue))(state)
         | None ->
-            match tailResumeArgument(armBody) with
-                | None ->
-                    opName
-                    |> UnsupportedOperationArmResume(capName)
-                    |> failure(state)
-                | Some(resumedValue) ->
-                    lower(buildArmParameterExpr(0)(patterns)(resumedValue))(state)
+            let placeholderBody = armBodyCapturePlaceholder(armBody)
+            in lowerOperationArmParameters(patterns)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(state)
 
 // Lowers every operation arm of the single handled capability to a closure and stores each one
 // into the handler frame at the same offset emitDynamicPerform reads from
@@ -4417,12 +4514,6 @@ let recursive letBindingSyntaxNames bindings =
     match bindings with
         | [] -> []
         | LetBindingSyntax { name = name } :: rest -> name :: letBindingSyntaxNames(rest)
-
-// Handed to finishLetValue/lowerPreparedRecursiveGroupWith wherever the real "body" is supplied by
-// the continuation lower instead (the rest of the top-level items, not a literal expression) — the
-// continuation lower ignores it. A bare int literal needs no environment/binding resolution, so it
-// stays inert even if a future change accidentally lowers it before the continuation intercepts it.
-let topLevelContinuationBody = ExprInt(0)
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
