@@ -158,38 +158,38 @@ same public behavior.
   `formatterFieldPrecedence`, gated on a following sibling at each call site), covered by the
   record-literal (inline, multiline, lambda-bodied, and last-field-needs-no-parens), update-field,
   call, tuple/list, and scrutinee cases in `selfhost/tests/formatter/Main.ash`.
-- [ ] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
+- [x] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
   whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
-  `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
-  known layout differences (`else if` chains, parenthesized `let` bodies, pipeline layout) and one
-  crash, re-diagnosed and massively minimized 2026-08-26 (the original note's "arrow-type
-  annotation" theory did not hold: `StandardTraits.ash` has no explicit arrow-typed `let`
-  annotation at all). Formatting `StandardTraits.ash` segfaults reproducibly at `--debug` inside a
-  compiler-synthesized `AdtDeepCopier` for the frontend's `Expr` type, a genuine invalid-pointer
-  dereference reading a list-cell tail (not stack overflow — the full backtrace is only ~29
-  frames), reached from `formatProgram` through the ownership pass's own defensive
-  independent-clone of a top-level binding's `Expr` value. **Minimized to a standalone 3-line
-  repro**: `let dummyPadding = (let fillCases names = names in fillCases(1))` — any nested
-  `let name param = ...` binding — crashes identically when its `sugarParameters: List(Str)`
-  field is walked by anything (the deep-copier, or a plain `Ashes.Collection.List.length` call on
-  it), with the SAME crash reproducing whether reached through `formatProgram` or through bare
-  parse-then-inspect code with no formatter involved. A hand-built `Expr`/`Pattern` tree of the
-  identical shape (not produced by the parser) does **not** crash, isolating the corruption to
-  something the *parser* does while building this specific field. **Ruled out** over this
-  investigation: reuse-specialization (`--debug-disable-reuse` doesn't help), the whole IR
-  optimizer (temporarily bypassing `IrOptimizer.Optimize` entirely doesn't help — the crash is in
-  base lowering/codegen, not an optimization pass), two confirmed instances of the
-  generic-`reverse`-of-heap-composite-accumulator bug in the parser's own sugar-parameter and
-  top-level-item list construction (both fixed as a real but separate bug — see the item below —
-  neither fixed this crash when tested in isolation or together), and a premature-drop/
-  evaluation-order theory (reordering the two consumers of the parsed sugar-parameter list doesn't
-  help). A hardware watchpoint confirmed the corrupted list cell's tail word already holds garbage
-  the very first time it is read, not from a later overwrite — narrowing this to the cons-cell
-  construction for the sugar-parameter list itself (inside `parserParseSugarParameters` in
-  `selfhost/packages/frontend/src/AshesCompiler/Frontend/Parser.ash`), which needs deeper
-  C#-lowering-internals investigation (likely `Lowering.Ownership.cs`'s tuple/list construction or
-  `AdtDeepCopier`/`CopyOutList` codegen in `LlvmCodegenMemory.cs`) than this pass completed. Left
-  open for a dedicated session with this minimized repro, gdb, and `--emit-ir`.
+  `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) found one crash,
+  root-caused and fixed 2026-08-26. **Minimized repro**: `let dummyPadding = (let fillCases names
+  = names in fillCases(1))` — any nested `let name param = ...` binding — segfaulted reading a
+  corrupted tail from its `sugarParameters: List(Str)` cons cell, reached through `formatProgram`'s
+  deep-copy of the parsed `Expr` tree (or equally through a bare `Ashes.Collection.List.length` on
+  the field with no formatter involved). A hardware watchpoint on the corrupted cell's tail word
+  (`0x7ffff3401910` in one run) caught it initialized correctly to `0` (empty-list) by
+  `parserParameterNames`, then overwritten with garbage by an unrelated allocation inside
+  `parserExprEnd`/`parserExprSpan` — called immediately afterward, in
+  `parserParseTopLevelBinding`'s own `(binding, parserExprEnd(value), ...)` return-tuple
+  construction. The nested let's sugar-parameter list lives arbitrarily deep inside `value` (the
+  parsed value expression of the *outer* binding); the compiler's arena/bracket accounting
+  considered the nested let's parse-local temporaries reclaimable once its own parsing finished,
+  not accounting for this list still being reachable through the still-live `value`, so the very
+  next allocation (`parserExprEnd`'s own span construction) reused and clobbered its memory. Eleven
+  earlier fix attempts targeting the list's own construction/copy-out (deep-copying the extracted
+  name, deep-copying the whole tuple-list, hand-written list copiers, non-tail-recursive rebuilds,
+  reordering double-uses, two C# ownership-analysis fixes) all failed because none of them widened
+  the *scope* of what needed to survive — the list, not `value` as a whole. Fixed in
+  `parserParseTopLevelBinding` (`selfhost/packages/frontend/src/AshesCompiler/Frontend/Parser.ash`)
+  by deep-copying `value` itself immediately after `parserBuildLambdas` builds it, before
+  `parserExprEnd` or anything else runs: `parserBuildLambdas(parameters)(rawValue)(name.position) |>
+  Ashes.Internal.deepCopy`. `Ashes.Internal.deepCopy` on an `Expr` (a recursive, multi-constructor
+  ADT the compiler's `AdtDeepCopier` machinery fully supports) forces every nested arena-placed
+  structure into a fixed-watermark-safe copy while everything is still valid, closing the reuse
+  window. Verified against the minimized repro, the full self-hosted formatter and semantics test
+  suites, and the full C# (`Ashes.Tests`, `Ashes.Cli.Tests`) and end-to-end `.ash` suites — all pass.
+  Ruled out along the way (kept for anyone hitting a similarly-shaped bug): reuse-specialization,
+  the whole IR optimizer, and two confirmed-but-separate instances of a generic-`reverse`-of-
+  heap-composite-accumulator bug (see the item below).
   The top-level boundary splitter no longer cuts a declaration value at an indented `then`/`else`/
   `in`/pipe line after a completed call (only a token that can start a whitespace-application
   argument begins the trailing expression, as in stage 0); that gate was found by the same pass.
@@ -990,8 +990,9 @@ same public behavior.
   self-hosted sources) and `parserParseProgramItems`/`parserParseProgramBody`
   (`List(TopLevelItem)`, the parsed program's top-level declarations); both fixed the same way
   (monomorphic reverse over the concrete type). Neither instance was the cause of the
-  `StandardTraits.ash` crash when tested in isolation or together — that crash's root cause is
-  something else, narrowed but not found; see the formatter-corpus item below.
+  `StandardTraits.ash` crash — that crash's actual root cause (a different arena-reuse shape, one
+  call frame away from the sugar-parameter list itself) is documented and fixed under the
+  formatter-corpus item below.
 - [ ] Check an inlined helper's references transitively before inlining it inside a reuse arm or a
   reuse specialization: an inlinable free name only proves resolvable when that helper's own body
   resolves in the isolated scope too (a stitched stdlib helper calling a module sibling through the
