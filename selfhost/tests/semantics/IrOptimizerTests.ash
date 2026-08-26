@@ -2147,9 +2147,392 @@ let testSelfLoopingJumpIsLeftAlone unit =
         then Unit
         else test.fail("testSelfLoopingJumpIsLeftAlone: a label followed by a jump to itself is not an empty hop"))
 
+let recursive countCallKnown instructions =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = CallKnown(_, _, _, _, _, _) } :: tail -> 1 + countCallKnown(tail)
+        | _ :: tail -> countCallKnown(tail)
+
+let recursive hasHeapAlloc instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Alloc(_, _, _) } :: _ -> true
+        | _ :: tail -> hasHeapAlloc(tail)
+
+let recursive callKnownStackFlag instructions label =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = CallKnown(_, candidate, _, _, _, stackAllocated) } :: tail ->
+            if candidate == label
+            then Some(stackAllocated)
+            else callKnownStackFlag(tail)(label)
+        | _ :: tail -> callKnownStackFlag(tail)(label)
+
+let recursive allocStackSizeOf instructions target =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = AllocStack(candidate, size) } :: tail ->
+            if candidate == target
+            then Some(size)
+            else allocStackSizeOf(tail)(target)
+        | _ :: tail -> allocStackSizeOf(tail)(target)
+
+let recursive countStoresThrough instructions basePtr =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = StoreMemOffset(candidate, _, _) } :: tail ->
+            if candidate == basePtr
+            then 1 + countStoresThrough(tail)(basePtr)
+            else countStoresThrough(tail)(basePtr)
+        | _ :: tail -> countStoresThrough(tail)(basePtr)
+
+let recursive loadsEnvironmentWordInto instructions target =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = LoadMemOffset(candidate, _, 8) } :: tail ->
+            if candidate == target
+            then true
+            else loadsEnvironmentWordInto(tail)(target)
+        | _ :: tail -> loadsEnvironmentWordInto(tail)(target)
+
+// outer calls the closure it captured in its only environment word; inner returns its argument.
+let capturedCallingFunction label =
+    makeFunction(label)(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            1
+            |> LoadLocal(1)
+            |> makeInstruction,
+            -1
+            |> CallClosure(2)(0)(1)
+            |> makeInstruction,
+            makeInstruction(Return(2))
+        ]
+    )(
+        2
+    )(
+        3
+    )(
+        true
+    )
+
+let argumentReturningFunction label =
+    makeFunction(label)([1
+    |> LoadLocal(0)
+    |> makeInstruction, makeInstruction(Return(0))])(2)(1)(true)
+
+// The entry creates outer's closure once, storing inner's closure into its single environment
+// word, and calls it.
+let singleCreationSiteEntry =
+    makeFunction("entry")(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            false
+            |> MakeClosure(1)("inner")(0)(0)(false)(false)
+            |> makeInstruction,
+            8
+            |> AllocStack(2)
+            |> makeInstruction,
+            1
+            |> StoreMemOffset(2)(0)
+            |> makeInstruction,
+            false
+            |> MakeClosureStack(3)("outer")(2)(8)(false)
+            |> makeInstruction,
+            1
+            |> LoadLocal(4)
+            |> makeInstruction,
+            -1
+            |> CallClosure(5)(3)(4)
+            |> makeInstruction,
+            makeInstruction(Return(5))
+        ]
+    )(
+        2
+    )(
+        6
+    )(
+        true
+    )
+
+let testCapturedClosureCallDevirtualizes unit =
+    (let optimized =
+        0
+        |> makeProgram(singleCreationSiteEntry)([capturedCallingFunction("outer"), argumentReturningFunction("inner")])([])
+        |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+    in
+        match findFunction(optimized.functions)("outer") with
+            | None -> test.fail("testCapturedClosureCallDevirtualizes: outer must remain in the program")
+            | Some(outer) ->
+                if hasCallClosure(outer.instructions)
+                then test.fail("testCapturedClosureCallDevirtualizes: the call through the captured closure must become direct")
+                else
+                    if countCallKnownTo(outer.instructions)("inner") == 1
+                    then
+                        match callKnownEnvTemp(outer.instructions)("inner") with
+                            | Some(envTemp) ->
+                                if loadsEnvironmentWordInto(outer.instructions)(envTemp)
+                                then Unit
+                                else test.fail("testCapturedClosureCallDevirtualizes: the direct call must read the captured closure object's environment word")
+                            | None -> test.fail("testCapturedClosureCallDevirtualizes: the direct call must target inner")
+                    else test.fail("testCapturedClosureCallDevirtualizes: exactly one direct call to inner is expected"))
+
+// Two creation sites store different closures into the same word of outer: the call inside outer
+// must stay indirect.
+let disagreeingCreationSitesEntry =
+    makeFunction("entry")(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            false
+            |> MakeClosure(1)("inner")(0)(0)(false)(false)
+            |> makeInstruction,
+            8
+            |> AllocStack(2)
+            |> makeInstruction,
+            1
+            |> StoreMemOffset(2)(0)
+            |> makeInstruction,
+            false
+            |> MakeClosureStack(3)("outer")(2)(8)(false)
+            |> makeInstruction,
+            false
+            |> MakeClosure(4)("other")(0)(0)(false)(false)
+            |> makeInstruction,
+            8
+            |> AllocStack(5)
+            |> makeInstruction,
+            4
+            |> StoreMemOffset(5)(0)
+            |> makeInstruction,
+            false
+            |> MakeClosureStack(6)("outer")(5)(8)(false)
+            |> makeInstruction,
+            1
+            |> LoadLocal(7)
+            |> makeInstruction,
+            -1
+            |> CallClosure(8)(3)(7)
+            |> makeInstruction,
+            -1
+            |> CallClosure(9)(6)(7)
+            |> makeInstruction,
+            9
+            |> AddInt(10)(8)
+            |> makeInstruction,
+            makeInstruction(Return(10))
+        ]
+    )(
+        2
+    )(
+        11
+    )(
+        true
+    )
+
+let testDisagreeingCreationSitesKeepIndirectCall unit =
+    (let optimized =
+        0
+        |> makeProgram(disagreeingCreationSitesEntry)([capturedCallingFunction("outer"), argumentReturningFunction("inner"), constantFunction("other")(1)])([])
+        |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+    in
+        match findFunction(optimized.functions)("outer") with
+            | None -> test.fail("testDisagreeingCreationSitesKeepIndirectCall: outer must remain in the program")
+            | Some(outer) ->
+                if hasCallClosure(outer.instructions)
+                then Unit
+                else test.fail("testDisagreeingCreationSitesKeepIndirectCall: a word whose creation sites disagree must not be devirtualized"))
+
+// The entry applies stage(x, 3)(0): the stage copies its two captures and its argument into a
+// fresh heap environment for body, so the whole chain can collapse into one direct call over a
+// caller-frame environment. Three captures keep the result out of reach of scalarization so the
+// assertions see the inlining alone.
+let curryingStageEntry =
+    makeFunction("entry")(
+        [
+            1
+            |> LoadLocal(0)
+            |> makeInstruction,
+            16
+            |> AllocStack(1)
+            |> makeInstruction,
+            0
+            |> StoreMemOffset(1)(0)
+            |> makeInstruction,
+            3
+            |> LoadConstInt(7)
+            |> makeInstruction,
+            7
+            |> StoreMemOffset(1)(8)
+            |> makeInstruction,
+            2
+            |> LoadConstInt(2)
+            |> makeInstruction,
+            true
+            |> CallKnown(3)("stage")(1)(2)(-1)
+            |> makeInstruction,
+            8
+            |> LoadMemOffset(4)(3)
+            |> makeInstruction,
+            0
+            |> LoadConstInt(5)
+            |> makeInstruction,
+            false
+            |> CallKnown(6)("body")(4)(5)(-1)
+            |> makeInstruction,
+            makeInstruction(Return(6))
+        ]
+    )(
+        2
+    )(
+        8
+    )(
+        true
+    )
+
+// A stage that only copies, or one that also retains its first capture first (which makes it more
+// than a pure copy).
+let curryingStageFunction retainCapture =
+    (let capturedTemp =
+        if retainCapture
+        then 6
+        else 1
+    in
+        let retain =
+            if retainCapture
+            then
+                [false
+                |> RcDup(6)(1)(true)
+                |> makeInstruction]
+            else []
+        in
+            makeFunction("stage")(
+                Ashes.Collection.List.append(
+                    [
+                        false
+                        |> Alloc(0)(24)
+                        |> makeInstruction,
+                        0
+                        |> LoadEnv(1)
+                        |> makeInstruction
+                    ]
+                )(
+                    Ashes.Collection.List.append(retain)(
+                        [
+                            capturedTemp
+                            |> StoreMemOffset(0)(0)
+                            |> makeInstruction,
+                            1
+                            |> LoadEnv(5)
+                            |> makeInstruction,
+                            5
+                            |> StoreMemOffset(0)(8)
+                            |> makeInstruction,
+                            1
+                            |> LoadLocal(2)
+                            |> makeInstruction,
+                            2
+                            |> StoreMemOffset(0)(16)
+                            |> makeInstruction,
+                            false
+                            |> MakeClosure(3)("body")(0)(24)(false)(false)
+                            |> makeInstruction,
+                            makeInstruction(Return(3))
+                        ]
+                    )
+                )
+            )(
+                2
+            )(
+                7
+            )(
+                true
+            ))
+
+let threeCaptureBody =
+    makeFunction("body")(
+        [
+            0
+            |> LoadEnv(0)
+            |> makeInstruction,
+            1
+            |> LoadEnv(1)
+            |> makeInstruction,
+            2
+            |> LoadEnv(3)
+            |> makeInstruction,
+            1
+            |> AddInt(2)(0)
+            |> makeInstruction,
+            3
+            |> AddInt(4)(2)
+            |> makeInstruction,
+            makeInstruction(Return(4))
+        ]
+    )(
+        2
+    )(
+        5
+    )(
+        true
+    )
+
+let optimizeCurryingStageProgram retainCapture =
+    0
+    |> makeProgram(curryingStageEntry)([curryingStageFunction(retainCapture), threeCaptureBody])([])
+    |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+
+let testPureCurryingStageInlinesIntoStackEnvironment unit =
+    (let entry =
+        false
+        |> optimizeCurryingStageProgram
+        |> entryInstructions
+    in
+        if countCallKnown(entry) != 1
+        then test.fail("testPureCurryingStageInlinesIntoStackEnvironment: the stage must not be called at all, leaving only the call of body")
+        else
+            match callKnownStackFlag(entry)("body") with
+                | Some(true) ->
+                    match callKnownEnvTemp(entry)("body") with
+                        | Some(envTemp) ->
+                            if allocStackSizeOf(entry)(envTemp) == Some(24)
+                            then
+                                if countStoresThrough(entry)(envTemp) == 3
+                                then
+                                    if hasHeapAlloc(entry)
+                                    then test.fail("testPureCurryingStageInlinesIntoStackEnvironment: no heap environment may remain")
+                                    else Unit
+                                else test.fail("testPureCurryingStageInlinesIntoStackEnvironment: every environment word must be stored by the caller")
+                            else test.fail("testPureCurryingStageInlinesIntoStackEnvironment: the caller-frame environment must have the stage's environment size")
+                        | None -> test.fail("testPureCurryingStageInlinesIntoStackEnvironment: body must be called directly")
+                | _ -> test.fail("testPureCurryingStageInlinesIntoStackEnvironment: the environment must live in the caller's frame"))
+
+// Scalarization may still rename the stage call, so the count covers the stage under any label.
+let testRetainingStageIsNotInlined unit =
+    (let entry =
+        true
+        |> optimizeCurryingStageProgram
+        |> entryInstructions
+    in
+        if countCallKnown(entry) != 2
+        then test.fail("testRetainingStageIsNotInlined: a stage with a retain is not a pure copy, so its call must remain")
+        else
+            match callKnownStackFlag(entry)("body") with
+                | Some(false) -> Unit
+                | _ -> test.fail("testRetainingStageIsNotInlined: body must still receive the stage's heap environment"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
+    |> (given (_) -> testCapturedClosureCallDevirtualizes(Unit))
+    |> (given (_) -> testDisagreeingCreationSitesKeepIndirectCall(Unit))
+    |> (given (_) -> testPureCurryingStageInlinesIntoStackEnvironment(Unit))
+    |> (given (_) -> testRetainingStageIsNotInlined(Unit))
     |> (given (_) -> testMeetOverPathsAgreeingEdges(Unit))
     |> (given (_) -> testMeetOverPathsLocalSlotAgreeing(Unit))
     |> (given (_) -> testMeetOverPathsLocalSlotDisagreeing(Unit))
