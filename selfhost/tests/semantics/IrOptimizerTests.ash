@@ -432,15 +432,15 @@ let testKnownFalseBranchBecomesJump unit =
             3
         )
     in
-        if hasJumpTo(optimized)("else")
-        then
+        if hasJumpIfFalse(optimized)
+        then test.fail("testKnownFalseBranchBecomesJump: a branch on a known-false condition must fold away")
+        else
             if hasLoadConstInt(optimized)(1)(1)
             then test.fail("testKnownFalseBranchBecomesJump: the then body after the folded jump must be unreachable")
             else
                 if hasLoadConstInt(optimized)(2)(2)
                 then Unit
-                else test.fail("testKnownFalseBranchBecomesJump: the else body must survive")
-        else test.fail("testKnownFalseBranchBecomesJump: a branch on a known-false condition must become a jump"))
+                else test.fail("testKnownFalseBranchBecomesJump: the else body must survive"))
 
 let testKnownSwitchTagBecomesJump unit =
     (let optimized =
@@ -477,15 +477,12 @@ let testKnownSwitchTagBecomesJump unit =
         if hasSwitchTag(optimized)
         then test.fail("testKnownSwitchTagBecomesJump: a switch on a known tag must fold to a jump")
         else
-            if hasJumpTo(optimized)("one")
-            then
-                if hasLabel(optimized)("zero")
-                then test.fail("testKnownSwitchTagBecomesJump: the orphaned zero case must vanish")
-                else
-                    if hasLabel(optimized)("other")
-                    then test.fail("testKnownSwitchTagBecomesJump: the orphaned default case must vanish")
-                    else Unit
-            else test.fail("testKnownSwitchTagBecomesJump: the jump must target the taken case, first jump: " + firstJumpTarget(optimized)))
+            if hasLabel(optimized)("zero")
+            then test.fail("testKnownSwitchTagBecomesJump: the orphaned zero case must vanish")
+            else
+                if hasLabel(optimized)("other")
+                then test.fail("testKnownSwitchTagBecomesJump: the orphaned default case must vanish")
+                else Unit)
 
 let testUnreferencedLabelInUnreachableRegionIsDropped unit =
     (let optimized =
@@ -1967,6 +1964,189 @@ let testMixedRuntimeManagedFlagsSplitTheChain unit =
                 else test.fail("testMixedRuntimeManagedFlagsSplitTheChain: the chain must stop at a link with a different runtime-managed flag")
             | None -> test.fail("testMixedRuntimeManagedFlagsSplitTheChain: the outer links must still fold"))
 
+let recursive hasAnyJump instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Jump(_) } :: _ -> true
+        | _ :: tail -> hasAnyJump(tail)
+
+let recursive hasAnyLabel instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = Label(_) } :: _ -> true
+        | _ :: tail -> hasAnyLabel(tail)
+
+let recursive casesAllTarget (cases: List(IrSwitchCase)) (label: Str) =
+    match cases with
+        | [] -> true
+        | IrSwitchCase { label = candidate } :: tail ->
+            if candidate == label
+            then casesAllTarget(tail)(label)
+            else false
+
+let recursive switchTargetsOnly instructions label =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SwitchTag(_, cases, defaultLabel) } :: _ ->
+            if defaultLabel == label
+            then casesAllTarget(cases)(label)
+            else false
+        | _ :: tail -> switchTargetsOnly(tail)(label)
+
+let testJumpChainCollapsesToFallthrough unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                makeInstruction(Jump("hop_a")),
+                makeInstruction(Label("hop_a")),
+                makeInstruction(Jump("hop_b")),
+                makeInstruction(Label("hop_b")),
+                makeInstruction(Jump("hop_c")),
+                makeInstruction(Label("hop_c")),
+                1
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                makeInstruction(Return(0))
+            ]
+        )(
+            0
+        )(
+            1
+        )
+    in
+        if hasAnyJump(optimized)
+        then test.fail("testJumpChainCollapsesToFallthrough: every hop of an empty-label chain must be threaded away and the final redundant jump elided")
+        else
+            if hasAnyLabel(optimized)
+            then test.fail("testJumpChainCollapsesToFallthrough: a label nothing branches to must be dropped")
+            else
+                if hasLoadConstInt(optimized)(0)(1)
+                then Unit
+                else test.fail("testJumpChainCollapsesToFallthrough: the code the chain led to must survive"))
+
+let testConditionalBranchThreadsThroughEmptyLabel unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                0
+                |> LoadLocal(0)
+                |> makeInstruction,
+                "skip"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                1
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Jump("end")),
+                makeInstruction(Label("skip")),
+                makeInstruction(Jump("other")),
+                makeInstruction(Label("other")),
+                2
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Label("end")),
+                makeInstruction(Return(1))
+            ]
+        )(
+            1
+        )(
+            2
+        )
+    in
+        if hasLabel(optimized)("skip")
+        then test.fail("testConditionalBranchThreadsThroughEmptyLabel: the empty label must be threaded away")
+        else
+            if hasLabel(optimized)("other")
+            then
+                if hasJumpTo(optimized)("end")
+                then Unit
+                else test.fail("testConditionalBranchThreadsThroughEmptyLabel: the branch past the else code must stay")
+            else test.fail("testConditionalBranchThreadsThroughEmptyLabel: the conditional branch must be redirected to the chain's destination, which keeps that label alive"))
+
+let testSwitchCasesThreadThroughEmptyLabels unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                0
+                |> LoadLocal(0)
+                |> makeInstruction,
+                "arm_default"
+                |> SwitchTag(0)([IrSwitchCase(tag = 0, label = "arm_0"), IrSwitchCase(tag = 1, label = "arm_1")])
+                |> makeInstruction,
+                makeInstruction(Label("arm_0")),
+                makeInstruction(Jump("merge")),
+                makeInstruction(Label("arm_1")),
+                makeInstruction(Jump("merge")),
+                makeInstruction(Label("arm_default")),
+                makeInstruction(Jump("merge")),
+                makeInstruction(Label("merge")),
+                7
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Return(1))
+            ]
+        )(
+            1
+        )(
+            2
+        )
+    in
+        if switchTargetsOnly(optimized)("merge")
+        then
+            if hasLabel(optimized)("arm_0")
+            then test.fail("testSwitchCasesThreadThroughEmptyLabels: an arm label nothing branches to any more must be dropped")
+            else Unit
+        else test.fail("testSwitchCasesThreadThroughEmptyLabels: every case and the default must be redirected to the merge label"))
+
+let testJumpToItsOwnNextLabelIsElided unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                1
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                makeInstruction(Jump("next")),
+                makeInstruction(Label("next")),
+                makeInstruction(Return(0))
+            ]
+        )(
+            0
+        )(
+            1
+        )
+    in
+        if hasAnyJump(optimized)
+        then test.fail("testJumpToItsOwnNextLabelIsElided: a jump reached only by fall-through to its own target is a no-op")
+        else
+            if hasAnyLabel(optimized)
+            then test.fail("testJumpToItsOwnNextLabelIsElided: the label the elided jump targeted has no reference left")
+            else Unit)
+
+let testSelfLoopingJumpIsLeftAlone unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                0
+                |> LoadLocal(0)
+                |> makeInstruction,
+                "exit"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                makeInstruction(Label("spin")),
+                makeInstruction(Jump("spin")),
+                makeInstruction(Label("exit")),
+                makeInstruction(Return(0))
+            ]
+        )(
+            1
+        )(
+            1
+        )
+    in
+        if hasJumpTo(optimized)("spin")
+        then Unit
+        else test.fail("testSelfLoopingJumpIsLeftAlone: a label followed by a jump to itself is not an empty hop"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -2007,6 +2187,11 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testConcatIntermediateUsedTwiceKeepsChain(Unit))
     |> (given (_) -> testConcatChainAcrossArenaBracketIsDeclined(Unit))
     |> (given (_) -> testMixedRuntimeManagedFlagsSplitTheChain(Unit))
+    |> (given (_) -> testJumpChainCollapsesToFallthrough(Unit))
+    |> (given (_) -> testConditionalBranchThreadsThroughEmptyLabel(Unit))
+    |> (given (_) -> testSwitchCasesThreadThroughEmptyLabels(Unit))
+    |> (given (_) -> testJumpToItsOwnNextLabelIsElided(Unit))
+    |> (given (_) -> testSelfLoopingJumpIsLeftAlone(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))

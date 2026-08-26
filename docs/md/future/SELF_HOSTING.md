@@ -604,7 +604,7 @@ same public behavior.
   Porting note: the C# reset resolution replays each function's instructions with all per-temp facts
   cleared and re-derived from the instructions alone, so this fact must be recoverable from durable
   per-function state (keyed by function and local slot), not only stamped once at initial lowering.
-- [ ] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
+- [x] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
   empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
   chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed
   by its own target label (a redundant fallthrough). Every rewrite is locally safe without reachability
@@ -624,7 +624,9 @@ same public behavior.
   at `-O0`/`--debug` (LLVM's own `simplifycfg` already performs this at `-O1`+) and for
   `--emit-ir`/`--explain` output quality; measured no meaningful hot-loop speed change at either `-O0`
   or `-O2` on a representative match-heavy benchmark (within measurement noise at both), consistent with
-  removing well-predicted branches rather than real work.
+  removing well-predicted branches rather than real work. Pure Ashes now ports the three rewrites
+  (`simplifyControlFlow`) and iterates them with unreachable-code elimination until the instruction
+  count stops decreasing (`simplifyControlFlowToFixedPoint`).
 - [ ] Extend match compilation to group arms by their outer constructor tag (not just emit one tag
   switch for an already-fully-trivial flat match): more than one arm may share a tag, sharing one tag
   test across all of them, with a group of more than one case (or a single non-trivial nested

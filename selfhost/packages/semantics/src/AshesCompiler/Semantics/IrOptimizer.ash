@@ -27,8 +27,10 @@
 //      while arena and stack bookkeeping never does, and a SetAdtField through a pointer
 //      allocated in the same block populates instead (store-to-load forwarding); followed by a
 //      third ownership-copy elision that forwards the copies it introduced
-//   9. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
-//      reference inside an unreachable region is dropped with its body)
+//   9. Control-flow simplification (jump threading through empty labels, unreferenced-label
+//      removal, redundant fall-through Jump elision) iterated to a fixed point with unreachable
+//      code elimination (after Jump, Return, SwitchTag; a label with no remaining branch reference
+//      inside an unreachable region is dropped with its body)
 //   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
 //   11. Erased RcDrop marker elision
 //   12. Closure environment scalarization for one or two scalar captures: a devirtualized call
@@ -1862,6 +1864,107 @@ let scalarizeSingleCaptureStackClosures (entry: IrFunction) (functions: List(IrF
                 match scalarizeCallSitesInFunctions(functions)(entryState)(functions)([]) with
                     | (newFunctions, finalState) -> (newEntry, append(newFunctions)(reverse(finalState.newFunctions))))
 
+// Control-flow simplification. Three locally safe rewrites that need no reachability analysis:
+// a branch aimed at a label that is immediately followed by nothing but an unconditional Jump is
+// redirected straight to that chain's final destination; a label with no remaining branch
+// reference is dropped (only a marker goes, never the code around it); and a Jump immediately
+// followed by its own target label is a redundant fall-through (nothing can branch to a Jump
+// itself, only to a label). Iterated together with unreachable-code elimination to a fixed point:
+// redirecting several branches to one final label and dropping the labels that used to separate
+// them stacks unconditional Jumps back-to-back, every one after the first is newly unreachable, and
+// removing those can bring a surviving Jump adjacent to its own target.
+// The direct hop of every empty label: (label, the target of the Jump that follows it).
+let recursive collectEmptyLabelHops instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = Label(name) } :: tail ->
+            match tail with
+                | IrInstruction { instruction = Jump(target) } :: _ ->
+                    if name == target
+                    then collectEmptyLabelHops(tail)(acc)
+                    else collectEmptyLabelHops(tail)((name, target) :: acc)
+                | _ -> collectEmptyLabelHops(tail)(acc)
+        | _ :: tail -> collectEmptyLabelHops(tail)(acc)
+
+// Follows a chain of hops to its final destination, stopping on a label already visited so a
+// pathological Jump-only loop in the source program cannot recurse forever.
+let recursive chaseRedirectChain (hops: List((Str, Str))) (current: Str) (seen: List(Str)) =
+    match lookupAssociation(current)(hops) with
+        | None -> current
+        | Some(next) ->
+            if listContains(next)(seen)
+            then current
+            else chaseRedirectChain(hops)(next)(next :: seen)
+
+let recursive resolveRedirects hops remaining acc =
+    match remaining with
+        | [] -> acc
+        | (name, _) :: tail -> resolveRedirects(hops)(tail)((name, chaseRedirectChain(hops)(name)([name])) :: acc)
+
+let redirectedLabel (redirect: List((Str, Str))) (label: Str) =
+    match lookupAssociation(label)(redirect) with
+        | Some(target) -> target
+        | None -> label
+
+let redirectSwitchCase redirect (switchCase: IrSwitchCase) = IrSwitchCase(tag = switchCase.tag, label = redirectedLabel(redirect)(switchCase.label))
+
+let recursive rewriteBranchTargets instructions redirect acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | IrInstruction { instruction = Jump(target), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = Jump(redirectedLabel(redirect)(target)), location = loc) :: acc)
+        | IrInstruction { instruction = JumpIfFalse(condition, target), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = JumpIfFalse(condition)(redirectedLabel(redirect)(target)), location = loc) :: acc)
+        | IrInstruction { instruction = SwitchTag(tagTemp, cases, defaultLabel), location = loc } :: tail -> rewriteBranchTargets(tail)(redirect)(IrInstruction(instruction = SwitchTag(tagTemp)(map(redirectSwitchCase(redirect))(cases))(redirectedLabel(redirect)(defaultLabel)), location = loc) :: acc)
+        | head :: tail -> rewriteBranchTargets(tail)(redirect)(head :: acc)
+
+let recursive dropUnreferencedLabels instructions refs acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = Label(name) } as irInst) :: tail ->
+            match lookupAssociation(name)(refs) with
+                | Some(_) -> dropUnreferencedLabels(tail)(refs)(irInst :: acc)
+                | None -> dropUnreferencedLabels(tail)(refs)(acc)
+        | head :: tail -> dropUnreferencedLabels(tail)(refs)(head :: acc)
+
+let recursive elideRedundantFallthroughJumps instructions acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = Jump(target) } as irInst) :: tail ->
+            match tail with
+                | IrInstruction { instruction = Label(name) } :: _ ->
+                    if target == name
+                    then elideRedundantFallthroughJumps(tail)(acc)
+                    else elideRedundantFallthroughJumps(tail)(irInst :: acc)
+                | _ -> elideRedundantFallthroughJumps(tail)(irInst :: acc)
+        | head :: tail -> elideRedundantFallthroughJumps(tail)(head :: acc)
+
+// Unreferenced labels go first, then redundant jumps, so a Jump/Label pair the label removal
+// itself brings into adjacency is elided in the same pass.
+let simplifyControlFlow instructions =
+    (let hops = collectEmptyLabelHops(instructions)([])
+    in
+        let redirected =
+            match hops with
+                | [] -> instructions
+                | _ -> rewriteBranchTargets(instructions)(resolveRedirects(hops)(hops)([]))([])
+        in
+            let withoutUnreferencedLabels = dropUnreferencedLabels(redirected)(countBranchRefsToLabels(redirected)([]))([])
+            in elideRedundantFallthroughJumps(withoutUnreferencedLabels)([]))
+
+let recursive instructionCount instructions (acc: Int) =
+    match instructions with
+        | [] -> acc
+        | _ :: tail -> instructionCount(tail)(acc + 1)
+
+// The instruction count strictly decreases on every iteration that changes anything (the one
+// rewrite that removes nothing, a redirected target, resolves each chain fully on its first
+// pass), which bounds the loop.
+let recursive simplifyControlFlowToFixedPoint instructions =
+    (let simplified = elideUnreachableCode(simplifyControlFlow(instructions))
+    in
+        if instructionCount(simplified)(0) == instructionCount(instructions)(0)
+        then simplified
+        else simplifyControlFlowToFixedPoint(simplified))
+
 let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
     (let insts0 = fn.instructions
     in
@@ -1877,7 +1980,7 @@ let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
                         in
                             let insts6 = elideTrivialOwnershipCopies(eliminateLocalRedundantComputation(evaluable)(fn.hasEnvAndArgParams)(insts5))
                             in
-                                let insts7 = elideUnreachableCode(insts6)
+                                let insts7 = simplifyControlFlowToFixedPoint(insts6)
                                 in
                                     let insts8 = elideDeadCode(insts7)
                                     in
