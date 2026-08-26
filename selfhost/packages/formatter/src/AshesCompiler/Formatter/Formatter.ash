@@ -164,6 +164,151 @@ let recursive formatterUnspanExpr : Expr -> Expr =
             | ExprAt(_span, inner) -> formatterUnspanExpr(inner)
             | _ -> expression
 
+// Whether a record update occurs anywhere inside an expression. `with` takes every following
+// `name = value` pair as one of its own fields and binds looser than application, so an operand
+// that contains one (a call argument, a tuple or list element, a record-literal field value, a
+// match scrutinee) is rendered at the precedence just above `with`, which parenthesizes the
+// update, or the let/if/lambda/match around it, exactly as stage 0 does.
+let recursive formatterContainsRecordUpdate : Expr -> Bool =
+    given (expression) ->
+        match expression with
+            | ExprAt(_span, inner) -> formatterContainsRecordUpdate(inner)
+            | ExprRecordUpdate(_target, _fields) -> true
+            | ExprAdd(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprSubtract(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprMultiply(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprDivide(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprModulo(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprBitwiseAnd(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprBitwiseOr(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprBitwiseXor(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprShiftLeft(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprShiftRight(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprBitwiseNot(operand) -> formatterContainsRecordUpdate(operand)
+            | ExprLogicalNot(operand) -> formatterContainsRecordUpdate(operand)
+            | ExprGreaterThan(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprLessThan(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprGreaterOrEqual(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprLessOrEqual(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprEqual(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprNotEqual(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprResultPipe(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprResultMapErrorPipe(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprLet(_name, value, body, _parameters, _annotation, _requirements) -> formatterContainsRecordUpdateIn(value)(body)
+            | ExprLetRecursive(_name, value, body, _parameters, _annotation, _requirements) -> formatterContainsRecordUpdateIn(value)(body)
+            | ExprLetResult(_name, value, body) -> formatterContainsRecordUpdateIn(value)(body)
+            | ExprLambda(_name, body, _annotation) -> formatterContainsRecordUpdate(body)
+            | ExprIf(condition, thenBranch, elseBranch) ->
+                if formatterContainsRecordUpdateIn(condition)(thenBranch)
+                then true
+                else formatterContainsRecordUpdate(elseBranch)
+            | ExprCall(function, argument, _whitespace, _layout) -> formatterContainsRecordUpdateIn(function)(argument)
+            | ExprTuple(elements) -> formatterAnyContainsRecordUpdate(elements)
+            | ExprList(elements, _isMultiline) -> formatterAnyContainsRecordUpdate(elements)
+            | ExprCons(head, tail) -> formatterContainsRecordUpdateIn(head)(tail)
+            | ExprMatch(value, cases, _position) ->
+                if formatterContainsRecordUpdate(value)
+                then true
+                else formatterAnyCaseContainsRecordUpdate(cases)
+            | ExprAwait(task) -> formatterContainsRecordUpdate(task)
+            | ExprRecord(_name, fields, _isMultiline) -> formatterAnyFieldContainsRecordUpdate(fields)
+            | ExprPerform(operation) -> formatterContainsRecordUpdate(operation)
+            | ExprHandle(body, arms) ->
+                if formatterContainsRecordUpdate(body)
+                then true
+                else formatterAnyArmContainsRecordUpdate(arms)
+            | _ -> false
+and formatterContainsRecordUpdateIn : Expr -> Expr -> Bool =
+    given (first) ->
+        given (second) ->
+            if formatterContainsRecordUpdate(first)
+            then true
+            else formatterContainsRecordUpdate(second)
+and formatterAnyContainsRecordUpdate : List(Expr) -> Bool =
+    given (expressions) ->
+        match expressions with
+            | [] -> false
+            | expression :: tail ->
+                if formatterContainsRecordUpdate(expression)
+                then true
+                else formatterAnyContainsRecordUpdate(tail)
+and formatterAnyFieldContainsRecordUpdate : List((Str, Expr)) -> Bool =
+    given (fields) ->
+        match fields with
+            | [] -> false
+            | (_name, value) :: tail ->
+                if formatterContainsRecordUpdate(value)
+                then true
+                else formatterAnyFieldContainsRecordUpdate(tail)
+and formatterAnyCaseContainsRecordUpdate : List((Pattern, Expr, Maybe(Expr))) -> Bool =
+    given (cases) ->
+        match cases with
+            | [] -> false
+            | (_pattern, body, guard) :: tail ->
+                if formatterContainsRecordUpdate(body)
+                then true
+                else
+                    match guard with
+                        | Some(guardExpression) ->
+                            if formatterContainsRecordUpdate(guardExpression)
+                            then true
+                            else formatterAnyCaseContainsRecordUpdate(tail)
+                        | None -> formatterAnyCaseContainsRecordUpdate(tail)
+and formatterAnyArmContainsRecordUpdate : List((Maybe(Str), Str, List(Pattern), Expr)) -> Bool =
+    given (arms) ->
+        match arms with
+            | [] -> false
+            | (_capability, _operation, _patterns, body) :: tail ->
+                if formatterContainsRecordUpdate(body)
+                then true
+                else formatterAnyArmContainsRecordUpdate(tail)
+
+// The parent precedence for an operand position that must keep a contained `with` parenthesized:
+// just above `with` when the operand contains an update, otherwise unconstrained.
+let formatterOperandPrecedence : Expr -> Int =
+    given (expression) ->
+        if formatterContainsRecordUpdate(expression)
+        then 3
+        else 0
+
+// Whether a record update sits at the unparenthesized right edge of an expression: the update
+// itself, or the trailing body of a let, lambda, conditional, match, or handler. Such an
+// expression must be parenthesized wherever a comma-separated `name = value` (a record-literal
+// field) or another comma-separated operand follows it, or the update absorbs what follows. A
+// binary operator, call, or bracket already closes its right edge, so those keep their form.
+let recursive formatterEndsWithRecordUpdate : Expr -> Bool =
+    given (expression) ->
+        match expression with
+            | ExprAt(_span, inner) -> formatterEndsWithRecordUpdate(inner)
+            | ExprRecordUpdate(_target, _fields) -> true
+            | ExprLet(_name, _value, body, _parameters, _annotation, _requirements) -> formatterEndsWithRecordUpdate(body)
+            | ExprLetRecursive(_name, _value, body, _parameters, _annotation, _requirements) -> formatterEndsWithRecordUpdate(body)
+            | ExprLetResult(_name, _value, body) -> formatterEndsWithRecordUpdate(body)
+            | ExprLambda(_name, body, _annotation) -> formatterEndsWithRecordUpdate(body)
+            | ExprIf(_condition, _thenBranch, elseBranch) -> formatterEndsWithRecordUpdate(elseBranch)
+            | ExprMatch(_value, cases, _position) -> formatterLastCaseEndsWithRecordUpdate(cases)
+            | ExprHandle(_body, arms) -> formatterLastArmEndsWithRecordUpdate(arms)
+            | _ -> false
+and formatterLastCaseEndsWithRecordUpdate : List((Pattern, Expr, Maybe(Expr))) -> Bool =
+    given (cases) ->
+        match cases with
+            | [] -> false
+            | (_pattern, body, _guard) :: [] -> formatterEndsWithRecordUpdate(body)
+            | _ :: tail -> formatterLastCaseEndsWithRecordUpdate(tail)
+and formatterLastArmEndsWithRecordUpdate : List((Maybe(Str), Str, List(Pattern), Expr)) -> Bool =
+    given (arms) ->
+        match arms with
+            | [] -> false
+            | (_capability, _operation, _patterns, body) :: [] -> formatterEndsWithRecordUpdate(body)
+            | _ :: tail -> formatterLastArmEndsWithRecordUpdate(tail)
+
+// The parent precedence for a comma-separated field value or multiline operand.
+let formatterFieldPrecedence : Expr -> Int =
+    given (expression) ->
+        if formatterEndsWithRecordUpdate(expression)
+        then 3
+        else 0
+
 // Giving the right operand a tighter parent precedence preserves left associativity.
 let recursive formatterBinary : Int -> Int -> Str -> Expr -> Expr -> Str =
     given (parent) ->
@@ -230,15 +375,15 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                             then formatterExpr(function)(13)(indent) + " " + formatterExpr(argument)(14)(indent)
                             else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)
                         in formatterWrap(parent)(13)(rendered)
-                    | ExprTuple(elements) -> "(" + formatterJoin(", ")(formatterExpressionInline)(elements) + ")"
+                    | ExprTuple(elements) -> "(" + formatterJoin(", ")(formatterOperandInline)(elements) + ")"
                     | ExprList(elements, isMultiline) ->
                         if isMultiline
                         then formatterMultilineList(elements)(indent)
-                        else "[" + formatterJoin(", ")(formatterExpressionInline)(elements) + "]"
+                        else "[" + formatterJoin(", ")(formatterOperandInline)(elements) + "]"
                     | ExprRecord(name, fields, isMultiline) ->
                         if isMultiline
                         then formatterMultilineRecord(name)(fields)(indent)
-                        else name + "(" + formatterJoin(", ")(formatterExprField)(fields) + ")"
+                        else name + "(" + formatterInlineFields(fields) + ")"
                     | ExprRecordUpdate(target, fields) ->
                         formatterWrap(
                             parent,
@@ -247,7 +392,7 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                                 target,
                                 3,
                                 indent
-                            ) + " with " + formatterJoin(", ")(formatterExprField)(fields)
+                            ) + " with " + formatterJoin(", ")(formatterUpdateField)(fields)
                         )
                     | ExprAwait(task) -> formatterWrap(parent)(12)("await " + formatterExpr(task)(12)(indent))
                     | ExprPerform(operation) ->
@@ -335,7 +480,7 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                         formatterWrap(
                             parent,
                             1,
-                            "match " + formatterExpr(value)(0)(indent) + " with\n" + formatterCases(cases)(indent + 4)
+                            "match " + formatterExpr(value)(formatterOperandPrecedence(value))(indent) + " with\n" + formatterCases(cases)(indent + 4)
                         )
                     | ExprHandle(body, arms) ->
                         formatterWrap(
@@ -346,6 +491,9 @@ and formatterExpr : Expr -> Int -> Int -> Str =
                     | ExprAt(_span, inner) -> formatterExpr(inner)(parent)(indent)
 and formatterExpressionInline : Expr -> Str =
     given (expression) -> formatterExpr(expression)(0)(0)
+and formatterOperandInline : Expr -> Str =
+    given (expression) ->
+        formatterExpr(expression)(formatterOperandPrecedence(expression))(0)
 and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout -> Int -> Str =
     given (expression) ->
         given (function) ->
@@ -353,12 +501,23 @@ and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout 
                 given (layout) ->
                     given (indent) ->
                         if layout == callArgumentsInline
-                        then formatterExpr(function)(13)(indent) + "(" + formatterExpr(argument)(0)(indent) + ")"
+                        then
+                            formatterExpr(function)(13)(indent) + "(" + formatterExpr(argument)(formatterOperandPrecedence(argument))(indent) + ")"
                         else formatterMultilineCall(expression)(indent)
-and formatterExprField : (Str, Expr) -> Str =
+// Inline record-literal fields, comma-separated. Only a field with a following sibling needs
+// protection against an unparenthesized `with` absorbing the next `name = value` pair — the last
+// field's own closing `)` already ends the update unambiguously.
+and formatterInlineFields : List((Str, Expr)) -> Str =
+    given (fields) ->
+        match fields with
+            | [] -> ""
+            | (name, value) :: [] -> name + " = " + formatterExpr(value)(0)(0)
+            | (name, value) :: tail ->
+                name + " = " + formatterExpr(value)(formatterFieldPrecedence(value))(0) + ", " + formatterInlineFields(tail)
+and formatterUpdateField : (Str, Expr) -> Str =
     given (field) ->
         match field with
-            | (name, value) -> name + " = " + formatterExpressionInline(value)
+            | (name, value) -> name + " = " + formatterExpr(value)(3)(0)
 and formatterMultilineRecord : Str -> List((Str, Expr)) -> Int -> Str =
     given (name) ->
         given (fields) ->
@@ -376,7 +535,7 @@ and formatterMultilineFields : List((Str, Expr)) -> Int -> Str =
                 | (name, value) :: tail ->
                     formatterIndent(indent) + name + " = " + formatterExpr(
                         value,
-                        0,
+                        formatterFieldPrecedence(value),
                         indent
                     ) + ",\n" + formatterMultilineFields(tail)(indent)
 and formatterMultilineCall : Expr -> Int -> Str =
@@ -412,7 +571,7 @@ and formatterMultilineExpressions : List(Expr) -> Int -> Str =
                 | expression :: tail ->
                     formatterIndent(indent) + formatterExpr(
                         expression,
-                        0,
+                        formatterFieldPrecedence(expression),
                         indent
                     ) + ",\n" + formatterMultilineExpressions(tail)(indent)
 and formatterLet : Int -> Int -> Str -> Str -> Expr -> Expr -> List(Str) -> Maybe(TypeExpr) -> List(TraitConstraintSyntax) -> Str =

@@ -254,6 +254,15 @@ let run unit =
     |> (given (_) -> assertExpression("[\n    value\n]\n")("[\nvalue\n]"))
     |> (given (_) -> assertExpression("18446744073709551615u64\n")("18446744073709551615u64"))
     |> (given (_) -> assertExpression("point with x = 5, y = 6\n")("point with x=5,y=6"))
+    |> (given (_) -> assertExpression("Value(state = (inner with currentSpan = previous), temp = temp)\n")("Value(state=(inner with currentSpan=previous), temp=temp)"))
+    |> (given (_) -> assertIdempotent("Value(state=(inner with currentSpan=previous), temp=temp)"))
+    |> (given (_) -> assertExpression("Value(\n    state = (inner with currentSpan = previous),\n    temp = temp\n)\n")("Value(\nstate=(inner with currentSpan=previous),\ntemp=temp\n)"))
+    |> (given (_) -> assertExpression("Value(state = (given (current) -> current with span = next), temp = temp)\n")("Value(state=(given (current) -> current with span=next), temp=temp)"))
+    |> (given (_) -> assertExpression("Value(temp = temp, state = inner with currentSpan = previous)\n")("Value(temp=temp, state=inner with currentSpan=previous)"))
+    |> (given (_) -> assertExpression("p with a = (q with b = 1), c = 2\n")("p with a=(q with b=1), c=2"))
+    |> (given (_) -> assertExpression("f((p with x = 1))\n")("f((p with x=1))"))
+    |> (given (_) -> assertExpression("((p with x = 1), [(q with y = 2)])\n")("((p with x=1), [(q with y=2)])"))
+    |> (given (_) -> assertExpression("match (p with x = 1) with\n    | _ -> 0\n")("match (p with x=1) with | _ -> 0"))
     |> (given (_) ->
         "a -> List(a) needs {ConsoleIO | e}"
         |> typeFrom

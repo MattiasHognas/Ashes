@@ -189,6 +189,21 @@ Records
   fields for multiple updates: `p with x = 5, y = 6`. Parentheses are added only
   where required by the surrounding precedence (`with` binds looser than
   application and the binary operators).
+- `with` takes every following `name = value` pair as one of its own fields, so a
+  record-literal field value, a multiline call argument, or a multiline list element
+  whose unparenthesized right edge is a record update (the update itself, or the
+  trailing body of a `let`, lambda, `if`, `match`, or `handle` ending in one) is
+  parenthesized as a whole *when another field, argument, or element follows it*:
+  `Value(state = (inner with x = 1), temp = temp)`,
+  `Value(state = (given (c) -> c with x = 1), temp = temp)`. The last field in the
+  list needs no such protection — its own closing bracket already ends the update
+  unambiguously: `Value(temp = temp, state = inner with x = 1)`. An operand whose
+  right edge is already closed (a call, a bracket, a pipeline whose last stage is a
+  parenthesized lambda) keeps its usual form regardless of position. Inline call
+  arguments, tuple and list elements, match scrutinees, and an update's own field
+  values are parenthesized whenever they contain an update anywhere, independent of
+  position (`f((p with x = 1))`, `p with a = (q with b = 1), c = 2`,
+  `match (p with x = 1) with`).
 
 Spacing
 
