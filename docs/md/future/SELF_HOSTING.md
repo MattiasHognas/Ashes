@@ -735,6 +735,20 @@ same public behavior.
   merged `pascalCaseCharacters`/`continuePascalCase` group crashed the `selfhost/tests/projects`
   binary with a bus error; a plain single-function alias loop double-dropped silently on every
   earlier compiler. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
+- [ ] Supply the evidence for a trait requirement inside a constrained function from the
+  requirement's own instantiated type, never by trait name alone: a function that carries an `Eq(a)`
+  dictionary and, in its body, calls another `Eq`-constrained function at a *concrete* type
+  (`lookup(fnLabel)(knownLabels)` with `fnLabel: Str` inside a function polymorphic in the temp it
+  looked up first) must resolve `Eq(Str)` statically, not thread its own `Eq(a)` dictionary through
+  — with the caller's `Eq(Int)` that is a pointer comparison of strings (right for two interned
+  literals, silently `None` for any computed string), and with the roles reversed it compares
+  integers as strings and faults. A syntax-only pre-pass that threads evidence by trait name can
+  only be a hint; the call lowering must unify the real arguments first and keep the hint solely
+  for a requirement that is still a bare type variable, and the active-dictionary fallback must
+  never serve a concrete or structured requirement. **Found only by compiling and running the
+  self-hosted optimizer's returned-closure devirtualization**, whose label lookup passed on
+  hand-built fixtures (interned labels) and failed on collector-built ones. Regression:
+  `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping
