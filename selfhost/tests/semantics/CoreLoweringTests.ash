@@ -58,8 +58,24 @@ let userIdType = SemNamed(42)("UserId")([])
 
 let pairType = SemNamed(43)("Pair")([])
 
+let shadeType = SemNamed(43)("Shade")([])
+
+let shadeLayout (name: Str) (tag: Int) =
+    CoreConstructorLayout(
+        name = name,
+        tag = tag,
+        scheme = TypeScheme(quantified = [], body = shadeType, constraints = []),
+        fieldNames = [],
+        isZeroCost = false
+    )
+
 let structuralLayouts =
     [
+        shadeLayout("Red")(0),
+        shadeLayout("Green")(1),
+        shadeLayout("Blue")(2),
+        shadeLayout("Cyan")(3),
+        shadeLayout("Magenta")(4),
         CoreConstructorLayout(
             name = "None",
             tag = 0,
@@ -1061,6 +1077,161 @@ let expectUnreadEnvironmentEmptied unit =
                 |> loadEnvIndices
                 |> test.assertEqual([]))
 
+let recursive countGetAdtTag instructions =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = GetAdtTag(_, _) } :: rest -> 1 + countGetAdtTag(rest)
+        | _ :: rest -> countGetAdtTag(rest)
+
+let recursive switchCaseCount instructions =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = SwitchTag(_, cases, _) } :: _ ->
+            cases
+            |> Ashes.Collection.List.length
+            |> Some
+        | _ :: rest -> switchCaseCount(rest)
+
+let recursive countLoadConstInt instructions (value: Int) =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = LoadConstInt(_, candidate) } :: rest ->
+            if candidate == value
+            then 1 + countLoadConstInt(rest)(value)
+            else countLoadConstInt(rest)(value)
+        | _ :: rest -> countLoadConstInt(rest)(value)
+
+let shadeArm (name: Str) (value: Int) = (PatternConstructor(name)([]), ExprInt(value), None)
+
+let fiveShadeMatch =
+    ExprMatch(
+        ExprVar("Red"),
+        [shadeArm("Red")(10), shadeArm("Green")(20), shadeArm("Blue")(30), shadeArm("Cyan")(40), shadeArm("Magenta")(50)],
+        None
+    )
+
+let expectFlatMatchAboveThresholdUsesOneTagSwitch unit =
+    (let instructions =
+        fiveShadeMatch
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        unit
+        |> (given (_) ->
+            instructions
+            |> switchCaseCount
+            |> test.assertEqual(Some(5)))
+        |> (given (_) ->
+            instructions
+            |> countGetAdtTag
+            |> test.assertEqual(1)))
+
+let expectSmallFlatMatchStaysLinear unit =
+    (let instructions =
+        adtPatternExpression
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        unit
+        |> (given (_) ->
+            instructions
+            |> switchCaseCount
+            |> test.assertEqual(None))
+        |> (given (_) ->
+            instructions
+            |> countGetAdtTag
+            |> test.assertEqual(2)))
+
+let repeatedTagMatch =
+    ExprMatch(
+        ExprCall(
+            ExprVar("Some"),
+            ExprInt(7),
+            false,
+            callArgumentsInline
+        ),
+        [
+            (PatternConstructor("Some")([PatternInt(1)]), ExprInt(100), None),
+            (PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None),
+            (PatternConstructor("None")([]), ExprInt(0), None)
+        ],
+        None
+    )
+
+let expectRepeatedTagSharesOneTagTest unit =
+    (let instructions =
+        repeatedTagMatch
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        unit
+        |> (given (_) ->
+            instructions
+            |> switchCaseCount
+            |> test.assertEqual(Some(2)))
+        |> (given (_) ->
+            instructions
+            |> countGetAdtTag
+            |> test.assertEqual(3))
+        |> (given (_) ->
+            100
+            |> countLoadConstInt(instructions)
+            |> test.assertEqual(1)))
+
+let trailingDefaultMatch =
+    ExprMatch(
+        ExprCall(
+            ExprVar("Some"),
+            ExprInt(7),
+            false,
+            callArgumentsInline
+        ),
+        [
+            (PatternConstructor("Some")([PatternInt(1)]), ExprInt(100), None),
+            (PatternWildcard, ExprInt(0), None)
+        ],
+        None
+    )
+
+let expectFailedNestedCaseFallsThroughToDefaultArm unit =
+    (let instructions =
+        trailingDefaultMatch
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        unit
+        |> (given (_) ->
+            instructions
+            |> switchCaseCount
+            |> test.assertEqual(Some(1)))
+        |> (given (_) ->
+            100
+            |> countLoadConstInt(instructions)
+            |> test.assertEqual(1)))
+
+let guardedMatch =
+    ExprMatch(
+        ExprVar("Red"),
+        [
+            (PatternConstructor("Red")([]), ExprInt(10), Some(ExprBool(true))),
+            shadeArm("Green")(20),
+            shadeArm("Blue")(30),
+            shadeArm("Cyan")(40),
+            shadeArm("Magenta")(50)
+        ],
+        None
+    )
+
+let expectGuardedMatchStaysLinear unit =
+    (let instructions =
+        guardedMatch
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        instructions
+        |> switchCaseCount
+        |> test.assertEqual(None))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -1085,4 +1256,9 @@ let runCoreLoweringTests unit =
     |> (given (_) -> expectAllLiveCapturesUntouched(Unit))
     |> (given (_) -> expectRepeatedReadsCountOnce(Unit))
     |> (given (_) -> expectUnreadEnvironmentEmptied(Unit))
+    |> (given (_) -> expectFlatMatchAboveThresholdUsesOneTagSwitch(Unit))
+    |> (given (_) -> expectSmallFlatMatchStaysLinear(Unit))
+    |> (given (_) -> expectRepeatedTagSharesOneTagTest(Unit))
+    |> (given (_) -> expectFailedNestedCaseFallsThroughToDefaultArm(Unit))
+    |> (given (_) -> expectGuardedMatchStaysLinear(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))

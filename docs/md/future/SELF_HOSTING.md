@@ -627,7 +627,7 @@ same public behavior.
   removing well-predicted branches rather than real work. Pure Ashes now ports the three rewrites
   (`simplifyControlFlow`) and iterates them with unreachable-code elimination until the instruction
   count stops decreasing (`simplifyControlFlowToFixedPoint`).
-- [ ] Extend match compilation to group arms by their outer constructor tag (not just emit one tag
+- [x] Extend match compilation to group arms by their outer constructor tag (not just emit one tag
   switch for an already-fully-trivial flat match): more than one arm may share a tag, sharing one tag
   test across all of them, with a group of more than one case (or a single non-trivial nested
   sub-pattern) falling back to linear per-case testing scoped to that group only — never reordering or
@@ -660,7 +660,13 @@ same public behavior.
   to the failure path instead produces a null result (segfault) or, when the failure path itself
   falls through by construction, silently skips the case entirely. Confirmed by a real regression:
   `reverse-complement` printed only its first FASTA header on every input because this exact shape
-  (`Some(('>', _)) -> ... | _ -> ...`) misrouted on every line after the first.
+  (`Some(('>', _)) -> ... | _ -> ...`) misrouted on every line after the first. Pure Ashes now ports
+  the tag-group dispatch (`planTagGroups`/`lowerMatchArmsViaTagGroups`): first-seen groups, one
+  trailing catch-all as the switch default and every group's fail target, trivial single-case groups
+  binding their payload with no tag re-test, linear testing within any other group, stage 0's
+  four-arm linear threshold for an all-trivial match, and a decline for guards, zero-cost
+  constructors, or a second ADT. Dead-arm elimination and its recursive coverage query are carried
+  by the next item, which the pure-Ashes lowering does not have yet.
 - [ ] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
   "Missing case" engine is a deliberate under-approximation of what is missing — correct for a
   diagnostic, which must never report a false "Missing case", and unsound as a proof that a trailing
