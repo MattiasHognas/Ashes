@@ -706,6 +706,18 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Retain a runtime-managed owned binding that a tail self-call argument carries out of its scope:
+  `let label = helper(...) in loop(n - 1)(Wrapped(instruction = Jump(label), ...) :: acc)` stores the
+  let-bound RC call result into the constructor field, and the binding's own scope-exit release
+  still fires at the back edge, so without a retain the next iteration's parameter holds a freed
+  reference (silently wrong values when the callee returned a literal, a heap-allocation failure
+  when it returned an RC string). A tail self-call argument escapes every binding scope of the
+  iteration exactly like a function result escapes its callee, so it must request the same
+  transfer treatment (`TransfersRuntimeManagedChildren`) and the constructor-argument path must
+  honor that request even without an owning consumer of the aggregate itself, leaving the Perceus
+  pattern-owner duplicate gated as before. **Found only by compiling and running the self-hosted
+  optimizer's own switch-fold test**; the bug predates the recent optimizer arc. Regression:
+  `tests/tco_let_call_result_in_accumulator_record.ash`.
 - [ ] Decide a `let`'s runtime-RC ownership from what its value temp *is*, not how it is represented:
   only a fresh producer (call result, constructor, concatenation) or a transferred value confers a
   reference the binding may release at scope exit. A plain read of an RC-normalized slot — a TCO
