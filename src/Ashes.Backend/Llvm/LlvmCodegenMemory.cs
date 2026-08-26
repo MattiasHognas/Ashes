@@ -55,6 +55,10 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmBasicBlockHandle savedBlock = LlvmApi.GetInsertBlock(builder);
+        // Positioning the builder before an instruction also adopts that instruction's debug
+        // location, and the entry-block allocas carry none; restore the caller's location afterwards
+        // so the instructions emitted next keep the source line of the IR instruction they belong to.
+        LlvmMetadataHandle savedLocation = LlvmApi.GetCurrentDebugLocation2(builder);
         // The current function is whatever owns the builder's insert block — not necessarily
         // state.Function, since some runtime helpers are synthesized into their own function while
         // state still refers to the outer one; hoisting into state.Function's entry block there
@@ -71,8 +75,10 @@ internal static partial class LlvmCodegen
             LlvmApi.PositionBuilderAtEnd(builder, entryBlock);
         }
 
+        LlvmApi.SetCurrentDebugLocation2(builder, default);
         LlvmValueHandle slot = LlvmApi.BuildAlloca(builder, type, name);
         LlvmApi.PositionBuilderAtEnd(builder, savedBlock);
+        LlvmApi.SetCurrentDebugLocation2(builder, savedLocation);
         return slot;
     }
 

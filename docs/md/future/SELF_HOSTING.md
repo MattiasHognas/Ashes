@@ -825,15 +825,6 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
-- [ ] Give a match arm whose whole body is one constructor allocation a line-table row of its own
-  (stage-0 backend, open). For `match text with | "abc" -> Alpha | ...` the lowered `AllocAdt` for
-  each arm carries the arm's line (`--emit-ir final` shows `file:28:20`), `EmitInstructionDebugLocation`
-  sets it on the builder before the instruction is emitted, and yet `llvm-dwarfdump --debug-line`
-  has rows for the `match` line and the surrounding `if`/`then` lines but none for the arm lines,
-  in single-file programs as much as in projects; a breakpoint on such an arm slides to the next
-  line with code. Find where the location is lost between the builder and the line table (a fused
-  emission that skips per-instruction locations is the first suspect) and add a line-table test
-  over a compiled `--debug` program.
 - [ ] Keep the string behind an `Ashes.Byte.fromText` view alive for as long as the view is used
   (stage-0 bug, open). `fromText` yields a borrowed view (`BytesOwnershipProvenance.BorrowedView`)
   and lifetime placement records no owner for it, so `let bytes = Ashes.Byte.fromText(source) in
