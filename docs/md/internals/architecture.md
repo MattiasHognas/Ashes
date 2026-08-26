@@ -655,8 +655,11 @@ only: at `-O0` no LLVM pass runs and the Ashes-optimized IR is emitted as-is;
 ```mermaid
 graph TD
     A["IrCompileTimeEval.Evaluate<br/>whole program: pure constant-argument calls become constants"] --> B["per-function pipeline<br/>entry + every function, in order"]
-    B --> C["ScalarizeSingleCaptureStackClosures<br/>one- and two-capture stack closures called through a devirtualized CallKnown"]
-    C --> D["DevirtualizeReturnedClosureCalls<br/>curried second applications via known-returned labels"]
+    B --> B1["DevirtualizeCapturedClosureCalls<br/>calls through a captured slot every creation site fills with one label"]
+    B1 --> B2["DevirtualizeReturnedClosureCalls<br/>curried second applications via known-returned labels"]
+    B2 --> B3["InlineCurryingStages<br/>saturated chains of copy-only stages into one call over a caller-frame environment"]
+    B3 --> C["ScalarizeSingleCaptureStackClosures<br/>one- and two-capture stack closures called through a devirtualized CallKnown"]
+    C --> D["DevirtualizeReturnedClosureCalls<br/>again, over the scalarized program"]
     D --> E["ComputeNonAllocatingFunctions +<br/>StripRedundantArenaBrackets"]
     E --> F["FoldConcatStrChains<br/>left-nested ConcatStr into one ConcatStrN"]
     F --> G["LLVM default&lt;O1..O3&gt; or none at -O0"]
@@ -679,6 +682,29 @@ empty labels and unreachable-code removal each expose the other), `ElideDeadCode
 are cleaned before anything reasons about ownership, calls are made direct before
 constants are folded and before CSE, and dead-code elimination runs last so it
 sweeps what every earlier pass strands.
+
+The whole-program closure passes (`IrOptimizer.ClosureEnvironments.cs`) run
+between the per-function pipeline and scalarization. A stitched module's
+functions reach each other through alias bindings captured in closure
+environments, so `DevirtualizeCapturedClosureCalls` resolves a `CallClosure`
+through a `LoadEnv` slot when every creation site of the enclosing function's
+environment stores the same closure label into that slot: a creation site is a
+`MakeClosure`/`MakeClosureStack` over a fresh environment with one store per
+slot, or the `CallKnown` the per-function devirtualization has already turned an
+immediately-called closure into; a stored value resolves directly, through a
+single-store local slot, through a captured slot of the creating function (a
+`WholeProgramFixpoint` over the capture graph), or through a `CallKnown` to a
+function with a known returned label, and any disagreement or unresolvable site
+leaves the call indirect. `InlineCurryingStages` then removes the per-stage
+environment and closure of a saturated curried call: a *stage* is a function
+that only copies its captures and argument into a fresh environment and returns
+a closure over the next stage, and a caller that calls a stage directly, extracts
+the returned closure's environment, and calls the next stage is rewritten to
+build that environment in its own frame (`AllocStack` plus the stores) and call
+the next stage with it, repeated to a fixpoint so a three-argument chain reaches
+the body with no intermediate allocation. Both passes leave the extracted
+environment's ownership placement untouched by keeping every rewritten
+instruction at the position of the original.
 
 Shared analysis infrastructure the passes build on:
 

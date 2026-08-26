@@ -63,6 +63,25 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-08-26, after the closure-environment optimizer passes
+
+No self-hosted source changed for this row; the .NET compiler gained two whole-program passes
+(captured-closure devirtualization and currying-stage inlining, see the compiler changelog). A
+stitched module's functions call each other through alias bindings captured in closure
+environments, so the packages were almost entirely indirect calls, each saturated curried call
+allocating a heap environment per stage. Lex drops from 7.6x to 3.1x and parse from 2.9x to 1.4x.
+The optimize row grew because the passes append scalarized callee variants (more functions after
+optimization) and cost about 0.85 s on the 31 s `-O2` build of the stage-1 binary itself.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 16 | 822 | 30 | 821 | 1.88x | 1 file crashed and was excluded |
+| lex | 38 | 360789 | 117 | 360757 | 3.08x | 1 file crashed and was excluded |
+| parse | 143 | 807 | 203 | 801 | 1.42x | 1 file crashed and was excluded |
+| format | 94 | 2346813 | 51 | 1457188 | 0.54x | 24 files crashed and were excluded |
+| infer (stage 1) vs infer+lower (stage 0) | 1205 | 376 | 5 | 35 | 0.00x | 1 file crashed and was excluded |
+| optimize IR (stage 0 only) | 472 | 1261 | - | - | - | |
+
 ### 2026-08-26, after the parser-state change
 
 The parse row was one mechanism: the parser state tuple is rebuilt on every token, it stays an

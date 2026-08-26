@@ -625,6 +625,25 @@ same public behavior.
   iteration. Pure Ashes now carries `ConcatStrN` through its IR model, text dump, validation, and
   temp scans, and folds as the last program-level step with the same single-use chain walk, the
   runtime-managed flag agreement, and the bracket/branch decline over the innermost-part-to-root span.
+- [ ] Port the two whole-program closure-environment passes that run between the per-function
+  pipeline and scalarization in the C# optimizer (`IrOptimizer.ClosureEnvironments.cs`).
+  `DevirtualizeCapturedClosureCalls` resolves a `CallClosure` through a `LoadEnv` slot when every
+  creation site of the enclosing function's environment stores the same closure label into that
+  slot — a creation site being a `MakeClosure`/`MakeClosureStack` over a fresh single-store
+  environment or the `CallKnown` the per-function devirtualization already produced for an
+  immediately-called closure, and a stored value resolving directly, through a single-store local
+  slot, through a captured slot of the creating function (a whole-program fixpoint over the capture
+  graph), or through a call with a known returned label; any disagreement leaves the call indirect.
+  `InlineCurryingStages` recognizes a stage function that only copies its captures and argument
+  into a fresh environment and returns a closure over the next stage, and rewrites a caller that
+  calls the stage, extracts the closure's environment, and calls the next stage into a caller-frame
+  `AllocStack` environment filled directly, iterated to a fixpoint per function. Motivation: a
+  stitched module's functions call each other through captured alias bindings, so the self-hosted
+  packages were almost entirely `CallClosure` (9,894 against 542 `CallKnown` in the stage-1 phase
+  benchmark) and every saturated curried call paid a heap environment per stage; the passes took
+  the benchmark's lexer row from 7.6x to 3.1x of the .NET lexer and the parser row from 2.9x to
+  1.4x. Both keep every rewritten instruction at the original call's position so the ownership
+  placement of the extracted environment stays valid.
 - [ ] Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound
   accumulator form `let acc2 = acc + rhs in loop(...)(acc2)`, as the C# compiler now does. Four
   coordinated pieces, three of them in the not-yet-ported move-analysis/ownership side (see the

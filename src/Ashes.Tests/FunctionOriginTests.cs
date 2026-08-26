@@ -141,9 +141,21 @@ public sealed class FunctionOriginTests
 
         IrProgram optimized = IrOptimizer.Optimize(program);
 
+        // A function the optimizer itself generates (a scalarized callee variant) names itself and
+        // points at the lowered function it was cloned from; every other origin is untouched.
         foreach (IrFunction function in AllFunctions(optimized))
         {
-            function.Origin.ShouldBe(origins[function.Label]);
+            if (origins.TryGetValue(function.Label, out IrFunctionOrigin? lowered))
+            {
+                function.Origin.ShouldBe(lowered);
+                continue;
+            }
+
+            IrFunctionOrigin generated = function.Origin.ShouldNotBeNull();
+            generated.GeneratedLabel.ShouldBe(function.Label);
+            IrFunctionOrigin parent = origins[generated.ParentGeneratedLabel.ShouldNotBeNull()].ShouldNotBeNull();
+            (generated with { GeneratedLabel = parent.GeneratedLabel, ParentGeneratedLabel = parent.ParentGeneratedLabel })
+                .ShouldBe(parent);
         }
     }
 

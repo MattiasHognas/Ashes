@@ -106,11 +106,11 @@ public sealed class IrDumpTests
         IReadOnlyList<string> lowered = Dump(IrDumpStage.Lowered, "loop");
         IReadOnlyList<string> final = Dump(IrDumpStage.Final, "loop");
 
-        // The optimizer removes instructions here. With absolute indices every following line would
-        // register as changed; without them, only the removed ones differ.
-        lowered.Count.ShouldBeGreaterThan(final.Count);
+        // The optimizer rewrites instructions here. With absolute indices every following line would
+        // register as changed; without them, only the rewritten ones differ.
+        lowered.SequenceEqual(final, StringComparer.Ordinal).ShouldBeFalse();
         int shared = lowered.Intersect(final, StringComparer.Ordinal).Count();
-        shared.ShouldBeGreaterThan(final.Count / 2);
+        shared.ShouldBeGreaterThan(Math.Min(lowered.Count, final.Count) / 2);
     }
 
     [Test]

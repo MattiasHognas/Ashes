@@ -388,8 +388,10 @@ public sealed class IrOptimizerTests
         var source = "let add = given (x) -> given (y) -> x + y in Ashes.IO.print(add(10)(32))";
         var unoptimized = Lower(source);
         var optimized = IrOptimizer.Optimize(unoptimized);
-        // All functions should be present (optimizer doesn't remove functions)
-        optimized.Functions.Count.ShouldBe(unoptimized.Functions.Count);
+        // Every lowered function is still present: the optimizer never removes a function, though
+        // it may append generated variants (a scalarized callee) after the originals.
+        optimized.Functions.Select(f => f.Label).Take(unoptimized.Functions.Count)
+            .ShouldBe(unoptimized.Functions.Select(f => f.Label));
     }
 
     [Test]
@@ -2756,6 +2758,209 @@ public sealed class IrOptimizerTests
             .ShouldHaveSingleItem();
         envExtraction.OffsetBytes.ShouldBe(8, "must read the closure object's env field, matching EmitCallClosure's own layout.");
         envExtraction.BasePtr.ShouldBe(1, "must read from helper's own call result, not some other temp.");
+    }
+
+    // Captured-closure devirtualization: the entry stores a known closure ("inner") into the
+    // environment of "outer" and calls outer; outer calls what it captured. Every creation site of
+    // outer (there is one) agrees, so outer's indirect call becomes direct.
+    [Test]
+    public void DevirtualizeCapturedClosureCalls_resolves_a_call_through_a_captured_closure()
+    {
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.MakeClosure(1, "inner", 0, 0),
+                new IrInst.AllocStack(2, 8),
+                new IrInst.StoreMemOffset(2, 0, 1),
+                new IrInst.MakeClosureStack(3, "outer", 2, 8),
+                new IrInst.LoadLocal(4, 1),
+                new IrInst.CallClosure(5, 3, 4),
+                new IrInst.Return(5),
+            ],
+            2,
+            6,
+            true);
+        IrFunction outer = new(
+            "outer",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadLocal(1, 1),
+                new IrInst.CallClosure(2, 0, 1),
+                new IrInst.Return(2),
+            ],
+            2,
+            3,
+            true);
+        IrFunction inner = new("inner", [new IrInst.LoadLocal(0, 1), new IrInst.Return(0)], 2, 1, true);
+        IrProgram program = new(entry, [outer, inner], [], false, false, false, false, true, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrFunction optimizedOuter = optimized.Functions.Single(f => string.Equals(f.Label, "outer", StringComparison.Ordinal));
+        optimizedOuter.Instructions.OfType<IrInst.CallClosure>().ShouldBeEmpty("the captured call must be direct");
+        IrInst.CallKnown direct = optimizedOuter.Instructions.OfType<IrInst.CallKnown>().ShouldHaveSingleItem();
+        direct.FuncLabel.ShouldBe("inner");
+        IrInst.LoadMemOffset envExtraction = optimizedOuter.Instructions
+            .OfType<IrInst.LoadMemOffset>()
+            .Where(inst => inst.Target == direct.EnvTemp)
+            .ShouldHaveSingleItem();
+        envExtraction.OffsetBytes.ShouldBe(8, "the captured closure object's environment word is the callee environment");
+    }
+
+    // Two creation sites store different closures into the same slot of "outer": the call inside
+    // outer must stay indirect.
+    [Test]
+    public void DevirtualizeCapturedClosureCalls_declines_a_slot_with_disagreeing_creation_sites()
+    {
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadConstInt(0, 0),
+                new IrInst.MakeClosure(1, "inner", 0, 0),
+                new IrInst.AllocStack(2, 8),
+                new IrInst.StoreMemOffset(2, 0, 1),
+                new IrInst.MakeClosureStack(3, "outer", 2, 8),
+                new IrInst.MakeClosure(4, "other", 0, 0),
+                new IrInst.AllocStack(5, 8),
+                new IrInst.StoreMemOffset(5, 0, 4),
+                new IrInst.MakeClosureStack(6, "outer", 5, 8),
+                new IrInst.LoadLocal(7, 1),
+                new IrInst.CallClosure(8, 3, 7),
+                new IrInst.CallClosure(9, 6, 7),
+                new IrInst.AddInt(10, 8, 9),
+                new IrInst.Return(10),
+            ],
+            2,
+            11,
+            true);
+        IrFunction outer = new(
+            "outer",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadLocal(1, 1),
+                new IrInst.CallClosure(2, 0, 1),
+                new IrInst.Return(2),
+            ],
+            2,
+            3,
+            true);
+        IrFunction inner = new("inner", [new IrInst.LoadLocal(0, 1), new IrInst.Return(0)], 2, 1, true);
+        IrFunction other = new("other", [new IrInst.LoadConstInt(0, 1), new IrInst.Return(0)], 2, 1, true);
+        IrProgram program = new(entry, [outer, inner, other], [], false, false, false, false, true, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        IrFunction optimizedOuter = optimized.Functions.Single(f => string.Equals(f.Label, "outer", StringComparison.Ordinal));
+        optimizedOuter.Instructions.OfType<IrInst.CallClosure>().ShouldHaveSingleItem("a disagreeing slot must not be devirtualized");
+    }
+
+    // Currying-stage inlining: entry calls "stage" directly (as after devirtualization) and then the
+    // closure it returns; stage only packs its capture and its argument into a fresh environment for
+    // "body". The caller builds that environment on its own stack and calls body directly.
+    // entry calls "stage" directly (as after devirtualization) and then the closure it returns;
+    // stage packs its capture and its argument into a fresh environment for "body", optionally
+    // retaining the capture first (which makes it more than a pure copy).
+    // entry applies stage(x, 3)(0): the stage copies its two captures and its argument into a
+    // fresh heap environment for body, so the whole chain can collapse into one direct call over a
+    // caller-frame environment. Three captures keep the result out of reach of scalarization so
+    // the assertions see the inlining alone.
+    private static IrProgram BuildCurryingStageProgram(bool retainCaptureInStage)
+    {
+        IrFunction entry = new(
+            "entry",
+            [
+                new IrInst.LoadLocal(0, 1),
+                new IrInst.AllocStack(1, 16),
+                new IrInst.StoreMemOffset(1, 0, 0),
+                new IrInst.LoadConstInt(7, 3),
+                new IrInst.StoreMemOffset(1, 8, 7),
+                new IrInst.LoadConstInt(2, 2),
+                new IrInst.CallKnown(3, "stage", 1, 2, EnvironmentIsStackAllocated: true),
+                new IrInst.LoadMemOffset(4, 3, 8),
+                new IrInst.LoadConstInt(5, 0),
+                new IrInst.CallKnown(6, "body", 4, 5),
+                new IrInst.Return(6),
+            ],
+            2,
+            8,
+            true);
+        List<IrInst> stageInstructions =
+        [
+            new IrInst.Alloc(0, 24),
+            new IrInst.LoadEnv(1, 0),
+        ];
+        int capturedTemp = 1;
+        if (retainCaptureInStage)
+        {
+            stageInstructions.Add(new IrInst.RcDup(6, 1, RuntimeManaged: true));
+            capturedTemp = 6;
+        }
+
+        stageInstructions.AddRange(
+        [
+            new IrInst.StoreMemOffset(0, 0, capturedTemp),
+            new IrInst.LoadEnv(5, 1),
+            new IrInst.StoreMemOffset(0, 8, 5),
+            new IrInst.LoadLocal(2, 1),
+            new IrInst.StoreMemOffset(0, 16, 2),
+            new IrInst.MakeClosure(3, "body", 0, 24),
+            new IrInst.Return(3),
+        ]);
+        IrFunction stage = new("stage", stageInstructions, 2, 7, true);
+        IrFunction body = new(
+            "body",
+            [
+                new IrInst.LoadEnv(0, 0),
+                new IrInst.LoadEnv(1, 1),
+                new IrInst.LoadEnv(3, 2),
+                new IrInst.AddInt(2, 0, 1),
+                new IrInst.AddInt(4, 2, 3),
+                new IrInst.Return(4),
+            ],
+            2,
+            5,
+            true);
+        return new IrProgram(entry, [stage, body], [], false, false, false, false, true, false);
+    }
+
+    [Test]
+    public void InlineCurryingStages_collapses_a_pure_stage_into_a_direct_call_with_a_stack_environment()
+    {
+        IrProgram optimized = IrOptimizer.Optimize(BuildCurryingStageProgram(retainCaptureInStage: false));
+
+        List<IrInst> entryInstructions = optimized.EntryFunction.Instructions;
+        entryInstructions.OfType<IrInst.CallKnown>()
+            .Where(inst => inst.FuncLabel.StartsWith("stage", StringComparison.Ordinal))
+            .ShouldBeEmpty("the stage must not be called at all");
+        IrInst.CallKnown bodyCall = entryInstructions.OfType<IrInst.CallKnown>()
+            .Where(inst => string.Equals(inst.FuncLabel, "body", StringComparison.Ordinal))
+            .ShouldHaveSingleItem();
+        bodyCall.EnvironmentIsStackAllocated.ShouldBeTrue("the environment lives in the caller's frame");
+        IrInst.AllocStack environment = entryInstructions.OfType<IrInst.AllocStack>()
+            .Where(inst => inst.Target == bodyCall.EnvTemp)
+            .ShouldHaveSingleItem();
+        environment.SizeBytes.ShouldBe(24);
+        entryInstructions.OfType<IrInst.StoreMemOffset>()
+            .Count(inst => inst.BasePtr == bodyCall.EnvTemp)
+            .ShouldBe(3, "every environment slot must be stored by the caller");
+        entryInstructions.OfType<IrInst.Alloc>().ShouldBeEmpty("no heap environment remains");
+    }
+
+    // A stage that also retains a capture is not a pure copy and must be left alone (scalarization
+    // may still rename it, so the label is matched by prefix).
+    [Test]
+    public void InlineCurryingStages_declines_a_stage_that_does_more_than_copy()
+    {
+        IrProgram optimized = IrOptimizer.Optimize(BuildCurryingStageProgram(retainCaptureInStage: true));
+
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallKnown>()
+            .Where(inst => inst.FuncLabel.StartsWith("stage", StringComparison.Ordinal))
+            .ShouldHaveSingleItem("a stage with a retain is not a pure copy");
+        optimized.EntryFunction.Instructions.OfType<IrInst.CallKnown>()
+            .Where(inst => inst.FuncLabel.StartsWith("body", StringComparison.Ordinal))
+            .ShouldHaveSingleItem()
+            .EnvironmentIsStackAllocated.ShouldBeFalse("the body still receives the stage's heap environment");
     }
 
     [Test]
