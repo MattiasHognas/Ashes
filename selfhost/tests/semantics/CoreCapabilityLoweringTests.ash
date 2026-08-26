@@ -513,6 +513,132 @@ let testHandleIfConditionResumeIsRejected unit =
                         | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
                         | _ -> test.fail("expected resume in an if condition to be rejected"))
 
+// A match whose case bodies resolve to different resume shapes — bare tail in one case, one-shot
+// let-resume in another — proves resolveOperationArmMatchArm(s) handles each case independently,
+// the same independence testHandleIfBranchesWithDifferentResumeShapesLowering already proved for
+// if branches, and reuses the ordinary lowerMatchGuard/finishMatchArm/matchFailLabel machinery for
+// the surrounding pattern-test/fail-label/result-join structure.
+let testHandleMatchCasesWithDifferentResumeShapesLowering unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let matchArmBody =
+                ExprMatch(
+                    ExprVar("u"),
+                    [
+                        (PatternInt(0), ExprCall(ExprVar("resume"))(ExprInt(1))(false)(callArgumentsInline), None),
+                        (PatternWildcard, ExprLet(
+                            "y",
+                            ExprCall(ExprVar("resume"))(ExprInt(0))(false)(callArgumentsInline),
+                            ExprSubtract(ExprVar("y"))(ExprInt(1)),
+                            [],
+                            None,
+                            []
+                        ), None)
+                    ],
+                    None
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], matchArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { program = Some(program), error = None } ->
+                            let instrs = allProgramInstructions(program)
+                            in
+                                instrs
+                                |> containsStoreCapabilityHandler(1)
+                                |> test.assertEqual(true)
+                                |> (given (_) ->
+                                    instrs
+                                    |> containsCallClosure
+                                    |> test.assertEqual(true))
+                        | CoreLoweringResult { error = Some(error) } -> test.fail("match-case mixed resume shape lowering failed: " + Ashes.Trait.Show.show(error))
+                        | _ -> test.fail("match-case mixed resume shape lowering produced no program"))
+
+// resume in a match's scrutinee is rejected outright, since the scrutinee doesn't unwrap to
+// exactly a resume call in this arm — this also covers stage-0's distinct one-shot-scrutinee
+// shape (`match resume(v) with | ...`), which is not yet ported and rejected the same way as any
+// other resume reference in the scrutinee.
+let testHandleMatchScrutineeResumeIsRejected unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let matchArmBody =
+                ExprMatch(
+                    ExprCall(ExprVar("resume"))(ExprVar("u"))(false)(callArgumentsInline),
+                    [
+                        (PatternWildcard, ExprInt(1), None)
+                    ],
+                    None
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], matchArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
+                        | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                        | _ -> test.fail("expected resume in a match scrutinee to be rejected"))
+
+// resume in a match case's guard is rejected outright, mirroring stage-0's
+// TryRewriteResumeMatchCases guard check.
+let testHandleMatchGuardResumeIsRejected unit =
+    (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
+    in
+        let cap =
+            CoreCapabilityLayout(
+                name = "State",
+                index = 0,
+                operations = [op]
+            )
+        in
+            let matchArmBody =
+                ExprMatch(
+                    ExprVar("u"),
+                    [
+                        (PatternVar("x"), ExprInt(1), ExprInt(0)
+                        |> ExprGreaterThan(ExprCall(ExprVar("resume"))(ExprVar("x"))(false)(callArgumentsInline))
+                        |> Some)
+                    ],
+                    None
+                )
+            in
+                let handleExpr =
+                    ExprHandle(
+                        ExprInt(42),
+                        [
+                            (Some("State"), "get", [PatternVar("u")], matchArmBody)
+                        ]
+                    )
+                in
+                    match lowerCoreExpressionWithCompleteContext([])([])([])([])([])([cap])([])(1)(handleExpr) with
+                        | CoreLoweringResult { error = Some(UnsupportedOperationArmResume("State", "get")) } -> Unit
+                        | CoreLoweringResult { error = Some(other) } -> test.fail("expected UnsupportedOperationArmResume, got " + Ashes.Trait.Show.show(other))
+                        | _ -> test.fail("expected resume in a match guard to be rejected"))
+
 let testHandleOneShotResumeLowering unit =
     (let op = CoreCapabilityOperationLayout(name = "get", index = 0)
     in
@@ -620,6 +746,9 @@ let runCoreCapabilityLoweringTests unit =
     |> testHandleLetRecursivePrefixBeforeOneShotResumeLowering
     |> testHandleIfBranchesWithDifferentResumeShapesLowering
     |> testHandleIfConditionResumeIsRejected
+    |> testHandleMatchCasesWithDifferentResumeShapesLowering
+    |> testHandleMatchScrutineeResumeIsRejected
+    |> testHandleMatchGuardResumeIsRejected
     |> testHandleOneShotResumeLowering
     |> testHandleOneShotResumeWithPerformLowering
     |> testDynamicPerformViaExpression
