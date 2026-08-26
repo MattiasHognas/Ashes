@@ -10704,39 +10704,119 @@ public sealed partial class Lowering
                 return ReportNonFunctionCall(rootExpr, currentType, i + 1);
             }
 
-            (int argTemp, TypeRef argType) =
-                TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
-                ?? LowerExpr(
-                    collectedArgs[i],
-                    LoweredValueRequest.None.WithExpectedType(funType.Arg)).AsPair();
-
-            var calleeName = TryGetCalleeDisplayName(rootExpr);
-            var callContext = calleeName is not null
-                ? $"in argument #{i + 1} of call to '{calleeName}'"
-                : $"in argument #{i + 1} of function call";
-            using (PushDiagnosticContext(callContext))
-            {
-                Unify(funType.Arg, argType);
-            }
-
-            // The applied arrow's capabilities happen here: record them in the ambient row.
-            using (PushDiagnosticSpan(GetSpan(call)))
-            {
-                SubsumeCalleeRow(funType.Row, GetSpan(call));
-            }
-
-            currentTemp = LowerAppliedClosureCall(
-                rootExpr, collectedArgs[i], i,
-                AllowsAsyncIndependentRcPlacement
-                    && AllowsOrdinaryRcPlacement
-                    && i == collectedArgs.Count - 1
-                    && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
-                    && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
-                currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
+            LowerCallApplyOneArgument(
+                call, rootExpr, collectedArgs, i, funType,
+                ref currentTemp, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
             currentType = Prune(funType.Ret);
         }
 
         return null;
+    }
+
+    private void LowerCallApplyOneArgument(
+        Expr.Call call,
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        int i,
+        TypeRef.TFun funType,
+        ref int currentTemp,
+        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        ref int runtimeManagedResultFlagTemp)
+    {
+        // A callee whose own type scheme leaves this parameter position quantified is compiled
+        // once, generically — its body has no static layout for the parameter, so it can never
+        // normalize an arena-placed argument on entry the way a concretely-typed parameter's entry
+        // normalization does (see IsRuntimeNormalizableParameterType). The caller still knows the
+        // argument's real (unified) type here, so it copies the argument into the persistent
+        // to-space/blob region itself before the call — immune to an ordinary RestoreArenaState
+        // reset, unlike a plain RC allocation, which shares the arena's own reclaimable cursor and
+        // would otherwise dangle once the caller's own enclosing scope reclaims it.
+        bool calleeParameterIsGeneric = IsCalleeParameterQuantifiedInScheme(rootExpr, i);
+
+        (int argTemp, TypeRef argType) =
+            TryLowerTraitDictionaryFunctionValue(collectedArgs[i], funType.Arg)
+            ?? LowerExpr(
+                collectedArgs[i],
+                LoweredValueRequest.None.WithExpectedType(funType.Arg)).AsPair();
+
+        var calleeName = TryGetCalleeDisplayName(rootExpr);
+        var callContext = calleeName is not null
+            ? $"in argument #{i + 1} of call to '{calleeName}'"
+            : $"in argument #{i + 1} of function call";
+        using (PushDiagnosticContext(callContext))
+        {
+            Unify(funType.Arg, argType);
+        }
+
+        if (calleeParameterIsGeneric)
+        {
+            TypeRef prunedArgType = Prune(argType);
+            if (prunedArgType is TypeRef.TStr)
+            {
+                int toSpaceTemp = NewTemp();
+                Emit(new IrInst.CopyOutArenaToSpace(toSpaceTemp, argTemp, -1));
+                argTemp = toSpaceTemp;
+            }
+            else if (prunedArgType is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr elementType)
+            {
+                argTemp = EmitListToSpaceCopy(argTemp, elementType);
+            }
+        }
+
+        // The applied arrow's capabilities happen here: record them in the ambient row.
+        using (PushDiagnosticSpan(GetSpan(call)))
+        {
+            SubsumeCalleeRow(funType.Row, GetSpan(call));
+        }
+
+        currentTemp = LowerAppliedClosureCall(
+            rootExpr, collectedArgs[i], i,
+            AllowsAsyncIndependentRcPlacement
+                && AllowsOrdinaryRcPlacement
+                && i == collectedArgs.Count - 1
+                && !TryResolveKnownFunctionResultOwnership(rootExpr, collectedArgs.Count, Prune(funType.Ret), out _)
+                && GetCallCopyOutKind(Prune(funType.Ret), out _, out _) is CopyOutKind.Shallow or CopyOutKind.List,
+            currentTemp, argTemp, argType, consumedRuntimeArguments, ref runtimeManagedResultFlagTemp);
+    }
+
+    private bool IsCalleeParameterQuantifiedInScheme(Expr rootExpr, int argumentIndex)
+    {
+        Binding? binding = rootExpr switch
+        {
+            Expr.Var variable => Lookup(variable.Name),
+            // A stdlib/module-qualified callee (e.g. `Ashes.Collection.HashMap.set`) resolves the
+            // same way LowerQualifiedVar's exported-binding path does: through the sanitized,
+            // module-prefixed export name, not a plain Lookup of the unqualified name.
+            Expr.QualifiedVar qualified => Lookup(
+                $"{ProjectSupport.SanitizeModuleBindingName(ResolveModuleAlias(qualified.Module))}_{qualified.Name}"),
+            _ => null,
+        };
+        TypeScheme? scheme = binding switch
+        {
+            Binding.Scheme s => s.S,
+            Binding.EnvScheme es => es.S,
+            _ => null,
+        };
+        if (scheme is null)
+        {
+            return false;
+        }
+
+        HashSet<int> quantifiedIds = scheme.Quantified.Select(tv => tv.Id).ToHashSet();
+        TypeRef cursor = scheme.Body;
+        for (int index = 0; index < argumentIndex; index++)
+        {
+            if (cursor is not TypeRef.TFun fun)
+            {
+                return false;
+            }
+
+            cursor = fun.Ret;
+        }
+
+        return cursor is TypeRef.TFun currentFun
+            && currentFun.Arg is TypeRef.TVar argVar
+            && quantifiedIds.Contains(argVar.Id);
     }
 
     private int LowerAppliedClosureCall(

@@ -2080,6 +2080,12 @@ public sealed partial class Lowering
                     fieldTemp = persistentField;
                 }
             }
+            else if (pruned is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr elementType)
+            {
+                // No in-place-reuse primitive exists for a list spine, so always rebuild fresh
+                // (matching the tuple insert path above) rather than reuse an update's dead cell.
+                fieldTemp = EmitListToSpaceCopy(fieldTemp, elementType);
+            }
         }
 
         return fieldTemp;
