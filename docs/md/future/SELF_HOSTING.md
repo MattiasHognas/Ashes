@@ -785,7 +785,13 @@ same public behavior.
   self-hosted `findSupertraitCycleInRequirements`/`findSupertraitCycle` group eligible for merging
   and broke the `selfhost/tests/semantics` build.
 - [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
-  and whole-program SCC provenance summaries.
+  and whole-program SCC provenance summaries. Include the entry normalization of a parameter that
+  always reaches the function's result: such a function advertises that it accepts a
+  runtime-managed argument and, at entry, keeps an owned reference or copies a borrowed one, for
+  `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
+  first limited this to `Str`; a curried stage capturing a reference-counted ADT argument for the
+  closure it returns then held a pointer its caller freed, which is why the self-hosted lexer
+  deep-copied every token until the fix).
 - [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
   another function: the same `BorrowInspectExpression`/`BorrowInspectOnly` walk that lets a TCO loop
   borrow its own tail parameter across match/head/tail uses and its own tail self-call is computed
@@ -811,6 +817,14 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
+- [ ] Keep the string behind an `Ashes.Byte.fromText` view alive for as long as the view is used
+  (stage-0 bug, open). `fromText` yields a borrowed view (`BytesOwnershipProvenance.BorrowedView`)
+  and lifetime placement records no owner for it, so `let bytes = Ashes.Byte.fromText(source) in
+  scan(bytes)...` with no later use of `source` places the `RcDrop` of `source` before the scan
+  that reads the view; the program crashes at `-O0`, `-O2`, and with reuse disabled once the
+  string is large enough to leave the arena. Any later use of `source` (the self-hosted lexer's
+  callers hold it) masks the bug. Sixty-line repro: build a 192 KB string, `fromText` it, walk
+  it with `subText` slices into a list, print a checksum.
 - [ ] Retain a runtime-managed owned binding that a tail self-call argument carries out of its scope:
   `let label = helper(...) in loop(n - 1)(Wrapped(instruction = Jump(label), ...) :: acc)` stores the
   let-bound RC call result into the constructor field, and the binding's own scope-exit release

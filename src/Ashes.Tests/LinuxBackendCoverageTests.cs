@@ -2705,6 +2705,104 @@ public sealed class LinuxBackendCoverageTests
         result.MaxRssKb.ShouldBeLessThan(65_536, "splitting a 100 KB text must not copy the text once per piece");
     }
 
+    [Test]
+    public async Task Linux_backend_llvm_module_function_keeping_an_rc_adt_argument_in_its_result_owns_it()
+    {
+        // A module function called through its alias closure receives a reference-counted argument
+        // under the runtime ownership protocol: the caller hands over a retained reference only when
+        // the callee advertises that it accepts one, and drops its own reference after the call
+        // either way. A callee whose parameter reaches its result keeps the value past the call, so
+        // it must advertise and take ownership, as a string parameter already did; an ADT parameter
+        // did not, and every wrapped kind read as whatever the freed cell was reused for.
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(), $"ashes-kept-argument-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(root, "src", "Repro"));
+        try
+        {
+            WriteKeptArgumentProject(root);
+
+            AshesProject project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
+            ProjectCompilationPlan plan = ProjectSupport.BuildCompilationPlan(project);
+            CombinedCompilationLayout layout = ProjectSupport.BuildCompilationLayout(plan);
+            Diagnostics diagnostics = new();
+            Frontend.Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+            diagnostics.ThrowIfAny();
+            Lowering lowering = new(diagnostics, plan.ImportedStdModules, plan.MergedAliases, layout.ConstructorModules);
+            lowering.SetSourceContext(layout);
+            IrProgram ir = IrOptimizer.Optimize(lowering.Lower(program));
+            diagnostics.ThrowIfAny();
+            MemoryExecutionResult result = await CompileRunWithLinuxLlvmPeakRssAsync(ir).ConfigureAwait(false);
+            result.Stdout.ShouldBe("4 alpha, 2 beta of 21\n");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // A module with an ADT and a function keeping its ADT parameter in its result, and an entry
+    // that calls that function through the module alias with a reference-counted argument.
+    private static void WriteKeptArgumentProject(string root)
+    {
+        File.WriteAllText(
+            Path.Combine(root, "ashes.json"),
+            """{"name":"kept-argument-app","entry":"Main.ash","sourceRoots":["src"]}""");
+        File.WriteAllText(Path.Combine(root, "src", "Repro", "Tok.ash"), """
+                export (
+                    type Kind(..),
+                    value wrap,
+                    value classify,
+                )
+
+                type Kind =
+                    | Alpha
+                    | Beta
+                    | Gamma
+                    deriving {Eq, Show}
+
+                let wrap (kind: Kind) = Some(kind)
+
+                let classify (text: Str) =
+                    match text with
+                        | "abc" -> Alpha
+                        | "def" -> Beta
+                        | _ -> Gamma
+                """);
+        File.WriteAllText(Path.Combine(root, "Main.ash"), """
+                import Repro.Tok
+
+                let readNext (bytes: Bytes) (position: Int) =
+                    let text = Ashes.Byte.subText(bytes)(position)(3)
+                    in wrap(classify(text))
+
+                let recursive scan (bytes: Bytes) (byteCount: Int) (position: Int) kinds =
+                    if position >= byteCount
+                    then kinds
+                    else scan(bytes)(byteCount)(position + 3)(readNext(bytes)(position) :: kinds)
+
+                let recursive countKind (want: Kind) kinds acc =
+                    match kinds with
+                        | [] -> acc
+                        | Some(k) :: rest ->
+                            if k == want
+                            then countKind(want)(rest)(acc + 1)
+                            else countKind(want)(rest)(acc)
+                        | None :: rest -> countKind(want)(rest)(acc)
+
+                let source = "abcdefabcxyzabcdefabc"
+
+                let bytes = Ashes.Byte.fromText(source)
+
+                let kinds = scan(bytes)(Ashes.Byte.length(bytes))(0)([])
+
+                Ashes.IO.print(Ashes.Text.fromInt(countKind(Alpha)(kinds)(0)) + " alpha, " + Ashes.Text.fromInt(countKind(Beta)(kinds)(0)) + " beta of " + Ashes.Text.fromInt(Ashes.Text.byteLength(source)))
+                """);
+    }
+
     // Two counted operands, with the result bound so a scope owns it. The binding's own drop covers
     // the result, never the operands consumed to build it.
     private static string BuildConcatBoundResultMemoryProgram(int iterations)
