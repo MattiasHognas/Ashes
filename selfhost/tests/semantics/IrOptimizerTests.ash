@@ -967,6 +967,230 @@ let testTransitivelyReturnedClosureCallDevirtualizes unit =
             then Unit
             else test.fail("testTransitivelyReturnedClosureCallDevirtualizes: a function returning another proven function's result must resolve in a later fixpoint pass"))
 
+let recursive countGetAdtField instructions =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = GetAdtField(_, _, _) } :: tail -> 1 + countGetAdtField(tail)
+        | _ :: tail -> countGetAdtField(tail)
+
+let recursive countCallKnownTo instructions label =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = CallKnown(_, candidate, _, _, _, _) } :: tail ->
+            if candidate == label
+            then 1 + countCallKnownTo(tail)(label)
+            else countCallKnownTo(tail)(label)
+        | _ :: tail -> countCallKnownTo(tail)(label)
+
+let optimizeArgumentFunction instructions =
+    (let optimized =
+        true
+        |> makeFunction("field_reader")(instructions)(6)(12)
+        |> optimizeIrFunction
+    in optimized.instructions)
+
+let readFieldTwiceThroughSlot =
+    [
+        1
+        |> LoadLocal(0)
+        |> makeInstruction,
+        0
+        |> GetAdtField(1)(0)
+        |> makeInstruction,
+        1
+        |> StoreLocal(2)
+        |> makeInstruction,
+        1
+        |> LoadLocal(3)
+        |> makeInstruction,
+        0
+        |> GetAdtField(4)(3)
+        |> makeInstruction,
+        4
+        |> AddInt(5)(1)
+        |> makeInstruction,
+        makeInstruction(Return(5))
+    ]
+
+let testDuplicateFieldReadThroughLocalSlotForwards unit =
+    (let optimized = optimizeArgumentFunction(readFieldTwiceThroughSlot)
+    in
+        if countGetAdtField(optimized) == 1
+        then Unit
+        else test.fail("testDuplicateFieldReadThroughLocalSlotForwards: the second read of the same field of the function's own argument must forward to the first"))
+
+let testFieldReadNotMergedAcrossLabel unit =
+    (let optimized =
+        optimizeArgumentFunction(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(1)(0)
+                |> makeInstruction,
+                4
+                |> LoadLocal(6)
+                |> makeInstruction,
+                "next"
+                |> JumpIfFalse(6)
+                |> makeInstruction,
+                makeInstruction(Label("next")),
+                1
+                |> LoadLocal(3)
+                |> makeInstruction,
+                0
+                |> GetAdtField(4)(3)
+                |> makeInstruction,
+                4
+                |> AddInt(5)(1)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )
+    in
+        if countGetAdtField(optimized) == 2
+        then Unit
+        else test.fail("testFieldReadNotMergedAcrossLabel: a label starts a new block, so no fact may cross it"))
+
+let testFieldReadNotMergedAcrossAliasingWrite unit =
+    (let optimized =
+        optimizeArgumentFunction(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(1)(0)
+                |> makeInstruction,
+                0
+                |> LoadLocal(6)
+                |> makeInstruction,
+                1
+                |> SetAdtField(6)(0)
+                |> makeInstruction,
+                1
+                |> LoadLocal(3)
+                |> makeInstruction,
+                0
+                |> GetAdtField(4)(3)
+                |> makeInstruction,
+                4
+                |> AddInt(5)(1)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )
+    in
+        if countGetAdtField(optimized) == 2
+        then Unit
+        else test.fail("testFieldReadNotMergedAcrossAliasingWrite: a write through a pointer that may alias the read must invalidate the cache"))
+
+let testFieldReadMergedAcrossArenaBracket unit =
+    (let optimized =
+        optimizeArgumentFunction(
+            [
+                1
+                |> LoadLocal(0)
+                |> makeInstruction,
+                0
+                |> GetAdtField(1)(0)
+                |> makeInstruction,
+                false
+                |> SaveArenaState(2)(3)
+                |> makeInstruction,
+                false
+                |> RestoreArenaState(2)(3)(4)
+                |> makeInstruction,
+                false
+                |> ReclaimArenaChunks(3)(4)
+                |> makeInstruction,
+                1
+                |> LoadLocal(3)
+                |> makeInstruction,
+                0
+                |> GetAdtField(4)(3)
+                |> makeInstruction,
+                4
+                |> AddInt(5)(1)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )
+    in
+        if countGetAdtField(optimized) == 1
+        then Unit
+        else test.fail("testFieldReadMergedAcrossArenaBracket: arena bookkeeping moves a cursor and never writes through a pointer, so it must not invalidate the cache"))
+
+let pureDoublingFunction label =
+    makeFunction(label)(
+        [
+            1
+            |> LoadLocal(0)
+            |> makeInstruction,
+            0
+            |> AddInt(1)(0)
+            |> makeInstruction,
+            makeInstruction(Return(1))
+        ]
+    )(
+        2
+    )(
+        2
+    )(
+        true
+    )
+
+let callTwiceEntry callee =
+    makeFunction("_start_main")(
+        [
+            0
+            |> LoadConstInt(0)
+            |> makeInstruction,
+            21
+            |> LoadConstInt(1)
+            |> makeInstruction,
+            false
+            |> CallKnown(2)(callee)(0)(1)(-1)
+            |> makeInstruction,
+            false
+            |> CallKnown(3)(callee)(0)(1)(-1)
+            |> makeInstruction,
+            3
+            |> AddInt(4)(2)
+            |> makeInstruction,
+            makeInstruction(Return(4))
+        ]
+    )(
+        0
+    )(
+        5
+    )(
+        false
+    )
+
+let testDuplicatePureKnownCallMerges unit =
+    (let entry =
+        0
+        |> makeProgram(callTwiceEntry("double"))([pureDoublingFunction("double")])([])
+        |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+        |> entryInstructions
+    in
+        if countCallKnownTo(entry)("double") == 1
+        then Unit
+        else test.fail("testDuplicatePureKnownCallMerges: the second call of a proven-pure function with the same operands must forward to the first"))
+
+let testDuplicateUnprovenCallKeepsBothCalls unit =
+    (let entry =
+        0
+        |> makeProgram(callTwiceEntry("opaque"))([])([])
+        |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+        |> entryInstructions
+    in
+        if countCallKnownTo(entry)("opaque") == 2
+        then Unit
+        else test.fail("testDuplicateUnprovenCallKeepsBothCalls: a call the purity oracle cannot prove must never be merged"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -984,6 +1208,12 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testReturnedClosureCallDevirtualizes(Unit))
     |> (given (_) -> testReturnedStackClosureKeepsIndirectCall(Unit))
     |> (given (_) -> testTransitivelyReturnedClosureCallDevirtualizes(Unit))
+    |> (given (_) -> testDuplicateFieldReadThroughLocalSlotForwards(Unit))
+    |> (given (_) -> testFieldReadNotMergedAcrossLabel(Unit))
+    |> (given (_) -> testFieldReadNotMergedAcrossAliasingWrite(Unit))
+    |> (given (_) -> testFieldReadMergedAcrossArenaBracket(Unit))
+    |> (given (_) -> testDuplicatePureKnownCallMerges(Unit))
+    |> (given (_) -> testDuplicateUnprovenCallKeepsBothCalls(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))

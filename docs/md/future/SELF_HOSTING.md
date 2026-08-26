@@ -443,7 +443,7 @@ same public behavior.
   plus a direct `CallKnown`, iterating every function to its own local fixed point after the
   per-function pipeline and before arena-bracket elimination; covered by
   `selfhost/tests/semantics/IrOptimizerTests.ash` (direct, transitive, and stack-closure-declined).
-- [ ] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
+- [x] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
   at every label, never across control flow): forward a duplicate `GetAdtField` read or a duplicate
   `CallKnown` call to a function proven pure by the compile-time-evaluation purity oracle (reused, not
   reimplemented) to the first occurrence's result. Operands must be canonicalized through a
@@ -462,7 +462,11 @@ same public behavior.
   currently reachable only when the closure was already devirtualized from `CallClosure`, which itself
   requires the closure temp to trace directly to a `MakeClosure`/`MakeClosureStack` with no intervening
   local-slot round-trip — a condition essentially no `let`-bound function call satisfies today, a
-  separate, pre-existing devirtualization gap this task did not attempt to fix.
+  separate, pre-existing devirtualization gap this task did not attempt to fix. Pure Ashes now
+  ports the block-local pass with the alias map, the seeded env/arg slot identities, the
+  deny-by-default invalidation list with the arena/stack bookkeeping exemption, and the
+  `computeEvaluableFunctions` oracle reused for known-call merging; the fresh-allocation
+  store-to-load forwarding is the next item.
 - [ ] Extend the local common-subexpression pass above with store-to-load/projection forwarding:
   when a `SetAdtField` writes through a pointer proven fresh in the same block (an `AllocAdt`/
   `AllocAdtStack` target — nothing that existed before it could hold or derive a reference to memory
