@@ -33,6 +33,7 @@ export (
     value lowerCoreExpressionWithFullContext,
     value lowerCoreExpressionWithCompleteContext,
     value lowerCoreRecursiveGroup,
+    value pruneDeadCaptures,
 )
 
 type CoreLoweringError =
@@ -862,6 +863,75 @@ let allocateEnvironment captures stackAllocate state =
                                 emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
                         in fillEnvironment(environmentTemp)(captures)(0)(allocatedState)
 
+// Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
+// lowered, so a capture the lowered body never reads through LoadEnv still gets an environment
+// word and a fill. The body is lowered first here, into its own instruction list, so the captures
+// its instructions actually read are known before the environment is built at the creation site:
+// the survivors are renumbered to a compact 0..k-1 range in the body's LoadEnv indices, and the
+// environment is then allocated and filled for the survivors only, so every consumer that derives
+// its offsets from the capture list's enumeration order stays consistent without patching. The
+// self-referential and mutual-recursion paths never come through here: a self reference rebuilds a
+// closure over this same environment with a size fixed before pruning could run, and a group's
+// environment is shared and filled once at the group site.
+let recursive containsIndex (index: Int) (indices: List(Int)) =
+    match indices with
+        | [] -> false
+        | candidate :: rest ->
+            if candidate == index
+            then true
+            else containsIndex(index)(rest)
+
+let recursive collectLoadEnvIndices instructions acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = LoadEnv(_, index) } :: rest ->
+            if containsIndex(index)(acc)
+            then collectLoadEnvIndices(rest)(acc)
+            else collectLoadEnvIndices(rest)(index :: acc)
+        | _ :: rest -> collectLoadEnvIndices(rest)(acc)
+
+let recursive countIndices (indices: List(Int)) =
+    match indices with
+        | [] -> 0
+        | _ :: rest -> 1 + countIndices(rest)
+
+// (survivors in capture order, old index -> new index for each survivor)
+let recursive pruneCaptureList captures usedIndices (index: Int) (nextIndex: Int) survivors remap =
+    match captures with
+        | [] -> (reverse(survivors), reverse(remap))
+        | capture :: rest ->
+            if containsIndex(index)(usedIndices)
+            then pruneCaptureList(rest)(usedIndices)(index + 1)(nextIndex + 1)(capture :: survivors)((index, nextIndex) :: remap)
+            else pruneCaptureList(rest)(usedIndices)(index + 1)(nextIndex)(survivors)(remap)
+
+let recursive remappedIndex (index: Int) (remap: List((Int, Int))) =
+    match remap with
+        | [] -> index
+        | (oldIndex, newIndex) :: rest ->
+            if oldIndex == index
+            then newIndex
+            else remappedIndex(index)(rest)
+
+let recursive renumberLoadEnv instructions remap acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | IrInstruction { instruction = LoadEnv(target, index), location = location } :: rest ->
+            renumberLoadEnv(rest)(remap)(IrInstruction(instruction = remap
+            |> remappedIndex(index)
+            |> LoadEnv(target), location = location) :: acc)
+        | head :: rest -> renumberLoadEnv(rest)(remap)(head :: acc)
+
+// (surviving captures, the body's instructions with LoadEnv indices renumbered), in the input order
+// of both lists; unchanged when every capture is read.
+let pruneDeadCaptures captures instructions =
+    (let usedIndices = collectLoadEnvIndices(instructions)([])
+    in
+        if countIndices(usedIndices) >= captureCount(captures)
+        then (captures, instructions)
+        else
+            match pruneCaptureList(captures)(usedIndices)(0)(0)([])([]) with
+                | (survivors, remap) -> (survivors, renumberLoadEnv(instructions)(remap)([])))
+
 let recursive capturedScope captures index =
     match captures with
         | [] -> []
@@ -947,22 +1017,31 @@ let finishClosureResult parameterType bodyType finishedBody closure =
             in
                 success(closureTemp)(SemFunction(parameterType)(resultType)(None))(closureState)
 
-let finishLambdaBody label environmentTemp captures stackAllocate typedOuter parameterType lowered =
+let emitPrunedClosure label captures stackAllocate parameterType bodyType finishedBody allocated =
+    match allocated with
+        | LoweredCoreValue { state = environmentState, error = Some(error) } -> failure(environmentState)(error)
+        | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
+            environmentState
+            |> emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)
+            |> finishClosureResult(parameterType)(bodyType)(finishedBody)
+
+let finishLambdaBody label captures stackAllocate typedOuter parameterType lowered =
     match lowered with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = loweredBody, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            let finishedBody =
-                loweredBody
-                |> emit(Return(bodyTemp))
-                |> finishLiftedFunction(label)(lambdaOrigin(label))
+            let returned = emit(Return(bodyTemp))(loweredBody)
             in
-                let restored = restoreOuterFrame(typedOuter)(finishedBody)
-                in
-                    restored
-                    |> emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)
-                    |> finishClosureResult(parameterType)(bodyType)(finishedBody)
+                match pruneDeadCaptures(captures)(returned.reversedInstructions) with
+                    | (survivors, prunedInstructions) ->
+                        let finishedBody =
+                            finishLiftedFunction(label)(lambdaOrigin(label))((returned with reversedInstructions = prunedInstructions))
+                        in
+                            finishedBody
+                            |> restoreOuterFrame(typedOuter)
+                            |> allocateEnvironment(survivors)(stackAllocate)
+                            |> emitPrunedClosure(label)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
-let lowerLambdaBody parameter body stackAllocate lower lambdaId captures environmentTemp fresh =
+let lowerLambdaBody parameter body stackAllocate lower lambdaId captures fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             let label = "lambda_" + Ashes.Text.fromInt(lambdaId)
@@ -971,15 +1050,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures environ
                 in
                     bodyState
                     |> lower(body)
-                    |> finishLambdaBody(label)(environmentTemp)(captures)(stackAllocate)(typedOuter)(parameterType)
-
-let lowerLambdaEnvironment parameter body stackAllocate lower lambdaId captures allocated =
-    match allocated with
-        | LoweredCoreValue { state = environmentState, error = Some(error) } -> failure(environmentState)(error)
-        | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
-            environmentState
-            |> freshType
-            |> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(environmentTemp)
+                    |> finishLambdaBody(label)(captures)(stackAllocate)(typedOuter)(parameterType)
 
 let lowerLambda parameter body stackAllocate lower state =
     match state with
@@ -989,8 +1060,8 @@ let lowerLambda parameter body stackAllocate lower state =
                 let captures = capturedBindings(freeNames)(outerBindings)([])
                 in
                     state
-                    |> allocateEnvironment(captures)(stackAllocate)
-                    |> lowerLambdaEnvironment(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)
+                    |> freshType
+                    |> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)
 
 let resolvedFunctionType state argumentType resultType =
     FunctionTypeResolution(

@@ -4,6 +4,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
@@ -998,6 +999,68 @@ let expectBuiltinIntegration unit =
         |> programUsesConcat
         |> test.assertEqual(true))
 
+let pruneInstruction kind = IrInstruction(instruction = kind, location = None)
+
+let recursive loadEnvIndices instructions =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = LoadEnv(_, index) } :: rest -> index :: loadEnvIndices(rest)
+        | _ :: rest -> loadEnvIndices(rest)
+
+let expectDeadCapturesPrunedAndRenumbered unit =
+    match pruneDeadCaptures(["a", "b", "c"])([2
+    |> LoadEnv(0)
+    |> pruneInstruction, 0
+    |> LoadEnv(1)
+    |> pruneInstruction, pruneInstruction(Return(1))]) with
+        | (survivors, instructions) ->
+            unit
+            |> (given (_) -> test.assertEqual(["a", "c"])(survivors))
+            |> (given (_) ->
+                instructions
+                |> loadEnvIndices
+                |> test.assertEqual([1, 0]))
+
+let expectAllLiveCapturesUntouched unit =
+    match pruneDeadCaptures(["a", "b"])([1
+    |> LoadEnv(0)
+    |> pruneInstruction, 0
+    |> LoadEnv(1)
+    |> pruneInstruction, pruneInstruction(Return(0))]) with
+        | (survivors, instructions) ->
+            unit
+            |> (given (_) -> test.assertEqual(["a", "b"])(survivors))
+            |> (given (_) ->
+                instructions
+                |> loadEnvIndices
+                |> test.assertEqual([1, 0]))
+
+let expectRepeatedReadsCountOnce unit =
+    match pruneDeadCaptures(["a", "b"])([1
+    |> LoadEnv(0)
+    |> pruneInstruction, 1
+    |> LoadEnv(1)
+    |> pruneInstruction, pruneInstruction(Return(0))]) with
+        | (survivors, instructions) ->
+            unit
+            |> (given (_) -> test.assertEqual(["b"])(survivors))
+            |> (given (_) ->
+                instructions
+                |> loadEnvIndices
+                |> test.assertEqual([0, 0]))
+
+let expectUnreadEnvironmentEmptied unit =
+    match pruneDeadCaptures(["a"])([1
+    |> LoadLocal(0)
+    |> pruneInstruction, pruneInstruction(Return(0))]) with
+        | (survivors, instructions) ->
+            unit
+            |> (given (_) -> test.assertEqual([])(survivors))
+            |> (given (_) ->
+                instructions
+                |> loadEnvIndices
+                |> test.assertEqual([]))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -1018,4 +1081,8 @@ let runCoreLoweringTests unit =
     |> expectRecordAsAndOrPatterns
     |> expectOperatorCases(operatorCases)
     |> expectBuiltinIntegration
+    |> (given (_) -> expectDeadCapturesPrunedAndRenumbered(Unit))
+    |> (given (_) -> expectAllLiveCapturesUntouched(Unit))
+    |> (given (_) -> expectRepeatedReadsCountOnce(Unit))
+    |> (given (_) -> expectUnreadEnvironmentEmptied(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))
