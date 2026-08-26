@@ -1085,6 +1085,16 @@ and parserParseNamedLet state =
                                                                                         parserExprEnd(body),
                                                                                         expression
                                                                                     ), afterBody)
+// A monomorphic reverse for List((Str, Maybe(TypeExpr))) (sugar-parameter name/annotation pairs).
+// The generic `Ashes.Collection.List.reverse` corrupts an accumulator of heap-composite elements
+// (a tuple here, since one field is `Maybe(TypeExpr)`) once enough allocation happens after the
+// call — the same stage-0 bug already worked around in SourceContext.ash's index builders; a
+// monomorphic reverse over the concrete type is unaffected. Found via the self-hosted formatter
+// segfaulting on any parsed `let name param = ...` binding.
+and reverseParameterList (parameters: List((Str, Maybe(TypeExpr)))) (acc: List((Str, Maybe(TypeExpr)))) =
+    match parameters with
+        | [] -> acc
+        | head :: tail -> reverseParameterList(tail)(head :: acc)
 and parserParseSugarParameters reversed state =
     match parserCurrentKind(state) with
         | Ident ->
@@ -1109,7 +1119,7 @@ and parserParseSugarParameters reversed state =
                                                         (parameter.text, Some(annotation)) :: reversed,
                                                         afterRightParen
                                                     )
-        | _ -> (reverseList(reversed), state)
+        | _ -> (reverseParameterList(reversed)([]), state)
 and parserBuildLambdas parameters body start =
     (let recursive build reversed current =
         match reversed with
@@ -1122,7 +1132,7 @@ and parserBuildLambdas parameters body start =
                     |> parserAt(start)(parserExprEnd(current))
                 )
     in
-        build(reverseList(parameters))(body))
+        build(reverseParameterList(parameters)([]))(body))
 and parserParseLetResult state =
     match parserAdvance(state) with
         | (letToken, afterLet) ->
@@ -2361,6 +2371,17 @@ let parserParseDeclarationBindingValue sourceBytes declarationColumn state =
     )
 
 // A top-level let whose next tokens form a pattern starts the trailing expression instead of a declaration.
+// A monomorphic reverse for List(TopLevelItem) (the parsed program's top-level declarations). The
+// generic `Ashes.Collection.List.reverse` corrupts an accumulator of heap-composite elements once
+// enough allocation happens after the call — the same stage-0 bug already worked around above for
+// sugar parameters and in SourceContext.ash's index builders; a monomorphic reverse over the
+// concrete type is unaffected. Confirmed as the trigger for the self-hosted formatter segfaulting
+// on a parsed program with any nested `let name param = ...` binding.
+let recursive reverseTopLevelItems (items: List(TopLevelItem)) (acc: List(TopLevelItem)) =
+    match items with
+        | [] -> acc
+        | head :: tail -> reverseTopLevelItems(tail)(head :: acc)
+
 let recursive parserParseProgramItems sourceBytes reversedItems state =
     if parserIsExportDeclaration(state)
     then
@@ -2393,11 +2414,11 @@ let recursive parserParseProgramItems sourceBytes reversedItems state =
             | EOF ->
                 match reversedItems with
                     | [] -> parserParseProgramBody(reversedItems)(state)
-                    | _ -> (reverseList(reversedItems), None, state)
+                    | _ -> (reverseTopLevelItems(reversedItems)([]), None, state)
             | _ -> parserParseProgramBody(reversedItems)(state)
 and parserParseProgramBody reversedItems state =
     match parserParseExpression(state) with
-        | (body, afterBody) -> (reverseList(reversedItems), Some(body), afterBody)
+        | (body, afterBody) -> (reverseTopLevelItems(reversedItems)([]), Some(body), afterBody)
 and parserIsExportDeclaration state =
     if parserCurrentKind(state) != Ident
     then false
