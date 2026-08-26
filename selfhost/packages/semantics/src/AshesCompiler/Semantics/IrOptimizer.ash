@@ -16,16 +16,24 @@
 //   7. Identity elimination and strength reduction (x+0, x-0, x*0, x*1, x*2, x/1), followed by a
 //      second ownership-copy elision: an identity rewrites into a Borrow copy rather than
 //      retargeting its uses, and the elision that already ran never revisits that new copy
-//   8. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
+//   8. Local common-subexpression elimination within one straight-line block (reset at every
+//      label): a duplicate GetAdtField read, or a duplicate CallKnown of a function the
+//      compile-time-evaluation purity oracle proves pure, forwards to the first occurrence through
+//      a Borrow copy; operands are canonicalized through a LoadLocal/StoreLocal/Borrow/RcDup alias
+//      map (with the function's own env/arg slots seeded to a stable identity) before keying the
+//      caches, which any instruction that could write through an existing pointer invalidates,
+//      while arena and stack bookkeeping never does; followed by a third ownership-copy elision
+//      that forwards the copies it introduced
+//   9. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
 //      reference inside an unreachable region is dropped with its body)
-//   9. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
-//   10. Erased RcDrop marker elision
-//   11. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
+//   10. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
+//   11. Erased RcDrop marker elision
+//   12. Program-level returned-closure devirtualization: a whole-program least fixpoint of the
 //       functions whose every Return is one heap MakeClosure label (directly, or transitively
 //       through a CallKnown to a function already proven), then a per-function local fixpoint
 //       rewriting each CallClosure on such a call's result into an environment-word read plus
 //       a direct CallKnown, so a curry of any depth resolves fully
-//   12. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
+//   13. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
@@ -45,6 +53,7 @@ export (
     value optimizeIrProgram,
     value optimizeIrProgramWithOptions,
     value optimizeIrFunction,
+    value optimizeIrFunctionWithEvaluable,
 )
 
 type IrOptimizerOptions =
@@ -63,6 +72,15 @@ type FoldFacts =
     | localInts: List((IrLocal, Int))
     | localFloats: List((IrLocal, Float))
     | localBools: List((IrLocal, Bool))
+
+// Local common-subexpression state for one straight-line block. Cache values are always real,
+// already-emitted temps; cache keys are canonical identities, which may be the negative sentinel
+// of a function's own env/arg slot (no visible defining instruction) and so must never be emitted.
+type LocalCseState =
+    | fieldCache: List(((Int, Int), IrTemp))
+    | callCache: List(((Str, Int, Int, Int, Bool), IrTemp))
+    | valueOf: List((IrTemp, Int))
+    | slotValue: List((IrLocal, Int))
 
 let defaultOptimizerOptions =
     IrOptimizerOptions(
@@ -1330,7 +1348,183 @@ let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
                                     lifetimesPlaced = fn.lifetimesPlaced
                                 ))
 
-let optimizeIrFunction (fn: IrFunction) =
+// Local common-subexpression elimination, scoped to a single straight-line block (reset at every
+// label, never across control flow). Operands are canonicalized through a
+// LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the caches: real Ashes IR round-trips
+// almost every value through a local slot, so raw-temp-identity keying would fold nothing (the
+// ubiquitous `let x = p.x in let y = p.x` shape never matches without it).
+// Deny by default: only these instruction kinds are known never to write through an existing
+// pointer or call into unmodeled effects. Arena and stack bookkeeping qualifies because it moves
+// an allocator cursor rather than writing through a pointer, and every `let` binding gets its own
+// such bracket in practice, so treating it as aliasing would silence the pass almost everywhere.
+let isLocalCseSafeInstruction inst =
+    match inst with
+        | LoadConstInt(_, _) -> true
+        | LoadConstFloat(_, _) -> true
+        | LoadConstBool(_, _) -> true
+        | LoadConstStr(_, _) -> true
+        | LoadLocal(_, _) -> true
+        | StoreLocal(_, _) -> true
+        | RcDup(_, _, _, _) -> true
+        | Borrow(_, _) -> true
+        | AddInt(_, _, _) -> true
+        | SubInt(_, _, _) -> true
+        | MulInt(_, _, _) -> true
+        | DivInt(_, _, _) -> true
+        | DivUInt(_, _, _) -> true
+        | AndInt(_, _, _) -> true
+        | OrInt(_, _, _) -> true
+        | XorInt(_, _, _) -> true
+        | ShlInt(_, _, _) -> true
+        | ShrInt(_, _, _) -> true
+        | AddFloat(_, _, _) -> true
+        | SubFloat(_, _, _) -> true
+        | MulFloat(_, _, _) -> true
+        | DivFloat(_, _, _) -> true
+        | IntToFloat(_, _) -> true
+        | FloatToInt(_, _) -> true
+        | CmpIntGt(_, _, _) -> true
+        | CmpIntGe(_, _, _) -> true
+        | CmpIntLt(_, _, _) -> true
+        | CmpIntLe(_, _, _) -> true
+        | CmpUIntGt(_, _, _) -> true
+        | CmpUIntGe(_, _, _) -> true
+        | CmpUIntLt(_, _, _) -> true
+        | CmpUIntLe(_, _, _) -> true
+        | CmpIntEq(_, _, _) -> true
+        | CmpIntNe(_, _, _) -> true
+        | CmpFloatGt(_, _, _) -> true
+        | CmpFloatGe(_, _, _) -> true
+        | CmpFloatLt(_, _, _) -> true
+        | CmpFloatLe(_, _, _) -> true
+        | CmpFloatEq(_, _, _) -> true
+        | CmpFloatNe(_, _, _) -> true
+        | CmpStrEq(_, _, _) -> true
+        | CmpStrNe(_, _, _) -> true
+        | GetAdtTag(_, _) -> true
+        | LoadArgumentOwnership(_) -> true
+        | LoadFuncAddr(_, _) -> true
+        | SaveArenaState(_, _, _) -> true
+        | RestoreArenaState(_, _, _, _) -> true
+        | ReclaimArenaChunks(_, _, _) -> true
+        | SaveStackPointer(_) -> true
+        | RestoreStackPointer(_) -> true
+        | _ -> false
+// Negative, so it can never collide with a real temp: the identity of the value the backend's
+// entry prologue stores into env/arg slot 0/1 before any instruction this pass can see.
+
+let entrySlotIdentity (slot: IrLocal) = -1 - slot
+
+let emptyLocalCseState hasEnvAndArgParams =
+    LocalCseState(
+        fieldCache = [],
+        callCache = [],
+        valueOf = [],
+        slotValue = if hasEnvAndArgParams
+        then [(0, entrySlotIdentity(0)), (1, entrySlotIdentity(1))]
+        else []
+    )
+
+let recursive resolveCseValue (valueOf: List((IrTemp, Int))) (temp: Int) =
+    match lookupAssociation(temp)(valueOf) with
+        | Some(alias) -> resolveCseValue(valueOf)(alias)
+        | None -> temp
+
+let recursive lookupFieldCache (ptr: Int) (field: Int) (entries: List(((Int, Int), IrTemp))) =
+    match entries with
+        | [] -> None
+        | ((cachedPtr, cachedField), cached) :: tail ->
+            if cachedPtr == ptr
+            then
+                if cachedField == field
+                then Some(cached)
+                else lookupFieldCache(ptr)(field)(tail)
+            else lookupFieldCache(ptr)(field)(tail)
+
+let callKeyMatches (label: Str) (env: Int) (arg: Int) (flag: Int) (stackAllocated: Bool) (key: (Str, Int, Int, Int, Bool)) =
+    match key with
+        | (cachedLabel, cachedEnv, cachedArg, cachedFlag, cachedStack) ->
+            if cachedLabel == label
+            then
+                if cachedEnv == env
+                then
+                    if cachedArg == arg
+                    then
+                        if cachedFlag == flag
+                        then cachedStack == stackAllocated
+                        else false
+                    else false
+                else false
+            else false
+
+let recursive lookupCallCache label env arg flag stackAllocated (entries: List(((Str, Int, Int, Int, Bool), IrTemp))) =
+    match entries with
+        | [] -> None
+        | (key, cached) :: tail ->
+            if callKeyMatches(label)(env)(arg)(flag)(stackAllocated)(key)
+            then Some(cached)
+            else lookupCallCache(label)(env)(arg)(flag)(stackAllocated)(tail)
+
+let cseInvalidateCaches (state: LocalCseState) = state with fieldCache = [], callCache = []
+
+// Pure value-identity aliases: the alias map records the canonical value so the caches can be
+// keyed by value rather than by raw temp.
+let trackLocalCseAlias inst (state: LocalCseState) =
+    match inst with
+        | Borrow(target, source) -> Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
+        | RcDup(target, source, _, _) -> Some((state with valueOf = setAssociation(target)(resolveCseValue(state.valueOf)(source))(state.valueOf)))
+        | StoreLocal(slot, source) -> Some((state with slotValue = setAssociation(slot)(resolveCseValue(state.valueOf)(source))(state.slotValue)))
+        | LoadLocal(target, slot) ->
+            match lookupAssociation(slot)(state.slotValue) with
+                | Some(known) -> Some((state with valueOf = setAssociation(target)(known)(state.valueOf)))
+                | None -> Some((state with valueOf = removeAssociation(target)(state.valueOf)))
+        | _ -> None
+
+// A cache hit becomes a Borrow copy of the first occurrence's result, exactly the idiom the
+// identity reduction uses, so the ownership-copy elision that follows forwards and erases it.
+let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
+    match inst with
+        | GetAdtField(target, ptr, field) ->
+            let key = resolveCseValue(state.valueOf)(ptr)
+            in
+                match lookupFieldCache(key)(field)(state.fieldCache) with
+                    | Some(cached) -> ((state with valueOf = setAssociation(target)(cached)(state.valueOf)), IrInstruction(instruction = Borrow(target)(cached), location = loc))
+                    | None -> ((state with fieldCache = ((key, field), target) :: state.fieldCache), IrInstruction(instruction = inst, location = loc))
+        | CallKnown(dest, label, envTemp, argTemp, flagTemp, stackAllocated) ->
+            if listContains(label)(evaluable)
+            then
+                let env = resolveCseValue(state.valueOf)(envTemp)
+                in
+                    let arg = resolveCseValue(state.valueOf)(argTemp)
+                    in
+                        let flag = resolveCseValue(state.valueOf)(flagTemp)
+                        in
+                            match lookupCallCache(label)(env)(arg)(flag)(stackAllocated)(state.callCache) with
+                                | Some(cached) -> ((state with valueOf = setAssociation(dest)(cached)(state.valueOf)), IrInstruction(instruction = Borrow(dest)(cached), location = loc))
+                                | None -> ((state with callCache = ((label, env, arg, flag, stackAllocated), dest) :: state.callCache), IrInstruction(instruction = inst, location = loc))
+            else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
+        | _ ->
+            if isLocalCseSafeInstruction(inst)
+            then (state, IrInstruction(instruction = inst, location = loc))
+            else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
+
+let recursive eliminateLocalRedundantComputationPass evaluable hasEnvAndArgParams instructions (state: LocalCseState) acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = Label(_) } as labelInst) :: tail -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(emptyLocalCseState(hasEnvAndArgParams))(labelInst :: acc)
+        | (IrInstruction { instruction = inst, location = loc } as irInst) :: tail ->
+            match trackLocalCseAlias(inst)(state) with
+                | Some(nextState) -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(nextState)(irInst :: acc)
+                | None ->
+                    match eliminateLocalCseInstruction(evaluable)(inst)(loc)(state) with
+                        | (nextState, rewritten) -> eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(tail)(nextState)(rewritten :: acc)
+// Slots 0 (env) and 1 (arg) are populated by the backend's entry prologue, a native store never
+// visible as a StoreLocal, so they are seeded with a stable identity at function entry and again
+// at every label: without it every read of a function's own argument looks like an unknown value.
+
+let eliminateLocalRedundantComputation evaluable hasEnvAndArgParams instructions = eliminateLocalRedundantComputationPass(evaluable)(hasEnvAndArgParams)(instructions)(emptyLocalCseState(hasEnvAndArgParams))([])
+
+let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
     (let insts0 = fn.instructions
     in
         let insts1 = elideTrivialOwnershipCopies(insts0)
@@ -1343,24 +1537,29 @@ let optimizeIrFunction (fn: IrFunction) =
                     in
                         let insts5 = elideTrivialOwnershipCopies(reduceIdentitiesAndStrength(insts4))
                         in
-                            let insts6 = elideUnreachableCode(insts5)
+                            let insts6 = elideTrivialOwnershipCopies(eliminateLocalRedundantComputation(evaluable)(fn.hasEnvAndArgParams)(insts5))
                             in
-                                let insts7 = elideDeadCode(insts6)
+                                let insts7 = elideUnreachableCode(insts6)
                                 in
-                                    let insts8 = elideErasedRcDrops(insts7)
+                                    let insts8 = elideDeadCode(insts7)
                                     in
-                                        IrFunction(
-                                            label = fn.label,
-                                            instructions = insts8,
-                                            localCount = fn.localCount,
-                                            tempCount = fn.tempCount,
-                                            hasEnvAndArgParams = fn.hasEnvAndArgParams,
-                                            coroutine = fn.coroutine,
-                                            localNames = fn.localNames,
-                                            localTypes = fn.localTypes,
-                                            origin = fn.origin,
-                                            lifetimesPlaced = fn.lifetimesPlaced
-                                        ))
+                                        let insts9 = elideErasedRcDrops(insts8)
+                                        in
+                                            IrFunction(
+                                                label = fn.label,
+                                                instructions = insts9,
+                                                localCount = fn.localCount,
+                                                tempCount = fn.tempCount,
+                                                hasEnvAndArgParams = fn.hasEnvAndArgParams,
+                                                coroutine = fn.coroutine,
+                                                localNames = fn.localNames,
+                                                localTypes = fn.localTypes,
+                                                origin = fn.origin,
+                                                lifetimesPlaced = fn.lifetimesPlaced
+                                            ))
+
+// The per-function pipeline without a purity oracle: no known call is ever merged.
+let optimizeIrFunction (fn: IrFunction) = optimizeIrFunctionWithEvaluable([])(fn)
 
 let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgram) =
     (let programAfterCtEval =
@@ -1368,36 +1567,38 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
         then evaluateCompileTimeConstants(program)
         else program
     in
-        let optEntry = optimizeIrFunction(programAfterCtEval.entryFunction)
+        let evaluable = computeEvaluableFunctions(programAfterCtEval)
         in
-            let optFuncs = map(optimizeIrFunction)(programAfterCtEval.functions)
+            let optEntry = optimizeIrFunctionWithEvaluable(evaluable)(programAfterCtEval.entryFunction)
             in
-                let knownLabels = computeKnownReturnedClosureLabels(optFuncs)([])
+                let optFuncs = map(optimizeIrFunctionWithEvaluable(evaluable))(programAfterCtEval.functions)
                 in
-                    let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(optEntry)
+                    let knownLabels = computeKnownReturnedClosureLabels(optFuncs)([])
                     in
-                        let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(optFuncs)
+                        let devirtEntry = devirtualizeReturnedClosureCallsInFunction(knownLabels)(optEntry)
                         in
-                            let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
+                            let devirtFuncs = map(devirtualizeReturnedClosureCallsInFunction(knownLabels))(optFuncs)
                             in
-                                let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
+                                let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
                                 in
-                                    let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                    let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
                                     in
-                                        IrProgram(
-                                            entryFunction = finalEntry,
-                                            functions = finalFuncs,
-                                            stringLiterals = programAfterCtEval.stringLiterals,
-                                            externalFunctions = programAfterCtEval.externalFunctions,
-                                            externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
-                                            usesPrintInt = programAfterCtEval.usesPrintInt,
-                                            usesPrintStr = programAfterCtEval.usesPrintStr,
-                                            usesPrintBool = programAfterCtEval.usesPrintBool,
-                                            usesConcatStr = programAfterCtEval.usesConcatStr,
-                                            usesClosures = programAfterCtEval.usesClosures,
-                                            usesAsync = programAfterCtEval.usesAsync,
-                                            capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
-                                            traitEvidence = programAfterCtEval.traitEvidence
-                                        ))
+                                        let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                        in
+                                            IrProgram(
+                                                entryFunction = finalEntry,
+                                                functions = finalFuncs,
+                                                stringLiterals = programAfterCtEval.stringLiterals,
+                                                externalFunctions = programAfterCtEval.externalFunctions,
+                                                externalOpaqueTypes = programAfterCtEval.externalOpaqueTypes,
+                                                usesPrintInt = programAfterCtEval.usesPrintInt,
+                                                usesPrintStr = programAfterCtEval.usesPrintStr,
+                                                usesPrintBool = programAfterCtEval.usesPrintBool,
+                                                usesConcatStr = programAfterCtEval.usesConcatStr,
+                                                usesClosures = programAfterCtEval.usesClosures,
+                                                usesAsync = programAfterCtEval.usesAsync,
+                                                capabilityHandlerGlobals = programAfterCtEval.capabilityHandlerGlobals,
+                                                traitEvidence = programAfterCtEval.traitEvidence
+                                            ))
 
 let optimizeIrProgram program = optimizeIrProgramWithOptions(defaultOptimizerOptions)(program)
