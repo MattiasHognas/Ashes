@@ -42,6 +42,9 @@
 //       rewriting each CallClosure on such a call's result into an environment-word read plus
 //       a direct CallKnown, so a curry of any depth resolves fully
 //   14. Interprocedural redundant arena bracket elimination (whole-function and straight-line regions)
+//   15. String-concatenation chain folding (last, over the whole program): a left-nested ConcatStr
+//       chain whose intermediates are each used once becomes one ConcatStrN, declined whenever an
+//       arena or stack bracket, a label, or a branch lies between the innermost part and the root
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.filter
@@ -207,6 +210,7 @@ let remapSourceTemps inst (remap: List((IrTemp, IrTemp))) =
             | CmpStrNe(dest, l, right) -> CmpStrNe(dest)(r(l))(r(right))
             | ConcatStr(dest, l, right, managed) -> ConcatStr(dest)(r(l))(r(right))(managed)
             | ConcatStrTip(dest, l, right, cur, endSlot, managed) -> ConcatStrTip(dest)(r(l))(r(right))(cur)(endSlot)(managed)
+            | ConcatStrN(dest, parts, managed) -> ConcatStrN(dest)(map(r)(parts))(managed)
             | MakeClosure(dest, fnLabel, envTemp, envSize, hasEnv, isClosure, isAsync) -> MakeClosure(dest)(fnLabel)(r(envTemp))(envSize)(hasEnv)(isClosure)(isAsync)
             | MakeClosureStack(dest, fnLabel, envTemp, envSize, hasEnv, isClosure) -> MakeClosureStack(dest)(fnLabel)(r(envTemp))(envSize)(hasEnv)(isClosure)
             | CallClosure(dest, closureTemp, argTemp, flagTemp) ->
@@ -1895,6 +1899,130 @@ let optimizeIrFunctionWithEvaluable evaluable (fn: IrFunction) =
 // The per-function pipeline without a purity oracle: no known call is ever merged.
 let optimizeIrFunction (fn: IrFunction) = optimizeIrFunctionWithEvaluable([])(fn)
 
+// String-concatenation chain folding. A left-nested chain of ConcatStr links (`((a ++ b) ++ c) ++ d`)
+// pays one allocation and one growing copy per link: n - 1 allocations and O(n^2) bytes copied
+// for n parts. When every intermediate result is used exactly once, as the left operand of the
+// next link, the chain folds into one ConcatStrN that allocates once for the sum of every part's
+// length and copies each part into its final position. Runs as the very last step over the whole
+// program, so every other pass only ever sees plain ConcatStr and only code generation needs the
+// new shape. Folding delays reading an earlier part until the chain's end, so a chain is declined
+// whenever an arena or stack bracket, a label, or a branch sits between the innermost part's
+// definition and the fold point: a later part's own bracket could reclaim the memory the earlier
+// part still has to be read from, invisible to a use-count check.
+let recursive consumedAsConcatLeft instructions useCounts acc =
+    match instructions with
+        | [] -> acc
+        | IrInstruction { instruction = ConcatStr(_, left, _, _) } :: tail ->
+            if lookupAssociation(left)(useCounts) == Some(1)
+            then consumedAsConcatLeft(tail)(useCounts)(left :: acc)
+            else consumedAsConcatLeft(tail)(useCounts)(acc)
+        | _ :: tail -> consumedAsConcatLeft(tail)(useCounts)(acc)
+
+let isArenaOrControlFlowInstruction inst =
+    match inst with
+        | Label(_) -> true
+        | Jump(_) -> true
+        | JumpIfFalse(_, _) -> true
+        | SwitchTag(_, _, _) -> true
+        | SaveArenaState(_, _, _) -> true
+        | RestoreArenaState(_, _, _, _) -> true
+        | ReclaimArenaChunks(_, _, _) -> true
+        | SaveStackPointer(_) -> true
+        | RestoreStackPointer(_) -> true
+        | _ -> false
+
+// Walks inward from a root link through each left operand defined by exactly one ConcatStr with
+// a single use and the same runtime-managed flag. Returns the parts in order (the innermost left
+// operand first, then every right operand from innermost to outermost) and the absorbed inner
+// link targets, innermost first.
+let recursive collectConcatChain singleDefs useCounts (left: IrTemp) (managed: Bool) rights absorbed =
+    match lookupAssociation(left)(singleDefs) with
+        | Some(ConcatStr(innerTarget, innerLeft, innerRight, innerManaged)) ->
+            if lookupAssociation(left)(useCounts) == Some(1)
+            then
+                if innerManaged == managed
+                then collectConcatChain(singleDefs)(useCounts)(innerLeft)(managed)(innerRight :: rights)(innerTarget :: absorbed)
+                else (left :: rights, absorbed)
+            else (left :: rights, absorbed)
+        | _ -> (left :: rights, absorbed)
+
+// Scans from the first instruction that defines the innermost part or the innermost link through
+// the instruction that defines the root.
+let recursive chainRangeIsSafe instructions (innermostPart: IrTemp) (innermostLink: IrTemp) (rootTarget: IrTemp) scanning =
+    match instructions with
+        | [] -> true
+        | IrInstruction { instruction = inst } :: tail ->
+            let defined = getDefinedTemps(inst)
+            in
+                let nowScanning =
+                    if scanning
+                    then true
+                    else
+                        if listContains(innermostPart)(defined)
+                        then true
+                        else listContains(innermostLink)(defined)
+                in
+                    if nowScanning
+                    then
+                        if isArenaOrControlFlowInstruction(inst)
+                        then false
+                        else
+                            if listContains(rootTarget)(defined)
+                            then true
+                            else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(true)
+                    else chainRangeIsSafe(tail)(innermostPart)(innermostLink)(rootTarget)(false)
+
+// Each fold: (root target, parts, runtime-managed flag); a chain needs at least one inner link.
+let recursive collectConcatFolds allInsts instructions singleDefs useCounts consumedLefts folds absorbedAll =
+    match instructions with
+        | [] -> (folds, absorbedAll)
+        | IrInstruction { instruction = ConcatStr(target, left, right, managed) } :: tail ->
+            if listContains(target)(consumedLefts)
+            then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+            else
+                match collectConcatChain(singleDefs)(useCounts)(left)(managed)([right])([]) with
+                    | (parts, absorbed) ->
+                        match (parts, absorbed) with
+                            | (innermostPart :: _, innermostLink :: _) ->
+                                if chainRangeIsSafe(allInsts)(innermostPart)(innermostLink)(target)(false)
+                                then collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)((target, parts, managed) :: folds)(append(absorbed)(absorbedAll))
+                                else collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+                            | _ -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+        | _ :: tail -> collectConcatFolds(allInsts)(tail)(singleDefs)(useCounts)(consumedLefts)(folds)(absorbedAll)
+
+let recursive lookupConcatFold (target: IrTemp) (folds: List((IrTemp, List(IrTemp), Bool))) =
+    match folds with
+        | [] -> None
+        | (foldTarget, parts, managed) :: tail ->
+            if foldTarget == target
+            then Some((parts, managed))
+            else lookupConcatFold(target)(tail)
+
+let recursive rewriteConcatFolds instructions folds absorbed acc =
+    match instructions with
+        | [] -> reverse(acc)
+        | (IrInstruction { instruction = ConcatStr(target, _, _, _), location = loc } as irInst) :: tail ->
+            if listContains(target)(absorbed)
+            then rewriteConcatFolds(tail)(folds)(absorbed)(acc)
+            else
+                match lookupConcatFold(target)(folds) with
+                    | Some((parts, managed)) -> rewriteConcatFolds(tail)(folds)(absorbed)(IrInstruction(instruction = ConcatStrN(target)(parts)(managed), location = loc) :: acc)
+                    | None -> rewriteConcatFolds(tail)(folds)(absorbed)(irInst :: acc)
+        | head :: tail -> rewriteConcatFolds(tail)(folds)(absorbed)(head :: acc)
+
+let foldConcatStrChains (fn: IrFunction) =
+    (let defCounts = countDefinitions(fn.instructions)([])
+    in
+        let singleDefs = collectSingleDefiningInstructions(fn.instructions)(defCounts)([])
+        in
+            let useCounts = countUses(fn.instructions)([])
+            in
+                let consumedLefts = consumedAsConcatLeft(fn.instructions)(useCounts)([])
+                in
+                    match collectConcatFolds(fn.instructions)(fn.instructions)(singleDefs)(useCounts)(consumedLefts)([])([]) with
+                        | ([], _) -> fn
+                        | (folds, absorbed) -> fn with instructions = rewriteConcatFolds(fn.instructions)(folds)(absorbed)([]))
+
 let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgram) =
     (let programAfterCtEval =
         if options.enableCompileTimeEval
@@ -1917,9 +2045,9 @@ let optimizeIrProgramWithOptions (options: IrOptimizerOptions) (program: IrProgr
                                     in
                                         let nonAllocating = computeNonAllocatingFunctions(devirtFuncs)
                                         in
-                                            let finalEntry = stripRedundantArenaBrackets(nonAllocating)(devirtEntry)
+                                            let finalEntry = foldConcatStrChains(stripRedundantArenaBrackets(nonAllocating)(devirtEntry))
                                             in
-                                                let finalFuncs = map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs)
+                                                let finalFuncs = map(foldConcatStrChains)(map(stripRedundantArenaBrackets(nonAllocating))(devirtFuncs))
                                                 in
                                                     IrProgram(
                                                         entryFunction = finalEntry,

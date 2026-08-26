@@ -122,6 +122,7 @@ type IrInstructionKind =
     | CmpStrNe(IrTemp, IrTemp, IrTemp)
     | ConcatStr(IrTemp, IrTemp, IrTemp, Bool)
     | ConcatStrTip(IrTemp, IrTemp, IrTemp, IrLocal, IrLocal, Bool)
+    | ConcatStrN(IrTemp, List(IrTemp), Bool)
     | RegexCompile(IrTemp, IrTemp)
     | RegexCompileError(IrTemp, IrTemp)
     | RegexFind(IrTemp, IrTemp, IrTemp, IrTemp)

@@ -682,6 +682,15 @@ let describeInstruction instruction =
                     boolOperand("RuntimeManaged")(runtimeManaged)
                 ]
             )
+        | ConcatStrN(target, parts, runtimeManaged) ->
+            IrInstructionDescription(
+                opcode = "ConcatStrN",
+                operands = [
+                    optionalIntOperand("Target")(target),
+                    collectionOperand("Parts")(parts),
+                    boolOperand("RuntimeManaged")(runtimeManaged)
+                ]
+            )
         | RegexCompile(target, pattern) ->
             IrInstructionDescription(
                 opcode = "RegexCompile",

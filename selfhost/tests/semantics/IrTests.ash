@@ -68,6 +68,7 @@ let coreInstructions =
         CmpStrNe(0)(1)(2),
         ConcatStr(0)(1)(2)(true),
         ConcatStrTip(0)(1)(2)(0)(1)(true),
+        ConcatStrN(0)([1, 2])(true),
         RegexCompile(0)(1),
         RegexCompileError(0)(1),
         RegexFind(0)(1)(2)(3),
@@ -268,7 +269,7 @@ let expectCompleteInstructionInventory unit =
     |> (given (_) ->
         coreInstructions
         |> length
-        |> test.assertEqual(77))
+        |> test.assertEqual(78))
     |> (given (_) ->
         ioInstructions
         |> length

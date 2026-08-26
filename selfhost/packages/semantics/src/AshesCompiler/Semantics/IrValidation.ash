@@ -162,6 +162,7 @@ let instructionTemps (kind: IrInstructionKind) =
         | CmpStrNe(t1, t2, t3) -> [t1, t2, t3]
         | ConcatStr(t1, t2, t3, _) -> [t1, t2, t3]
         | ConcatStrTip(t1, t2, t3, _, _, _) -> [t1, t2, t3]
+        | ConcatStrN(t1, parts, _) -> t1 :: parts
         | RegexCompile(t1, t2) -> [t1, t2]
         | RegexCompileError(t1, t2) -> [t1, t2]
         | RegexFind(t1, t2, t3, t4) -> [t1, t2, t3, t4]

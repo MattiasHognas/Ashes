@@ -1796,6 +1796,177 @@ let testTwiceStoredSlotKeepsIndirectCall unit =
         then Unit
         else test.fail("testTwiceStoredSlotKeepsIndirectCall: a slot written twice holds no single known closure"))
 
+let recursive hasConcatStr instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = ConcatStr(_, _, _, _) } :: _ -> true
+        | _ :: tail -> hasConcatStr(tail)
+
+let recursive concatStrNParts instructions =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = ConcatStrN(_, parts, _) } :: _ -> Some(parts)
+        | _ :: tail -> concatStrNParts(tail)
+
+let fourLiterals =
+    [
+        "str_0"
+        |> LoadConstStr(0)
+        |> makeInstruction,
+        "str_1"
+        |> LoadConstStr(1)
+        |> makeInstruction,
+        "str_2"
+        |> LoadConstStr(2)
+        |> makeInstruction,
+        "str_3"
+        |> LoadConstStr(3)
+        |> makeInstruction
+    ]
+
+let optimizeEntryProgram instructions tempCount =
+    0
+    |> makeProgram(makeFunction("_start_main")(instructions)(4)(tempCount)(false))([])([])
+    |> optimizeIrProgramWithOptions(noCompileTimeEvalOptions)
+    |> entryInstructions
+
+let testLeftNestedConcatChainFoldsIntoOneAllocation unit =
+    (let optimized =
+        optimizeEntryProgram(
+            Ashes.Collection.List.append(fourLiterals)(
+                [
+                    false
+                    |> ConcatStr(4)(0)(1)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(5)(4)(2)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(6)(5)(3)
+                    |> makeInstruction,
+                    makeInstruction(Return(6))
+                ]
+            )
+        )(
+            7
+        )
+    in
+        if hasConcatStr(optimized)
+        then test.fail("testLeftNestedConcatChainFoldsIntoOneAllocation: every link of the chain must be absorbed")
+        else
+            match concatStrNParts(optimized) with
+                | Some(parts) ->
+                    if parts == [0, 1, 2, 3]
+                    then Unit
+                    else test.fail("testLeftNestedConcatChainFoldsIntoOneAllocation: the folded concatenation must list every part in order")
+                | None -> test.fail("testLeftNestedConcatChainFoldsIntoOneAllocation: the chain must fold into one concatenation"))
+
+let testConcatIntermediateUsedTwiceKeepsChain unit =
+    (let optimized =
+        optimizeEntryProgram(
+            Ashes.Collection.List.append(fourLiterals)(
+                [
+                    false
+                    |> ConcatStr(4)(0)(1)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(5)(4)(2)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(6)(4)(3)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(7)(5)(6)
+                    |> makeInstruction,
+                    makeInstruction(Return(7))
+                ]
+            )
+        )(
+            8
+        )
+    in
+        match concatStrNParts(optimized) with
+            | Some(parts) ->
+                if parts == [4, 2, 6]
+                then
+                    if hasConcatStr(optimized)
+                    then Unit
+                    else test.fail("testConcatIntermediateUsedTwiceKeepsChain: the twice-read intermediate must keep its own concatenation")
+                else test.fail("testConcatIntermediateUsedTwiceKeepsChain: the chain must stop at an intermediate read by two links and fold only the single-use link")
+            | None -> test.fail("testConcatIntermediateUsedTwiceKeepsChain: the single-use link above the shared intermediate must still fold"))
+
+let testConcatChainAcrossArenaBracketIsDeclined unit =
+    (let optimized =
+        optimizeEntryProgram(
+            [
+                "str_0"
+                |> LoadConstStr(0)
+                |> makeInstruction,
+                false
+                |> SaveArenaState(0)(1)
+                |> makeInstruction,
+                false
+                |> AllocAdt(7)(0)(1)
+                |> makeInstruction,
+                "str_1"
+                |> LoadConstStr(1)
+                |> makeInstruction,
+                false
+                |> RestoreArenaState(0)(1)(2)
+                |> makeInstruction,
+                false
+                |> ReclaimArenaChunks(1)(2)
+                |> makeInstruction,
+                "str_2"
+                |> LoadConstStr(2)
+                |> makeInstruction,
+                false
+                |> ConcatStr(3)(0)(1)
+                |> makeInstruction,
+                false
+                |> ConcatStr(4)(3)(2)
+                |> makeInstruction,
+                makeInstruction(Return(4))
+            ]
+        )(
+            8
+        )
+    in
+        match concatStrNParts(optimized) with
+            | None -> Unit
+            | Some(_) -> test.fail("testConcatChainAcrossArenaBracketIsDeclined: a reclaim between an earlier part and the fold point may free that part's memory"))
+
+let testMixedRuntimeManagedFlagsSplitTheChain unit =
+    (let optimized =
+        optimizeEntryProgram(
+            Ashes.Collection.List.append(fourLiterals)(
+                [
+                    true
+                    |> ConcatStr(4)(0)(1)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(5)(4)(2)
+                    |> makeInstruction,
+                    false
+                    |> ConcatStr(6)(5)(3)
+                    |> makeInstruction,
+                    makeInstruction(Return(6))
+                ]
+            )
+        )(
+            7
+        )
+    in
+        match concatStrNParts(optimized) with
+            | Some(parts) ->
+                if parts == [4, 2, 3]
+                then
+                    if hasConcatStr(optimized)
+                    then Unit
+                    else test.fail("testMixedRuntimeManagedFlagsSplitTheChain: the differently flagged link must survive as a plain concatenation")
+                else test.fail("testMixedRuntimeManagedFlagsSplitTheChain: the chain must stop at a link with a different runtime-managed flag")
+            | None -> test.fail("testMixedRuntimeManagedFlagsSplitTheChain: the outer links must still fold"))
+
 let runIrOptimizerTests unit =
     unit
     |> testConstantFolding
@@ -1832,6 +2003,10 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testLetBoundHelperCallDevirtualizesThroughItsSlot(Unit))
     |> (given (_) -> testLetBoundHelperWithDropperKeepsCleanup(Unit))
     |> (given (_) -> testTwiceStoredSlotKeepsIndirectCall(Unit))
+    |> (given (_) -> testLeftNestedConcatChainFoldsIntoOneAllocation(Unit))
+    |> (given (_) -> testConcatIntermediateUsedTwiceKeepsChain(Unit))
+    |> (given (_) -> testConcatChainAcrossArenaBracketIsDeclined(Unit))
+    |> (given (_) -> testMixedRuntimeManagedFlagsSplitTheChain(Unit))
     |> (given (_) -> testIdentityReduction(Unit))
     |> (given (_) -> testUnreachableCodeElision(Unit))
     |> (given (_) -> testDeadCodeElision(Unit))
