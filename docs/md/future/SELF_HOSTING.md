@@ -548,30 +548,45 @@ same public behavior.
   handles the merge for free. Regressions: `testHandleIfBranchesWithDifferentResumeShapesLowering`
   (mixed tail/one-shot branches), `testHandleIfConditionResumeIsRejected`. **`match` case bodies
   resuming independently are now also supported** (mirrors stage 0's
-  `TryRewriteResumeMatchCases`): the scrutinee and every case's guard must not reference `resume`
-  at all (rejected otherwise — this also covers stage 0's distinct one-shot-scrutinee shape,
-  `match resume(v) with | ...`, `TryRewriteResumeOneShotMatch`, which is a genuinely different
-  one-shot-like case needing its own post-building and is not yet ported; a scrutinee that directly
-  is a resume call is rejected the same as any other resume reference in the scrutinee), and each
-  case body is independently resolved by the same `resolveOperationArmBody` recursion — one case
-  can resume in tail position while another resumes one-shot, same independence as `if`'s two
-  branches. New `resolveOperationArmMatchArm`/`resolveOperationArmMatchArms` mirror
-  `lowerMatchArm`/`lowerMatchArms` exactly, splitting the guard (still lowered through the arm's
-  own ordinary `lower`) from the body (routed through `resolveOperationArmBody`) across the two
-  separate pipe stages those functions already call `lower` from (`lowerMatchGuard` then
-  `finishMatchArm`), rather than needing one `lower` to distinguish the two — simpler than the
-  `if` case's `branchLower` wrapper needed to be. Always dispatches through the plain linear
-  arm-by-arm path, never `lowerMatch`'s own tag-group dispatch optimization
-  (`lowerMatchArmsViaTagGroups`) for constructor-pattern matches — correct but potentially slower
-  IR for a resume-containing match on constructor patterns, acceptable since operation arms aren't
-  a hot path the way ordinary pattern matching is. Regressions:
-  `testHandleMatchCasesWithDifferentResumeShapesLowering`,
-  `testHandleMatchScrutineeResumeIsRejected`, `testHandleMatchGuardResumeIsRejected`. **Still
-  unimplemented**: the one-shot match-scrutinee-resume shape (`match resume(v) with | ...`); a
-  handler whose arms only use tail-position or one-shot-`let`-position `resume`, optionally behind
-  a non-resuming `let`/`let recursive` prefix, an `if` with independently-resolved branches, or a
-  `match` with independently-resolved case bodies, now lowers correctly, anything else is rejected
-  rather than silently wrong.
+  `TryRewriteResumeMatchCases`): when the scrutinee is NOT itself a resume call, it and every
+  case's guard must not reference `resume` at all (rejected otherwise), and each case body is
+  independently resolved by the same `resolveOperationArmBody` recursion — one case can resume in
+  tail position while another resumes one-shot, same independence as `if`'s two branches. New
+  `resolveOperationArmMatchArm`/`resolveOperationArmMatchArms` mirror `lowerMatchArm`/
+  `lowerMatchArms` exactly, splitting the guard (still lowered through the arm's own ordinary
+  `lower`) from the body (routed through `resolveOperationArmBody`) across the two separate pipe
+  stages those functions already call `lower` from (`lowerMatchGuard` then `finishMatchArm`),
+  rather than needing one `lower` to distinguish the two — simpler than the `if` case's
+  `branchLower` wrapper needed to be. Always dispatches through the plain linear arm-by-arm path,
+  never `lowerMatch`'s own tag-group dispatch optimization (`lowerMatchArmsViaTagGroups`) for
+  constructor-pattern matches — correct but potentially slower IR for a resume-containing match on
+  constructor patterns, acceptable since operation arms aren't a hot path the way ordinary pattern
+  matching is. Regressions: `testHandleMatchCasesWithDifferentResumeShapesLowering`,
+  `testHandleMatchScrutineeIndirectResumeIsRejected`, `testHandleMatchGuardResumeIsRejected`.
+  **The one-shot match-scrutinee shape is now also ported**: a scrutinee that IS directly a resume
+  call (`match resume(v) with | pat1 -> body1 | ...`, stage 0's `TryRewriteResumeOneShotMatch`) —
+  `v` returns to the perform site immediately, and the WHOLE match, re-run against the resumed
+  value via a fresh synthetic parameter, becomes the single post continuation, reusing
+  `lowerOneShotPost` completely unchanged (it already accepts an arbitrary `postBody` Expr, and an
+  ordinary reconstructed `ExprMatch` needs no `resolveOperationArmBody` routing once none of its
+  cases resume again). Since the whole match becomes one post body, there is no further per-case
+  independent resolution the way ordinary case-body recursion allows — every case's body and guard
+  must NOT reference `resume` a second time (multi-shot rejected, `matchCasesReferenceResume`).
+  Regressions: `testHandleOneShotMatchScrutineeResumeLowering`,
+  `testHandleOneShotMatchScrutineeMultiShotIsRejected`. **This closes stage 0's entire
+  `TryRewriteResume` family** — a handler whose arms use tail-position, one-shot-`let`-position, or
+  one-shot-match-scrutinee `resume`, optionally behind a non-resuming `let`/`let recursive` prefix,
+  an `if` with independently-resolved branches, or a `match` with independently-resolved case
+  bodies, now lowers correctly; a `resume` call in any other position (a match/if condition that
+  isn't itself the resume call, a second resume on a path that already resumed once) is rejected
+  rather than silently producing wrong IR. **Gotcha hit while implementing**: `||` is not a valid
+  Ashes infix operator (`&&`/`||` don't exist in the language — see
+  [reference/language.md](../reference/language.md)); a first draft used
+  `exprReferencesResume(caseBody) || guardReferencesResume` inside `matchCasesReferenceResume` and
+  produced an opaque, unlocated `ASH003 Expected expression but found Pipe` from the whole-file
+  parse, requiring bisection (deleting recently-added functions one at a time) to isolate — a
+  chained `if ... then true else if ... then true else ...` is the idiom this codebase already uses
+  elsewhere for combining booleans.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
