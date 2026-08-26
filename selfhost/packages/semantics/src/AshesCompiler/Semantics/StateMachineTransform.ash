@@ -159,6 +159,7 @@ let getDefinedTemps inst =
         | CmpStrNe(t, _, _) -> [t]
         | ConcatStr(t, _, _, _) -> [t]
         | ConcatStrTip(t, _, _, _, _, _) -> [t]
+        | ConcatStrN(t, _, _) -> [t]
         | RegexCompile(t, _) -> [t]
         | RegexCompileError(t, _) -> [t]
         | RegexFind(t, _, _, _) -> [t]
@@ -353,6 +354,7 @@ let getUsedTemps inst =
         | CmpStrNe(_, l, r) -> [l, r]
         | ConcatStr(_, l, r, _) -> [l, r]
         | ConcatStrTip(_, l, r, _, _, _) -> [l, r]
+        | ConcatStrN(_, parts, _) -> parts
         | RegexCompile(_, p) -> [p]
         | RegexCompileError(_, p) -> [p]
         | RegexFind(_, c, s, st) -> [c, s, st]

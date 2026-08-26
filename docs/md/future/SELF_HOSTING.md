@@ -561,7 +561,7 @@ same public behavior.
   deletion of already-emitted fills (`pruneDeadCaptures`, with the self-referential and group paths
   untouched); its free-variable analysis is shadowing-exact, so no current lowering path produces a
   dead capture and the mechanism is covered by direct tests over hand-built bodies.
-- [ ] Fold a left-nested chain of string-concatenation calls with single-use intermediates into one
+- [x] Fold a left-nested chain of string-concatenation calls with single-use intermediates into one
   N-ary concatenation that allocates once for the sum of every part's length and copies each part
   directly into its final position, instead of paying one allocation and one growing copy per link
   (`n-1` allocations, `O(n^2)` bytes copied, for `n` parts). Run this as the very last step of the
@@ -587,7 +587,9 @@ same public behavior.
   20,000,000-iteration loop ran **~2.25x faster at `-O0`** and **~15-17x faster at the CLI's default
   `-O2`** — unlike most passes in this pipeline, the `-O2` win dominates, since LLVM cannot invent
   away a real allocator call with observable side effects that the unfolded chain pays every
-  iteration.
+  iteration. Pure Ashes now carries `ConcatStrN` through its IR model, text dump, validation, and
+  temp scans, and folds as the last program-level step with the same single-use chain walk, the
+  runtime-managed flag agreement, and the bracket/branch decline over the innermost-part-to-root span.
 - [ ] Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound
   accumulator form `let acc2 = acc + rhs in loop(...)(acc2)`, as the C# compiler now does. Four
   coordinated pieces, three of them in the not-yet-ported move-analysis/ownership side (see the
