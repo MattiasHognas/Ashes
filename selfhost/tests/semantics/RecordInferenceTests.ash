@@ -62,6 +62,49 @@ let rejectWrongRecordFieldType unit =
         | ProgramInferenceResult { semanticType = _semanticType, substitution = _substitution, environment = _environment, error = Some(ProgramExpressionError(InferenceUnificationError(TypeMismatch(_left, _right)))) } -> Unit
         | _ -> test.fail("record field values should match their declared types")
 
+let optionType =
+    TypeDecl(
+        name = "Option",
+        typeParameters = [],
+        constructors = [TypeConstructor(name = "NoVal", parameters = [], fieldNames = []), TypeConstructor(name = "HasVal", parameters = [TypeNamed("Int")], fieldNames = [])],
+        isRecord = false,
+        derivingTraits = []
+    )
+
+let inferOptionExpression expression = inferProgram(ProgramSyntax(items = [TopLevelType(optionType)], body = Some(expression)))
+
+let bareNullaryMatch =
+    ExprMatch(
+        ExprCall(ExprVar("HasVal"))(ExprInt(1))(false)(callArgumentsInline),
+        [(PatternVar("NoVal"), ExprInt(0), None), (PatternConstructor("HasVal")([PatternVar("n")]), ExprVar("n"), None)],
+        None
+    )
+
+let expectBareNullaryConstructorPatternIsAConstructor unit =
+    match inferOptionExpression(bareNullaryMatch) with
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+            if formatSemanticType(applySubstitution(substitution)(semanticType)) == "Int"
+            then Unit
+            else test.fail("a bare nullary constructor pattern must type the match like its constructor")
+        | _ -> test.fail("a bare nullary constructor pattern must infer")
+
+let rejectBareNullaryConstructorAgainstAnotherType unit =
+    match None
+    |> ExprMatch(ExprInt(1))([(PatternVar("NoVal"), ExprInt(0), None), (PatternWildcard, ExprInt(1), None)])
+    |> inferOptionExpression with
+        | ProgramInferenceResult { error = Some(_error) } -> Unit
+        | _ -> test.fail("a bare nullary constructor pattern is not a binder and must not match a scrutinee of another type")
+
+let expectPlainNameStaysABinder unit =
+    match None
+    |> ExprMatch(ExprInt(1))([(PatternVar("anything"), ExprVar("anything"), None)])
+    |> inferOptionExpression with
+        | ProgramInferenceResult { semanticType = semanticType, substitution = substitution, environment = _environment, error = None } ->
+            if formatSemanticType(applySubstitution(substitution)(semanticType)) == "Int"
+            then Unit
+            else test.fail("a name that is not a constructor still binds the scrutinee")
+        | _ -> test.fail("a plain variable pattern must infer")
+
 let runRecordInferenceTests unit =
     unit
     |> expectValidRecords
@@ -69,4 +112,7 @@ let runRecordInferenceTests unit =
     |> rejectUnknownRecordField
     |> rejectDuplicateRecordField
     |> rejectWrongRecordFieldType
+    |> (given (_) -> expectBareNullaryConstructorPatternIsAConstructor(Unit))
+    |> (given (_) -> rejectBareNullaryConstructorAgainstAnotherType(Unit))
+    |> (given (_) -> expectPlainNameStaysABinder(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted record inference tests passed"))

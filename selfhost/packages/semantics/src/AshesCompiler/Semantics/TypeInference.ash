@@ -1014,6 +1014,14 @@ let recursive patternNameExists : Str -> List(Str) -> Bool =
                     then true
                     else patternNameExists(name)(tail)
 
+// The parser writes a bare `None` or `NoVal` as a variable pattern; only the constructor table
+// tells it apart from a binder, exactly as stage 0 resolves the name at this point.
+let isNullaryConstructorName (name: Str) environment =
+    match resolveConstructorBinding(name)(environment) with
+        | Some(ConstructorInferenceDefinition { scheme = TypeScheme { body = SemFunction(_, _, _) } }) -> false
+        | Some(_) -> true
+        | None -> false
+
 let recursive splitConstructorType semanticType reversedParameters =
     match semanticType with
         | SemFunction(parameter, result, None) -> splitConstructorType(result)(parameter :: reversedParameters)
@@ -2148,20 +2156,23 @@ and inferPattern pattern environment substitution supply names =
                         names
                     )
         | PatternVar(name) ->
-            if patternNameExists(name)(names)
-            then patternFailure(SemNever)(environment)(substitution)(supply)(names)(DuplicatePatternBinding(name))
+            if isNullaryConstructorName(name)(environment)
+            then inferPattern(PatternConstructor(name)([]))(environment)(substitution)(supply)(names)
             else
-                match freshTypeVariable(supply) with
-                    | (variableType, nextSupply) ->
-                        let scheme = TypeScheme(quantified = [], body = variableType, constraints = [])
-                        in
-                            patternSuccess(
-                                variableType,
-                                addTypeBinding(name)(scheme)(environment),
-                                substitution,
-                                nextSupply,
-                                name :: names
-                            )
+                if patternNameExists(name)(names)
+                then patternFailure(SemNever)(environment)(substitution)(supply)(names)(DuplicatePatternBinding(name))
+                else
+                    match freshTypeVariable(supply) with
+                        | (variableType, nextSupply) ->
+                            let scheme = TypeScheme(quantified = [], body = variableType, constraints = [])
+                            in
+                                patternSuccess(
+                                    variableType,
+                                    addTypeBinding(name)(scheme)(environment),
+                                    substitution,
+                                    nextSupply,
+                                    name :: names
+                                )
         | PatternWildcard ->
             match freshTypeVariable(supply) with
                 | (wildcardType, nextSupply) ->
