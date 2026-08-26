@@ -756,6 +756,15 @@ same public behavior.
   self-hosted optimizer's returned-closure devirtualization**, whose label lookup passed on
   hand-built fixtures (interned labels) and failed on collector-built ones. Regression:
   `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
+- [ ] Keep every operator operand out of tail position: in a function that is a TCO loop because
+  some branch ends in a genuine tail self-call, a self-call that is an operand of `+`, `-`, a
+  comparison, a negation, or a pipe in another branch (`then 1 + count(tail) else count(tail)`)
+  is an ordinary call whose result the operator consumes, never a back-edge jump. Tail position
+  is a property the lowering must clear at every operand boundary, not only at call arguments,
+  `let` values, and scrutinees; a function with no genuine tail call never exposes the gap, which
+  is why a plain `n + sumTo(n - 1)` never caught it. **Found only by compiling and running the
+  self-hosted optimizer's own tests**, whose `1 + count(tail)` / `count(tail)` list walk returned
+  0. Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
 - [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
   back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
   argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping

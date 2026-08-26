@@ -132,6 +132,7 @@ public sealed partial class Lowering
 
     private (int LeftTemp, TypeRef LeftType, int RightTemp, TypeRef RightType) LowerAddOperands(Expr.Add add)
     {
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(add.Left);
         var (rightTemp, rightType) = LowerExpr(add.Right);
         return (leftTemp, leftType, rightTemp, rightType);
@@ -299,6 +300,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerSubtract(Expr.Subtract sub)
     {
         using var diagnosticSpan = PushDiagnosticSpan(sub);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(sub.Left);
         var (rightTemp, rightType) = LowerExpr(sub.Right);
 
@@ -340,6 +342,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerMultiply(Expr.Multiply mul)
     {
         using var diagnosticSpan = PushDiagnosticSpan(mul);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(mul.Left);
         var (rightTemp, rightType) = LowerExpr(mul.Right);
 
@@ -354,6 +357,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerDivide(Expr.Divide div)
     {
         using var diagnosticSpan = PushDiagnosticSpan(div);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(div.Left);
         var (rightTemp, rightType) = LowerExpr(div.Right);
 
@@ -370,6 +374,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerModulo(Expr.Modulo mod)
     {
         using var diagnosticSpan = PushDiagnosticSpan(mod);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(mod.Left);
         var (rightTemp, rightType) = LowerExpr(mod.Right);
         if (RecordMappedBinaryTrait("Remainder", "remainder", leftTemp, rightTemp, leftType, rightType, false, GetSpan(mod)) is { } traitRemainder)
@@ -421,6 +426,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerBitwiseAnd(Expr.BitwiseAnd bitAnd)
     {
         using var diagnosticSpan = PushDiagnosticSpan(bitAnd);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(bitAnd.Left);
         var (rightTemp, rightType) = LowerExpr(bitAnd.Right);
 
@@ -435,6 +441,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerBitwiseOr(Expr.BitwiseOr bitOr)
     {
         using var diagnosticSpan = PushDiagnosticSpan(bitOr);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(bitOr.Left);
         var (rightTemp, rightType) = LowerExpr(bitOr.Right);
 
@@ -449,6 +456,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerBitwiseXor(Expr.BitwiseXor bitXor)
     {
         using var diagnosticSpan = PushDiagnosticSpan(bitXor);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(bitXor.Left);
         var (rightTemp, rightType) = LowerExpr(bitXor.Right);
 
@@ -463,6 +471,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerShiftLeft(Expr.ShiftLeft shiftLeft)
     {
         using var diagnosticSpan = PushDiagnosticSpan(shiftLeft);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(shiftLeft.Left);
         var (rightTemp, rightType) = LowerExpr(shiftLeft.Right);
 
@@ -477,6 +486,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerShiftRight(Expr.ShiftRight shiftRight)
     {
         using var diagnosticSpan = PushDiagnosticSpan(shiftRight);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(shiftRight.Left);
         var (rightTemp, rightType) = LowerExpr(shiftRight.Right);
 
@@ -491,6 +501,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerBitwiseNot(Expr.BitwiseNot bitwiseNot)
     {
         using var diagnosticSpan = PushDiagnosticSpan(bitwiseNot);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (operandTemp, operandType) = LowerExpr(bitwiseNot.Operand);
         if (RecordMappedUnaryTrait("BitwiseNot", "bitwiseNot", operandTemp, operandType, GetSpan(bitwiseNot)) is { } traitBitwiseNot)
         {
@@ -531,6 +542,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerLogicalNot(Expr.LogicalNot logicalNot)
     {
         using var diagnosticSpan = PushDiagnosticSpan(logicalNot);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         (int operandTemp, TypeRef operandType) = LowerExpr(logicalNot.Operand);
         if (RecordMappedUnaryTrait("Not", "not", operandTemp, operandType, GetSpan(logicalNot)) is { } traitNot)
         {
@@ -562,6 +574,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerGreaterThan(Expr.GreaterThan gt)
     {
         using var diagnosticSpan = PushDiagnosticSpan(gt);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(gt.Left);
         var (rightTemp, rightType) = LowerExpr(gt.Right);
 
@@ -576,6 +589,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerGreaterOrEqual(Expr.GreaterOrEqual ge)
     {
         using var diagnosticSpan = PushDiagnosticSpan(ge);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(ge.Left);
         var (rightTemp, rightType) = LowerExpr(ge.Right);
 
@@ -590,6 +604,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerLessThan(Expr.LessThan lt)
     {
         using var diagnosticSpan = PushDiagnosticSpan(lt);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(lt.Left);
         var (rightTemp, rightType) = LowerExpr(lt.Right);
 
@@ -604,6 +619,7 @@ public sealed partial class Lowering
     private (int, TypeRef) LowerLessOrEqual(Expr.LessOrEqual le)
     {
         using var diagnosticSpan = PushDiagnosticSpan(le);
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
         var (leftTemp, leftType) = LowerExpr(le.Left);
         var (rightTemp, rightType) = LowerExpr(le.Right);
 
@@ -632,6 +648,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
+
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
 
         var (leftTemp, leftType) = LowerExpr(pipe.Left);
         var errorType = NewTypeVar();
@@ -714,6 +732,8 @@ public sealed partial class Lowering
         {
             return ReturnNeverWithDummyTemp();
         }
+
+        using var operandScope = new TcoTailPositionScope(_tcoCtx);
 
         var (leftTemp, leftType) = LowerExpr(pipe.Left);
         var errorType = NewTypeVar();
