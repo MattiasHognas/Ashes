@@ -1257,6 +1257,104 @@ let expectBareNullaryConstructorPatternTestsItsTag unit =
         |> countGetAdtTag
         |> test.assertEqual(2))
 
+let someSeven =
+    ExprCall(
+        ExprVar("Some"),
+        ExprInt(7),
+        false,
+        callArgumentsInline
+    )
+
+let trimmedArmsInstructions arms =
+    None
+    |> ExprMatch(someSeven)(arms)
+    |> loweredProgramWithLayouts(structuralLayouts)
+    |> entryInstructions
+
+let expectDeadWildcardArmAfterCompleteConstructorsIsTrimmed unit =
+    (let instructions =
+        trimmedArmsInstructions(
+            [
+                (PatternConstructor("Some")([PatternVar("value")]), ExprVar("value"), None),
+                (PatternVar("None"), ExprInt(0), None),
+                (PatternWildcard, ExprInt(99), None)
+            ]
+        )
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(0))
+
+let expectWildcardAfterNestedLiteralArmIsKept unit =
+    (let instructions =
+        trimmedArmsInstructions(
+            [
+                (PatternConstructor("Some")([PatternInt(1)]), ExprInt(1), None),
+                (PatternVar("None"), ExprInt(0), None),
+                (PatternWildcard, ExprInt(99), None)
+            ]
+        )
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(1))
+
+let expectWildcardAfterIncompleteConstructorsIsKept unit =
+    (let instructions =
+        trimmedArmsInstructions(
+            [
+                (PatternConstructor("Some")([PatternWildcard]), ExprInt(1), None),
+                (PatternWildcard, ExprInt(99), None)
+            ]
+        )
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(1))
+
+let expectWildcardAfterBothBoolLiteralsIsTrimmed unit =
+    (let instructions =
+        None
+        |> ExprMatch(ExprBool(true))([(PatternBool(true), ExprInt(1), None), (PatternBool(false), ExprInt(0), None), (PatternWildcard, ExprInt(99), None)])
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(0))
+
+let expectWildcardAfterTupleOfLiteralsIsKept unit =
+    (let instructions =
+        None
+        |> ExprMatch(
+            ExprTuple([ExprBool(true), ExprBool(false)]),
+            [
+                (PatternTuple([PatternBool(true), PatternBool(false)]), ExprInt(1), None),
+                (PatternTuple([PatternBool(false), PatternBool(true)]), ExprInt(2), None),
+                (PatternWildcard, ExprInt(99), None)
+            ]
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(1))
+
+let expectWildcardAfterEmptyAndConsIsTrimmed unit =
+    (let instructions =
+        None
+        |> ExprMatch(
+            ExprList([ExprInt(1)])(false),
+            [(PatternEmptyList, ExprInt(0), None), (PatternCons(PatternWildcard)(PatternWildcard), ExprInt(1), None), (PatternWildcard, ExprInt(99), None)]
+        )
+        |> loweredProgramWithLayouts(structuralLayouts)
+        |> entryInstructions
+    in
+        99
+        |> countLoadConstInt(instructions)
+        |> test.assertEqual(0))
+
 let runCoreLoweringTests unit =
     unit
     |> expectConstantAndLocal
@@ -1287,4 +1385,10 @@ let runCoreLoweringTests unit =
     |> (given (_) -> expectFailedNestedCaseFallsThroughToDefaultArm(Unit))
     |> (given (_) -> expectGuardedMatchStaysLinear(Unit))
     |> (given (_) -> expectBareNullaryConstructorPatternTestsItsTag(Unit))
+    |> (given (_) -> expectDeadWildcardArmAfterCompleteConstructorsIsTrimmed(Unit))
+    |> (given (_) -> expectWildcardAfterNestedLiteralArmIsKept(Unit))
+    |> (given (_) -> expectWildcardAfterIncompleteConstructorsIsKept(Unit))
+    |> (given (_) -> expectWildcardAfterBothBoolLiteralsIsTrimmed(Unit))
+    |> (given (_) -> expectWildcardAfterTupleOfLiteralsIsKept(Unit))
+    |> (given (_) -> expectWildcardAfterEmptyAndConsIsTrimmed(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted core lowering tests passed"))
