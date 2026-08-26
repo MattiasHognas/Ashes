@@ -154,7 +154,14 @@ same public behavior.
 - [x] Infer `Result` map/flat-map/error-map pipelines and `let?` propagation.
 - [x] Infer sequential top-level bindings, shared-monomorphic recursive groups, and an optional trailing
   expression.
-- [ ] Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs.
+- [x] Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs.
+  Pure Ashes now seeds the standard `Task(e, a)` type next to `Maybe` and `Result` and types
+  `await task` as stage 0 does: the operand must unify with `Task(e, a)` for a fresh error/success
+  pair (`ExpectedTaskType` otherwise) and the expression is the `Result(e, a)` the task runs to, so
+  a `let!` binding (the parser's `let x = await e`) exposes that `Result` to its body and the
+  ordinary `let?`/`Result` propagation applies from there. The structured task APIs (`Ashes.Task`)
+  are ordinary standard-library bindings typed through module stitching, and lowering `await` to
+  `RunTask`/`AwaitTask` belongs to the core-lowering coverage of async bodies.
 - [x] Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
   diagnostic reporting. Pure Ashes now checks every typed match once its arms are inferred
   (`matchCoverageError`): constructor patterns from two ADTs, unreachable arms (after a catch-all, a

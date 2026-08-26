@@ -22,6 +22,8 @@ let maybeTypeSymbolId = 1
 
 let resultTypeSymbolId = 2
 
+let taskTypeSymbolId = 3
+
 let binaryType argument result =
     SemFunction(argument)(SemFunction(argument)(result)(None))(None)
 
@@ -361,6 +363,7 @@ let standardTraitEnvironment unit =
     |> addConstructorBinding("Unordered")(orderingConstructorScheme)([])
     |> addInferenceTypeDefinition(maybeTypeSymbolId)("Maybe")(1)
     |> addInferenceTypeDefinition(resultTypeSymbolId)("Result")(2)
+    |> addInferenceTypeDefinition(taskTypeSymbolId)("Task")(2)
     |> registerStandardTraits
     |> registerPrimitiveImplementations
     |> registerStructuralImplementations
