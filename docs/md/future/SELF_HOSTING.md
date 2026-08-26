@@ -799,7 +799,13 @@ same public behavior.
   `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
   first limited this to `Str`; a curried stage capturing a reference-counted ADT argument for the
   closure it returns then held a pointer its caller freed, which is why the self-hosted lexer
-  deep-copied every token until the fix).
+  deep-copied every token until the fix). Include, in lifetime placement, the owner-alias walk that
+  keeps an owned binding live across a curried call chain: an alias reaches the first stage's
+  environment, every later stage copies it into the closure it returns, so applying an
+  alias-holding closure (or a devirtualized stage over an alias-holding environment) yields an
+  alias while that result is applied again; and treat a borrowed read of an owned binding passed as
+  a call argument (a byte view of it taken at the call site) as the binding's reference, never as a
+  consumed fresh result to release after the call.
 - [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
   another function: the same `BorrowInspectExpression`/`BorrowInspectOnly` walk that lets a TCO loop
   borrow its own tail parameter across match/head/tail uses and its own tail self-call is computed
@@ -825,14 +831,6 @@ same public behavior.
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
   exceptional, handler, and coroutine control flow.
-- [ ] Keep the string behind an `Ashes.Byte.fromText` view alive for as long as the view is used
-  (stage-0 bug, open). `fromText` yields a borrowed view (`BytesOwnershipProvenance.BorrowedView`)
-  and lifetime placement records no owner for it, so `let bytes = Ashes.Byte.fromText(source) in
-  scan(bytes)...` with no later use of `source` places the `RcDrop` of `source` before the scan
-  that reads the view; the program crashes at `-O0`, `-O2`, and with reuse disabled once the
-  string is large enough to leave the arena. Any later use of `source` (the self-hosted lexer's
-  callers hold it) masks the bug. Sixty-line repro: build a 192 KB string, `fromText` it, walk
-  it with `subText` slices into a list, print a checksum.
 - [ ] Retain a runtime-managed owned binding that a tail self-call argument carries out of its scope:
   `let label = helper(...) in loop(n - 1)(Wrapped(instruction = Jump(label), ...) :: acc)` stores the
   let-bound RC call result into the constructor field, and the binding's own scope-exit release
@@ -1031,7 +1029,13 @@ same public behavior.
 - [ ] Select and link the shipped Mbed TLS, openlibm, and PCRE2 bitcode and any external library/resource
   payloads hermetically.
 - [ ] Emit source-level debug information and preserve valid DWARF/target debug sections through every
-  supported optimization level.
+  supported optimization level. Set each instruction's location from its IR source location before
+  emitting it, give arena/ownership machinery the artificial line-0 location, and keep the current
+  location across any builder repositioning: LLVM's `SetInsertPoint(Instruction*)` adopts that
+  instruction's location, so hoisting a scratch `alloca` into the entry block (whose allocas carry
+  none) must save the location first, emit the `alloca` unlocated, and restore it — otherwise every
+  instruction emitted afterwards for the same IR instruction loses its line, and a match arm whose
+  whole body is one reference-counted allocation gets no line-table row (stage 0 had exactly this).
 - [ ] Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
   corresponding native host compiler bundle.
 
