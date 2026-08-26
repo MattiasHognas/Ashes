@@ -2584,6 +2584,60 @@ public sealed class LinuxBackendCoverageTests
         AssertMemoryPlateaus("runtime-RC shared record child", sharedRecordChild);
     }
 
+    /// <summary>
+    /// A TCO loop's own exit arm building a multi-constructor ADT (<c>| Pr(a, b)</c>, not a
+    /// zero-cost single-payload wrapper) directly from the loop's own runtime-managed accumulator
+    /// parameters. Unlike every ADT shape in
+    /// <see cref="Linux_backend_llvm_runtime_rc_hot_loop_memory_should_plateau_as_work_scales"/>
+    /// (which build fresh literals from scratch values each iteration), this one threads the loop's
+    /// own List(Int) parameters straight into the constructor at the loop's terminal case — the shape
+    /// that exposes the leak.
+    /// </summary>
+    [Test]
+    public async Task Linux_backend_llvm_tco_exit_adt_constructor_memory_should_plateau()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        List<MemoryExecutionResult> samples = await MeasureImportedMemoryGrowthAsync(
+            BuildTcoExitAdtConstructorMemoryProgram,
+            outputPerIteration: 2).ConfigureAwait(false);
+
+        AssertMemoryPlateaus("TCO-exit ADT constructor over runtime-RC accumulators", samples);
+    }
+
+    /// <summary>
+    /// Root-cause probe for the leak above: the ADT shell built at the TCO loop's exit arm must be
+    /// runtime-managed (RC) whenever it stores runtime-managed children, exactly like the equivalent
+    /// tuple shape already is (see <see cref="AssertRuntimeRcTupleTcoProbe"/>'s sibling coverage).
+    /// Today the constructor's own field retain (<c>RcDup</c> on xs/ys) always fires, but the shell
+    /// itself (<c>AllocAdt</c>) is placed on the arena — an orphaned retain, never balanced by any
+    /// drop, leaking one reference per call. This assertion targets exactly that mismatch and is
+    /// expected to fail until the TCO-exit ADT placement gap is fixed.
+    /// </summary>
+    [Test]
+    public void Linux_backend_llvm_tco_exit_adt_constructor_shell_is_runtime_managed()
+    {
+        IrProgram probe = LowerProgramWithImports(BuildTcoExitAdtConstructorMemoryProgram(1));
+        List<IrInst> instructions = AllInstructions(probe).ToList();
+
+        instructions.Any(instruction => instruction is IrInst.RcDup { RuntimeManaged: true })
+            .ShouldBeTrue(
+                "The exit arm's constructor arguments (xs, ys) should retain their runtime-managed " +
+                "children exactly as they do today.");
+        instructions.Any(instruction => instruction is IrInst.AllocAdt
+        {
+            FieldCount: 2,
+            Tagless: true,
+            RuntimeManaged: false,
+        }).ShouldBeFalse(
+            "The TCO loop's exit-arm ADT shell must itself be runtime-managed when it stores " +
+            "runtime-managed children (RcDup'd above) — an arena shell around retained RC children " +
+            "orphans the retain: it is never RcDrop'd, so every call leaks one reference per field.");
+    }
+
     [Test]
     public async Task Linux_backend_llvm_async_coroutine_value_memory_should_plateau()
     {
@@ -7069,6 +7123,31 @@ public sealed class LinuxBackendCoverageTests
                             match tail with
                                 | [] -> loop(n - 1)(total)
                                 | tailHead :: _ -> loop(n - 1)(total + Ashes.Text.byteLength(head) + Ashes.Text.byteLength(tailHead))
+
+            Ashes.IO.print(loop({{iterations}})(0))
+            """;
+
+    private static string BuildTcoExitAdtConstructorMemoryProgram(int iterations)
+        => $$"""
+            import Ashes.Collection.List
+
+            type Pr(a, b) =
+                | Pr(a, b)
+
+            let recursive walk n xs ys =
+                if n <= 0 then Pr(xs, ys) else walk(n - 1)(n :: xs)(n :: ys)
+
+            let recursive loop count total =
+                if count <= 0 then total
+                else
+                    match walk(50)([])([]) with
+                        | Pr(xs, ys) ->
+                            match xs with
+                                | [] -> loop(count - 1)(total)
+                                | xsHead :: _ ->
+                                    match ys with
+                                        | [] -> loop(count - 1)(total)
+                                        | ysHead :: _ -> loop(count - 1)(total + xsHead + ysHead)
 
             Ashes.IO.print(loop({{iterations}})(0))
             """;
