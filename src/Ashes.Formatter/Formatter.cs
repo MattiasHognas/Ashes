@@ -1262,6 +1262,26 @@ public static class Formatter
 
     private static bool ContainsRecordUpdate(Expr expression) => ContainsExpression(expression, static candidate => candidate is Expr.RecordUpdate);
 
+    // Whether a record update sits at the unparenthesized right edge of an expression: the update
+    // itself, or the trailing body of a let, lambda, conditional, match, or handler. `with` takes
+    // every following `name = value` pair as one of its own fields, so such an expression must be
+    // parenthesized wherever a comma-separated `name = value` (a record-literal field) or another
+    // comma-separated operand follows it. A binary operator, call, or bracket already closes its
+    // right edge, and a pipeline stage's lambda is parenthesized as a stage, so those are left in
+    // their usual form.
+    private static bool EndsWithRecordUpdate(Expr expression) => expression switch
+    {
+        Expr.RecordUpdate => true,
+        Expr.Let let => EndsWithRecordUpdate(let.Body),
+        Expr.LetRecursive let => EndsWithRecordUpdate(let.Body),
+        Expr.LetResult let => EndsWithRecordUpdate(let.Body),
+        Expr.Lambda lambda => EndsWithRecordUpdate(lambda.Body),
+        Expr.If conditional => EndsWithRecordUpdate(conditional.Else),
+        Expr.Match match => match.Cases.Count > 0 && EndsWithRecordUpdate(match.Cases[^1].Body),
+        Expr.Handle handle => handle.Arms.Count > 0 && EndsWithRecordUpdate(handle.Arms[^1].Body),
+        _ => false,
+    };
+
     private static bool ContainsExpression(Expr expression, Func<Expr, bool> predicate) => predicate(expression) || expression switch
     {
         Expr.Add binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
@@ -1841,8 +1861,10 @@ public static class Formatter
         for (int index = 0; index < reversedArguments.Count; index++)
         {
             WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, reversedArguments[index], indent + options.IndentSize, 0, preferPipelines, options);
-            if (index < reversedArguments.Count - 1)
+            bool hasFollowingArgument = index < reversedArguments.Count - 1;
+            int argumentPrecedence = hasFollowingArgument && EndsWithRecordUpdate(reversedArguments[index]) ? PrecWith + 1 : 0;
+            WriteExpr(sb, reversedArguments[index], indent + options.IndentSize, argumentPrecedence, preferPipelines, options);
+            if (hasFollowingArgument)
             {
                 sb.Append(',');
             }
@@ -1904,8 +1926,10 @@ public static class Formatter
         for (int index = 0; index < list.Elements.Count; index++)
         {
             WriteIndent(sb, indent + options.IndentSize, options);
-            WriteExpr(sb, list.Elements[index], indent + options.IndentSize, 0, preferPipelines, options);
-            if (index < list.Elements.Count - 1)
+            bool hasFollowingElement = index < list.Elements.Count - 1;
+            int elementPrecedence = hasFollowingElement && EndsWithRecordUpdate(list.Elements[index]) ? PrecWith + 1 : 0;
+            WriteExpr(sb, list.Elements[index], indent + options.IndentSize, elementPrecedence, preferPipelines, options);
+            if (hasFollowingElement)
             {
                 sb.Append(',');
             }
@@ -1919,7 +1943,11 @@ public static class Formatter
 
     private static void WriteRecordLit(StringBuilder sb, Expr.RecordLit rl, int indent, bool preferPipelines, FormattingOptions options)
     {
-        // Brace-free construction: TypeName(field = value, ...)
+        // Brace-free construction: TypeName(field = value, ...). A field value that ends in a
+        // record update must keep its parentheses when another field follows: `with` takes every
+        // following `name = value` pair as one of its own fields, so an unparenthesized update
+        // would otherwise absorb the literal's remaining fields. The last field needs no such
+        // protection — its own closing `)` already ends the update unambiguously.
         sb.Append(rl.TypeName);
         sb.Append('(');
         if (rl.IsMultiline)
@@ -1930,8 +1958,10 @@ public static class Formatter
                 WriteIndent(sb, indent + options.IndentSize, options);
                 sb.Append(rl.Fields[index].Name);
                 sb.Append(" = ");
-                WriteExpr(sb, rl.Fields[index].Value, indent + options.IndentSize, 0, preferPipelines, options);
-                if (index < rl.Fields.Count - 1)
+                bool hasFollowingField = index < rl.Fields.Count - 1;
+                int fieldPrecedence = hasFollowingField && EndsWithRecordUpdate(rl.Fields[index].Value) ? PrecWith + 1 : 0;
+                WriteExpr(sb, rl.Fields[index].Value, indent + options.IndentSize, fieldPrecedence, preferPipelines, options);
+                if (hasFollowingField)
                 {
                     sb.Append(',');
                 }
@@ -1952,7 +1982,9 @@ public static class Formatter
             }
             sb.Append(rl.Fields[i].Name);
             sb.Append(" = ");
-            WriteExprInline(sb, rl.Fields[i].Value, indent, 0, preferPipelines, options);
+            bool hasFollowingField = i < rl.Fields.Count - 1;
+            int fieldPrecedence = hasFollowingField && EndsWithRecordUpdate(rl.Fields[i].Value) ? PrecWith + 1 : 0;
+            WriteExprInline(sb, rl.Fields[i].Value, indent, fieldPrecedence, preferPipelines, options);
         }
         sb.Append(')');
     }

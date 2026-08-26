@@ -98,6 +98,67 @@ public sealed class BraceFreeRecordFormatterTests
         Format(formatted).ShouldBe(formatted);
     }
 
+    // `with` takes every following `name = value` pair as its own field, so an update used as a
+    // record-literal field value must keep its parentheses or it absorbs the literal's remaining
+    // fields on the next parse.
+    [Test]
+    public void Format_should_parenthesize_a_record_update_used_as_a_record_literal_field()
+    {
+        const string source = "Value(state = (inner with currentSpan = previous), temp = temp)\n";
+
+        string formatted = Format(source);
+
+        formatted.ShouldBe(source);
+        Format(formatted).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_parenthesize_a_record_update_used_as_a_multiline_record_literal_field()
+    {
+        const string source = "Value(\n    state = (inner with currentSpan = previous),\n    temp = temp\n)\n";
+
+        string formatted = Format(source);
+
+        formatted.ShouldBe(source);
+        Format(formatted).ShouldBe(formatted);
+    }
+
+    // The trailing body of a lambda or let is an unparenthesized right edge too.
+    [Test]
+    public void Format_should_parenthesize_a_lambda_ending_in_a_record_update_used_as_a_record_literal_field()
+    {
+        const string source = "Value(state = (given (current) -> current with span = next), temp = temp)\n";
+
+        string formatted = Format(source);
+
+        formatted.ShouldBe(source);
+        Format(formatted).ShouldBe(formatted);
+    }
+
+    // Nothing follows the last field, so its own closing `)` already ends the update
+    // unambiguously; no protective parentheses are needed (or added).
+    [Test]
+    public void Format_should_not_parenthesize_a_record_update_as_the_last_record_literal_field()
+    {
+        const string source = "Value(temp = temp, state = inner with currentSpan = previous)\n";
+
+        string formatted = Format(source);
+
+        formatted.ShouldBe(source);
+        Format(formatted).ShouldBe(formatted);
+    }
+
+    [Test]
+    public void Format_should_parenthesize_a_record_update_used_as_an_update_field_value()
+    {
+        const string source = "p with a = (q with b = 1), c = 2\n";
+
+        string formatted = Format(source);
+
+        formatted.ShouldBe(source);
+        Format(formatted).ShouldBe(formatted);
+    }
+
     private static string Format(string source)
     {
         var diagnostics = new Diagnostics();

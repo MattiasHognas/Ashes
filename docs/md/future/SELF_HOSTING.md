@@ -141,12 +141,23 @@ same public behavior.
   requested line ending.
 - [ ] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
   made from the source form.
-- [ ] Keep the parentheses around a record update used as a record-literal field value (stage-0
-  formatter, open): `fmt` rewrites `Value(state = (inner with currentSpan = previous), temp = temp)`
-  to `Value(state = inner with currentSpan = previous, temp = temp)`, where the update absorbs the
-  following fields, so the formatted file no longer compiles (`Missing field 'temp' in record
+- [x] Keep the parentheses around a record update used as a record-literal field value: `fmt`
+  rewrote `Value(state = (inner with currentSpan = previous), temp = temp)` to
+  `Value(state = inner with currentSpan = previous, temp = temp)`, where the update absorbs the
+  following fields, so the formatted file no longer compiled (`Missing field 'temp' in record
   literal`). Formatting must never change what a file parses to. **Found while porting the located
-  core lowering**; the self-hosted code binds the updated record with a `let` first.
+  core lowering.** Stage 0 now renders record-literal field values (inline and multiline), multiline
+  call arguments, and multiline list elements at the precedence just above `with` whenever their
+  own unparenthesized right edge is a record update (the update itself, or the trailing body of a
+  `let`/lambda/`if`/`match`/`handle` ending in one) **and** another field, argument, or element
+  follows — the last one in the list needs no such protection, since its own closing bracket already
+  ends the update; getting this wrong (parenthesizing every occurrence regardless of position) was
+  caught by reformatting the whole repository and finding spurious new parentheses on already-correct
+  committed code. The rule is written into the formatter reference. Pure Ashes lacked the rule at
+  every one of those sites and now ports it in full (`formatterEndsWithRecordUpdate`,
+  `formatterFieldPrecedence`, gated on a following sibling at each call site), covered by the
+  record-literal (inline, multiline, lambda-bodied, and last-field-needs-no-parens), update-field,
+  call, tuple/list, and scrutinee cases in `selfhost/tests/formatter/Main.ash`.
 - [ ] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
   whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
   `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) already shows the
