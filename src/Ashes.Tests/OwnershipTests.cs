@@ -118,6 +118,96 @@ public sealed class OwnershipTests
     }
 
     [Test]
+    public void Let_bound_call_result_in_tco_argument_constructor_is_retained()
+    {
+        // `label` is an owned runtime-managed let (an RC-normalized call result) stored into the
+        // Jump constructor of the next iteration's accumulator. The let's own release still fires at
+        // the back edge, so the constructor field must hold its own retained reference: exactly one
+        // runtime-managed RcDup must feed the field store, or the next iteration reads freed memory.
+        IrProgram ir = LowerProgram(
+            """
+            type Inst =
+                | Jump(Str)
+                | Other
+
+            type Wrapped =
+                | instruction: Inst
+                | location: Maybe(Int)
+
+            let pick n =
+                if n == 0
+                then "picked"
+                else "other"
+
+            let recursive loop n acc =
+                if n == 0
+                then acc
+                else
+                    let label = pick(n % 2)
+                    in loop(n - 1)(Wrapped(instruction = Jump(label), location = None) :: acc)
+
+            match loop(4)([]) with
+                | [] -> Ashes.IO.print(0)
+                | _ -> Ashes.IO.print(1)
+            """);
+
+        List<IrFunction> loops = ir.Functions
+            .Where(function => function.Instructions.Any(inst =>
+                inst is IrInst.RcDrop { TypeName: "String", OwnerSlot: >= 0, RuntimeManaged: true }))
+            .ToList();
+        loops.ShouldNotBeEmpty("the let-bound call result must be an owned runtime-managed binding");
+        (bool storedRetained, bool storedRawLoad) = ClassifyOwnedBindingFieldStores(loops);
+        storedRetained.ShouldBeTrue(
+            "the let-bound call result stored into the tail-call argument's constructor must be retained");
+        storedRawLoad.ShouldBeFalse(
+            "a constructor field must never take the owned binding's own reference, which the back edge releases");
+    }
+
+    /// <summary>
+    /// For every function, tracks the temps naming an owned slot's value (loads and borrows of them)
+    /// versus the retained duplicates made from those temps, and reports whether any constructor
+    /// field store consumed a retained duplicate and whether any consumed the raw owned reference.
+    /// </summary>
+    private static (bool StoredRetained, bool StoredRawLoad) ClassifyOwnedBindingFieldStores(IEnumerable<IrFunction> functions)
+    {
+        bool storedRetained = false;
+        bool storedRawLoad = false;
+        foreach (IrFunction function in functions)
+        {
+            HashSet<int> ownerSlots = function.Instructions
+                .OfType<IrInst.RcDrop>()
+                .Where(drop => drop.RuntimeManaged && drop.OwnerSlot >= 0)
+                .Select(drop => drop.OwnerSlot)
+                .ToHashSet();
+            var ownerLoads = new HashSet<int>();
+            var retainedDups = new HashSet<int>();
+            foreach (IrInst inst in function.Instructions)
+            {
+                switch (inst)
+                {
+                    case IrInst.LoadLocal load when ownerSlots.Contains(load.Slot):
+                        ownerLoads.Add(load.Target);
+                        break;
+                    case IrInst.Borrow borrow when ownerLoads.Contains(borrow.SourceTemp):
+                        ownerLoads.Add(borrow.Target);
+                        break;
+                    case IrInst.RcDup { RuntimeManaged: true } dup when ownerLoads.Contains(dup.SourceTemp):
+                        retainedDups.Add(dup.Target);
+                        break;
+                    case IrInst.SetAdtField store when retainedDups.Contains(store.Source):
+                        storedRetained = true;
+                        break;
+                    case IrInst.SetAdtField store when ownerLoads.Contains(store.Source):
+                        storedRawLoad = true;
+                        break;
+                }
+            }
+        }
+
+        return (storedRetained, storedRawLoad);
+    }
+
+    [Test]
     public void Local_concat_consumed_by_print_uses_runtime_rc()
     {
         IrProgram ir = LowerProgram("let text = \"ab\" + \"cd\" in Ashes.IO.print(text)");

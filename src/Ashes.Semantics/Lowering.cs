@@ -9366,6 +9366,11 @@ public sealed partial class Lowering
                         tailShared: false,
                         tcoTailSlot: tco.ParamSlots[index])
                 : LoweredValueRequest.None;
+            // The argument becomes the next iteration's parameter, so it escapes every binding scope
+            // of this iteration exactly like a function result escapes its callee: a runtime-managed
+            // owned binding stored inside it (a `let` call result placed in a constructor field) must
+            // be retained, because the binding's own release still fires at the back edge.
+            request = request with { TransfersRuntimeManagedChildren = true };
             request = request
                 .AddRuntime(
                     freshClosure,

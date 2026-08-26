@@ -1687,23 +1687,12 @@ public sealed partial class Lowering
                 fieldType,
                 runtimeManagedCandidate,
                 childRequest);
-            // Runtime-RC aggregates own their RC children. An arena aggregate also needs a retained
-            // child when an owning consumer may normalize the aggregate after its pattern root has
-            // been released (for example a TCO function result). Purely local arena aggregates borrow
-            // instead: retaining those would leave no arena-shell drop site.
-            if (runtimeManagedCandidate
-                || request.ConsumerCanOwn
-                || _tcoCtx?.InTailPosition == true)
-            {
-                argumentTemp = DuplicatePerceusPatternOwnerForAggregate(arguments[i], argumentTemp);
-                if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
-                {
-                    argumentTemp = DuplicateRuntimeManagedOwnedValueForTransfer(
-                        arguments[i],
-                        argumentTemp,
-                        argumentType);
-                }
-            }
+            argumentTemp = RetainEscapingConstructorArgument(
+                arguments[i],
+                argumentTemp,
+                argumentType,
+                runtimeManagedCandidate,
+                request);
             argumentTemps.Add(argumentTemp);
             TypeRef parameterType = InstantiateConstructorParameterType(constructor, i, resultType);
             Unify(parameterType, argumentType);
@@ -1712,6 +1701,41 @@ public sealed partial class Lowering
         }
 
         return (argumentTemps, argumentTypes);
+    }
+
+    /// <summary>
+    /// Retains a constructor argument that outlives the scope building the aggregate. Runtime-RC
+    /// aggregates own their RC children. An arena aggregate also needs a retained child when an
+    /// owning consumer may normalize the aggregate after its pattern root has been released (for
+    /// example a TCO function result); purely local arena aggregates borrow instead, since retaining
+    /// those would leave no arena-shell drop site. Independently of that, a value that escapes the
+    /// current iteration's binding scopes without an owning consumer of the aggregate itself (a tail
+    /// self-call argument, which becomes the next iteration's parameter) still carries a
+    /// runtime-managed owned binding stored inside it out of that binding's scope: the binding's own
+    /// scope-exit release fires at the back edge, so the aggregate needs its own retained reference
+    /// or the next iteration reads a freed value.
+    /// </summary>
+    private int RetainEscapingConstructorArgument(
+        Expr argument,
+        int argumentTemp,
+        TypeRef argumentType,
+        bool runtimeManagedCandidate,
+        LoweredValueRequest request)
+    {
+        bool owningConsumer = runtimeManagedCandidate
+            || request.ConsumerCanOwn
+            || _tcoCtx?.InTailPosition == true;
+        if (owningConsumer)
+        {
+            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
+        }
+
+        if (!runtimeManagedCandidate && request.TransfersRuntimeManagedChildren)
+        {
+            argumentTemp = DuplicateRuntimeManagedOwnedValueForTransfer(argument, argumentTemp, argumentType);
+        }
+
+        return argumentTemp;
     }
 
     private (int Temp, TypeRef Type) LowerRuntimeManagedConstructorArgument(
