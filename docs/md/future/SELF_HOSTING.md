@@ -481,7 +481,24 @@ same public behavior.
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
 - [x] Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
-- [x] Lower capability handlers/providers and trait evidence according to the completed semantic plans.
+- [~] Lower capability handlers/providers and trait evidence according to the completed semantic
+  plans. Correcting an earlier over-broad `[x]`: dynamically scoped handler globals (save/switch/
+  restore of the global handler-slot array around a `handle`'s install/uninstall) and static-provider
+  dictionary calls are real, working IR (`CoreCapabilityLowering.ash`'s `emitPerformEvidenceSave`/
+  `Switch`/`Restore`, `StoreCapabilityHandler`/`LoadCapabilityHandler`, `emitStaticProviderCall`), but
+  a `handle` never lowers any operation arm's body into the frame it installs — `lowerHandle` snapshots
+  globals and calls `StoreCapabilityHandler`, then never writes a single arm closure into the frame's
+  operation slots, so `emitDynamicPerform`'s closure read for a handled operation reads uninitialized
+  stack memory. `resume` and pre/post handler control flow (stage 0's CPS-style `TryRewriteResume` +
+  `LowerHandleFoldPosts`/`BuildCapabilityPost`) have no selfhost counterpart at all. **Found and fixed
+  while auditing this gap**: the handler return-arm path referenced an unbound `ExprVar("__body_res")`
+  — the handled body's actual lowered result (`bodyTemp`/`bodyType`) was computed and then discarded
+  instead of bound to that name before the return-arm match ran, so any `handle ... with | return(x)
+  -> ...` failed to lower at all (`UnknownLoweringBinding("__body_res")`). Fixed with the same
+  `finishLetValue` binding path an ordinary `let` already uses. Regression:
+  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`'s
+  `testHandleReturnArmLowering`. Arm-closure installation and the `resume`/pre-post-handler
+  transform remain unimplemented; a program with any op-arm handler cannot lower to correct IR yet.
 - [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
   explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
   and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
