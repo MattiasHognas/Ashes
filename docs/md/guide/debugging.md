@@ -410,7 +410,9 @@ extension setting:
 
 - **Line breakpoints:** Click in the gutter or press **F9** on a line.
 - Breakpoints map to the `.ash` source file and line number via DWARF
-  `.debug_line` information.
+  `.debug_line` information. In a multi-file project every module maps to its own
+  file and lines, including dependency modules the compiler re-renders while
+  stitching the program together.
 
 ### Stepping
 

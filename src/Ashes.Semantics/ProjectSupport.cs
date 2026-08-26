@@ -137,6 +137,8 @@ public readonly record struct ParsedImportHeader(
 /// <param name="FunctionSourceNames">Maps compiler binding names in the stitched source back to the
 /// original source and module-qualified declaration names.</param>
 /// <param name="ModuleProvenanceByPath">Maps stitched source paths to manifest package and module identities.</param>
+/// <param name="SourceLineAnchors">Line anchors for every fragment of reconstructed module text (a
+/// rendered binding value or a hoisted declaration), in combined-source order; see <see cref="SourceLineAnchor"/>.</param>
 public readonly record struct CombinedCompilationLayout(
     string Source,
     int EntryOffset,
@@ -145,7 +147,28 @@ public readonly record struct CombinedCompilationLayout(
     IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? EntryTypeDeclFragments = null,
     IReadOnlyDictionary<string, IReadOnlySet<string>>? ConstructorModules = null,
     IReadOnlyDictionary<string, SourceFunctionName>? FunctionSourceNames = null,
-    IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null
+    IReadOnlyDictionary<string, ModuleProvenance>? ModuleProvenanceByPath = null,
+    IReadOnlyList<SourceLineAnchor>? SourceLineAnchors = null
+);
+
+/// <summary>
+/// Maps one fragment of reconstructed module text in the combined source back to where its text
+/// starts in the user's file. A stitched module region is not line-for-line identical to its file
+/// (the export block and header are gone, declarations are hoisted, binding values are re-rendered
+/// with renamed identifiers), but renaming never adds or removes a line break, so within one
+/// fragment a position maps by line delta from the anchor.
+/// </summary>
+/// <param name="FilePath">The file the fragment came from.</param>
+/// <param name="CombinedStart">UTF-16 offset in the combined source where the fragment's text begins.</param>
+/// <param name="CombinedEnd">UTF-16 offset in the combined source just past the fragment's text.</param>
+/// <param name="Line">One-based line in the file where the fragment's text begins.</param>
+/// <param name="Column">One-based column (Unicode scalars) in the file where the fragment's text begins.</param>
+public readonly record struct SourceLineAnchor(
+    string FilePath,
+    int CombinedStart,
+    int CombinedEnd,
+    int Line,
+    int Column
 );
 
 /// <summary>Manifest package and module identity for one stitched source path.</summary>
@@ -202,7 +225,9 @@ public static class ProjectSupport
 
     private sealed record StandardLibraryModuleDescriptor(string ModuleName, string? ResourceName);
 
-    private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive, string? Annotation = null);
+    // ValueOrigin is the offset in the module's shaped source of the first character of the value
+    // text that ValueSource renders (-1 when the legacy text path extracted the binding).
+    private sealed record ModuleBindingFragment(string Name, string ValueSource, bool IsRecursive, string? Annotation = null, int ValueOrigin = -1);
 
     private sealed record ModuleBindingGroup(IReadOnlyList<ModuleBindingFragment> Bindings, bool IsRecursiveGroup);
 
@@ -240,7 +265,11 @@ public static class ProjectSupport
         // (offset within TypeDeclarationsSource, offset in the module's imports-stripped source,
         // fragment length). Lets diagnostics that land in the hoisted-declaration region of the
         // combined source map back to exact original offsets.
-        IReadOnlyList<(int FragmentStart, int OriginalStart, int Length)>? TypeDeclFragments = null);
+        IReadOnlyList<(int FragmentStart, int OriginalStart, int Length)>? TypeDeclFragments = null,
+        // The module source the fragment offsets above and ValueOrigin refer to: the imports-stripped
+        // file with its export block blanked and private members renamed, which keeps every line
+        // break of the file, so a line computed in it is a line of the file.
+        string? ShapedSource = null);
 
     /// <summary>
     /// Regex matching a single <c>import</c> line: a dotted module path, an optional selector leaf,
@@ -1879,11 +1908,12 @@ public static class ProjectSupport
 
         var prefix = new StringBuilder();
 
-        // Track module offset regions as content is appended
+        // Track module offset regions and fragment line anchors as content is appended
         var moduleOffsets = new List<(string FilePath, int StartOffset, int EndOffset)>();
+        var anchors = new List<SourceLineAnchor>();
 
         int entryTypeDeclarationsStart = AppendHoistedTypeDeclarations(
-            prefix, moduleOffsets, entryModule, entryShape, nonEntryModules, shapes);
+            prefix, moduleOffsets, anchors, entryModule, entryShape, nonEntryModules, shapes);
         IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments =
             OffsetEntryTypeDeclFragments(entryShape, entryTypeDeclarationsStart);
 
@@ -1895,6 +1925,7 @@ public static class ProjectSupport
         var legacyBindingEmitted = AppendModuleBindingPrefixes(
             prefix,
             moduleOffsets,
+            anchors,
             nonEntryModules,
             shapes,
             exportedNames,
@@ -1919,13 +1950,19 @@ public static class ProjectSupport
             entryShape,
             entryExpression,
             prefix,
-            moduleOffsets,
+            new LayoutRegions(moduleOffsets, anchors),
             constructorModules,
             functionSourceNames,
             moduleProvenanceByPath,
             entryTypeDeclFragments,
             appendFlatEntryBare);
     }
+
+    // The combined source's region table and fragment anchors, grown together while the prefix is
+    // assembled and handed to the layout as one unit.
+    private sealed record LayoutRegions(
+        List<(string FilePath, int StartOffset, int EndOffset)> ModuleOffsets,
+        List<SourceLineAnchor> Anchors);
 
     private static IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>?
         OffsetEntryTypeDeclFragments(ModuleSourceShape entryShape, int combinedStart)
@@ -2102,6 +2139,7 @@ public static class ProjectSupport
     private static int AppendHoistedTypeDeclarations(
         StringBuilder prefix,
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        List<SourceLineAnchor> anchors,
         ProjectModule entryModule,
         ModuleSourceShape entryShape,
         IReadOnlyList<ProjectModule> nonEntryModules,
@@ -2118,6 +2156,7 @@ public static class ProjectSupport
                 prefix.Append(typeDecls);
                 EnsureEndsWithNewline(prefix);
                 moduleOffsets.Add((module.FilePath, start, prefix.Length));
+                AddTypeDeclarationAnchors(anchors, module.FilePath, shapes[module.ModuleName], start);
             }
         }
 
@@ -2128,6 +2167,7 @@ public static class ProjectSupport
             prefix.Append(entryShape.TypeDeclarationsSource);
             EnsureEndsWithNewline(prefix);
             moduleOffsets.Add((entryModule.FilePath, start, prefix.Length));
+            AddTypeDeclarationAnchors(anchors, entryModule.FilePath, entryShape, start);
         }
 
         return entryTypeDeclarationsStart;
@@ -2144,6 +2184,7 @@ public static class ProjectSupport
     private static bool AppendModuleBindingPrefixes(
         StringBuilder prefix,
         List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        List<SourceLineAnchor> anchors,
         IReadOnlyList<ProjectModule> nonEntryModules,
         Dictionary<string, ModuleSourceShape> shapes,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
@@ -2155,38 +2196,47 @@ public static class ProjectSupport
         // nested-let pyramid (everything after the first pyramid `let ... in` is the trailing body).
         foreach (var module in nonEntryModules.Where(module => shapes[module.ModuleName].IsFlat))
         {
-            var start = prefix.Length;
-            prefix.Append(BuildModuleBindingPrefix(
-                module,
-                shapes[module.ModuleName],
-                exportedNames,
-                exportAnnotations,
-                usedBindingNames,
-                flat: true));
-            if (prefix.Length > start)
-            {
-                moduleOffsets.Add((module.FilePath, start, prefix.Length));
-            }
+            AppendModuleBindingRegion(
+                prefix, moduleOffsets, anchors, module, shapes[module.ModuleName],
+                exportedNames, exportAnnotations, usedBindingNames, flat: true);
         }
 
         var legacyBindingEmitted = false;
         foreach (var module in nonEntryModules.Where(module => !shapes[module.ModuleName].IsFlat))
         {
-            var start = prefix.Length;
-            prefix.Append(BuildModuleBindingPrefix(
-                module,
-                shapes[module.ModuleName],
-                exportedNames,
-                exportAnnotations,
-                usedBindingNames));
-            if (prefix.Length > start)
-            {
-                moduleOffsets.Add((module.FilePath, start, prefix.Length));
-                legacyBindingEmitted = true;
-            }
+            legacyBindingEmitted |= AppendModuleBindingRegion(
+                prefix, moduleOffsets, anchors, module, shapes[module.ModuleName],
+                exportedNames, exportAnnotations, usedBindingNames, flat: false);
         }
 
         return legacyBindingEmitted;
+    }
+
+    // Renders one module's binding prefix as its own region of the combined source and places the
+    // anchors it produced at their combined offsets. Returns whether anything was emitted.
+    private static bool AppendModuleBindingRegion(
+        StringBuilder prefix,
+        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        List<SourceLineAnchor> anchors,
+        ProjectModule module,
+        ModuleSourceShape shape,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
+        IReadOnlyDictionary<string, string> exportAnnotations,
+        Dictionary<string, string> usedBindingNames,
+        bool flat)
+    {
+        var start = prefix.Length;
+        int firstAnchor = anchors.Count;
+        prefix.Append(BuildModuleBindingPrefix(
+            module, shape, exportedNames, exportAnnotations, usedBindingNames, anchors, flat));
+        if (prefix.Length == start)
+        {
+            return false;
+        }
+
+        moduleOffsets.Add((module.FilePath, start, prefix.Length));
+        ShiftAnchors(anchors, firstAnchor, start);
+        return true;
     }
 
     private static CombinedCompilationLayout ComposeEntryLayout(
@@ -2194,64 +2244,51 @@ public static class ProjectSupport
         ModuleSourceShape entryShape,
         string entryExpression,
         StringBuilder prefix,
-        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        LayoutRegions regions,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
         IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
         IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments,
         bool appendFlatEntryBare)
     {
-        if (appendFlatEntryBare)
-        {
-            return AppendBareEntryLayout(
-                entryModule,
-                entryShape,
-                entryExpression,
-                prefix,
-                moduleOffsets,
-                constructorModules,
-                functionSourceNames,
-                moduleProvenanceByPath,
-                entryTypeDeclFragments);
-        }
-
-        if (prefix.Length > entryShape.TypeDeclarationsSource.Length)
+        if (!appendFlatEntryBare && prefix.Length > entryShape.TypeDeclarationsSource.Length)
         {
             return AppendParenthesizedEntryLayout(
                 entryModule,
                 entryShape,
                 entryExpression,
                 prefix,
-                moduleOffsets,
+                regions,
                 constructorModules,
                 functionSourceNames,
                 moduleProvenanceByPath,
                 entryTypeDeclFragments);
         }
 
-        if (entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
+        if (!appendFlatEntryBare && entryShape.TypeDeclarationsSource.Length == 0 && prefix.Length == 0)
         {
-            moduleOffsets.Add((entryModule.FilePath, 0, entryExpression.Length));
+            regions.ModuleOffsets.Add((entryModule.FilePath, 0, entryExpression.Length));
             return CreateCombinedCompilationLayout(
                 entryExpression,
                 0,
                 0,
-                moduleOffsets,
+                regions,
                 entryTypeDeclFragments: null,
                 constructorModules,
                 functionSourceNames,
                 moduleProvenanceByPath);
         }
 
-        // Only the entry's own (hoisted) type declarations precede the body: append it bare — the
-        // combined source is then an ordinary flat program (type declarations, then the body), and
-        // the type-declaration region keeps its exact original offsets for span mapping.
+        // Only the entry's own (hoisted) type declarations precede the body, or a flat boundary was
+        // applied: append it bare — the combined source is then an ordinary flat program (type
+        // declarations, then the body), and the type-declaration region keeps its exact original
+        // offsets for span mapping.
         return AppendBareEntryLayout(
             entryModule,
             entryShape,
             entryExpression,
             prefix,
-            moduleOffsets,
+            regions,
             constructorModules,
             functionSourceNames,
             moduleProvenanceByPath,
@@ -2263,7 +2300,7 @@ public static class ProjectSupport
         ModuleSourceShape entryShape,
         string entryExpression,
         StringBuilder prefix,
-        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        LayoutRegions regions,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
         IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
@@ -2275,12 +2312,12 @@ public static class ProjectSupport
         int entryOffset = prefix.Length;
         prefix.Append(entryExpression);
         prefix.Append(')');
-        moduleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
+        regions.ModuleOffsets.Add((entryModule.FilePath, entryOffset, entryOffset + entryExpression.Length));
         return CreateCombinedCompilationLayout(
             prefix.ToString(),
             entryOffset,
             entryShape.TypeDeclarationsSource.Length,
-            moduleOffsets,
+            regions,
             entryTypeDeclFragments,
             constructorModules,
             functionSourceNames,
@@ -2292,7 +2329,7 @@ public static class ProjectSupport
         ModuleSourceShape entryShape,
         string entryExpression,
         StringBuilder prefix,
-        List<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        LayoutRegions regions,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
         IReadOnlyDictionary<string, ModuleProvenance> moduleProvenanceByPath,
@@ -2300,12 +2337,12 @@ public static class ProjectSupport
     {
         int offset = prefix.Length;
         prefix.Append(entryExpression);
-        moduleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
+        regions.ModuleOffsets.Add((entryModule.FilePath, offset, prefix.Length));
         return CreateCombinedCompilationLayout(
             prefix.ToString(),
             offset,
             entryShape.TypeDeclarationsSource.Length,
-            moduleOffsets,
+            regions,
             entryTypeDeclFragments,
             constructorModules,
             functionSourceNames,
@@ -2328,7 +2365,7 @@ public static class ProjectSupport
         string source,
         int entryOffset,
         int bodyStart,
-        IReadOnlyList<(string FilePath, int StartOffset, int EndOffset)> moduleOffsets,
+        LayoutRegions regions,
         IReadOnlyList<(int CombinedStart, int OriginalStart, int Length)>? entryTypeDeclFragments,
         IReadOnlyDictionary<string, IReadOnlySet<string>> constructorModules,
         IReadOnlyDictionary<string, SourceFunctionName> functionSourceNames,
@@ -2337,11 +2374,12 @@ public static class ProjectSupport
             source,
             entryOffset,
             bodyStart,
-            moduleOffsets,
+            regions.ModuleOffsets,
             entryTypeDeclFragments,
             constructorModules,
             functionSourceNames,
-            moduleProvenanceByPath);
+            moduleProvenanceByPath,
+            regions.Anchors);
 
     /// <summary>
     /// Verifies every selector import names an export the target module actually provides, resolving
@@ -2728,6 +2766,7 @@ public static class ProjectSupport
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
         IReadOnlyDictionary<string, string> exportAnnotations,
         IDictionary<string, string> usedBindingNames,
+        List<SourceLineAnchor> anchors,
         bool flat = false)
     {
         var moduleBindingName = SanitizeModuleBindingName(module.ModuleName);
@@ -2741,12 +2780,14 @@ public static class ProjectSupport
 
         var prefix = new StringBuilder();
         var availableLocalBindings = new List<string>();
+        SourceTextIndex? originIndex = shape.ShapedSource is null ? null : new SourceTextIndex(shape.ShapedSource);
 
         foreach (var group in shape.TopLevelBindings)
         {
             AppendModuleBindingGroup(
                 prefix, module, group, moduleBindingName, flat,
-                exportedNames, exportAnnotations, usedBindingNames, availableLocalBindings);
+                exportedNames, exportAnnotations, usedBindingNames, availableLocalBindings,
+                originIndex, anchors);
         }
 
         // Flat modules drop their trailing expression and bind no whole-module value, so the
@@ -2780,7 +2821,9 @@ public static class ProjectSupport
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
         IReadOnlyDictionary<string, string> exportAnnotations,
         IDictionary<string, string> usedBindingNames,
-        List<string> availableLocalBindings)
+        List<string> availableLocalBindings,
+        SourceTextIndex? originIndex,
+        List<SourceLineAnchor> anchors)
     {
         foreach (var binding in group.Bindings)
         {
@@ -2811,7 +2854,8 @@ public static class ProjectSupport
         {
             AppendModuleGroupBinding(
                 prefix, module, group.Bindings[i], moduleBindingName, flat,
-                recursiveBindings, availableLocalBindings, exportedNames, exportAnnotations, appendSeparator: i > 0);
+                recursiveBindings, availableLocalBindings, exportedNames, exportAnnotations,
+                originIndex, anchors, appendSeparator: i > 0);
         }
 
         // Flat modules are stitched as genuine top-level declarations (no `in`): a `let rec ... and
@@ -2835,6 +2879,8 @@ public static class ProjectSupport
         IReadOnlyList<string> availableLocalBindings,
         IReadOnlyDictionary<string, IReadOnlyList<string>> exportedNames,
         IReadOnlyDictionary<string, string> exportAnnotations,
+        SourceTextIndex? originIndex,
+        List<SourceLineAnchor> anchors,
         bool appendSeparator)
     {
         var referencedNames = CollectReferencedNames(binding.ValueSource);
@@ -2869,9 +2915,63 @@ public static class ProjectSupport
             prefix.Append(" : ").Append(annotation);
         }
 
-        prefix.Append(" = (")
-            .Append(renderedValue)
-            .Append(')');
+        prefix.Append(" = (");
+        int valueStart = prefix.Length;
+        prefix.Append(renderedValue);
+        if (originIndex is not null && binding.ValueOrigin >= 0)
+        {
+            anchors.Add(CreateAnchor(module.FilePath, originIndex, binding.ValueOrigin, valueStart, prefix.Length));
+        }
+
+        prefix.Append(')');
+    }
+
+    // The anchor's file position is the origin offset in the shaped source, whose line breaks are
+    // the file's own; the combined offsets are the caller's to shift once the fragment's region is
+    // placed in the combined source.
+    private static SourceLineAnchor CreateAnchor(
+        string filePath,
+        SourceTextIndex originIndex,
+        int originOffset,
+        int combinedStart,
+        int combinedEnd)
+    {
+        (int line, int column) = originIndex.ToPosition(
+            originIndex.ToUtf8Offset(originOffset),
+            SourcePositionEncoding.UnicodeScalar);
+        return new SourceLineAnchor(filePath, combinedStart, combinedEnd, line + 1, column + 1);
+    }
+
+    private static void AddTypeDeclarationAnchors(
+        List<SourceLineAnchor> anchors,
+        string filePath,
+        ModuleSourceShape shape,
+        int combinedStart)
+    {
+        if (shape.TypeDeclFragments is null || shape.ShapedSource is null)
+        {
+            return;
+        }
+
+        var originIndex = new SourceTextIndex(shape.ShapedSource);
+        foreach (var (fragmentStart, originalStart, length) in shape.TypeDeclFragments)
+        {
+            anchors.Add(CreateAnchor(
+                filePath, originIndex, originalStart,
+                combinedStart + fragmentStart, combinedStart + fragmentStart + length));
+        }
+    }
+
+    private static void ShiftAnchors(List<SourceLineAnchor> anchors, int firstIndex, int offset)
+    {
+        for (int i = firstIndex; i < anchors.Count; i++)
+        {
+            anchors[i] = anchors[i] with
+            {
+                CombinedStart = anchors[i].CombinedStart + offset,
+                CombinedEnd = anchors[i].CombinedEnd + offset,
+            };
+        }
     }
 
     private static List<KeyValuePair<string, string>> BuildVisibleAliases(
@@ -3170,7 +3270,7 @@ public static class ProjectSupport
         var legacyFragments = typeDeclarationsSource.Length > 0
             ? new[] { (0, 0, typeDeclarationsSource.Length) }
             : null;
-        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false, policy, TypeDeclFragments: legacyFragments);
+        return new ModuleSourceShape(typeDeclarationsSource, rawExpressionSource, remainingBody, topLevelBindings, legacyExportName, IsFlat: false, policy, TypeDeclFragments: legacyFragments, ShapedSource: source);
     }
 
     private static (string Source, ModuleExportPolicy Policy) ApplyExplicitExportInterface(
@@ -3581,7 +3681,8 @@ public static class ProjectSupport
             LegacyExportName: null,
             IsFlat: true,
             HasTrailingExpression: hasTrailingExpression,
-            TypeDeclFragments: typeDeclFragments);
+            TypeDeclFragments: typeDeclFragments,
+            ShapedSource: source);
     }
 
     private static bool TryShapeFlatItem(
@@ -3710,13 +3811,13 @@ public static class ProjectSupport
     {
         if (!TryExtractFlatBindingValue(
                 source, sourceIndex, sourceLexer, letDecl.Value,
-                ref cursor, out var valueSource, out var annotation))
+                ref cursor, out var valueSource, out var annotation, out var valueOrigin))
         {
             return false;
         }
 
         groups.Add(new ModuleBindingGroup(
-            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive, annotation)],
+            [new ModuleBindingFragment(letDecl.Name, valueSource, letDecl.IsRecursive, annotation, valueOrigin)],
             letDecl.IsRecursive));
         hasFlatBinding = true;
         return true;
@@ -3742,12 +3843,13 @@ public static class ProjectSupport
                     value,
                     ref cursor,
                     out string valueSource,
-                    out string? annotation))
+                    out string? annotation,
+                    out int valueOrigin))
             {
                 return false;
             }
 
-            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true, annotation));
+            members.Add(new ModuleBindingFragment(name, valueSource, IsRecursive: true, annotation, valueOrigin));
         }
 
         groups.Add(new ModuleBindingGroup(members, IsRecursiveGroup: true));
@@ -3800,9 +3902,11 @@ public static class ProjectSupport
         Expr value,
         ref int cursor,
         out string valueSource,
-        out string? annotation)
+        out string? annotation,
+        out int valueOrigin)
     {
         valueSource = string.Empty;
+        valueOrigin = -1;
         if (!TryScanFlatLetHeader(
                 source, sourceLexer, cursor,
                 out var parameters, out var valueStart, out annotation))
@@ -3826,6 +3930,14 @@ public static class ProjectSupport
         if (valueEnd > source.Length)
         {
             return false;
+        }
+
+        // The rendered value starts at the first non-blank character (the leading whitespace is
+        // trimmed below), so that is the position a line anchor for this binding refers to.
+        valueOrigin = valueStart;
+        while (valueOrigin < valueEnd && char.IsWhiteSpace(source[valueOrigin]))
+        {
+            valueOrigin++;
         }
 
         var body = source[valueStart..valueEnd].Trim();
