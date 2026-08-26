@@ -6157,7 +6157,7 @@ public sealed partial class Lowering
 
         LowerLambdaCoreFinalizeTcoOwnership(
             lam, reuseEntryCopies, savedTcoCtx, reuseInsertIndex, specElidedAccs, bodyTemp);
-        LowerLambdaCoreNormalizeAlwaysReturnedStringParameter(lam, label, argSlot, paramTy);
+        LowerLambdaCoreNormalizeAlwaysReturnedParameter(lam, label, argSlot, paramTy);
 
         _tcoCtx = outerTcoCtx;
         if (isChainLambda) _tcoCtx!.DescendingChain = isChainLambda;
@@ -6336,14 +6336,20 @@ public sealed partial class Lowering
         }
     }
 
-    private void LowerLambdaCoreNormalizeAlwaysReturnedStringParameter(
+    // A function whose parameter always reaches its result keeps the argument past the call, so it
+    // must take ownership of a runtime-managed argument: it advertises that it accepts one (the
+    // caller then hands over a retained reference) and copies a borrowed argument into an owned
+    // value otherwise. Without this, a caller that keeps its own reference drops it after the call
+    // and the result holds a dangling pointer.
+    private void LowerLambdaCoreNormalizeAlwaysReturnedParameter(
         Expr.Lambda lambda,
         string label,
         int argumentSlot,
         TypeRef argumentType)
     {
+        TypeRef parameterType = Prune(argumentType);
         if (_runtimeNormalizedFunctionArgumentLabels.Contains(label)
-            || Prune(argumentType) is not TypeRef.TStr
+            || !IsRuntimeNormalizableParameterType(parameterType)
             || !ResultAlwaysReachesVariable(lambda.Body, lambda.ParamName))
         {
             return;
@@ -6352,13 +6358,23 @@ public sealed partial class Lowering
         int generatedStart = _inst.Count;
         int sourceTemp = NewTemp();
         Emit(new IrInst.LoadLocal(sourceTemp, argumentSlot));
-        int normalizedTemp = EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, argumentType);
+        int normalizedTemp = EmitRuntimeManagedTcoArgumentNormalization(sourceTemp, parameterType);
         Emit(new IrInst.StoreLocal(argumentSlot, normalizedTemp));
         List<IrInst> generated = _inst.GetRange(generatedStart, _inst.Count - generatedStart);
         _inst.RemoveRange(generatedStart, generated.Count);
         _inst.InsertRange(0, generated);
         _runtimeNormalizedFunctionArgumentLabels.Add(label);
     }
+
+    // The parameter types the entry normalization can turn into an owned runtime-managed value:
+    // strings, and the records and ADTs the runtime RC layer copies out or deep-copies.
+    private bool IsRuntimeNormalizableParameterType(TypeRef parameterType)
+        => parameterType switch
+        {
+            TypeRef.TStr => true,
+            TypeRef.TNamedType named => CanCopyOutAdt(named, out _) || CanRuntimeManageTcoAdt(named),
+            _ => false,
+        };
 
     private bool ResultAlwaysReachesVariable(
         Expr expression,
