@@ -63,6 +63,30 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-08-26, after the allocation-free header scan and lexer paths
+
+Three self-hosted frontend changes, each removing per-unit allocations from code the finished
+compiler runs on every file or token. The import-header pass split the whole file into lines,
+trimmed each header line up to three times, and joined everything back to blank a few import
+lines; it now walks header lines over the `Bytes` view, slices only the header lines, and takes
+the body with one `subText`. Keyword recognition compared each identifier against 24 keywords by
+allocating the keyword's bytes and hashing both sides per candidate; it now matches the token's
+already-sliced text against the keyword literals. Operator scanning allocated a `subText` per
+candidate spelling (`|?>`, `|!>`, `->`, ...); it now dispatches on the raw bytes. Header is now
+faster than the .NET pass, parse (which includes lexing) is close to parity, and lex is the one
+row left above 1.5x. `tests/regress_readline_loop_depth.ash` no longer crashes any phase because
+the header pass no longer builds the per-line list that triggered the stage-0 lifetime bug; that
+bug stays open on the checklist.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 17 | 822 | 9 | 822 | 0.53x | |
+| lex | 38 | 360166 | 74 | 360178 | 1.95x | |
+| parse | 147 | 807 | 175 | 802 | 1.19x | |
+| format | 99 | 2334590 | 52 | 1491022 | 0.53x | 22 files crashed and were excluded |
+| infer (stage 1) vs infer+lower (stage 0) | 1192 | 376 | 5 | 35 | 0.00x | |
+| optimize IR (stage 0 only) | 452 | 1261 | - | - | - | |
+
 ### 2026-08-26, after the closure-environment optimizer passes
 
 No self-hosted source changed for this row; the .NET compiler gained two whole-program passes
