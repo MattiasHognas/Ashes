@@ -155,8 +155,17 @@ same public behavior.
 - [x] Infer sequential top-level bindings, shared-monomorphic recursive groups, and an optional trailing
   expression.
 - [ ] Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs.
-- [ ] Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
-  diagnostic reporting.
+- [x] Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
+  diagnostic reporting. Pure Ashes now checks every typed match once its arms are inferred
+  (`matchCoverageError`): constructor patterns from two ADTs, unreachable arms (after a catch-all, a
+  repeated literal, constructor, or composite pattern), missing constructors of an ADT scrutinee
+  (with the `Result` wording, the five-constructor listing limit, and the "... and N more"
+  truncation), a list scrutinee missing `[]` or `x :: xs`, half-covered bools, and the per-field
+  missing-pattern search over lists, tuples, constructors, bools, and literals, reported with stage
+  0's message text as `NonExhaustiveMatch`, `UnreachableMatchArm`, and
+  `ConstructorPatternsFromDifferentAdts` inference errors; or-alternatives, as-patterns, and record
+  patterns are expanded to plain positional patterns first, exactly as stage 0's diagnostic
+  pre-pass does. Stable `ASH###` codes for these messages remain uncoded in stage 0 as well.
 - [ ] Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
   diagnostics at the semantic boundary.
 - [~] Seed the shipped standard trait/type identities and primitive/structural implementation heads so

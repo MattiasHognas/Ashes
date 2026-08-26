@@ -33,7 +33,7 @@ let expectBasicPatterns unit =
         None
         |> ExprMatch(
             ExprList([ExprString("head")])(false),
-            [(PatternCons(PatternVar("head"))(PatternWildcard), ExprVar("head"), None)]
+            [(PatternCons(PatternVar("head"))(PatternWildcard), ExprVar("head"), None), (PatternEmptyList, ExprString(""), None)]
         )
         |> expectMatchType("Str"))
     |> (given (_) ->
