@@ -32,7 +32,9 @@ type ProgramParseResult =
     | program: ProgramSyntax
     | diagnostics: List(DiagnosticEntry)
 
-type alias ParserState = (List(Token), List(DiagnosticEntry), Str)
+// The source travels as its byte view: the parser reads it only for layout checks, and a bare
+// string element would be cloned every time the state tuple is rebuilt.
+type alias ParserState = (List(Token), List(DiagnosticEntry), Bytes)
 
 type ParsedTypeBranches =
     | constructors: List(TypeConstructor)
@@ -219,10 +221,6 @@ let parserStateWithTokens (state: ParserState) tokens =
     match state with
         | (_oldTokens, diagnostics, source) -> (tokens, diagnostics, source)
 
-let parserStateSource (state: ParserState) =
-    match state with
-        | (_tokens, _diagnostics, source) -> source
-
 let parserSourceByteAt bytes position =
     position
     |> Ashes.Byte.get(bytes)
@@ -237,38 +235,32 @@ let recursive parserSourceContainsLineBreak bytes position endPosition =
             | 13 -> true
             | _ -> parserSourceContainsLineBreak(bytes)(position + 1)(endPosition)
 
+// The source stays inside the state tuple: a helper returning the source string would hand out a
+// copy of the whole file on every layout check, so the scan reads the bytes in place.
+let parserStateContainsLineBreak (state: ParserState) position endPosition =
+    match state with
+        | (_tokens, _diagnostics, sourceBytes) -> parserSourceContainsLineBreak(sourceBytes)(position)(endPosition)
+
 let parserCallStartsOnNewLine state leftParen firstArgument =
     match parserCurrentKind(state) with
         | RParen -> false
         | _ ->
-            parserSourceContainsLineBreak(
-                state
-                |> parserStateSource
-                |> Ashes.Byte.fromText,
-                tokenEnd(leftParen),
-                parserExprStart(firstArgument)
-            )
+            firstArgument
+            |> parserExprStart
+            |> parserStateContainsLineBreak(state)(tokenEnd(leftParen))
 
 let parserListStartsOnNewLine state leftBracket firstElement =
     match parserCurrentKind(state) with
         | RBracket -> false
         | _ ->
-            parserSourceContainsLineBreak(
-                state
-                |> parserStateSource
-                |> Ashes.Byte.fromText,
-                tokenEnd(leftBracket),
-                parserExprStart(firstElement)
-            )
+            firstElement
+            |> parserExprStart
+            |> parserStateContainsLineBreak(state)(tokenEnd(leftBracket))
 
 let parserRecordStartsOnNewLine state leftParen =
-    parserSourceContainsLineBreak(
-        state
-        |> parserStateSource
-        |> Ashes.Byte.fromText,
-        tokenEnd(leftParen),
-        parserCurrentPosition(state)
-    )
+    state
+    |> parserCurrentPosition
+    |> parserStateContainsLineBreak(state)(tokenEnd(leftParen))
 
 let recursive parserLineStart bytes position =
     if position <= 0
@@ -1804,12 +1796,8 @@ and parserParseParenthesized state =
                     if parserLetStartsPattern(afterLeftParen)
                     then parserParseExpression(afterLeftParen)
                     else
-                        parserParseParenthesizedFlatBody(
-                            afterLeftParen
-                            |> parserStateSource
-                            |> Ashes.Byte.fromText,
-                            afterLeftParen
-                        )
+                        match afterLeftParen with
+                            | (_tokens, _diagnostics, sourceBytes) -> parserParseParenthesizedFlatBody(sourceBytes)(afterLeftParen)
                 else parserParseExpression(afterLeftParen)
             in
                 match bodyResult with
@@ -3497,7 +3485,7 @@ and parserParseRecursiveGroup sourceBytes reversedItems start reversedBindings r
 let parseProgram source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], source)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source))
         in
             let sourceBytes = Ashes.Byte.fromText(source)
             in
@@ -3528,7 +3516,7 @@ let parseProgram source =
 let parseExpression source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], source)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source))
         in
             match parserParseExpression(initial) with
                 | (expression, state) ->
@@ -3557,7 +3545,7 @@ let parseExpression source =
 let parseTypeExpression source =
     (let lexed = tokenize(source)
     in
-        let initial : ParserState = (lexed.tokens, [], source)
+        let initial : ParserState = (lexed.tokens, [], Ashes.Byte.fromText(source))
         in
             match parserParseTypeExpressionState(initial) with
                 | (typeExpression, state) ->

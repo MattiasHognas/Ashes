@@ -876,6 +876,22 @@ same public behavior.
   0 otherwise inlined the outer helper, declined the inner call, and reported the stdlib name as not
   yet declared. **Found by the `Ashes.Text.split` rewrite the phase benchmark motivated.** Regression:
   `ReuseInlineResolutionTests`.
+- [ ] Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
+  rather than clone the string elements of an escaping arena tuple: a requested RC tuple falls back
+  to an arena shell when an element is not runtime-manageable (`List(Token)`, a list of records,
+  is not), and `MaterializeEscapingArenaTupleElements` then deep-copies every `Str` element whose
+  provenance is unknown. The self-hosted parser's state `(List(Token), List(DiagnosticEntry), Str)`
+  was rebuilt by `parserAdvance` on every token, so each token cloned the entire source into the
+  arena (4,182-line `TypeInference.ash`: 24k clones of 233 KB per parse, ~1,400 four-MiB chunk
+  map/unmap cycles, 382 ms). The parser now carries the source as its `Bytes` view, which that
+  path leaves alone (29 ms); the general cost remains for any program threading a large string
+  through an escaping tuple next to a list of records. **Found by the phase benchmark's parse row.**
+- [ ] Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
+  caller can prove the aggregate is reference-counted: an accessor such as
+  `parserStateSource (state) = match state with (_, _, source) -> source` lowers to
+  `Borrow` + `CopyOutArena RcNormalization`, a copy of the whole string per call, because the
+  callee cannot tell an arena string from an RC one. The self-hosted parser no longer extracts the
+  source (it scans the bytes in place); the item stays for the compiler.
 - [ ] Keep a large string alive when a tail-recursive loop moves it from the list it consumes into
   its accumulator: `walk(Ashes.Text.split(source)("\n"))([])`, where `walk` matches `line :: rest`
   and conses `line` onto its accumulator, releases the line string with the consumed cell, so the
@@ -889,7 +905,11 @@ same public behavior.
   directive line) inside `finishHeader`'s join. **Found by the self-hosting phase benchmark's
   corpus run**, which now bisects and excludes crashing files per phase and reports their count.
   Twelve-line repro: build a 15 KB line with an affine-string loop, split it, walk it inline,
-  join the result.
+  join the result. The same release shows up without any list: a loop rebuilding a tuple state
+  `walk((rest, source))(count + 1)` from its own pattern-bound elements reads a freed `source` at
+  the end for any string over the chunk size (the fresh tuple is an arena `Alloc` whose children are
+  neither retained nor copied), so the parser-state shape above is only fast, not yet proven safe,
+  for strings the arena reclaim actually unmaps.
 - [ ] Release a TCO loop's aggregate result in its caller: a call to a loop whose result is a
   tuple or an ADT built from its accumulators (`walk(50)([])([])` returning `(xs, ys)` or
   `Pair(xs, ys)`) is never dropped by the consumer that destructures it, so every call leaks the
