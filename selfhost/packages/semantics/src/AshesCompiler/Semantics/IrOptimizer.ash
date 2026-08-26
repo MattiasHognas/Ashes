@@ -13,7 +13,9 @@
 //      conservative clear at a label with a not-yet-observed backward edge; a JumpIfFalse whose
 //      condition is known folds to a fall-through or an unconditional Jump, and a SwitchTag whose
 //      tag is known folds to a Jump to the taken case)
-//   7. Identity elimination and strength reduction (x+0, x-0, x*0, x*1, x*2, x/1)
+//   7. Identity elimination and strength reduction (x+0, x-0, x*0, x*1, x*2, x/1), followed by a
+//      second ownership-copy elision: an identity rewrites into a Borrow copy rather than
+//      retargeting its uses, and the elision that already ran never revisits that new copy
 //   8. Unreachable code elimination (after Jump, Return, SwitchTag; a label with no remaining branch
 //      reference inside an unreachable region is dropped with its body)
 //   9. Dead code elimination (unused LoadConst, StoreLocal, MakeClosure)
@@ -1229,7 +1231,7 @@ let optimizeIrFunction (fn: IrFunction) =
                 in
                     let insts4 = foldConstants(insts3)
                     in
-                        let insts5 = reduceIdentitiesAndStrength(insts4)
+                        let insts5 = elideTrivialOwnershipCopies(reduceIdentitiesAndStrength(insts4))
                         in
                             let insts6 = elideUnreachableCode(insts5)
                             in
