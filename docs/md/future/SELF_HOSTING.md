@@ -396,18 +396,27 @@ same public behavior.
   control flow, the posts-fold mechanism: #642, exercised end-to-end by every one-shot test since).
 - [~] Lower static-provider dictionaries and generic capability evidence into IR. Static-provider
   dictionaries: done and tested (`emitStaticProviderCall`, `CoreCapabilityLowering.ash`). Generic
-  capability evidence: **verified gap, not yet fixed** — `CoreStaticProviderLayout.typeArguments:
-  List(SemanticType)` is a real field but is never read anywhere in `CoreCapabilityLowering.ash`/
-  `CoreLowering.ash`; `findStaticProvider` matches by `capabilityName` alone, so if two providers
-  for the same capability name at different concrete type arguments (e.g. `provide Log(Int)` vs.
-  `provide Log(Str)`) both reach lowering in the same `staticProviders` list, lowering cannot
-  distinguish them and would silently pick whichever matches by name first. Not yet determined
-  whether this is reachable in practice — inference's own ambiguity rejection (the item above this
-  section, "Satisfy exact concrete capability requirements... rejecting provider/handler ambiguity")
-  may already guarantee `staticProviders` never contains two same-named entries for one lowering
-  call, the same way handler-arm completeness turned out to already be enforced at the inference
-  phase rather than needing a lowering-side check (see the post-#646 audit note in project memory).
-  Needs verification before treating this as an active bug.
+  capability evidence: **confirmed reachable gap, not yet fixed**. Stage 0 registers a static
+  provider under a key built from its capability name AND its resolved type arguments
+  (`Lowering.Capabilities.cs`'s `BuildProviderKey`/`_providers`), so `provide Log(Int)` and
+  `provide Log(Str)` in the same program are two distinct, individually valid registrations —
+  inference's own ambiguity rejection (ASH026/ASH027, the item above this section) only fires on
+  two providers sharing the exact same key, never on two providers sharing only a capability name,
+  so it does NOT guarantee `staticProviders` is free of same-named entries the way handler-arm
+  completeness turned out to already be enforced at the inference phase. `findStaticProvider`
+  matches by `capabilityName` alone and ignores `CoreStaticProviderLayout.typeArguments` entirely,
+  so it can never distinguish the two: `findStaticProvider("Log")([intProvider, strProvider])`
+  always returns whichever provider is listed first, regardless of `typeArguments` or list order,
+  proven directly (both orderings) by
+  `testStaticProviderGenericEvidenceAmbiguityIsUnresolved` in
+  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`. Fixing this needs the same
+  prerequisite the call-site trait-dictionary forwarding gap above is blocked on
+  (`CoreLowering.ash`'s own local type reconstruction becoming constraint-aware, or merging it with
+  the external inference pass) — there is also no whole-program entry point wiring real
+  `ProviderInfo` into `CoreStaticProviderLayout` yet (`CoreStaticProviderLayout(...)` is
+  constructed nowhere outside test fixtures), so this is not reachable through the current
+  production pipeline yet either, the same situation the trait-evidence item was in before
+  `lowerCoreProgramWithEnvironment` existed.
 - [ ] Validate capability explanations and observable behavior against normal, optimization-disabled,
   and reuse-disabled C# compilation.
 

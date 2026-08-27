@@ -146,6 +146,78 @@ let testStaticProviderCall unit =
                         | _ -> test.fail("static provider call should emit single CallClosure")
                 | _ -> test.fail("static provider call emission failed"))
 
+// Confirms the SELF_HOSTING.md "generic capability evidence" gap is real, not just theoretical.
+// Stage 0 registers a static provider under a key built from its capability name AND its resolved
+// type arguments (`Lowering.Capabilities.cs`'s `BuildProviderKey`/`_providers`), so `provide
+// Log(Int)` and `provide Log(Str)` in the same program are two DISTINCT, individually valid
+// registrations -- ASH026 (duplicate provider) only fires on two providers sharing the same key,
+// never on two providers sharing only a capability name. `findStaticProvider` here, by contrast,
+// matches on `capabilityName` alone and returns the first list entry regardless of
+// `typeArguments`, so it can never distinguish the two: whichever provider a real whole-program
+// entry point happened to list first for "Log" is the only one `lowerPerform` can ever reach, from
+// every `perform Log.log(...)` call site in the program, independent of source order or the call
+// site's own argument types. Fixing this needs the same prerequisite the call-site trait-dictionary
+// forwarding gap above is blocked on (`CoreLowering.ash`'s own local type reconstruction becoming
+// constraint-aware, or merging it with the external inference pass) -- there is no whole-program
+// entry point wiring real `ProviderInfo` into `CoreStaticProviderLayout` yet either, so this is not
+// reachable through the current production pipeline, only through this direct unit test (the same
+// situation the trait-evidence item was in before `lowerCoreProgramWithEnvironment` existed).
+let testStaticProviderGenericEvidenceAmbiguityIsUnresolved unit =
+    (let intProvider =
+        CoreStaticProviderLayout(
+            capabilityName = "Log",
+            typeArguments = [SemInt],
+            operations = [("log", ExprVar("log_int"))]
+        )
+    in
+        let strProvider =
+            CoreStaticProviderLayout(
+                capabilityName = "Log",
+                typeArguments = [SemNamed(0)("Str")([])],
+                operations = [("log", ExprVar("log_str"))]
+            )
+        in
+            // Both branches below destructure the result with `match` rather than compare it
+            // with `==`/test.assertEqual: `SemanticType` derives Eq, and its SemNamed arm's own
+            // List(SemanticType) typeArguments field needs Eq(List(SemanticType)) again to even
+            // build the dictionary (every arm is compiled, not just the one the runtime value
+            // happens to match) -- but List(a)'s stdlib Eq/Ord/Hash/Show implementations never
+            // spell their own trait+method name (they recurse through a local `let recursive`
+            // helper instead), so that instance's compiler-internal self-tie binding is never
+            // actually created. That is a genuine, reproducible stage-0 bug of its own (silently
+            // wrong results for Eq, a segfault for Show -- both traced to
+            // EnterActiveTraitImplementation's self-tie name being shared across every instance
+            // of a trait+method regardless of type, so an inner instance's own self-tie can
+            // shadow an outer one's, or an outer instance with no direct self-reference in its
+            // own body never gets a real binding at all) -- unrelated to what this test is about,
+            // so destructuring sidesteps it rather than exercising it.
+            match findStaticProvider("Log")([intProvider, strProvider]) with
+                | Some(CoreStaticProviderLayout { typeArguments = selectedFirst }) ->
+                    match selectedFirst with
+                        | SemInt :: [] -> Unit
+                        | _ ->
+                            "expected a single SemInt element"
+                            |> test.fail
+                            |> (given (_) ->
+                        // Same two providers, opposite registration order: the selection still
+                        // ignores typeArguments and just follows list order, proving there is no
+                        // path by which the Int provider can win here or the Str provider could
+                        // have won above -- registration order alone decides, every time.
+                                match findStaticProvider("Log")([strProvider, intProvider]) with
+                                    | Some(CoreStaticProviderLayout { typeArguments = selectedSecond }) ->
+                                        match selectedSecond with
+                                            | SemNamed(packageId, name, arguments) :: [] ->
+                                                packageId
+                                                |> test.assertEqual(0)
+                                                |> (given (_) -> test.assertEqual("Str")(name))
+                                                |> (given (_) ->
+                                                    match arguments with
+                                                        | [] -> Unit
+                                                        | _ -> test.fail("expected no nested type arguments"))
+                                            | _ -> test.fail("expected a single SemNamed(0, \"Str\", []) element")
+                                    | None -> test.fail("expected a provider match"))
+                | None -> test.fail("expected a provider match"))
+
 let testSplitHandlerArms unit =
     (let arms =
         [
@@ -815,6 +887,7 @@ let runCoreCapabilityLoweringTests unit =
     Unit
     |> testDynamicPerformEmission
     |> testStaticProviderCall
+    |> testStaticProviderGenericEvidenceAmbiguityIsUnresolved
     |> testSplitHandlerArms
     |> testFindCapabilityLayout
     |> testFindCapabilityOperationIndex
