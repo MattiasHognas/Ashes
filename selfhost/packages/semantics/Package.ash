@@ -51,4 +51,7 @@ import AshesCompiler.Semantics.IrCompileTimeEval
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.TcoAnalysis
 import AshesCompiler.Semantics.TcoPromotionCostSignal
+import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.OwnershipProvenance
+import AshesCompiler.Semantics.OwnershipInference
 Unit
