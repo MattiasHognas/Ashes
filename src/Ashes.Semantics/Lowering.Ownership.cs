@@ -3430,6 +3430,279 @@ public sealed partial class Lowering
         return EmitDeepCopy(fieldTemp, pruned);
     }
 
+    // True when EmitDeepCopyToSpace can relocate every heap pointer inside a value of this type into
+    // the persistent blob region: copy types (nothing to relocate), Str/Bytes, a tuple of only
+    // copy-type elements (flat blob copy), a list of Str (EmitListToSpaceCopy), and a non-resource ADT
+    // whose own fields are, recursively, all one of these (including a well-founded self-reference,
+    // e.g. a record field of the ADT's own type). Closures, BigInt, resource types, and any other
+    // heap-pointer-bearing field shape are declined — used to gate EmitDeepCopyToSpace so a caller
+    // never smuggles a still-arena-owned pointer into a to-space cell.
+    private bool IsToSpaceCopySafeType(TypeRef type) =>
+        IsToSpaceCopySafeType(type, new HashSet<string>(StringComparer.Ordinal));
+
+    private bool IsToSpaceCopySafeType(TypeRef type, HashSet<string> path)
+    {
+        TypeRef pruned = Prune(type);
+        if (CanArenaReset(pruned))
+        {
+            return true;
+        }
+
+        return pruned switch
+        {
+            TypeRef.TStr or TypeRef.TBytes => true,
+            TypeRef.TTuple tup => tup.Elements.All(CanArenaReset),
+            TypeRef.TList list => Prune(list.Element) is TypeRef.TStr,
+            TypeRef.TNamedType named when !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name) =>
+                IsAdtToSpaceCopySafe(named, path),
+            _ => false,
+        };
+    }
+
+    private bool IsAdtToSpaceCopySafe(TypeRef.TNamedType named, HashSet<string> path)
+    {
+        TypeSymbol sym = named.Symbol;
+        if (sym.Constructors.Count == 0 || IsResourceBearing(named))
+        {
+            return false;
+        }
+
+        string key = Pretty(named);
+        if (!path.Add(key))
+        {
+            return true; // already validating this exact instantiation further up the recursion
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        bool safe = true;
+        foreach (ConstructorSymbol ctor in sym.Constructors)
+        {
+            foreach (TypeRef fieldType in ctor.ParameterTypes)
+            {
+                TypeRef resolved = ResolveFieldType(fieldType, typeParamMap);
+                if (!IsToSpaceCopySafeType(resolved, path))
+                {
+                    safe = false;
+                    break;
+                }
+            }
+
+            if (!safe)
+            {
+                break;
+            }
+        }
+
+        path.Remove(key);
+        return safe;
+    }
+
+    /// <summary>
+    /// Deep-copies a value into the persistent blob region: recurses through the same field shapes
+    /// <see cref="IsToSpaceCopySafeType(TypeRef)"/> validates (Str/Bytes, copy-type tuples, Str lists, and
+    /// non-resource ADTs), so a value passed through a generic (quantified) callee parameter — which
+    /// is compiled once with no static layout for the argument, and so can never normalize an
+    /// arena-placed argument on entry the way a concretely-typed parameter's entry normalization does
+    /// — survives past the caller's own enclosing arena scope. Callers must check
+    /// <see cref="IsToSpaceCopySafeType(TypeRef)"/> first; an unsupported shape falls through unchanged here
+    /// only as a defensive default, not a supported path.
+    /// </summary>
+    private int EmitDeepCopyToSpace(int temp, TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        if (CanArenaReset(pruned))
+        {
+            return temp;
+        }
+
+        switch (pruned)
+        {
+            case TypeRef.TStr or TypeRef.TBytes:
+                {
+                    int dest = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(dest, temp, -1));
+                    return dest;
+                }
+
+            case TypeRef.TTuple tup when tup.Elements.All(CanArenaReset):
+                {
+                    int dest = NewTemp();
+                    Emit(new IrInst.CopyOutArenaToSpace(dest, temp, tup.Elements.Count * HeapLayouts.WordSizeBytes));
+                    return dest;
+                }
+
+            case TypeRef.TList list when Prune(list.Element) is TypeRef.TStr elementType:
+                return EmitListToSpaceCopy(temp, elementType);
+
+            case TypeRef.TNamedType named when !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name):
+                {
+                    string? label = TrySynthesizeAdtToSpaceCopier(named);
+                    if (label is null)
+                    {
+                        return temp;
+                    }
+
+                    int envPtr = NewTemp();
+                    Emit(new IrInst.Alloc(envPtr, 8));
+                    int copier = NewTemp();
+                    Emit(new IrInst.MakeClosure(copier, label, envPtr, 8));
+                    Emit(new IrInst.StoreMemOffset(envPtr, 0, copier));
+                    int result = NewTemp();
+                    Emit(new IrInst.CallClosure(result, copier, temp));
+                    return result;
+                }
+
+            default:
+                return temp;
+        }
+    }
+
+    private readonly Dictionary<string, string> _adtToSpaceCopierLabels = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _adtToSpaceCopierInProgress = new(StringComparer.Ordinal);
+
+    // A to-space analogue of TrySynthesizeAdtCopier above, for a value that must survive not just one
+    // arena reset but indefinitely (see EmitDeepCopyToSpace). Each constructor's cell is built as
+    // ordinary-arena scratch with its fields already relocated to to-space, then the finished cell is
+    // itself flat-copied into the persistent blob region via CopyOutArenaToSpace's fixed-size branch —
+    // there is no direct "allocate this many bytes in to-space" primitive for a non-reuse-specialization
+    // cell (AllocAdtToSpace is reserved for in-place-reuse's own node arena; interleaving unrelated
+    // cells into it would corrupt that mechanism's fixed-node-shape assumptions), so this mirrors
+    // SynthesizeListToSpaceCopier's "build in arena scratch, then blob-copy the whole cell" pattern.
+    private string? TrySynthesizeAdtToSpaceCopier(TypeRef.TNamedType named)
+    {
+        string key = Pretty(named);
+        if (_adtToSpaceCopierLabels.TryGetValue(key, out string? existing))
+        {
+            return existing;
+        }
+
+        if (_adtToSpaceCopierInProgress.Contains(key))
+        {
+            return null; // mutual-recursion cycle between distinct ADT types — bail to shallow
+        }
+
+        TypeSymbol sym = named.Symbol;
+        if (sym.Constructors.Count == 0)
+        {
+            return null;
+        }
+
+        Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap = null;
+        if (sym.TypeParameters.Count > 0 && named.TypeArgs.Count == sym.TypeParameters.Count)
+        {
+            typeParamMap = new Dictionary<TypeParameterSymbol, TypeRef>();
+            for (int i = 0; i < sym.TypeParameters.Count; i++)
+            {
+                typeParamMap[sym.TypeParameters[i]] = named.TypeArgs[i];
+            }
+        }
+
+        _adtToSpaceCopierInProgress.Add(key);
+        string label = $"__tospacecopy_adt_{_nextLambdaId++}";
+        _adtToSpaceCopierLabels[key] = label; // register before the body so self-type fields resolve to it
+
+        var saved = BeginSynthesizedBody();
+
+        EmitAdtToSpaceCopierBody(label, named, typeParamMap);
+
+        AddFunction(
+            new IrFunction(
+                Label: label,
+                Instructions: new List<IrInst>(_inst),
+                LocalCount: _nextLocalSlot,
+                TempCount: _nextTempSlot,
+                HasEnvAndArgParams: true),
+            new IrFunctionOrigin(
+                label,
+                IrFunctionOriginKind.AdtDeepCopier,
+                CompilerOwner: new CompilerFunctionOwner(
+                    CompilerFunctionOwnerKind.Type,
+                    key),
+                StableDiscriminator: key));
+
+        RestoreEnclosingBodyState(saved);
+
+        _adtToSpaceCopierInProgress.Remove(key);
+        return label;
+    }
+
+    private void EmitAdtToSpaceCopierBody(string label, TypeRef.TNamedType named, Dictionary<TypeParameterSymbol, TypeRef>? typeParamMap)
+    {
+        var sym = named.Symbol;
+
+        NewLocal(); // slot 0: env (implicit)
+        int argSlot = NewLocal(); // slot 1: the value to copy (implicit)
+
+        int argTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(argTemp, argSlot));
+        int selfTemp = NewTemp();
+        Emit(new IrInst.LoadEnv(selfTemp, 0));
+        int tagTemp = EmitAdtTag(argTemp, sym);
+
+        var cases = new List<(long, string)>(sym.Constructors.Count);
+        var ctorLabels = new string[sym.Constructors.Count];
+        for (int i = 0; i < sym.Constructors.Count; i++)
+        {
+            ctorLabels[i] = $"{label}_c{i}";
+            cases.Add((GetConstructorTag(sym.Constructors[i]), ctorLabels[i]));
+        }
+
+        string defaultLabel = $"{label}_default";
+        Emit(new IrInst.SwitchTag(tagTemp, cases, defaultLabel));
+
+        for (int i = 0; i < sym.Constructors.Count; i++)
+        {
+            Emit(new IrInst.Label(ctorLabels[i]));
+            var ctor = sym.Constructors[i];
+            bool tagless = IsTaglessConstructor(ctor);
+            int scratchTemp = NewTemp();
+            Emit(new IrInst.AllocAdt(scratchTemp, GetConstructorTag(ctor), ctor.Arity, Tagless: tagless));
+            for (int j = 0; j < ctor.Arity; j++)
+            {
+                int fieldTemp = NewTemp();
+                Emit(new IrInst.LoadMemOffset(fieldTemp, argTemp, AdtFieldOffsetBytes(ctor, j)));
+                var fieldType = ResolveFieldType(ctor.ParameterTypes[j], typeParamMap);
+                int copied = CopyFieldToSpaceInsideCopier(fieldTemp, fieldType, named, selfTemp);
+                Emit(new IrInst.StoreMemOffset(scratchTemp, AdtFieldOffsetBytes(ctor, j), copied));
+            }
+
+            int toSpaceTemp = NewTemp();
+            Emit(new IrInst.CopyOutArenaToSpace(toSpaceTemp, scratchTemp, AdtAllocationSizeBytes(ctor)));
+            Emit(new IrInst.Return(toSpaceTemp));
+        }
+
+        Emit(new IrInst.Label(defaultLabel));
+        Emit(new IrInst.Return(argTemp)); // unreachable fallback
+    }
+
+    /// <summary>
+    /// Copies one field inside a synthesized to-space ADT copier: a field of the same recursive type
+    /// uses the self-closure (env[0]) for recursion; any other field type goes through
+    /// <see cref="EmitDeepCopyToSpace"/>.
+    /// </summary>
+    private int CopyFieldToSpaceInsideCopier(int fieldTemp, TypeRef fieldType, TypeRef.TNamedType selfType, int selfTemp)
+    {
+        var pruned = Prune(fieldType);
+        if (pruned is TypeRef.TNamedType fieldNamed
+            && string.Equals(Pretty(fieldNamed), Pretty(selfType), StringComparison.Ordinal))
+        {
+            int copied = NewTemp();
+            Emit(new IrInst.CallClosure(copied, selfTemp, fieldTemp));
+            return copied;
+        }
+
+        return EmitDeepCopyToSpace(fieldTemp, pruned);
+    }
+
     private CopyOutKind GetTcoCopyOutKind(TypeRef type, out int staticSizeBytes, out IrInst.ListHeadCopyKind listHeadCopy)
     {
         var pruned = Prune(type);

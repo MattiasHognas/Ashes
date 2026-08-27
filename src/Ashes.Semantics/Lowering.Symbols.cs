@@ -1441,7 +1441,7 @@ public sealed partial class Lowering
         for (int i = 0; i < argTemps.Count; i++)
         {
             bool tagless = IsTaglessConstructor(ctor);
-            int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp, tagless);
+            int fieldTemp = MaterializeSpecializationField(args[i], argTypes[i], argTemps[i], ptrTemp, i, reuseNode, consumedTokenTemp, tagless, resultType);
             Emit(new IrInst.SetAdtField(ptrTemp, i, fieldTemp, tagless));
         }
         if (runtimeManagedCandidate)
@@ -2028,67 +2028,96 @@ public sealed partial class Lowering
     /// over-materializing an already-persistent value only costs a copy, never correctness.
     /// Returns the (possibly persisted) field temp to store into the cell.
     /// </summary>
-    private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless)
+    private int MaterializeSpecializationField(Expr argExpr, TypeRef argType, int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, TypeRef resultType)
     {
-        if (_inSpecialization && _specFreshInputNames is not null
-            && (argExpr is not Expr.Var fieldVar || _specFreshInputNames.Contains(fieldVar.Name)))
+        if (!_inSpecialization || _specFreshInputNames is null
+            || (argExpr is Expr.Var fieldVar && !_specFreshInputNames.Contains(fieldVar.Name)))
         {
-            var pruned = Prune(argType);
-            if (pruned is TypeRef.TStr or TypeRef.TBytes)
-            {
-                if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
-                {
-                    // Update path: reuse the dead old value blob in place when the new string fits and
-                    // the old blob is provably persistent (a runtime blob-region check in the backend),
-                    // else materialize fresh. Bounds blob growth to the largest value per cell instead of
-                    // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
-                    // path below.
-                    int oldValueTemp = NewTemp();
-                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
-                    int persistentField = NewTemp();
-                    Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
-                    fieldTemp = persistentField;
-                }
-                else
-                {
-                    int persistentField = NewTemp();
-                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, -1));
-                    fieldTemp = persistentField;
-                }
-            }
-            else if (pruned is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset))
-            {
-                int sizeBytes = tup.Elements.Count * 8;
-                if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
-                {
-                    // Update path: the reused node's old value cell is dead. Overwrite its contents in
-                    // place when it is provably persistent (a runtime blob-region check in the backend),
-                    // else materialize fresh — so value storage is reused and the blob stays bounded by
-                    // distinct keys, without overwriting reclaimable main-arena memory in place.
-                    int oldValueTemp = NewTemp();
-                    Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
-                    int persistentField = NewTemp();
-                    Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
-                    fieldTemp = persistentField;
-                }
-                else
-                {
-                    // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
-                    // the number of distinct keys).
-                    int persistentField = NewTemp();
-                    Emit(new IrInst.CopyOutArenaToSpace(persistentField, fieldTemp, sizeBytes));
-                    fieldTemp = persistentField;
-                }
-            }
-            else if (pruned is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr elementType)
-            {
-                // No in-place-reuse primitive exists for a list spine, so always rebuild fresh
-                // (matching the tuple insert path above) rather than reuse an update's dead cell.
-                fieldTemp = EmitListToSpaceCopy(fieldTemp, elementType);
-            }
+            return fieldTemp;
+        }
+
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TStr or TypeRef.TBytes)
+        {
+            return MaterializeSpecializationStringField(fieldTemp, ptrTemp, fieldIndex, reuseNode, consumedTokenTemp, tagless);
+        }
+
+        if (pruned is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset))
+        {
+            return MaterializeSpecializationTupleField(fieldTemp, ptrTemp, fieldIndex, reuseNode, consumedTokenTemp, tagless, tup.Elements.Count * 8);
+        }
+
+        if (pruned is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr elementType)
+        {
+            // No in-place-reuse primitive exists for a list spine, so always rebuild fresh
+            // (matching the tuple insert path above) rather than reuse an update's dead cell.
+            return EmitListToSpaceCopy(fieldTemp, elementType);
+        }
+
+        // A recursive child (e.g. left/right of a Node) resolves to the accumulator's own type: it is
+        // already a to-space/reuse-managed node by construction (the recursive call that produced it
+        // is itself part of the specialization), so re-deep-copying it here would be both redundant
+        // and — since it synthesizes a self-recursive copier closure — exactly what the loop's reset
+        // safety analysis treats as an escaping closure, defeating the per-iteration arena reset this
+        // whole mechanism exists to enable. Only a genuinely distinct (non-self) ADT leaf is copied.
+        bool isAccumulatorSelfType = pruned is TypeRef.TNamedType selfCandidate
+            && Prune(resultType) is TypeRef.TNamedType resultNamed
+            && ReferenceEquals(selfCandidate.Symbol, resultNamed.Symbol);
+        if (!isAccumulatorSelfType
+            && pruned is TypeRef.TNamedType named
+            && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name)
+            && IsToSpaceCopySafeType(named))
+        {
+            // Same reasoning as the list case above: no in-place-reuse primitive exists for an
+            // arbitrary record/ADT cell, so always rebuild fresh via the general to-space deep
+            // copier rather than reuse an update's dead cell.
+            return EmitDeepCopyToSpace(fieldTemp, pruned);
         }
 
         return fieldTemp;
+    }
+
+    private int MaterializeSpecializationStringField(int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless)
+    {
+        if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
+        {
+            // Update path: reuse the dead old value blob in place when the new string fits and
+            // the old blob is provably persistent (a runtime blob-region check in the backend),
+            // else materialize fresh. Bounds blob growth to the largest value per cell instead of
+            // leaking one blob per update. The variable-size analogue of the tuple CopyFixedInto
+            // path below.
+            int oldValueTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
+            int persistentField = NewTemp();
+            Emit(new IrInst.CopyStringIntoOrFresh(persistentField, oldValueTemp, fieldTemp));
+            return persistentField;
+        }
+
+        int freshField = NewTemp();
+        Emit(new IrInst.CopyOutArenaToSpace(freshField, fieldTemp, -1));
+        return freshField;
+    }
+
+    private int MaterializeSpecializationTupleField(int fieldTemp, int ptrTemp, int fieldIndex, bool reuseNode, int consumedTokenTemp, bool tagless, int sizeBytes)
+    {
+        if (reuseNode && ReuseTokenFieldIsDead(consumedTokenTemp, fieldIndex))
+        {
+            // Update path: the reused node's old value cell is dead. Overwrite its contents in
+            // place when it is provably persistent (a runtime blob-region check in the backend),
+            // else materialize fresh — so value storage is reused and the blob stays bounded by
+            // distinct keys, without overwriting reclaimable main-arena memory in place.
+            int oldValueTemp = NewTemp();
+            Emit(new IrInst.GetAdtField(oldValueTemp, ptrTemp, fieldIndex, tagless));
+            int persistentField = NewTemp();
+            Emit(new IrInst.CopyFixedIntoOrFresh(persistentField, oldValueTemp, fieldTemp, sizeBytes));
+            return persistentField;
+        }
+
+        // Insert path: no old cell to reuse — materialize a fresh blob cell (bounded by
+        // the number of distinct keys).
+        int freshField = NewTemp();
+        Emit(new IrInst.CopyOutArenaToSpace(freshField, fieldTemp, sizeBytes));
+        return freshField;
     }
 
     private int GetConstructorTag(ConstructorSymbol ctor)
