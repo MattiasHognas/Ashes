@@ -6,7 +6,8 @@ public sealed partial class Lowering
 {
     private readonly record struct OwnershipPlacementContext(
         bool MayExecuteUnderLiveHandlerPost,
-        bool MayExecuteInsideCoroutine)
+        bool MayExecuteInsideCoroutine,
+        bool MayExecuteAsParallelWorker)
     {
         public bool AllowsOrdinaryRc => !MayExecuteUnderLiveHandlerPost;
 
@@ -15,6 +16,13 @@ public sealed partial class Lowering
         /// values and ordinary placement applies even though the program creates tasks elsewhere.
         /// </summary>
         public bool AllowsAsyncIndependentRc => !MayExecuteInsideCoroutine;
+
+        /// <summary>
+        /// True when the function cannot run as a structured-parallelism worker callback, so a value
+        /// it touches can never live in a worker's arena that another thread tears down independently
+        /// of this function's own scope. See Lowering.ParallelWorkerEffects.cs.
+        /// </summary>
+        public bool AllowsParallelWorkerIndependentRc => !MayExecuteAsParallelWorker;
     }
 
     private readonly HashSet<FuncKey> _maFunctionsMayExecuteUnderLiveHandlerPost = [];
@@ -36,9 +44,16 @@ public sealed partial class Lowering
     /// </summary>
     private bool AllowsAsyncIndependentRcPlacement => _ownershipPlacementContext.AllowsAsyncIndependentRc;
 
+    /// <summary>
+    /// True when the function being lowered cannot execute as a structured-parallelism worker
+    /// callback. See Lowering.ParallelWorkerEffects.cs.
+    /// </summary>
+    private bool AllowsParallelWorkerIndependentRcPlacement => _ownershipPlacementContext.AllowsParallelWorkerIndependentRc;
+
     private void ClearHandlerEffectAnalysis()
     {
         ClearCoroutineEffectAnalysis();
+        ClearParallelWorkerEffectAnalysis();
         _maFunctionsMayExecuteUnderLiveHandlerPost.Clear();
         _maFunctionKeyByLambda.Clear();
         _ownershipPlacementBySource.Clear();
@@ -59,12 +74,14 @@ public sealed partial class Lowering
             unknownDynamicCallers,
             entryHasUnknownDynamicCall);
         ComputeCoroutineEffects(calleesByCaller, unknownDynamicCallers);
+        ComputeParallelWorkerEffects(calleesByCaller, unknownDynamicCallers);
 
         foreach ((FuncKey function, SourceFunctionOrigin source) in _maFunctionOrigins)
         {
             _ownershipPlacementBySource[source] = new OwnershipPlacementContext(
                 _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
-                _maFunctionsMayExecuteInsideCoroutine.Contains(function));
+                _maFunctionsMayExecuteInsideCoroutine.Contains(function),
+                _maFunctionsMayExecuteAsParallelWorker.Contains(function));
         }
     }
 
