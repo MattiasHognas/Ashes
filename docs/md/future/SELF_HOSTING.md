@@ -1239,8 +1239,34 @@ same public behavior.
   keep reuse tokens layout-exact (a tagless token never satisfies a tagged constructor of the same
   field count, nor the reverse). Build the classifier with this layout from the start rather than
   porting the uniform tagged layout and unboxing it afterwards.
-- [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
-  exceptional, handler, and coroutine control flow. Include the entry normalization of a parameter
+- [~] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
+  exceptional, handler, and coroutine control flow. **First slice landed**: `CoreLowering.ash` now
+  brackets a `let` scope with the arena save/restore/reclaim triple stage 0 always emits
+  (`SaveArenaState` before the value, `RestoreArenaState` + `ReclaimArenaChunks` after the body),
+  for the flat top-level `let`/trailing-expression sequence `lowerCoreProgramItems` walks (Model A).
+  Gated by `isProvablyArenaSafeExpr`/`topLevelItemsProvablyArenaSafe`, a conservative purely
+  syntactic whitelist (scalar literals, scalar operators, a reference to an already-proven-scalar
+  name, a nested `let` whose own value and body both pass the same check) proven true for the whole
+  remaining chain *before* any lowering happens, so a program outside the whitelist lowers exactly
+  as before — no waste, no shifted local-slot numbers for anything not bracketed. Landed this way
+  specifically to avoid the general case's `CopyOutArena` requirement (an escaping heap-typed
+  result crossing the reclaim boundary needs a copy the arena reset would otherwise invalidate),
+  not yet ported. Makes the `let_bindings` whole-program IR parity fixture
+  (`selfhost/parity/semantics/lowered-ir/let_bindings.ir`) match stage-0 byte-for-byte, the first of
+  the four fixtures excluded by that suite's own note to do so.
+  **Explicitly still out of scope**: a *nested* `ExprLet` (inside an arbitrary expression, as opposed
+  to a flat top-level `let`) is not bracketed — `lowerLet` is unchanged, and only participates in the
+  top-level safety check as a recognized (but not separately bracketed) shape, which is sound (a
+  smaller, correct subset) but not yet as thorough as stage-0. `CopyOutArena` itself; the general
+  heap-escaping case; `SaveArenaState.CoroutineLoop`/async back-edges; and everything else this
+  checklist item's own text below still describes (entry normalization for a runtime-managed
+  parameter, the owner-alias walk, the actual `RcDup`/`RcDrop` operations themselves — no
+  `IrInstructionKind.RcDup`/`RcDrop` is emitted anywhere in `CoreLowering.ash` yet) remain unported.
+  The `closure_capture`, `mutual_recursion`, and `pattern_match` parity fixtures stay excluded:
+  closures need `CleanupResource`-style cleanup, `let recursive`/`and` groups lower through a
+  different path (`lowerPreparedRecursiveGroupWith`, deliberately excluded from the safety check),
+  and pattern matches need constructor-layout registration — none of which this slice touches.
+  Include the entry normalization of a parameter
   that always reaches the function's result: such a function advertises that it accepts a
   runtime-managed argument and, at entry, keeps an owned reference or copies a borrowed one, for
   `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
