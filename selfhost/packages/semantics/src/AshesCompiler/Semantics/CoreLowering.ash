@@ -116,6 +116,7 @@ type CoreLoweringState =
     | currentSpan: Maybe(TextSpan)
     | currentItem: Int
     | topLevelNames: List(Str)
+    | arenaBracketingArmed: Bool
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -316,7 +317,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         sourceContext = None,
         currentSpan = None,
         currentItem = 0,
-        topLevelNames = []
+        topLevelNames = [],
+        arenaBracketingArmed = false
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -716,6 +718,60 @@ let finishLetValue name body lower outerBindings lowered =
             |> freshLocal
             |> lowerStoredLet(name)(body)(lower)(outerBindings)(temp)(semanticType)
 
+let recursive arenaSafeContainsName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest ->
+            if name == candidate
+            then true
+            else arenaSafeContainsName(name)(rest)
+
+// A conservative, purely syntactic whitelist: true only when `expr` can never produce or read a
+// heap value — scalar literals, scalar operators over such expressions, a reference to a name
+// already proven scalar within this same check, and a nested `let` whose own value and body both
+// pass the same check. Never inspects real types, so it is sound (a false positive would let an
+// escaping heap reference be reclaimed) without needing inference: anything not on the whitelist
+// (calls, constructors, lambdas, matches, external types, ...) conservatively answers false.
+let recursive isProvablyArenaSafeExpr (expr: Expr) (scalarNames: List(Str)) =
+    match expr with
+        | ExprAt(_span, inner) -> isProvablyArenaSafeExpr(inner)(scalarNames)
+        | ExprInt(_value) -> true
+        | ExprBool(_value) -> true
+        | ExprVar(name) -> arenaSafeContainsName(name)(scalarNames)
+        | ExprAdd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprSubtract(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprMultiply(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprDivide(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprModulo(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprBitwiseAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprBitwiseOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprBitwiseXor(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprShiftLeft(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprShiftRight(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprGreaterThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprGreaterOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprLessThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprLessOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprNotEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprBitwiseNot(operand) -> isProvablyArenaSafeExpr(operand)(scalarNames)
+        | ExprLogicalNot(operand) -> isProvablyArenaSafeExpr(operand)(scalarNames)
+        | ExprLet(name, letValue, letBody, _parameters, _annotation, _requirements) ->
+            if isProvablyArenaSafeExpr(letValue)(scalarNames)
+            then isProvablyArenaSafeExpr(letBody)(name :: scalarNames)
+            else false
+        | _ -> false
+and isProvablyArenaSafeBinary (left: Expr) (right: Expr) (scalarNames: List(Str)) =
+    if isProvablyArenaSafeExpr(left)(scalarNames)
+    then isProvablyArenaSafeExpr(right)(scalarNames)
+    else false
+
+// Nested (non-top-level) lets are not yet bracketed — see lowerCoreProgramItems's TopLevelLet
+// case and isProvablyArenaSafeExpr's own doc comment for why the first slice stops at the
+// top-level sequence. A nested ExprLet remains a safe, correct subset of that check: it is still
+// walked (as one recognized shape) when deciding whether an enclosing top-level let's trailing
+// body is provably arena-safe, so a program that mixes the two loses only the inner scope's own
+// bracket, never correctness.
 let lowerLet name value body lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings } ->
@@ -4740,6 +4796,63 @@ let traitRewrittenTopLevelValue name value environment =
                 | [] -> value
                 | constraints -> rewriteTraitConstrainedValue(value)(constraints)(env)
 
+// As isProvablyArenaSafeExpr, but over the flat top-level `let`/trailing-expression sequence
+// lowerCoreProgramItems walks (Model A: sequential, not one nested Expr). A self-recursive
+// TopLevelLet or a TopLevelRecursiveGroup conservatively stops the chain — recursive bindings
+// lower through lowerPreparedRecursiveGroupWith, a distinct path this first slice does not cover.
+// Every other item (types, externals, capabilities, traits, providers) lowers no value in this
+// function and is transparent, matching lowerCoreProgramItems's own fallthrough.
+let recursive topLevelItemsProvablyArenaSafe (items: List(TopLevelItem)) (trailingBody: Expr) (scalarNames: List(Str)) =
+    match items with
+        | [] -> isProvablyArenaSafeExpr(trailingBody)(scalarNames)
+        | TopLevelAt(_span, inner) :: rest -> topLevelItemsProvablyArenaSafe(inner :: rest)(trailingBody)(scalarNames)
+        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
+            if isProvablyArenaSafeExpr(value)(scalarNames)
+            then topLevelItemsProvablyArenaSafe(rest)(trailingBody)(name :: scalarNames)
+            else false
+        | TopLevelLet(_letBinding, true) :: _rest -> false
+        | TopLevelRecursiveGroup(_bindings) :: _rest -> false
+        | _other :: rest -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scalarNames)
+
+let topLevelLetChainProvablyArenaSafe name value rest trailingBody =
+    if isProvablyArenaSafeExpr(value)([])
+    then topLevelItemsProvablyArenaSafe(rest)(trailingBody)([name])
+    else false
+
+// Brackets one flat top-level let with the arena save/restore/reclaim triple stage 0 always emits
+// (SaveArenaState before the value, RestoreArenaState + ReclaimArenaChunks after the rest of the
+// program), the first slice of Perceus/region lifetime placement ported to the self-hosted
+// lowerer. Only reached once the whole remaining top-level sequence has been proven, by
+// topLevelItemsProvablyArenaSafe, to contain no heap value that could cross the restore boundary —
+// the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
+// (see docs/md/future/SELF_HOSTING.md). Takes the sentinel-placeholder continuation
+// lowerCoreProgramItems supplies (see its own TopLevelLet case) in place of a literal body Expr.
+let lowerArenaBracketedTopLevelLet name value environment continuation outerBindings restoreArmedTo state =
+    match freshLocal(state) with
+        | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
+            match freshLocal(cursorAllocated) with
+                | FreshLocal { state = endAllocated, local = endSlot } ->
+                    let saved =
+                        emit(SaveArenaState(cursorSlot)(endSlot)(false))(endAllocated)
+                    in
+                        match saved
+                        |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
+                        |> finishLetValue(
+                            name,
+                            topLevelContinuationBody,
+                            continuation,
+                            outerBindings
+                        ) with
+                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
+                            | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                                match freshLocal(bodyState) with
+                                    | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                                        let closed =
+                                            preRestoreAllocated
+                                            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                                            |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                        in success(resultTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -4762,16 +4875,25 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
-                        | CoreLoweringState { bindings = outerBindings } ->
-                            state
-                            |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
-                            |> finishLetValue(
-                                name,
-                                topLevelContinuationBody,
+                        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = alreadyArmed } ->
+                            let continuation =
                                 given (_ignoredBody) ->
-                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s),
-                                outerBindings
-                            )
+                                    given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s)
+                            in
+                                if alreadyArmed
+                                then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(alreadyArmed)(state)
+                                else
+                                    if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)
+                                    then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)((state with arenaBracketingArmed = true))
+                                    else
+                                        state
+                                        |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
+                                        |> finishLetValue(
+                                            name,
+                                            topLevelContinuationBody,
+                                            continuation,
+                                            outerBindings
+                                        )
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))

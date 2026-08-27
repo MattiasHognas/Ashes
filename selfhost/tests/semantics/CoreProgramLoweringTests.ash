@@ -137,6 +137,9 @@ let expectTraitConstrainedBindingFailsWithoutEnvironment unit =
                 | CoreLoweringResult { error = Some(_error) } -> Unit
                 | CoreLoweringResult { error = None } -> test.fail("expected trait-constrained program lowering to fail without an environment, but it produced a program")
 
+// Both top-level lets and the trailing `a + b` are provably arena-safe (scalar Int throughout), so
+// this now matches stage-0's own always-bracketed shape byte-for-byte: SaveArenaState before each
+// value, RestoreArenaState + ReclaimArenaChunks after the rest of the program, innermost first.
 let expectPlainTopLevelLetsProduceExpectedIr unit =
     "let a = 1\nlet b = 2\na + b"
     |> dumpSource
@@ -145,14 +148,20 @@ let expectPlainTopLevelLetsProduceExpectedIr unit =
         "============",
         "",
         "function _start_main  [ProgramEntry]",
-        "  locals=2 temps=5",
+        "  locals=8 temps=5",
+        "    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1",
         "    LoadConstInt          Target=0 Value=1",
-        "    StoreLocal            Slot=0 Source=0",
+        "    StoreLocal            Slot=2 Source=0",
+        "    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4",
         "    LoadConstInt          Target=1 Value=2",
-        "    StoreLocal            Slot=1 Source=1",
-        "    LoadLocal             Target=2 Slot=0",
-        "    LoadLocal             Target=3 Slot=1",
+        "    StoreLocal            Slot=5 Source=1",
+        "    LoadLocal             Target=2 Slot=2",
+        "    LoadLocal             Target=3 Slot=5",
         "    AddInt                Target=4 Left=2 Right=3",
+        "    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6",
+        "    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6",
+        "    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7",
+        "    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=7",
         "    Return                Source=4",
         ""
     ])
