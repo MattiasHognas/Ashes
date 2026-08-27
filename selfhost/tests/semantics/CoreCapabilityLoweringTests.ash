@@ -177,45 +177,18 @@ let testStaticProviderGenericEvidenceAmbiguityIsUnresolved unit =
                 operations = [("log", ExprVar("log_str"))]
             )
         in
-            // Both branches below destructure the result with `match` rather than compare it
-            // with `==`/test.assertEqual: `SemanticType` derives Eq, and its SemNamed arm's own
-            // List(SemanticType) typeArguments field needs Eq(List(SemanticType)) again to even
-            // build the dictionary (every arm is compiled, not just the one the runtime value
-            // happens to match) -- but List(a)'s stdlib Eq/Ord/Hash/Show implementations never
-            // spell their own trait+method name (they recurse through a local `let recursive`
-            // helper instead), so that instance's compiler-internal self-tie binding is never
-            // actually created. That is a genuine, reproducible stage-0 bug of its own (silently
-            // wrong results for Eq, a segfault for Show -- both traced to
-            // EnterActiveTraitImplementation's self-tie name being shared across every instance
-            // of a trait+method regardless of type, so an inner instance's own self-tie can
-            // shadow an outer one's, or an outer instance with no direct self-reference in its
-            // own body never gets a real binding at all) -- unrelated to what this test is about,
-            // so destructuring sidesteps it rather than exercising it.
             match findStaticProvider("Log")([intProvider, strProvider]) with
                 | Some(CoreStaticProviderLayout { typeArguments = selectedFirst }) ->
-                    match selectedFirst with
-                        | SemInt :: [] -> Unit
-                        | _ ->
-                            "expected a single SemInt element"
-                            |> test.fail
-                            |> (given (_) ->
+                    selectedFirst
+                    |> test.assertEqual([SemInt])
+                    |> (given (_) ->
                         // Same two providers, opposite registration order: the selection still
                         // ignores typeArguments and just follows list order, proving there is no
                         // path by which the Int provider can win here or the Str provider could
                         // have won above -- registration order alone decides, every time.
-                                match findStaticProvider("Log")([strProvider, intProvider]) with
-                                    | Some(CoreStaticProviderLayout { typeArguments = selectedSecond }) ->
-                                        match selectedSecond with
-                                            | SemNamed(packageId, name, arguments) :: [] ->
-                                                packageId
-                                                |> test.assertEqual(0)
-                                                |> (given (_) -> test.assertEqual("Str")(name))
-                                                |> (given (_) ->
-                                                    match arguments with
-                                                        | [] -> Unit
-                                                        | _ -> test.fail("expected no nested type arguments"))
-                                            | _ -> test.fail("expected a single SemNamed(0, \"Str\", []) element")
-                                    | None -> test.fail("expected a provider match"))
+                        match findStaticProvider("Log")([strProvider, intProvider]) with
+                            | Some(CoreStaticProviderLayout { typeArguments = selectedSecond }) -> test.assertEqual([SemNamed(0)("Str")([])])(selectedSecond)
+                            | None -> test.fail("expected a provider match"))
                 | None -> test.fail("expected a provider match"))
 
 let testSplitHandlerArms unit =

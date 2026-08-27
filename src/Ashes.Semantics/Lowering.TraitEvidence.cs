@@ -66,6 +66,7 @@ public sealed partial class Lowering
     private readonly List<ActiveTraitImplementationMethod> _activeTraitImplementationMethods = [];
     private readonly Dictionary<string, TypeRef> _generatedTraitRecursiveTypes =
         new(StringComparer.Ordinal);
+    private int _activeTraitImplementationOrdinal;
 
     private sealed record InferredTraitBindingElaboration(
         TypeExpr TypeAnnotation,
@@ -2329,10 +2330,12 @@ public sealed partial class Lowering
             .Select((parameter, index) => (parameter.Name, Type: plan.Goal.TypeArgs[index]))
             .ToDictionary(item => item.Name, item => item.Type, StringComparer.Ordinal);
         TypeRef expectedType = SubstituteTraitParameters(method.Scheme.Body, traitSubstitution);
+        string selfName = EnterActiveTraitImplementation(plan.Goal, method.Name, expectedType);
         Expr loweredImplementation = RewriteSelectedTraitMethodReferences(
             implementation,
             plan,
-            method);
+            method,
+            selfName);
         IReadOnlyList<TypeRef>? savedTypes = _annotationParamTypes;
         int savedCursor = _annotationParamCursor;
         Expr.Lambda? savedTarget = _annotationTargetLambda;
@@ -2347,7 +2350,6 @@ public sealed partial class Lowering
         Dictionary<string, TypeRef>? savedTypeParameterScope = _typeExprParamScope;
         _typeExprParamScope = ResolveSelectedMethodTypeParameterScope(
             plan, method, traitSubstitution);
-        string selfName = EnterActiveTraitImplementation(plan.Goal, method.Name, expectedType);
         (int methodTemp, TypeRef methodType) methodValue;
         try
         {
@@ -2415,7 +2417,16 @@ public sealed partial class Lowering
         string method,
         TypeRef expectedType)
     {
-        string selfName = $"__trait_impl_{constraint.Trait.Name}_{method}";
+        // Unique per constructed instance, not just per trait+method: building this instance's
+        // own method can nest inside building another instance of the SAME trait+method (for
+        // example Show(List(a))'s recursive `Show.show(tail)` and a self-referential ADT's own
+        // Show, whose List(Self) field needs Show(List(Self)) again). A name shared across
+        // nesting levels lets the inner LetRecursive shadow the outer one, so a reference
+        // correctly identified (via FindActiveTraitImplementationMethod's type-aware match) as
+        // belonging to the OUTER instance resolves, lexically, to the INNER instance's own
+        // self-closure instead — silently calling the wrong instance's dictionary on a value of
+        // the wrong shape (or, once made unreachable that way, "Undefined variable").
+        string selfName = $"__trait_impl_{constraint.Trait.Name}_{method}_{_activeTraitImplementationOrdinal++}";
         _activeTraitImplementationMethods.Add(new ActiveTraitImplementationMethod(constraint, method, selfName));
         _generatedTraitRecursiveTypes[selfName] = expectedType;
         return selfName;
@@ -2424,11 +2435,10 @@ public sealed partial class Lowering
     private Expr RewriteSelectedTraitMethodReferences(
         Expr implementation,
         TraitEvidencePlan.Instance plan,
-        TraitMethodSymbol method)
+        TraitMethodSymbol method,
+        string selfName)
     {
         TraitSymbol trait = plan.Goal.Trait;
-        string selfName = $"__trait_impl_{trait.Name}_{method.Name}";
-        bool hasSelfReference = false;
         Expr Rewrite(Expr current)
         {
             if (current is Expr.QualifiedVar reference
@@ -2436,7 +2446,6 @@ public sealed partial class Lowering
             {
                 if (string.Equals(referencedMethod.Name, method.Name, StringComparison.Ordinal))
                 {
-                    hasSelfReference = true;
                     return current;
                 }
                 return new Expr.Var(TraitImplementationMethodBindingName(trait, referencedMethod.Name));
@@ -2450,12 +2459,14 @@ public sealed partial class Lowering
             return MapChildExpressions(current, Rewrite);
         }
 
+        // Always tie this instance's own binding, even when nothing in its own source literally
+        // spells its trait+method name: a co-recursive pair of instances (e.g. the stdlib's
+        // Eq(List(a)) requires {Eq(a)}, instantiated at a self-referential a=T whose own derived
+        // Eq requires Eq(List(T)) again) can only terminate if at least one side of the pair has
+        // a real, referenceable binding to close the loop through — skipping the tie whenever an
+        // instance's own body has no direct self-reference left every such instance permanently
+        // unaddressable, so the pair rebuilds each other without bound.
         Expr rewritten = Rewrite(implementation);
-        if (!hasSelfReference)
-        {
-            return rewritten;
-        }
-
         TextSpan span = AstSpans.GetOrDefault(implementation);
         Expr.Var selfReference = new(selfName);
         AstSpans.Set(selfReference, span);
