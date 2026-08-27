@@ -1144,12 +1144,14 @@ public sealed partial class Lowering
     }
 
     // A reuse-node heap leaf field type the materialization can make persistent (blob): copy types (inline,
-    // nothing to do), Str/Bytes (dynamic copy), and tuples of copy-type elements (fixed-size shallow copy).
-    // Must match the materialization cases in LowerConstructorApplication.
+    // nothing to do), Str/Bytes (dynamic copy), tuples of copy-type elements (fixed-size shallow copy), and
+    // a list of Str (rebuilt fresh into to-space via EmitListToSpaceCopy). Must match the materialization
+    // cases in MaterializeSpecializationField (called from LowerConstructorApplication).
     private bool IsReuseMaterializableFieldType(TypeRef t) =>
         CanArenaReset(t)
         || t is TypeRef.TStr or TypeRef.TBytes
-        || (t is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset));
+        || (t is TypeRef.TTuple tup && tup.Elements.All(CanArenaReset))
+        || (t is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr);
 
     private sealed record ReuseSpecializationQualification(
         string TargetFunction,

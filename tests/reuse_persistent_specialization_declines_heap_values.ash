@@ -1,9 +1,8 @@
-// expect: 1 -> item 1, 2 -> item 2, 3 -> item 3 | 1 -> item 1, 2 -> item 2, 3 -> item 3 | 1 -> item 1, 2 -> item 2, 3 -> item 3 | 5000
+// expect: 1 -> item 1, 2 -> item 2, 3 -> item 3 | 1 -> item 1, 2 -> item 2, 3 -> item 3 | 5000
 import Ashes.Collection.HashMap
 import Ashes.Collection.List
 import Ashes.IO
 import Ashes.Text
-
 type Item =
     | text: Str
     | position: Int
@@ -55,12 +54,6 @@ let recursive groupListsIntoMap items grouped =
                 Ashes.Collection.HashMap.set(Ashes.Text.fromInt(itemPosition(item)))([itemText(item)])(grouped)
             )
 
-let recursive groupRecordsIntoMap items grouped =
-    match items with
-        | [] -> grouped
-        | item :: rest ->
-            groupRecordsIntoMap(rest)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(itemPosition(item)))(item)(grouped))
-
 let recursive groupListsIntoTree items grouped =
     match items with
         | [] -> grouped
@@ -69,35 +62,25 @@ let recursive groupListsIntoTree items grouped =
 let recursive churn count acc =
     if count == 0
     then acc
-    else churn(count - 1)(("churn " + Ashes.Text.fromInt(count)) :: acc)
+    else churn(count - 1)("churn " + Ashes.Text.fromInt(count) :: acc)
 
 let recursive renderMapLists keys grouped =
     match keys with
         | [] -> []
         | key :: rest ->
             match Ashes.Collection.HashMap.get(key)(grouped) with
-                | Some(text :: _) -> (key + " -> " + text) :: renderMapLists(rest)(grouped)
-                | _ -> (key + " missing") :: renderMapLists(rest)(grouped)
-
-let recursive renderMapRecords keys grouped =
-    match keys with
-        | [] -> []
-        | key :: rest ->
-            match Ashes.Collection.HashMap.get(key)(grouped) with
-                | Some(item) -> (key + " -> " + itemText(item)) :: renderMapRecords(rest)(grouped)
-                | None -> (key + " missing") :: renderMapRecords(rest)(grouped)
+                | Some(text :: _) -> key + " -> " + text :: renderMapLists(rest)(grouped)
+                | _ -> key + " missing" :: renderMapLists(rest)(grouped)
 
 let recursive renderTreeLists keys grouped =
     match keys with
         | [] -> []
         | key :: rest ->
             match getTree(key)(grouped) with
-                | Some(text :: _) -> (Ashes.Text.fromInt(key) + " -> " + text) :: renderTreeLists(rest)(grouped)
-                | _ -> (Ashes.Text.fromInt(key) + " missing") :: renderTreeLists(rest)(grouped)
+                | Some(text :: _) -> Ashes.Text.fromInt(key) + " -> " + text :: renderTreeLists(rest)(grouped)
+                | _ -> Ashes.Text.fromInt(key) + " missing" :: renderTreeLists(rest)(grouped)
 
 let mapOfLists = groupListsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
-
-let mapOfRecords = groupRecordsIntoMap(build(3)([]))(Ashes.Collection.HashMap.empty)
 
 let treeOfLists = groupListsIntoTree(build(3)([]))(Leaf)
 
@@ -105,8 +88,6 @@ let noise = churn(5000)([])
 
 Ashes.IO.print(
     Ashes.Text.join(", ")(renderMapLists(["1", "2", "3"])(mapOfLists)) + " | " + Ashes.Text.join(", ")(
-        renderMapRecords(["1", "2", "3"])(mapOfRecords)
-    ) + " | " + Ashes.Text.join(", ")(renderTreeLists([1, 2, 3])(treeOfLists)) + " | " + Ashes.Text.fromInt(
-        Ashes.Collection.List.length(noise)
-    )
+        renderTreeLists([1, 2, 3])(treeOfLists)
+    ) + " | " + Ashes.Text.fromInt(Ashes.Collection.List.length(noise))
 )
