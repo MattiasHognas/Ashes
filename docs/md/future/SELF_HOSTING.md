@@ -40,28 +40,89 @@ must reference only the packages they actually consume.
 ### Planned work
 
 Work should continue in dependency order. Each item below is a reviewable milestone or a short series
-of milestones; split an item when its tests and public contract can stand alone.
+of milestones; split an item when its tests and public contract can stand alone. The six phases below
+still hold at that granularity, but three keystone decisions gate the shape of everything under them —
+naming them explicitly here keeps them from hiding inside a longer numbered item:
+
+```mermaid
+flowchart TD
+    A["1. Trait evidence"] --> B["3. Ownership and RC\nfoundations"]
+    B --> C["4. Backend: LLVM\ncodegen"]
+    C --> D["4. Linking"]
+    D --> E["5. compile / run"]
+    E --> F["5. TestRunner"]
+    B -.->|async ownership| C
+    A -.->|no dependency| G["5. LSP transport"]
+    F --> H["6. Bootstrap"]
+    G --> H
+    D --> I["5. DAP"]
+    I --> H
+```
 
 1. **Complete trait semantics.** Thread evidence through every value shape and lower dictionaries and
-   method dispatch. Add `deriving` expansion only after ordinary evidence works end to end.
+   method dispatch. Add `deriving` expansion only after ordinary evidence works end to end. The
+   remaining gap is one architectural decision — call-site dictionary forwarding, under "Traits,
+   implementations, and evidence" below — blocked on making `CoreLowering`'s own local type
+   reconstruction constraint-aware, or merging it with the external inference pass into one
+   type-variable space. Every other item in this phase (concrete dictionary construction, the standard
+   trait ABI, `deriving`'s physical lowering, and the "supply evidence from a requirement's instantiated
+   type, never trait name alone" item under "Optimization, ownership, and reuse", which is the same gap
+   seen from the ownership side) is inert until one of those two paths lands. Verify generic capability
+   evidence disambiguation (under "Capabilities and handlers") before writing any code for it —
+   inference's own provider-ambiguity rejection may already make it unreachable in practice.
 2. **Close whole-program semantic gaps.** Port import/module and export resolution, external declaration
    typing and ABI metadata, package/project stitching, remaining declaration namespace rules, exhaustive
    diagnostics, and any expression/type-inference behavior not yet represented by the focused tests.
-   Compare observable results with the C# compiler rather than copying its internal object graph.
+   Compare observable results with the C# compiler rather than copying its internal object graph. This
+   phase does not depend on phase 1 and is largely residue — small, self-contained items (resource
+   move/borrow/consume rules, the registry/lock-file graph's network half, source-function origins
+   through the future IR) that can close out alongside it rather than after it.
 3. **Define and lower the complete IR.** Port the current IR model and text form, expression and
    declaration lowering, trait/capability evidence, async state machines, optimization passes, ownership
    and move analysis, Perceus lifetime placement, reuse, and compiler explanation/tooling metadata. Keep
-   ownership inferred and retain the current no-GC memory contract.
+   ownership inferred and retain the current no-GC memory contract. Internally this phase has its own
+   hard order, under "Optimization, ownership, and reuse": heap layout classification (copy /
+   RC-managed / resource / borrowed-view / region / unsupported — build the tagless single-constructor
+   ADT layout against this classifier from the start, not bolted on afterward) comes before the
+   ownership/move-analysis pass (parameter/capture ownership, freshness, reachability, borrows,
+   forwarding, whole-program SCC provenance), which comes before Perceus duplication/drop insertion
+   itself. Almost every other item in that section is a *port*, not new design — each already has a
+   stage-0-proven fix, and several have a minimized repro or a written regression test from this
+   project's own history. The highest-value single ports, each covering several crash shapes at once:
+   retaining runtime-managed children in an escaping/owning aggregate (the class stage-0's #608 closed),
+   releasing a pattern-bound value passed by name as a TCO back-edge argument (the class stage-0's
+   fannkuch-redux investigation closed — 2.4 GB to a flat 8.2 MB), and supplying trait evidence from a
+   requirement's instantiated type rather than by name (the class stage-0's #650 closed). Reuse
+   (structural droppers, safe allocation reuse) and coroutine-frame/async ownership close out this
+   phase; cross-mode validation and the `ownership`/`rc`/`reuse`/`memory` explain snapshots prove it
+   held.
 4. **Port native code generation and linking.** Implement LLVM emission, target ABI handling, runtime
    and bitcode selection, ELF/PE construction, external libraries/resources, debug information, and all
    four target RIDs. Start with the host target but preserve target-independent APIs from the outset.
+   LLVM C API bindings and host `libLLVM` loading gate everything else under "LLVM code generation and
+   runtime integration"; IR emission needs phase 3's ownership/RC shape settled, but not every one of
+   its bug-class items fixed first. Under "Object parsing and executable linking", object parsing gates
+   the four target layouts, which are then independent of each other — do linux-x64 first, since it
+   unblocks every later phase that only needs one working target. The `musttail` upgrade item (under
+   "Optimization, ownership, and reuse") is explicitly blocked on this phase existing; the
+   scheduler/async runtime item needs phase 3's coroutine-frame ownership decided first.
 5. **Port the toolchain consumers.** Build the Ashes CLI orchestration and registry commands, then the
    TestRunner, LSP, DAP, and deterministic fuzzing/fuzzyrunner packages. LSP and DAP remain consumers of
-   compiler packages; they must not duplicate parsing, inference, lowering, or runtime behavior.
+   compiler packages; they must not duplicate parsing, inference, lowering, or runtime behavior. `fmt`,
+   the manifest commands (`init`/`add`/`remove`/`restore`/`tree`/`why`), and the LSP transport itself
+   have no dependency on phase 4 at all — the formatter, `ProjectSupport`, and frontend/semantics are
+   already done, so these can start as soon as there is time for them rather than waiting their turn.
+   `compile`/`run`/`repl`, by contrast, need phase 4 finished end to end, and TestRunner needs `compile`
+   and `run` before it can compile a single test. DAP needs phase 4's debug information and a real,
+   linked executable to attach to. The full `.ash` corpus run through both toolchains, at the end of
+   this phase, is the first honest parity signal for the whole port.
 6. **Bootstrap and prove parity.** Produce a stage-1 compiler with the existing compiler, use stage 1 to
    build stage 2, compare deterministic compiler artifacts or normalized observable output, and run the
    same source/test corpus through both implementations. Add reproducible bootstrap and release jobs
    only after host-target parity is stable, then extend execution/structural validation to every RID.
+   Grow the standing phase benchmark at every milestone along the way, not only here — it has already
+   surfaced four real stage-0 memory bugs in one week of use, and a crashing corpus file it finds is a
+   bug to record, not a file to quietly exclude.
 
 ### Toolchain implementation checklist
 
