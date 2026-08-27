@@ -42,6 +42,7 @@ import TcoTests
 import IrValidationTests
 import IrOptimizerTests
 import OwnershipInferenceTests
+import HeapLayoutClassificationTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -84,6 +85,7 @@ let run unit =
     |> (given (_) -> IrValidationTests.runIrValidationTests(Unit))
     |> (given (_) -> IrOptimizerTests.runIrOptimizerTests(Unit))
     |> (given (_) -> OwnershipInferenceTests.runOwnershipInferenceTests(Unit))
+    |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)
