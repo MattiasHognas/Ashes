@@ -960,21 +960,16 @@ public static class Runner
             return CompileProjectTestImage(filePath, targetId, backendOptions, pipeline, project, source, sourceOverride);
         }
 
-        if (HasImports(source))
-        {
-            return CompileImportsTestImage(filePath, targetId, backendOptions, pipeline, source, sourceOverride);
-        }
-
-        // A file with inline `module` blocks but no imports still needs the stitching layout so the
-        // blocks are lifted into submodules; the raw parser has no inline-module construct.
-        if (ProjectSupport.ContainsInlineModule(source))
-        {
-            var parsed = ProjectSupport.ParseImportHeader(source, filePath);
-            var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, filePath, parsed.ImportSelectors);
-            return CompileToImage(layout.Source, targetId, backendOptions, pipeline, null, parsed.ImportAliases.Count == 0 ? null : parsed.ImportAliases, layout.ConstructorModules, layout);
-        }
-
-        return CompileToImage(source, targetId, backendOptions, pipeline);
+        // Every other real (non-inline-source) file goes through the same standalone-project
+        // stitching as a file with `import` lines, regardless of whether it has any: a bare
+        // `CompileToImage(source, ...)` skips module/trait discovery entirely, which is unsound the
+        // moment the source references a generic operator (e.g. `==` inside a user-defined
+        // polymorphic function) that needs a real dictionary resolved from the stitched Ashes.Trait
+        // module — not just the presence of `Ashes.IO`/`Ashes.Text` intrinsics, which the bare path
+        // does handle correctly on its own. `CompileImportsTestImage`'s stitching already handles a
+        // zero-import file the same way `ashes run` does, so there is no behavioral loss from always
+        // taking it — only the discovery walk this file was skipping before.
+        return CompileImportsTestImage(filePath, targetId, backendOptions, pipeline, source, sourceOverride);
     }
 
     private static byte[] CompileProjectTestImage(string filePath, string targetId, BackendCompileOptions backendOptions, TestPipeline pipeline, AshesProject project, string source, string? sourceOverride)
