@@ -2084,6 +2084,7 @@ public sealed partial class Lowering
                 ?? LowerExpr(
                     argument,
                     LoweredValueRequest.None.WithExpectedType(function.Arg)).AsPair();
+            argumentTemp = DuplicatePerceusPatternOwnerForAggregate(argument, argumentTemp);
             argumentTemps.Add(argumentTemp);
             Unify(function.Arg, argumentType);
             SubsumeCalleeRow(function.Row, span);
