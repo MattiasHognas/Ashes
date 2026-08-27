@@ -6659,20 +6659,16 @@ public sealed partial class Lowering
     // backend, which no-ops on a literal's immortal sentinel header instead of touching memory that
     // has no real refcount.
     //
-    // KNOWN GAP: this widens protection to fire on an Arena-placed root for the first time ever, and
-    // that root can be a structured-parallelism worker's own result (Ashes.Collection.List.reduce
-    // reuse-specialized into IrInst.ParallelQueueStart, see LowerParallelReduceQueuedEmit in
-    // Lowering.Reuse.cs) whose backing arena is torn down once that worker's thread exits — RcDup on
-    // such a value reads a dangling pointer. Unlike coroutines/effect handlers (excluded via
-    // AllowsAsyncIndependentRcPlacement/AllowsOrdinaryRcPlacement, computed by a whole-program
-    // call-graph pre-pass in Lowering.HandlerEffects.cs), no equivalent exclusion exists yet for
-    // functions reachable from a parallel worker body. Reproduced in
-    // LinuxBackendCoverageTests.Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale
-    // (challenges/1brc/brc.ash's mergeEntries, which folds two workers' partial hash maps): crashes
-    // reliably at 4 workers, never at 1, never on the unwidened gate. Needs a
-    // MayExecuteAsParallelWorker-style bit added to OwnershipPlacementContext, following the same
-    // pre-pass shape as MayExecuteInsideCoroutine, gating this widened branch off for any function
-    // reachable from ParallelQueueStart lowering. Tracked as a follow-up; not yet implemented.
+    // This widens protection to fire on an Arena-placed root for the first time ever, and that root
+    // can be a structured-parallelism worker's own result (Ashes.Collection.List.reduce/map reuse-
+    // specialized into IrInst.ParallelQueueStart or a fork-tree specialization, see
+    // LowerParallelReduceQueuedEmit/TryLowerParallelSpecializedCall in Lowering.Reuse.cs) whose
+    // backing arena is torn down once that worker's thread exits — RcDup on such a value reads a
+    // dangling pointer (see project_ownership_provenance_arena_corruption_bug memory: reproduced in
+    // LinuxBackendCoverageTests.Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale). The
+    // caller below excludes this via AllowsParallelWorkerIndependentRcPlacement, computed by the same
+    // whole-program call-graph pre-pass shape as the pre-existing async/coroutine exclusion — see
+    // Lowering.ParallelWorkerEffects.cs.
     private static bool IsUnconditionallyRcManagedType(TypeRef type) =>
         type is TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt;
 
@@ -6693,7 +6689,9 @@ public sealed partial class Lowering
                 : PatternBindingPlacementOutcome.Borrowed;
         }
 
-        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || IsUnconditionallyRcManagedType(prunedType)
+        bool widenedProtectionSafeHere = IsUnconditionallyRcManagedType(prunedType)
+            && AllowsParallelWorkerIndependentRcPlacement;
+        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || widenedProtectionSafeHere
             ? PatternBindingPlacementOutcome.ProtectiveOwnerPlaced
             : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
     }

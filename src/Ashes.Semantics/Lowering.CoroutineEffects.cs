@@ -47,7 +47,7 @@ public sealed partial class Lowering
 
         if (node is Expr.Call { Func: Expr.Var { Name: AsyncBindingName } } asyncCall)
         {
-            MarkCoroutineBodyFunctions(asyncCall.Arg, owner);
+            MarkFunctionsReachableFrom(asyncCall.Arg, owner, _maFunctionsMayExecuteInsideCoroutine);
         }
 
         foreach (object? child in HandlerEffectChildren(node))
@@ -57,11 +57,14 @@ public sealed partial class Lowering
     }
 
     /// <summary>
-    /// Marks everything an async body can run: a function written inside it, and a name it
-    /// references that resolves to a function in the enclosing lexical scope. Referencing a function
-    /// is treated as running it, which over-approximates rather than missing an indirect call.
+    /// Marks everything an expression subtree can run into <paramref name="target"/>: a lambda
+    /// written inside it, and a name it references that resolves to a function in the enclosing
+    /// lexical scope. Referencing a function is treated as running it, which over-approximates rather
+    /// than missing an indirect call. Shared by every whole-program reachability seed (async bodies,
+    /// structured-parallelism worker callbacks — see Lowering.ParallelWorkerEffects.cs) that needs
+    /// "what functions can this subtree cause to run."
     /// </summary>
-    private void MarkCoroutineBodyFunctions(object? node, FuncKey? owner)
+    private void MarkFunctionsReachableFrom(object? node, FuncKey? owner, HashSet<FuncKey> target)
     {
         if (node is null or string)
         {
@@ -70,20 +73,20 @@ public sealed partial class Lowering
 
         if (node is Expr.Lambda lambda && _maFunctionKeyByLambda.TryGetValue(lambda, out FuncKey nested))
         {
-            _maFunctionsMayExecuteInsideCoroutine.Add(nested);
+            target.Add(nested);
         }
-        else if (node is Expr.Var variable && ResolveCoroutineBodyReference(variable.Name, owner) is { } referenced)
+        else if (node is Expr.Var variable && ResolveLexicalFunctionReference(variable.Name, owner) is { } referenced)
         {
-            _maFunctionsMayExecuteInsideCoroutine.Add(referenced);
+            target.Add(referenced);
         }
 
         foreach (object? child in HandlerEffectChildren(node))
         {
-            MarkCoroutineBodyFunctions(child, owner);
+            MarkFunctionsReachableFrom(child, owner, target);
         }
     }
 
-    private FuncKey? ResolveCoroutineBodyReference(string name, FuncKey? owner)
+    private FuncKey? ResolveLexicalFunctionReference(string name, FuncKey? owner)
     {
         if (owner is { } enclosing
             && _maFunctionScopes.TryGetValue(enclosing, out IReadOnlyDictionary<string, FuncKey>? scope)
@@ -92,7 +95,7 @@ public sealed partial class Lowering
             return lexical;
         }
 
-        // An async body written in the entry expression has no enclosing function scope; the
+        // A reference written in the entry expression has no enclosing function scope; the
         // globally-unambiguous name index is the available resolution there.
         return _maNameIndex.TryGetValue(name, out FuncKey topLevel) ? topLevel : null;
     }

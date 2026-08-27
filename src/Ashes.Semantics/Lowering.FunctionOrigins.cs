@@ -40,7 +40,10 @@ public sealed partial class Lowering
                 : ExpressionContainsHandleForOwner(expression, owner: null),
             // The entry expression itself runs outside every coroutine: the async body it may create
             // becomes its own function, and everything that body reaches is marked separately.
-            MayExecuteInsideCoroutine: false);
+            MayExecuteInsideCoroutine: false,
+            // Likewise, the entry expression is never itself a parallel worker callback — a
+            // Parallel.reduce/map call it makes spawns its own, separately-marked functions.
+            MayExecuteAsParallelWorker: false);
         _ownershipPlacementByFunctionLabel[entryOrigin.GeneratedLabel] =
             _ownershipPlacementContext;
         return entryOrigin;
