@@ -153,6 +153,18 @@ internal static partial class LlvmCodegen
     private const ulong RuntimeRcMaxCachedBlockSizeBytes = 4096;
     private const ulong RuntimeRcFreeListTableSizeBytes = RuntimeRcMaxCachedBlockSizeBytes + 8;
 
+    // Refcount sentinel for an "immortal" runtime-managed value — one with no real RC allocation
+    // behind it (currently: a static string-literal constant, see EmitHeapStringLiteral). A genuine
+    // refcount only ever holds a small positive count, so this value can never collide with one in
+    // ordinary operation. Deliberately NOT ulong.MaxValue (i.e. -1): that is exactly the bit pattern
+    // an accidental refcount underflow (0 - 1, from an unrelated over-release elsewhere) would also
+    // produce, which would misidentify a corrupted real allocation as "immortal" and silently skip
+    // its release instead of surfacing the underlying bug. This value sits far from both 0 and any
+    // realistic count in either direction, so neither overflow nor underflow drift can reach it.
+    // EmitRuntimeRcDup/EmitRuntimeRcDrop/EmitRuntimeDropReuse recognize it and treat the dup/drop as
+    // a no-op instead of reading or writing a header that was never actually allocated.
+    private const ulong RuntimeRcImmortalSentinel = 1UL << 62;
+
     private static LlvmValueHandle EmitAllocAdt(LlvmCodegenState state, int tag, int fieldCount, bool runtimeManaged = false, bool tagless = false)
     {
         int valueSizeBytes = HeapLayouts.AdtLayout(tagless).AllocationSizeBytes(fieldCount);
@@ -312,14 +324,29 @@ internal static partial class LlvmCodegen
 
     private static LlvmValueHandle EmitRuntimeRcDup(LlvmCodegenState state, LlvmValueHandle valuePtr)
     {
-        LlvmValueHandle allocationBase = LlvmApi.BuildSub(state.Target.Builder, valuePtr,
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle allocationBase = LlvmApi.BuildSub(builder, valuePtr,
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_dup_base");
         LlvmValueHandle count = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_dup_count");
-        LlvmValueHandle incremented = LlvmApi.BuildAdd(state.Target.Builder, count,
+        // An immortal value (see RuntimeRcImmortalSentinel/EmitHeapStringLiteral) has no real
+        // refcount to increment — treat the dup as a no-op rather than writing to its header.
+        LlvmValueHandle isImmortal = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0), "rc_dup_immortal");
+        LlvmBasicBlockHandle incBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_dup_inc");
+        LlvmBasicBlockHandle mergeBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_dup_merge");
+        LlvmApi.BuildCondBr(builder, isImmortal, mergeBlock, incBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, incBlock);
+        LlvmValueHandle incremented = LlvmApi.BuildAdd(builder, count,
             LlvmApi.ConstInt(state.I64, 1, 0), "rc_dup_incremented");
         StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
             incremented, "rc_dup_store");
+        LlvmApi.BuildBr(builder, mergeBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, mergeBlock);
         return valuePtr;
     }
 
@@ -340,14 +367,21 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "rc_drop_base");
         LlvmValueHandle count = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "rc_drop_count");
+        LlvmValueHandle isImmortal = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0), "rc_drop_immortal");
         LlvmValueHandle isLast = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
             LlvmApi.ConstInt(state.I64, 1, 0), "rc_drop_last");
+        LlvmBasicBlockHandle checkLastBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "rc_drop_check_last");
         LlvmBasicBlockHandle releaseBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "rc_drop_release");
         LlvmBasicBlockHandle retainBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "rc_drop_retain");
         LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "rc_drop_continue");
+        LlvmApi.BuildCondBr(builder, isImmortal, continueBlock, checkLastBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkLastBlock);
         LlvmApi.BuildCondBr(builder, isLast, releaseBlock, retainBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, retainBlock);
@@ -358,6 +392,18 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, releaseBlock);
+        EmitRuntimeRcRelease(state, allocationBase, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
+        return false;
+    }
+
+    private static void EmitRuntimeRcRelease(
+        LlvmCodegenState state,
+        LlvmValueHandle allocationBase,
+        LlvmBasicBlockHandle continueBlock)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle allocationSize = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.AllocationSizeOffsetBytes, "rc_drop_size");
         LlvmValueHandle shouldCache = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Ule,
@@ -383,9 +429,6 @@ internal static partial class LlvmCodegen
         LlvmApi.PositionBuilderAtEnd(builder, freeBlock);
         EmitFreeOsMemory(state, allocationBase, allocationSize, "rc_drop_large");
         LlvmApi.BuildBr(builder, continueBlock);
-
-        LlvmApi.PositionBuilderAtEnd(builder, continueBlock);
-        return false;
     }
 
     private static LlvmValueHandle EmitRuntimeDropReuse(LlvmCodegenState state, LlvmValueHandle valuePtr)
@@ -396,14 +439,29 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "drop_reuse_base");
         LlvmValueHandle count = LoadMemory(state, allocationBase,
             HeapLayouts.RcHeader.ReferenceCountOffsetBytes, "drop_reuse_count");
+        // An immortal value (see RuntimeRcImmortalSentinel/EmitHeapStringLiteral) is never unique
+        // (there is no real allocation to reuse) and dropping it must not touch its header.
+        LlvmValueHandle isImmortal = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
+            LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0), "drop_reuse_immortal");
         LlvmValueHandle isUnique = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Eq, count,
             LlvmApi.ConstInt(state.I64, 1, 0), "drop_reuse_unique");
+        LlvmBasicBlockHandle checkUniqueBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "drop_reuse_check_unique");
+        LlvmBasicBlockHandle immortalBlock = LlvmApi.AppendBasicBlockInContext(
+            state.Target.Context, state.Function, "drop_reuse_immortal_block");
         LlvmBasicBlockHandle uniqueBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "drop_reuse_take");
         LlvmBasicBlockHandle sharedBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "drop_reuse_shared");
         LlvmBasicBlockHandle continueBlock = LlvmApi.AppendBasicBlockInContext(
             state.Target.Context, state.Function, "drop_reuse_continue");
+        LlvmApi.BuildCondBr(builder, isImmortal, immortalBlock, checkUniqueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, immortalBlock);
+        LlvmApi.BuildStore(builder, LlvmApi.ConstInt(state.I64, 0, 0), resultSlot);
+        LlvmApi.BuildBr(builder, continueBlock);
+
+        LlvmApi.PositionBuilderAtEnd(builder, checkUniqueBlock);
         LlvmApi.BuildCondBr(builder, isUnique, uniqueBlock, sharedBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, uniqueBlock);
@@ -2707,21 +2765,27 @@ internal static partial class LlvmCodegen
     }
 
     /// <summary>
-    /// Emit a string literal as a read-only global constant in the .rodata section.
-    /// The global has layout { i64 length, [N x i8] data } matching the runtime
-    /// string representation, so no heap allocation is needed. Since Ashes strings
-    /// are immutable, this is always safe for literals.
+    /// Emit a string literal as a read-only global constant in the .rodata section. The global has
+    /// layout { i64 immortalRefCount, i64 unusedAllocSize, i64 length, [N x i8] data } — a genuine
+    /// (but never-written) RcHeader immediately followed by the runtime string representation, so no
+    /// heap allocation is needed but the value pointer this returns (past the header) is still safe
+    /// to pass anywhere an ordinary runtime-managed Str is expected. Since Ashes strings are
+    /// immutable, sharing one global across identical literals is always safe. The header's refcount
+    /// word is the RuntimeRcImmortalSentinel value, not a real count: a value extracted straight from
+    /// a literal (e.g. a constructor name pulled off an AST node with no intervening materialization)
+    /// can flow into an ordinary RcDup/RcDrop, and those recognize the sentinel and no-op rather than
+    /// incrementing/decrementing a count that was never allocated.
     /// </summary>
     private static LlvmValueHandle EmitHeapStringLiteral(LlvmCodegenState state, string value)
     {
         // Compile-time string-literal interning: identical literal values share a single
-        // module-level `.rodata` global (built lazily on first use). The per-use ptrtoint is
-        // still emitted at the current builder position — it is a constant that folds away.
+        // module-level `.rodata` global (built lazily on first use). The per-use arithmetic is
+        // still emitted at the current builder position — it is constant-foldable and folds away.
         LlvmValueHandle global = state.Target.GetOrAddStringLiteralGlobal(value, () =>
         {
             byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(value);
 
-            // Build the constant initializer: { i64 len, [N x i8] data }
+            // Build the constant initializer: { i64 immortalRefCount, i64 unusedAllocSize, i64 len, [N x i8] data }
             LlvmTypeHandle arrayType = LlvmApi.ArrayType2(state.I8, (ulong)utf8.Length);
 
             var byteElements = new LlvmValueHandle[utf8.Length];
@@ -2730,13 +2794,15 @@ internal static partial class LlvmCodegen
                 byteElements[i] = LlvmApi.ConstInt(state.I8, utf8[i], 0);
             }
 
+            LlvmValueHandle constRefCount = LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0);
+            LlvmValueHandle constAllocSize = LlvmApi.ConstInt(state.I64, 0, 0);
             LlvmValueHandle constLen = LlvmApi.ConstInt(state.I64, (ulong)utf8.Length, 0);
             LlvmValueHandle constData = LlvmApi.ConstArray2(state.I8, byteElements);
             LlvmValueHandle constStruct = LlvmApi.ConstStructInContext(
-                state.Target.Context, [constLen, constData]);
+                state.Target.Context, [constRefCount, constAllocSize, constLen, constData]);
 
             LlvmTypeHandle structType = LlvmApi.StructTypeInContext(
-                state.Target.Context, [state.I64, arrayType]);
+                state.Target.Context, [state.I64, state.I64, state.I64, arrayType]);
 
             int id = state.Target.NextGlobalConstantId();
             LlvmValueHandle created = LlvmApi.AddGlobal(state.Target.Module, structType, $".str_lit_{id}");
@@ -2747,7 +2813,9 @@ internal static partial class LlvmCodegen
             return created;
         });
 
-        return LlvmApi.BuildPtrToInt(state.Target.Builder, global, state.I64, "str_lit_ref");
+        LlvmValueHandle globalAddress = LlvmApi.BuildPtrToInt(state.Target.Builder, global, state.I64, "str_lit_addr");
+        return LlvmApi.BuildAdd(state.Target.Builder, globalAddress,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "str_lit_ref");
     }
 
     private static LlvmValueHandle EmitHeapStringFromBytes(LlvmCodegenState state, IReadOnlyList<byte> bytes, string prefix)

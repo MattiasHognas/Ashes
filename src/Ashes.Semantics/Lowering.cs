@@ -6645,17 +6645,43 @@ public sealed partial class Lowering
             SplicePerceusPatternBindingOwnerDup(
                 site.LocalSlot,
                 site.InsertIndex,
-                MayUseEmptyListRepresentation(site.Type));
+                Prune(site.Type));
         }
 
         _patternBindingPlacementSites.Clear();
     }
 
+    // Str/Bytes/BigInt values are RC-managed independent of the containing structure's own
+    // placement (Arena spines routinely hold RC-managed Str elements). A pattern-owner binding of
+    // one of these types therefore needs protection even when its root TCO parameter's own slot is
+    // Arena-placed. This is safe to protect with a plain RcDup even when the binding turns out to
+    // still be a direct reference to a static string-literal constant: see EmitRuntimeRcDup in the
+    // backend, which no-ops on a literal's immortal sentinel header instead of touching memory that
+    // has no real refcount.
+    //
+    // KNOWN GAP: this widens protection to fire on an Arena-placed root for the first time ever, and
+    // that root can be a structured-parallelism worker's own result (Ashes.Collection.List.reduce
+    // reuse-specialized into IrInst.ParallelQueueStart, see LowerParallelReduceQueuedEmit in
+    // Lowering.Reuse.cs) whose backing arena is torn down once that worker's thread exits — RcDup on
+    // such a value reads a dangling pointer. Unlike coroutines/effect handlers (excluded via
+    // AllowsAsyncIndependentRcPlacement/AllowsOrdinaryRcPlacement, computed by a whole-program
+    // call-graph pre-pass in Lowering.HandlerEffects.cs), no equivalent exclusion exists yet for
+    // functions reachable from a parallel worker body. Reproduced in
+    // LinuxBackendCoverageTests.Linux_backend_llvm_one_brc_memory_stays_bounded_as_rows_scale
+    // (challenges/1brc/brc.ash's mergeEntries, which folds two workers' partial hash maps): crashes
+    // reliably at 4 workers, never at 1, never on the unwidened gate. Needs a
+    // MayExecuteAsParallelWorker-style bit added to OwnershipPlacementContext, following the same
+    // pre-pass shape as MayExecuteInsideCoroutine, gating this widened branch off for any function
+    // reachable from ParallelQueueStart lowering. Tracked as a follow-up; not yet implemented.
+    private static bool IsUnconditionallyRcManagedType(TypeRef type) =>
+        type is TypeRef.TStr or TypeRef.TBytes or TypeRef.TBigInt;
+
     private PatternBindingPlacementOutcome ResolvePatternBindingPlacementOutcome(
         PatternBindingPlacementSite site,
         TcoContext tco)
     {
-        if (CanArenaReset(Prune(site.Type)))
+        TypeRef prunedType = Prune(site.Type);
+        if (CanArenaReset(prunedType))
         {
             return PatternBindingPlacementOutcome.CopyType;
         }
@@ -6667,7 +6693,7 @@ public sealed partial class Lowering
                 : PatternBindingPlacementOutcome.Borrowed;
         }
 
-        return tco.IsRuntimeManagedSlot(site.RootParameterSlot)
+        return tco.IsRuntimeManagedSlot(site.RootParameterSlot) || IsUnconditionallyRcManagedType(prunedType)
             ? PatternBindingPlacementOutcome.ProtectiveOwnerPlaced
             : PatternBindingPlacementOutcome.RootNotRuntimeManaged;
     }
@@ -6726,23 +6752,30 @@ public sealed partial class Lowering
         }
     }
 
-    private void SplicePerceusPatternBindingOwnerDup(int localSlot, int insertIndex, bool mayBeEmpty)
+    private void SplicePerceusPatternBindingOwnerDup(int localSlot, int insertIndex, TypeRef type)
     {
         int generatedStart = _inst.Count;
-        EmitPerceusPatternBindingOwnerDup(localSlot, mayBeEmpty);
+        EmitPerceusPatternBindingOwnerDup(localSlot, type);
         int generatedCount = _inst.Count - generatedStart;
         List<IrInst> generated = _inst.GetRange(generatedStart, generatedCount);
         _inst.RemoveRange(generatedStart, generatedCount);
         _inst.InsertRange(insertIndex, generated);
     }
 
-    private void EmitPerceusPatternBindingOwnerDup(int localSlot, bool mayBeEmpty)
+    private void EmitPerceusPatternBindingOwnerDup(int localSlot, TypeRef type)
     {
         int valueTemp = NewTemp();
         Emit(new IrInst.LoadLocal(valueTemp, localSlot));
-        int duplicatedTemp = NewTemp();
-        Emit(new IrInst.RcDup(duplicatedTemp, valueTemp, RuntimeManaged: true, MayBeEmpty: mayBeEmpty));
-        Emit(new IrInst.StoreLocal(localSlot, duplicatedTemp));
+        int protectedTemp = NewTemp();
+        // A plain RcDup returns the same pointer with an incremented count, so rebinding the slot via
+        // StoreLocal below is a value-preserving no-op as far as every other consumer of this slot is
+        // concerned (the "locals are never reassigned after their initial binding" invariant several
+        // other passes rely on stays intact). This is safe even for a value that is still a direct
+        // reference to a static string-literal constant: see EmitRuntimeRcDup/EmitRuntimeRcDrop in the
+        // backend, which recognize a literal's immortal sentinel header and treat the dup/drop as a
+        // no-op rather than touching memory that does not have a real refcount.
+        Emit(new IrInst.RcDup(protectedTemp, valueTemp, RuntimeManaged: true, MayBeEmpty: MayUseEmptyListRepresentation(type)));
+        Emit(new IrInst.StoreLocal(localSlot, protectedTemp));
     }
 
     /// <summary>
