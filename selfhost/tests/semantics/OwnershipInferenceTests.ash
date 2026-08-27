@@ -393,72 +393,25 @@ let testProgramLevelCaptureExcludesOtherFunctions unit =
                                             | [] -> test.fail("expected 2 program summaries")
                                     | [] -> test.fail("expected non-empty program summaries"))
 
+let reportOwnershipInferenceSuccess unit = Ashes.IO.print("all self-hosted ownership inference and provenance tests passed")
+
 let runOwnershipInferenceTests unit =
-    (let _ = testBorrowReadResourceParameter(Unit)
-    in
-        let _ = Ashes.IO.print("test 1 passed")
-        in
-            let _ = testUnusedParameterIsBorrow(Unit)
-            in
-                let _ = Ashes.IO.print("test 2 passed")
-                in
-                    let _ = testConsumedArithmeticParameter(Unit)
-                    in
-                        let _ = Ashes.IO.print("test 3 passed")
-                        in
-                            let _ = testConsumedReturnedParameter(Unit)
-                            in
-                                let _ = Ashes.IO.print("test 4 passed")
-                                in
-                                    let _ = testConsumedConstructorParameter(Unit)
-                                    in
-                                        let _ = Ashes.IO.print("test 5 passed")
-                                        in
-                                            let _ = testMixedParameters(Unit)
-                                            in
-                                                let _ = Ashes.IO.print("test 6 passed")
-                                                in
-                                                    let _ = testFreshConstantResult(Unit)
-                                                    in
-                                                        let _ = Ashes.IO.print("test 7 passed")
-                                                        in
-                                                            let _ = testParameterReachingResult(Unit)
-                                                            in
-                                                                let _ = Ashes.IO.print("test 8 passed")
-                                                                in
-                                                                    let _ = testConditionalBranchReachingResult(Unit)
-                                                                    in
-                                                                        let _ = Ashes.IO.print("test 9 passed")
-                                                                        in
-                                                                            let _ = testInternalSharingPoisoning(Unit)
-                                                                            in
-                                                                                let _ = Ashes.IO.print("test 10 passed")
-                                                                                in
-                                                                                    let _ = testDirectRcConstruction(Unit)
-                                                                                    in
-                                                                                        let _ = Ashes.IO.print("test 11 passed")
-                                                                                        in
-                                                                                            let _ = testForwardingChainProvenance(Unit)
-                                                                                            in
-                                                                                                let _ = Ashes.IO.print("test 12 passed")
-                                                                                                in
-                                                                                                    let _ = testMutualRecursionProvenanceConvergence(Unit)
-                                                                                                    in
-                                                                                                        let _ = Ashes.IO.print("test 13 passed")
-                                                                                                        in
-                                                                                                            let _ = testUngroundedCycleRejection(Unit)
-                                                                                                            in
-                                                                                                                let _ = Ashes.IO.print("test 14 passed")
-                                                                                                                in
-                                                                                                                    let _ = testProgramOwnershipInference(Unit)
-                                                                                                                    in
-                                                                                                                        let _ = Ashes.IO.print("test 15 passed")
-                                                                                                                        in
-                                                                                                                            let _ = testDirectCaptureOfFreeVariable(Unit)
-                                                                                                                            in
-                                                                                                                                let _ = Ashes.IO.print("test 16 passed")
-                                                                                                                                in
-                                                                                                                                    let _ = testProgramLevelCaptureExcludesOtherFunctions(Unit)
-                                                                                                                                    in
-                                                                                                                                        let _ = Ashes.IO.print("test 17 passed")
-                                                                                                                                        in Ashes.IO.print("all self-hosted ownership inference and provenance tests passed"))
+    unit
+    |> testBorrowReadResourceParameter
+    |> testUnusedParameterIsBorrow
+    |> testConsumedArithmeticParameter
+    |> testConsumedReturnedParameter
+    |> testConsumedConstructorParameter
+    |> testMixedParameters
+    |> testFreshConstantResult
+    |> testParameterReachingResult
+    |> testConditionalBranchReachingResult
+    |> testInternalSharingPoisoning
+    |> testDirectRcConstruction
+    |> testForwardingChainProvenance
+    |> testMutualRecursionProvenanceConvergence
+    |> testUngroundedCycleRejection
+    |> testProgramOwnershipInference
+    |> testDirectCaptureOfFreeVariable
+    |> testProgramLevelCaptureExcludesOtherFunctions
+    |> reportOwnershipInferenceSuccess

@@ -1206,8 +1206,31 @@ same public behavior.
   (`ComputeTcoParamFacts`, `IsBorrowableInspectOnlyList`) sees through a proven callee unchanged, so
   a traversal that hands its tail to a read-only helper no longer takes the defensive
   `CopyOutArena` normalization path.
-- [ ] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
-  constructor-specific child/drop information.
+- [~] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
+  constructor-specific child/drop information. `HeapLayoutClassification.ash` now ports the
+  foundational slice of stage-0's `OrdinaryHeapLayoutCapability`/`Lowering.LayoutCapability.cs`:
+  given a resolved `SemanticType` and the real `TypeEnvironment`, `classifyHeapLayout` reports
+  whether the value transitively contains a declared resource type (walking `ExternalTypeDefinition`
+  destructors, cycle-guarded by named-type symbol id, matching `IsResourceBearing`'s own cycle
+  default of "not found on this path") or an unresolved type variable (`SemVariable`/`SemParameter`,
+  cycle-guarded the same way, matching `ContainsUnresolvedLayoutType`), and — for list, tuple, and
+  named-ADT shapes — each child's type and `HeapChildDropKind` (`DropString`/`DropBytes`/
+  `DropBigInt`/`DropList`/`DropTuple`/`DropAdt`/`UnsupportedChildDrop`, mirroring `DropKindForType`).
+  A named type's constructor fields are instantiated against its own concrete type arguments via
+  the existing `applySubstitution`, keyed on the ordinary fresh `SemVariable`s
+  `ProgramInference.ash`'s `registerTypeParameters` actually assigns a `TypeDecl`'s own parameters
+  (not a separate rigid-parameter shape, corrected mid-implementation after a first attempt keyed on
+  `SemParameter` silently produced unsubstituted fields — caught by a generic-ADT-at-two-instantiations
+  test, not by inspection). **Deliberately deferred to a follow-up**, since it belongs to reuse
+  specialization rather than the ownership/move-analysis foundation this item is a prerequisite for
+  (the roadmap's own phase-3 ordering): `OrdinaryHeapStructuralCopyKind` (arena inline/shallow/deep
+  copy eligibility) and every `Runtime*Supported` reuse-eligibility flag
+  (`RuntimeOuterCellReuseSupported` and friends) — both are backend/reuse-specific concerns with no
+  consumer yet in the self-hosted toolchain (no Perceus lifetime placement or reuse pass exists to
+  need them), unlike child/drop classification, which the very next item in this list (Perceus
+  duplication/drop insertion) needs immediately. A single-constructor tagless-ADT layout (the next
+  checklist item) and the `region` placement family (a per-value ownership-inference decision, not a
+  type-level fact even in stage-0) remain out of this item's scope for the same reason.
 - [ ] Lay out a single-constructor ADT (one non-nullary constructor; not a builtin, zero-cost newtype,
   resource, or resource-bearing type) without a tag word: payload at offset 0, one word smaller per
   cell, with every ADT instruction that allocates, reads or writes such a cell carrying its tagless
