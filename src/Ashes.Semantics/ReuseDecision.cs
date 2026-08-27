@@ -87,6 +87,7 @@ internal enum ReuseDecisionReason
     AccumulatorNotProvenUnique,
     FreshResultNotProven,
     FreshAccumulatorLayoutUnsupported,
+    AccumulatorLayoutNotPersistent,
     CompatibleConstructorLayout,
     ConstructorFieldCountMismatch,
     ConstructorCellKindMismatch,

@@ -781,6 +781,91 @@ public sealed class ReuseDecisionTests
         return matches[0];
     }
 
+    // A hand-written recursive tree/map type never itself reaches the to-space specialization path
+    // this fix guards (IsReusableSpecializationAccumulatorType declines it earlier, at
+    // TrySynthesizeAdtCopier, regardless of its field types) — only a generic stdlib container whose
+    // own module is registered for reuse specialization (Ashes.Collection.HashMap's MapTree(K, V))
+    // does. That container's own module source, and the Eq/Hash trait dictionaries its generic key
+    // comparisons need, only exist once the program is compiled through real project stitching — a
+    // bare `new Lowering(diagnostics)` (see LowerProgram below) has neither, so this test compiles
+    // through the same standalone-project layout `ashes run`/`ashes test` use instead.
+    [Test]
+    public void ToSpaceSpecialization_DeclinesAMapAccumulatorWhoseValueCannotBePersisted()
+    {
+        const string source = """
+            import Ashes.Collection.HashMap
+            import Ashes.Text
+
+            type Item =
+                | text: Str
+
+            let recursive fillRecords count grouped =
+                if count <= 0
+                then grouped
+                else fillRecords(count - 1)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(count))(Item(text = "item"))(grouped))
+
+            let recursive fillInts count grouped =
+                if count <= 0
+                then grouped
+                else fillInts(count - 1)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(count))(count)(grouped))
+
+            let records = fillRecords(3)(Ashes.Collection.HashMap.empty)
+            let ints = fillInts(3)(Ashes.Collection.HashMap.empty)
+            in (records, ints)
+            """;
+
+        Lowering lowering = LowerStitchedProgram(source, "reuse-persistence.ash");
+
+        ReuseDecision rejection = lowering.ReuseDecisions.Single(decision =>
+            decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
+            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent);
+        rejection.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
+        rejection.Function.Source.ShouldNotBeNull();
+        rejection.Function.Source.SourceName.ShouldBe("fillRecords", "the record-valued map must decline the to-space specialization");
+        rejection.Candidate.ShouldNotBeNull();
+        rejection.Candidate.SourceName.ShouldBe("grouped");
+
+        lowering.ReuseDecisions.ShouldNotContain(decision =>
+            decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
+            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent
+            && decision.Function.Source != null
+            && string.Equals(decision.Function.Source.SourceName, "fillInts", StringComparison.Ordinal),
+            "the Int-valued map's own field layout is persistent and must not be declined for this reason");
+    }
+
+    private static Lowering LowerStitchedProgram(string source, string fileName)
+    {
+        string tempDir = Directory.CreateTempSubdirectory("ashes-reuse-decision-tests-").FullName;
+        string filePath = Path.Combine(tempDir, fileName);
+        File.WriteAllText(filePath, source);
+
+        AshesProject project = new(
+            ProjectFilePath: filePath,
+            ProjectDirectory: tempDir,
+            EntryPath: filePath,
+            EntryModuleName: Path.GetFileNameWithoutExtension(fileName),
+            Name: null,
+            SourceRoots: [tempDir],
+            Include: [],
+            OutDir: Path.GetTempPath(),
+            Target: "linux-x64");
+        ProjectCompilationPlan plan = ProjectSupport.BuildCompilationPlan(project);
+        CombinedCompilationLayout layout = ProjectSupport.BuildCompilationLayout(plan);
+
+        Diagnostics diagnostics = new();
+        Program program = new Parser(layout.Source, diagnostics).ParseProgram();
+        diagnostics.ThrowIfAny();
+        Lowering lowering = new(
+            diagnostics,
+            plan.ImportedStdModules,
+            plan.MergedAliases.Count == 0 ? null : plan.MergedAliases,
+            layout.ConstructorModules);
+        lowering.SetSourceContext(layout);
+        _ = lowering.Lower(program);
+        diagnostics.ThrowIfAny();
+        return lowering;
+    }
+
     private static Lowering LowerProgram(string source, string filePath)
     {
         Diagnostics diagnostics = new();
