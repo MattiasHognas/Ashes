@@ -377,7 +377,50 @@ same public behavior.
   lowering with a type mismatch (the dictionary ends up unified against the real argument). Proven
   by a regression that asserts exactly this failure mode without the rewrite, and sidesteps it by
   testing only the binding's own value, not a call site. Wiring `rewriteTraitConstrainedReference`
-  into ordinary call/reference lowering is the natural next slice.
+  into ordinary call/reference lowering is the natural next slice, and was attempted twice this
+  session — see the two attempts below; both were reverted, but the second surfaced and fixed a
+  real, independently-testable gap along the way. **Fixed: missing inherited-forwarding fallback.**
+  `findTraitEvidenceForwarding`'s exact stable-key matching (`traitConstraintStableKey`, which
+  embeds the raw type-variable id) can never match two independently-generalized schemes' "same"
+  abstract requirement — each carries its own fresh quantified variable, with no reason to share an
+  id. Stage 0 (`Lowering.TraitEvidence.cs`'s `FindActiveTraitDictionaryParameter`) has a fallback
+  selfhost was missing entirely: when there's no exact match and the requirement is still abstract
+  (a free variable, not yet unified with anything concrete), if there is exactly one active
+  dictionary parameter for that trait name, use it — sound only because it's the only option; with
+  two or more, no fallback fires and the ordinary missing-evidence rejection takes over. Added
+  `findTraitEvidenceForwardingWithFallback` to `TraitEvidenceThreading.ash`, mirroring stage 0
+  exactly. Regressions (`TraitEvidenceCallRewritingTests.ash`):
+  `expectSoleActiveParameterFallbackCallRewrite` (the fallback fires correctly),
+  `rejectAmbiguousActiveParametersCallRewrite` (and doesn't over-fire when genuinely ambiguous).
+  This fix is real and shipped, but on its own is inert — nothing calls
+  `rewriteTraitConstrainedReference` from real lowering yet (see the "attempted twice" note below
+  for why not).
+  **Two call-site wiring attempts this session, both reverted (do not re-attempt without reading
+  this first):** (1) checked a referenced name's RAW, un-instantiated scheme constraints
+  (`bindingTraitConstraints`, straight from the external `TypeEnvironment`) at `ExprVar`-lowering
+  time — failed even the simplest cases (`MissingActiveTraitEvidence`) because raw constraints from
+  two different bindings' schemes never share a type-variable id, exactly the gap fix above closes.
+  (2) Cross-referenced stage 0's actual solution (`InstantiateScheme` per reference, plus the
+  fallback above) and re-implemented properly: `instantiateReferenceConstraints` (fresh
+  per-reference instantiation via the existing `instantiate` primitive in `TypeSchemes.ash`, which
+  already threads constraints through substitution correctly) plus fixing two `generalize(...)([])`
+  call sites in `CoreLowering.ash` that hardcoded empty constraints. Compiled clean, but a new
+  inherited-forwarding test (`wrapper`, itself `requires {Greet(a)}`, calling `describe(y)`)
+  **segfaulted** — root-caused via `gdb -batch -ex run -ex "bt 40"` on the `--debug` binary to a
+  genuine infinite substitution cycle in `applySubstitution` (`Types.ash:138`). The real cause:
+  `generalize`'s `semanticType` argument (from `CoreLowering.ash`'s own LOCAL type reconstruction,
+  its own local `typeSupply` numbering) and its `constraints` argument (from the EXTERNAL
+  real-inference `TypeEnvironment`, a completely separate, unrelated numbering space) get merged
+  into one `TypeScheme` — but selfhost's `CoreLowering.ash` and its real-inference pass are two
+  independent type systems with no shared variable space (unlike stage 0, where type inference IS
+  the lowering pass — the reason `InstantiateScheme`-based resolution works there and doesn't
+  directly port). A written trait's `a` and the SAME binding's actual locally-reconstructed
+  parameter type are two separate, never-connected variables even after correct, collision-free
+  instantiation; real argument-type unification can never reach the constraint's own orphaned
+  variable. **Conclusion**: call-site forwarding needs either (a) making `CoreLowering.ash`'s local
+  type reconstruction fully constraint-aware in its own right, or (b) genuinely merging the two type
+  systems — both bigger than a next-PR-sized slice. Full traces of both attempts are in project
+  memory (`project_selfhost_port_progress_2026_08_26.md`) for whoever picks this back up.
 - [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
   ABI-ordered fields, and recursively constructed inherited evidence. Lower those values, default
   dispatch, method selection, and safe concrete specialization into IR without changing unoptimized

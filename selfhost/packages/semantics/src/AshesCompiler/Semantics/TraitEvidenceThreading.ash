@@ -245,11 +245,70 @@ let recursive findTraitEvidenceForwarding shapes target =
                 | Some(forwarding) -> Some(forwarding)
                 | None -> findTraitEvidenceForwarding(tail)(target)
 
+let recursive isFreeVariableSemanticType semanticType =
+    match semanticType with
+        | SemVariable(_variableId) -> true
+        | _ -> false
+
+let recursive allFreeVariableSemanticTypes types =
+    match types with
+        | [] -> true
+        | head :: tail ->
+            if isFreeVariableSemanticType(head)
+            then allFreeVariableSemanticTypes(tail)
+            else false
+
+// A constraint whose type argument(s) are still free variables — unification hasn't yet identified
+// them with anything concrete, so exact stable-key matching (traitEvidenceShapeMatches) can never
+// hit, even against an active dictionary parameter for the exact same underlying obligation: each
+// side's variable was independently instantiated fresh and has no reason to share an id.
+let constraintIsStillAbstract constraint =
+    match constraint with
+        | TraitConstraint { traitName = _traitName, typeArguments = typeArguments } -> allFreeVariableSemanticTypes(typeArguments)
+
+let sameTraitName target shape =
+    match (target, shape) with
+        | (TraitConstraint { traitName = targetName, typeArguments = _targetTypeArguments }, TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = TraitConstraint { traitName = shapeName, typeArguments = _shapeTypeArguments }, methods = _methods, supertraits = _supertraits }) -> targetName == shapeName
+
+let recursive countShapesWithTraitName shapes target =
+    match shapes with
+        | [] -> 0
+        | shape :: rest ->
+            if sameTraitName(target)(shape)
+            then 1 + countShapesWithTraitName(rest)(target)
+            else countShapesWithTraitName(rest)(target)
+
+let recursive findShapeByTraitName shapes target =
+    match shapes with
+        | [] -> None
+        | (TraitDictionaryAbiShape { parameterIndex = parameterIndex, constraint = _constraint, methods = _methods, supertraits = _supertraits } as shape) :: rest ->
+            if sameTraitName(target)(shape)
+            then Some(TraitEvidenceForwarding(rootParameterIndex = parameterIndex, supertraitPath = []))
+            else findShapeByTraitName(rest)(target)
+
+// The hidden dictionary parameter in scope that supplies `target`: the one bound to the exact same
+// pruned constraint (following supertrait paths), or — unless the requirement is concrete — the
+// sole top-level active parameter for that trait, when inference has not yet identified its type
+// variable with the parameter's. Sound only because it's the ONLY option: with two or more active
+// parameters for the same trait, which one is right depends on type information this check doesn't
+// have, so no fallback fires and the caller's own error path (missing evidence) takes over. Mirrors
+// stage-0's FindActiveTraitDictionaryParameter fallback (Lowering.TraitEvidence.cs).
+let findTraitEvidenceForwardingWithFallback shapes target =
+    match findTraitEvidenceForwarding(shapes)(target) with
+        | Some(forwarding) -> Some(forwarding)
+        | None ->
+            if constraintIsStillAbstract(target)
+            then
+                if countShapesWithTraitName(shapes)(target) == 1
+                then findShapeByTraitName(shapes)(target)
+                else None
+            else None
+
 let recursive planTraitEvidenceForwardingFrom requiredShapes activeShapes reversed =
     match requiredShapes with
         | [] -> TraitEvidenceForwardingPlanning(arguments = reverse(reversed), error = None)
         | (TraitDictionaryAbiShape { parameterIndex = _parameterIndex, constraint = constraint, methods = _methods, supertraits = _supertraits } as shape) :: tail ->
-            match findTraitEvidenceForwarding(activeShapes)(constraint) with
+            match findTraitEvidenceForwardingWithFallback(activeShapes)(constraint) with
                 | Some(forwarding) ->
                     planTraitEvidenceForwardingFrom(
                         tail,
