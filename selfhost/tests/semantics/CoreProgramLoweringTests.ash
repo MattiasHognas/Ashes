@@ -70,6 +70,30 @@ let expectDuplicateAcrossPlainAndRecursiveIsRejected unit =
         | DuplicateTopLevelBinding(name) -> test.assertEqual("a")(name)
         | other -> test.fail("expected DuplicateTopLevelBinding, got " + Ashes.Trait.Show.show(other))
 
+// `a`'s value references `b`, declared LATER in the file — Model A's sequential top-level scoping
+// makes this a forward reference (ASH014 in stage 0), not a plain undefined-variable error: `b` IS
+// a real top-level binding, just not yet visible from `a`'s own position.
+let expectForwardReferenceToLaterBindingIsRejected unit =
+    match loweringErrorFor("let a = b\nlet b = 1\na") with
+        | ForwardTopLevelReference(name) -> test.assertEqual("b")(name)
+        | other -> test.fail("expected ForwardTopLevelReference, got " + Ashes.Trait.Show.show(other))
+
+// A plain (non-recursive) `let a = a` — self-reference without `let recursive` — is ALSO a forward
+// reference under Model A: `a` only becomes visible to what comes AFTER it, never to its own
+// value. Self-recursion needs `let recursive`.
+let expectSelfReferenceWithoutRecursiveIsRejected unit =
+    match loweringErrorFor("let a = a\na") with
+        | ForwardTopLevelReference(name) -> test.assertEqual("a")(name)
+        | other -> test.fail("expected ForwardTopLevelReference, got " + Ashes.Trait.Show.show(other))
+
+// A name that ISN'T any top-level binding at all (not even one declared later) is a genuine
+// undefined variable, not a forward reference — proves the two error paths stay properly
+// distinguished rather than ForwardTopLevelReference swallowing every lookup failure.
+let expectGenuinelyUnknownNameStillRejectedAsUnknown unit =
+    match loweringErrorFor("let a = totallyUnknownName\na") with
+        | UnknownLoweringBinding(name) -> test.assertEqual("totallyUnknownName")(name)
+        | other -> test.fail("expected UnknownLoweringBinding, got " + Ashes.Trait.Show.show(other))
+
 let inferredProgramAndEnvironment source =
     match parsedProgram(source) with
         | program ->
@@ -143,6 +167,9 @@ let runCoreProgramLoweringTests unit =
     |> expectDuplicateTopLevelBindingIsRejected
     |> expectDuplicateInsideRecursiveGroupIsRejected
     |> expectDuplicateAcrossPlainAndRecursiveIsRejected
+    |> expectForwardReferenceToLaterBindingIsRejected
+    |> expectSelfReferenceWithoutRecursiveIsRejected
+    |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))

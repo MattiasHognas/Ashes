@@ -286,8 +286,23 @@ same public behavior.
   builtin and standard-library value/type environment must be populated through module stitching.
 - [x] Validate every written binding `requires` clause against the inferred canonical external
   requirement set, including recursive groups and ambiguity checks.
-- [ ] Port the remaining declaration namespace, duplicate-name, shadowing, annotation, and inference
-  diagnostics with stable codes and source spans.
+- [~] Port the remaining declaration namespace, duplicate-name, shadowing, annotation, and inference
+  diagnostics with stable codes and source spans. `ASH013` (duplicate top-level binding) shipped
+  with the whole-program lowering entry point (#639). **`ASH014` (forward reference) now also
+  shipped**: `lowerCoreVariable`'s final "name not found anywhere ordinary" fallback checks a new
+  `CoreLoweringState.topLevelNames` (every top-level value-binding name in the whole program,
+  collected once up front by each whole-program entry point) before falling back to the generic
+  `UnknownLoweringBinding` — if the name IS a real top-level binding, just not yet visible under
+  Model A's sequential scoping (declared later in the file, or a plain, non-`recursive` self-
+  reference), reports `ForwardTopLevelReference` instead. Mirrors stage 0's
+  `LowerVarUnbound`/`_topLevelBindingNames` specialization
+  (`Lowering.cs:2844`/`Lowering.TopLevel.cs:377`) closely — same two-set-membership design, ported
+  directly since (unlike the trait-evidence problem above) this needs no external inference data at
+  all, only the `ProgramSyntax` already being lowered. Regressions:
+  `expectForwardReferenceToLaterBindingIsRejected`, `expectSelfReferenceWithoutRecursiveIsRejected`,
+  `expectGenuinelyUnknownNameStillRejectedAsUnknown` (proving the two error paths — forward
+  reference vs. genuinely undefined — stay correctly distinguished). `ASH015` (`and` without `let
+  recursive`) and `ASH016` (conflicting unqualified import selectors) remain unported.
 
 #### Capabilities and handlers
 
