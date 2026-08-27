@@ -403,7 +403,7 @@ public sealed partial class Lowering
                         : constructorCall
                             ? PatternBindingOwnershipUse.EmbeddedInOwner
                             : ordinaryCall
-                                ? PatternBindingOwnershipUse.OrdinaryCallBorrow
+                                ? ClassifyOrdinaryCallArgumentUse(binding)
                                 : PatternBindingOwnershipUse.ConservativeUnknown;
                 continue;
             }
@@ -429,6 +429,27 @@ public sealed partial class Lowering
             state,
             PatternBindingUseContext.ConservativeUnknown);
     }
+
+    /// <summary>
+    /// A binding extracted directly off the scrutinee (depth 1, e.g. the head of a matched list) that
+    /// is only ever passed to a plain call stays a borrow: whatever that call does with it, the
+    /// call's own result is what a later `let` (or the same depth-1 slot on a tail self-call) would
+    /// independently protect before it can escape further — that path already has its own correct
+    /// ownership tracking. Verified against a real regression (fannkuch-redux, factorial-scaling
+    /// leak): protecting a depth-1 binding here spuriously bumps its own refcount, which corrupts an
+    /// unrelated uniqueness check further down the same call's own structural drop.
+    ///
+    /// A binding extracted one level deeper (depth 2+, e.g. a field pulled out of a record/constructor
+    /// that is itself a list element) has no such safety net: the field's own reference is not the
+    /// scrutinee's single tracked unit the way a depth-1 element is, so nothing else notices when the
+    /// scrutinee's later deep-drop independently releases that same field. Treat it as an escape so it
+    /// gets its own protective reference at the call site (DuplicatePerceusPatternOwnerForAggregate).
+    /// </summary>
+    private static PatternBindingOwnershipUse ClassifyOrdinaryCallArgumentUse(
+        PatternBindingOwnershipBuilder binding) =>
+        binding.ExtractionDepth >= 2
+            ? PatternBindingOwnershipUse.IndependentEscape
+            : PatternBindingOwnershipUse.OrdinaryCallBorrow;
 
     private static void RecordPatternBindingUse(
         Expr.Var variable,
