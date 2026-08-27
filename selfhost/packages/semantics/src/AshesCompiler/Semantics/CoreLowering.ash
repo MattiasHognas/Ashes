@@ -66,6 +66,7 @@ type CoreLoweringError =
     | UnsupportedCoreLoweringExpression(Str)
     | DuplicateTopLevelBinding(Str)
     | UnsupportedOperationArmResume(Str, Str)
+    | ForwardTopLevelReference(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -114,6 +115,7 @@ type CoreLoweringState =
     | sourceContext: Maybe(SourceContext)
     | currentSpan: Maybe(TextSpan)
     | currentItem: Int
+    | topLevelNames: List(Str)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -313,7 +315,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         substitution = [],
         sourceContext = None,
         currentSpan = None,
-        currentItem = 0
+        currentItem = 0,
+        topLevelNames = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -3804,9 +3807,17 @@ let finishCoreBuiltinReference layout lower state =
     else
         lower(builtinLambda(layout))(state)
 
+// A name not found anywhere ordinary (no local/top-level binding, no constructor, no external
+// declaration) is either a genuine undefined identifier, or — under Model A's sequential top-level
+// scoping — a binding that DOES exist, just later in the file, not yet visible from here.
+// state.topLevelNames (every top-level value-binding name in the whole program, collected once up
+// front by each whole-program entry point) is exactly what distinguishes the two: mirrors stage-0's
+// LowerVarUnbound/_topLevelBindingNames specialization (Lowering.cs:2844). Expression-only entry
+// points (lowerCoreExpression*) never populate topLevelNames, so this never fires for them — there
+// is no "later in the file" to be forward-referencing without a whole program.
 let lowerCoreVariable name lower state =
     match state with
-        | CoreLoweringState { bindings = bindings, externalLayouts = externalLayouts } ->
+        | CoreLoweringState { bindings = bindings, externalLayouts = externalLayouts, topLevelNames = topLevelNames } ->
             match lookupBinding(name)(bindings) with
                 | Some(binding) -> lowerBoundVariable(binding)(state)
                 | None ->
@@ -3815,7 +3826,10 @@ let lowerCoreVariable name lower state =
                         | None ->
                             match tryFindExternalLayout(name)(externalLayouts) with
                                 | Some(extLayout) -> finishCoreExternalReference(extLayout)(lower)(state)
-                                | None -> failure(state)(UnknownLoweringBinding(name))
+                                | None ->
+                                    if containsName(name)(topLevelNames)
+                                    then failure(state)(ForwardTopLevelReference(name))
+                                    else failure(state)(UnknownLoweringBinding(name))
 
 let lowerCoreQualifiedVariable moduleName memberName lower state =
     match builtinLayout(moduleName)(memberName)(state) with
@@ -4679,6 +4693,24 @@ let recursive letBindingSyntaxNames bindings =
         | [] -> []
         | LetBindingSyntax { name = name } :: rest -> name :: letBindingSyntaxNames(rest)
 
+// Every top-level value-binding name in the WHOLE program (not just the items seen so far during
+// lowerCoreProgramItems's sequential scan) — computed once, up front, at each whole-program entry
+// point, so lowerCoreOrdinaryVariable's final "unknown binding" fallback can distinguish a genuine
+// undefined identifier from a Model-A forward reference (a name that IS declared, just later in
+// the file). Mirrors stage-0's CollectTopLevelBindingNames/_topLevelBindingNames
+// (Lowering.TopLevel.cs/Lowering.cs) and the same LowerVarUnbound-style specialization
+// (Lowering.cs:2844).
+let recursive allTopLevelBindingNames items =
+    match items with
+        | [] -> []
+        | TopLevelAt(_span, inner) :: rest -> allTopLevelBindingNames(inner :: rest)
+        | TopLevelLet(LetBindingSyntax { name = name }, _isRecursive) :: rest -> name :: allTopLevelBindingNames(rest)
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            rest
+            |> allTopLevelBindingNames
+            |> append(letBindingSyntaxNames(bindings))
+        | _ :: rest -> allTopLevelBindingNames(rest)
+
 // Pure, no lowering: the trait constraints attached to a binding's own generalized TypeScheme, as
 // recorded by inference in the TypeEnvironment's flat (name, TypeScheme) binding list.
 let recursive findBindingScheme name bindings =
@@ -4833,6 +4865,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
             in
                 Unit
                 |> initialState
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
@@ -4849,7 +4882,7 @@ let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSy
                 Unit
                 |> initialState
                 |> (given (state: CoreLoweringState) ->
-                    state with sourceContext = Some(createSourceContext(filePath)(source)))
+                    state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
@@ -4870,6 +4903,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
             in
                 Unit
                 |> initialState
+                |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
                 |> lowerCoreProgramItems(items)(trailingBody)([])(Some(environment))
                 |> buildProgram
 
