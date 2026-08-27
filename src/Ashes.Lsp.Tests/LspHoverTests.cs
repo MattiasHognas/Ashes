@@ -288,6 +288,47 @@ public sealed class LspHoverTests
         }
     }
 
+    [Test]
+    public void Hover_reuses_cached_project_plan_but_still_reflects_a_changed_dependency()
+    {
+        var document = TempProjectDocument.Create(
+            "HoverPlanCache",
+            ("Main.ash", "import Helper\nHelper.value"),
+            ("Helper.ash", "let value = 1"));
+        try
+        {
+            var mainSource = File.ReadAllText(document.MainFilePath);
+            int position = mainSource.LastIndexOf("value", StringComparison.Ordinal);
+
+            var first = DocumentService.GetHover(mainSource, position, document.MainFilePath);
+            first.ShouldNotBeNull();
+            first.Value.Contents.ShouldContain("Int");
+
+            // Same file, same position, nothing on disk changed: must still be served correctly
+            // whether or not the cached ProjectCompilationPlan was reused.
+            var second = DocumentService.GetHover(mainSource, position, document.MainFilePath);
+            second.ShouldNotBeNull();
+            second.Value.Contents.ShouldBe(first.Value.Contents);
+
+            // Change the dependency Helper.ash relies on and force its mtime forward — a coarse
+            // filesystem mtime clock could otherwise leave it indistinguishable from the original
+            // write within the same test run. The cached plan must be invalidated and rebuilt so
+            // this shows Str, not the stale cached Int.
+            var helperPath = Path.Combine(document.Directory, "Helper.ash");
+            File.WriteAllText(helperPath, "let value = \"hi\"");
+            File.SetLastWriteTimeUtc(helperPath, DateTime.UtcNow.AddSeconds(5));
+
+            var third = DocumentService.GetHover(mainSource, position, document.MainFilePath);
+            third.ShouldNotBeNull();
+            third.Value.Contents.ShouldContain("Str");
+            third.Value.Contents.ShouldNotContain("Int");
+        }
+        finally
+        {
+            Directory.Delete(document.Directory, recursive: true);
+        }
+    }
+
     private static string FindRepoRoot()
     {
         var dir = AppContext.BaseDirectory;
@@ -331,6 +372,44 @@ public sealed class LspHoverTests
             }
 
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class TempProjectDocument
+    {
+        private TempProjectDocument(string directory, string mainFilePath)
+        {
+            Directory = directory;
+            MainFilePath = mainFilePath;
+        }
+
+        public string Directory { get; }
+
+        public string MainFilePath { get; }
+
+        public static TempProjectDocument Create(string projectName, params (string FileName, string Content)[] files)
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "ashes-lsp-tests", projectName + "-" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "ashes.json"), """{"entry":"Main.ash","sourceRoots":["."]}""");
+
+            string? mainFilePath = null;
+            foreach ((string fileName, string content) in files)
+            {
+                var filePath = Path.Combine(directory, fileName);
+                File.WriteAllText(filePath, content);
+                if (string.Equals(fileName, "Main.ash", StringComparison.OrdinalIgnoreCase))
+                {
+                    mainFilePath = filePath;
+                }
+            }
+
+            if (mainFilePath is null)
+            {
+                throw new InvalidOperationException("Main.ash is required.");
+            }
+
+            return new TempProjectDocument(directory, mainFilePath);
         }
     }
 }
