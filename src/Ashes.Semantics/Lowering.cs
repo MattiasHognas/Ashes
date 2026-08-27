@@ -10751,15 +10751,9 @@ public sealed partial class Lowering
         if (calleeParameterIsGeneric)
         {
             TypeRef prunedArgType = Prune(argType);
-            if (prunedArgType is TypeRef.TStr)
+            if (IsToSpaceCopySafeType(prunedArgType))
             {
-                int toSpaceTemp = NewTemp();
-                Emit(new IrInst.CopyOutArenaToSpace(toSpaceTemp, argTemp, -1));
-                argTemp = toSpaceTemp;
-            }
-            else if (prunedArgType is TypeRef.TList list && Prune(list.Element) is TypeRef.TStr elementType)
-            {
-                argTemp = EmitListToSpaceCopy(argTemp, elementType);
+                argTemp = EmitDeepCopyToSpace(argTemp, prunedArgType);
             }
         }
 

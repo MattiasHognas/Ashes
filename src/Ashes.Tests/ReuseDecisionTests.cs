@@ -797,12 +797,12 @@ public sealed class ReuseDecisionTests
             import Ashes.Text
 
             type Item =
-                | text: Str
+                | values: List(Int)
 
             let recursive fillRecords count grouped =
                 if count <= 0
                 then grouped
-                else fillRecords(count - 1)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(count))(Item(text = "item"))(grouped))
+                else fillRecords(count - 1)(Ashes.Collection.HashMap.set(Ashes.Text.fromInt(count))(Item(values = [count]))(grouped))
 
             let recursive fillInts count grouped =
                 if count <= 0
@@ -821,7 +821,7 @@ public sealed class ReuseDecisionTests
             && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent);
         rejection.Outcome.ShouldBe(ReuseDecisionOutcome.Rejected);
         rejection.Function.Source.ShouldNotBeNull();
-        rejection.Function.Source.SourceName.ShouldBe("fillRecords", "the record-valued map must decline the to-space specialization");
+        rejection.Function.Source.SourceName.ShouldBe("fillRecords", "a record with a List(Int) field (outside the to-space-copyable set) must decline the to-space specialization");
         rejection.Candidate.ShouldNotBeNull();
         rejection.Candidate.SourceName.ShouldBe("grouped");
 
@@ -831,6 +831,39 @@ public sealed class ReuseDecisionTests
             && decision.Function.Source != null
             && string.Equals(decision.Function.Source.SourceName, "fillInts", StringComparison.Ordinal),
             "the Int-valued map's own field layout is persistent and must not be declined for this reason");
+    }
+
+    [Test]
+    public void ToSpaceSpecialization_AcceptsAMapAccumulatorWhoseRecordValueIsToSpaceCopySafe()
+    {
+        const string source = """
+            import Ashes.Collection.HashMap
+            import Ashes.Text
+
+            type Item =
+                | text: Str
+                | position: Int
+
+            let recursive fillRecords count grouped =
+                if count <= 0
+                then grouped
+                else
+                    fillRecords(count - 1)(
+                        Ashes.Collection.HashMap.set(Ashes.Text.fromInt(count))(Item(text = "item", position = count))(grouped)
+                    )
+
+            let records = fillRecords(3)(Ashes.Collection.HashMap.empty)
+            in records
+            """;
+
+        Lowering lowering = LowerStitchedProgram(source, "reuse-persistence-accepted.ash");
+
+        lowering.ReuseDecisions.ShouldNotContain(decision =>
+            decision.Decision == ReuseDecisionKind.SpecializationCandidateQualification
+            && decision.Reason == ReuseDecisionReason.AccumulatorLayoutNotPersistent
+            && decision.Function.Source != null
+            && string.Equals(decision.Function.Source.SourceName, "fillRecords", StringComparison.Ordinal),
+            "a record built only from Str/Int fields is to-space-copy-safe and must qualify for specialization");
     }
 
     private static Lowering LowerStitchedProgram(string source, string fileName)
