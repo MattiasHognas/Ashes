@@ -10,6 +10,16 @@ public sealed partial class Lowering
     {
         if (value is Expr.Lambda lam) return lam;
         if (value is Expr.Let let) return FindInnermostLambdaUnderLets(let.Body);
+        // `let recursive inner = V in inner`: a self-returning recursive binding is just V under
+        // another name (the shape a trait method's self-tie wrapper produces around a stdlib
+        // helper like List's `equal = let recursive equalLists = ... in equalLists`) — dig into
+        // its own value rather than its body, since the body here is only ever its own name.
+        if (value is Expr.LetRecursive letRec
+            && letRec.Body is Expr.Var selfReference
+            && string.Equals(selfReference.Name, letRec.Name, StringComparison.Ordinal))
+        {
+            return FindInnermostLambdaUnderLets(letRec.Value);
+        }
         return null;
     }
 

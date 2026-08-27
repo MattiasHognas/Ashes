@@ -5561,6 +5561,31 @@ public sealed partial class Lowering
         {
             return LowerLetRecursiveLambdaValue(letRecursive, lambda, recursiveType, request);
         }
+        // `let recursive outer = (let recursive inner = <lambda> in inner) in ...`: the outer
+        // binding's whole value is just a nested recursive definition immediately returned by
+        // name — "outer" and "inner" denote the exact same closure under two names (the shape a
+        // trait method's self-tie wrapper produces around a stdlib helper like List's `equal =
+        // let recursive equalLists = ... in equalLists`, when nothing in that helper's own body
+        // happens to reference the trait method by name). Lower the inner lambda as an ordinary
+        // recursive value under "inner"'s own name (preserving its own TCO/tail-call detection,
+        // keyed off that name) and bind "outer" as an ADDITIONAL alias of the SAME
+        // environment-relative self-closure via extraSelfAliases — never as a plain, separately
+        // finalized local slot: that slot is only written by StoreLocal after this whole call
+        // returns, so any nested construction that captures "outer" while still inside this call
+        // (exactly the scenario this whole shape exists to support) would capture that slot's
+        // uninitialized contents instead of the real closure.
+        if (letRecursive.Value is Expr.LetRecursive innerRecursive
+            && innerRecursive.Body is Expr.Var innerSelfReference
+            && string.Equals(innerSelfReference.Name, innerRecursive.Name, StringComparison.Ordinal)
+            && innerRecursive.Value is Expr.Lambda innerRecursiveLambda)
+        {
+            return LowerLetRecursiveLambdaValue(
+                innerRecursive,
+                innerRecursiveLambda,
+                recursiveType,
+                request,
+                extraSelfAliases: [letRecursive.Name]);
+        }
         if (innerLambda is not null)
         {
             return LowerLetRecursiveAliasChainValue(letRecursive, innerLambda, recursiveType, request);
@@ -5714,7 +5739,8 @@ public sealed partial class Lowering
         Expr.LetRecursive letRecursive,
         Expr.Lambda lam2,
         TypeRef recursiveType,
-        LoweredValueRequest request)
+        LoweredValueRequest request,
+        IReadOnlyList<string>? extraSelfAliases = null)
     {
         // Detect lambda chain for TCO: given (x) -> given (y) -> body
         (List<string> tcoParamNames, Expr innermostBody) = DescribeTcoLambdaChain(lam2);
@@ -5735,6 +5761,7 @@ public sealed partial class Lowering
             letRecursive.Name,
             recursiveType,
             lam2,
+            selfAliases: extraSelfAliases,
             request: request);
 
         _tcoCtx = savedTcoCtx;
@@ -7117,10 +7144,25 @@ public sealed partial class Lowering
         }
 
         var free = FreeVars(lam.Body, bound);
-        if (selfName is null)
-        {
-            free.UnionWith(CollectActiveTraitMethodCaptures(lam.Body));
-        }
+        // Capture every currently active trait-implementation self-tie, even when this lambda is
+        // itself a recursive binding's own value (selfName != null) and even when nothing in
+        // lam.Body's own syntax visibly references it. A self-tie only becomes reachable through
+        // lowering, not through source-level syntax: a lambda whose body calls an unrelated
+        // trait-dictionary construction (an operator like `x == y`, or a call needing a
+        // completely different instance) can, several BuildTraitDictionary calls deeper, land
+        // back inside a DERIVED implementation that references THIS outer instance again (e.g. a
+        // self-referential ADT's own Eq/Show dispatching, through a List(Self) field, back to the
+        // Eq(List(Self))/Show(List(Self)) instance one level up) — a need no scan of lam.Body's
+        // own AST can see, since it is discovered only once that nested construction actually
+        // runs. Capturing every active self-tie unconditionally is safe: an active tie that turns
+        // out unused just costs an unused environment slot, and the Lookup-based filter in
+        // LowerLambdaCoreBuildEnv still drops any name that is not actually in scope. Only
+        // selfName itself (already in `bound`, handled by the dedicated environment-relative
+        // self-closure mechanism) must be excluded — capturing a lambda's own recursive name as
+        // an ordinary environment slot would capture it before its own closure is constructed.
+        free.UnionWith(_activeTraitImplementationMethods
+            .Select(active => active.BindingName)
+            .Where(name => !bound.Contains(name)));
         free.UnionWith(CollectActiveTraitDictionaryOperatorCaptures(lam.Body));
         foreach (string parameter in _activeTraitDictionaryParameters
                      .OrderBy(item => item.Key, StringComparer.Ordinal)
