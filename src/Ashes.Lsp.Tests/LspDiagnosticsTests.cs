@@ -179,6 +179,37 @@ public sealed class LspDiagnosticsTests
         var moduleSourceText = File.ReadAllText(moduleSourcePath);
         var moduleSourceDiags = DocumentService.Analyze(moduleSourceText, moduleSourcePath);
         moduleSourceDiags.ShouldBeEmpty();
+
+        // lib/Ashes/Text.ash has no ashes.json above it, so it analyzes in standalone mode with no
+        // explicit imports of its own — a regression case for RequiresTraitEvidence: it defines
+        // `join`, whose helper `reduce` relies on the polymorphic `+`/generalization Ashes.Trait
+        // must be stitched in for, with no `trait`/`implement`/`requires`/`deriving` keyword anywhere
+        // in the file to hint at that need.
+        var textPath = Path.Combine(repoRoot, "lib/Ashes/Text.ash");
+        var textDiags = DocumentService.Analyze(File.ReadAllText(textPath), textPath);
+        textDiags.ShouldBeEmpty();
+
+        // A project-mode regression case for the same underlying gap, from the other direction: this
+        // file lives inside the "formatter" package, uses Ashes.Text.trimEnd/join/split by qualified
+        // name with no import of its own, and only ever resolved by accident (via a sibling test
+        // project's driver file happening to import Ashes.Text, made visible to every module sharing
+        // its stitched scope) until Formatter.ash gained its own explicit import.
+        var formatterPath = Path.Combine(repoRoot, "selfhost/packages/formatter/src/AshesCompiler/Formatter/Formatter.ash");
+        var formatterDiags = DocumentService.Analyze(File.ReadAllText(formatterPath), formatterPath);
+        formatterDiags.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Standalone_analysis_stitches_trait_evidence_for_a_bare_operator_with_no_import_or_trait_keyword()
+    {
+        DocumentService.Analyze("1 + 2", "/tmp/PlainArithmetic.ash").ShouldBeEmpty();
+        DocumentService.Analyze("\"a\" == \"b\"", "/tmp/PlainEquality.ash").ShouldBeEmpty();
+
+        // Tokens deliberately excluded from the RequiresTraitEvidence heuristic (Star, Pipe) because
+        // they are ambiguous without real parsing (pointer types, ADT constructor separators) must
+        // still analyze cleanly on their own ordinary, non-operator meaning.
+        DocumentService.Analyze("type Color = | Red | Green\nRed", "/tmp/PlainAdt.ash").ShouldBeEmpty();
+        DocumentService.Analyze("external type Handle\nexternal inspect(*u8) -> Int\n0", "/tmp/PlainPointer.ash").ShouldBeEmpty();
     }
 
     private static string FindRepoRoot()

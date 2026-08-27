@@ -8,6 +8,7 @@
 import AshesCompiler.Frontend.Syntax
 import Ashes.Collection.List.sortBy
 import Ashes.Collection.List.map as listMap
+import Ashes.Text
 export (
     value formatProgram,
     value formatExpression,

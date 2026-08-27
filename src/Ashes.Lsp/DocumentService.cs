@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -305,6 +306,112 @@ public static partial class DocumentService
     }
 
     /// <summary>
+    /// A memoized <see cref="ProjectCompilationPlan"/> plus the file mtimes it was built from, so a
+    /// later request can cheaply confirm nothing on disk changed before trusting the cached plan.
+    /// </summary>
+    private readonly record struct CachedProjectPlan(
+        ProjectCompilationPlan Plan,
+        IReadOnlyList<(string Path, DateTime WriteTimeUtc)> Fingerprint);
+
+    // BuildCompilationPlan re-reads and import-parses every reachable .ash file across the project
+    // and all its dependencies on every call — expensive, and otherwise redone from scratch on every
+    // LSP request (hover, completion, ...) even though only the live-edited entry file's *content*
+    // changes between keystrokes. Cache it per (project, entry file), invalidated by an mtime check
+    // over every file the plan actually read plus the manifest/lock — see GetOrBuildProjectPlan.
+    // A ConcurrentDictionary, not a plain Dictionary: Program.cs's own request loop is
+    // single-threaded, but DocumentService is also called directly (e.g. from parallel test runs)
+    // outside that loop, so this static cache must tolerate concurrent access on its own.
+    private static readonly ConcurrentDictionary<(string ProjectPath, string EntryFilePath), CachedProjectPlan> ProjectPlanCache = new();
+    private const int ProjectPlanCacheCapacity = 8;
+
+    private static ProjectCompilationPlan GetOrBuildProjectPlan(
+        AshesProject pseudoProject, string projectPath, string entryFilePath)
+    {
+        var key = (projectPath, entryFilePath);
+        if (ProjectPlanCache.TryGetValue(key, out CachedProjectPlan cached) && ProjectPlanFingerprintIsFresh(cached.Fingerprint))
+        {
+            return cached.Plan;
+        }
+
+        var plan = ProjectSupport.BuildCompilationPlan(pseudoProject);
+
+        // A soft, approximate cap, not true LRU: under concurrent access there is no cheap way to
+        // track exact insertion order without its own synchronization, and eviction is only a
+        // memory bound, not a hot path — clearing occasionally just costs one extra rebuild.
+        if (ProjectPlanCache.Count >= ProjectPlanCacheCapacity)
+        {
+            ProjectPlanCache.Clear();
+        }
+
+        ProjectPlanCache[key] = new CachedProjectPlan(plan, BuildProjectPlanFingerprint(projectPath, plan));
+        return plan;
+    }
+
+    private static IReadOnlyList<(string Path, DateTime WriteTimeUtc)> BuildProjectPlanFingerprint(
+        string projectPath, ProjectCompilationPlan plan)
+    {
+        // A HashSet first: OrderedModules can list several inline-module entries (a synthetic
+        // "path#Name" FilePath) backed by the same real file, and every module in the plan can in
+        // principle repeat a path — dedupe before stat-ing rather than stat-ing the same file twice.
+        var paths = new HashSet<string>(StringComparer.Ordinal)
+        {
+            projectPath,
+            Path.Combine(Path.GetDirectoryName(projectPath) ?? ".", "ashes.lock"),
+        };
+        foreach (ProjectModule module in plan.OrderedModules)
+        {
+            paths.Add(RealModuleFilePath(module.FilePath));
+        }
+
+        var fingerprint = new List<(string, DateTime)>(paths.Count);
+        foreach (string path in paths)
+        {
+            fingerprint.Add((path, SafeLastWriteTimeUtc(path)));
+        }
+
+        return fingerprint;
+    }
+
+    private static bool ProjectPlanFingerprintIsFresh(IReadOnlyList<(string Path, DateTime WriteTimeUtc)> fingerprint)
+    {
+        foreach ((string path, DateTime writeTimeUtc) in fingerprint)
+        {
+            if (SafeLastWriteTimeUtc(path) != writeTimeUtc)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // File.GetLastWriteTimeUtc already returns a sentinel (not an exception) for a path that does
+    // not exist, which is exactly the "treat as changed" behavior a deleted dependency file needs —
+    // this only guards the rarer case of a transient I/O error while stat-ing.
+    private static DateTime SafeLastWriteTimeUtc(string path)
+    {
+        try
+        {
+            return File.GetLastWriteTimeUtc(path);
+        }
+        catch (IOException)
+        {
+            return DateTime.MinValue;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return DateTime.MinValue;
+        }
+    }
+
+    private static string RealModuleFilePath(string filePath)
+    {
+        int hashIndex = filePath.IndexOf('#');
+        return hashIndex < 0 ? filePath : filePath[..hashIndex];
+    }
+
+
+    /// <summary>
     /// Tries to build a combined project source for the given file, substituting
     /// <paramref name="strippedSource"/> (import-stripped in-memory content) as the entry module.
     /// Returns (CombinedSource, EntryOffset, BodyStart) or null if no project is found.<br/>
@@ -339,7 +446,7 @@ public static partial class DocumentService
             EntryModuleName = Path.GetFileNameWithoutExtension(fileFullPath)
         };
 
-        var plan = ProjectSupport.BuildCompilationPlan(pseudoProject);
+        var plan = GetOrBuildProjectPlan(pseudoProject, projectPath, fileFullPath);
         var layout = ProjectSupport.BuildCompilationLayout(plan, strippedSource);
 
         return new ProjectAnalysisContext(
@@ -432,7 +539,7 @@ public static partial class DocumentService
         if (standaloneImportDiagnostics.Count == 0
             && (header.Imports.Count > 0
                 || ProjectSupport.ContainsInlineModule(header.StrippedSource)
-                || ContainsTraitSurface(header.StrippedSource)))
+                || RequiresTraitEvidence(header.StrippedSource)))
         {
             var standaloneLayout = ProjectSupport.BuildStandaloneCompilationLayout(
                 header.StrippedSource,
@@ -464,20 +571,39 @@ public static partial class DocumentService
             layout);
     }
 
-    private static bool ContainsTraitSurface(string source)
+    // True when standalone analysis needs Ashes.Trait stitched in: either the source spells out
+    // trait syntax literally, or it uses an operator that is itself trait-constrained under the
+    // hood (every arithmetic, bitwise, equality, and ordering operator desugars to a trait method —
+    // see GetMappedOperatorTraitName in Lowering.TraitEvidence.cs) even with no `trait`/`implement`/
+    // `requires`/`deriving` keyword anywhere. Missing this class of operator was the original gap:
+    // a plain `+`/`==` in a project-less snippet resolved fine in Ashes.Cli (which always stitches
+    // Ashes.Trait unconditionally) but reported spurious type-mismatch diagnostics here.
+    //
+    // Deliberately NOT included: Star and Pipe. A pure token scan (no parsing) cannot tell the
+    // multiply operator from a pointer type's `*u8`, or bitwise-or from an ADT declaration's
+    // `| Ctor1 | Ctor2` separators — both real, common, trait-evidence-free shapes. Treating either
+    // token as a signal forced needless stitching that broke top-level declaration hover on plain
+    // `type`/`external` snippets (see the regression this comment is fixing). Missing a bare `x * y`
+    // or `a | b` with no other operator/keyword in the same snippet is an accepted, narrow gap.
+    private static bool RequiresTraitEvidence(string source)
     {
         var diagnostics = new Diagnostics();
         var lexer = new Lexer(source, diagnostics);
         while (true)
         {
             Token token = lexer.Next();
-            if (token.Kind is TokenKind.Trait or TokenKind.Implement or TokenKind.Requires or TokenKind.Deriving)
+            switch (token.Kind)
             {
-                return true;
-            }
-            if (token.Kind == TokenKind.EOF)
-            {
-                return false;
+                case TokenKind.Trait or TokenKind.Implement or TokenKind.Requires or TokenKind.Deriving:
+                case TokenKind.Plus or TokenKind.Minus or TokenKind.Slash or TokenKind.Percent:
+                case TokenKind.Bang or TokenKind.Tilde:
+                case TokenKind.Ampersand or TokenKind.Caret:
+                case TokenKind.LessLess or TokenKind.GreaterGreater:
+                case TokenKind.EqualsEquals or TokenKind.BangEquals:
+                case TokenKind.LessThan or TokenKind.GreaterThan or TokenKind.LessEquals or TokenKind.GreaterEquals:
+                    return true;
+                case TokenKind.EOF:
+                    return false;
             }
         }
     }
