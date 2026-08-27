@@ -1191,20 +1191,8 @@ same public behavior.
   names to the wrapper slots. The gap predates the shape widening above, but that widening made the
   self-hosted `findSupertraitCycleInRequirements`/`findSupertraitCycle` group eligible for merging
   and broke the `selfhost/tests/semantics` build.
-- [ ] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
-  and whole-program SCC provenance summaries. Include the entry normalization of a parameter that
-  always reaches the function's result: such a function advertises that it accepts a
-  runtime-managed argument and, at entry, keeps an owned reference or copies a borrowed one, for
-  `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
-  first limited this to `Str`; a curried stage capturing a reference-counted ADT argument for the
-  closure it returns then held a pointer its caller freed, which is why the self-hosted lexer
-  deep-copied every token until the fix). Include, in lifetime placement, the owner-alias walk that
-  keeps an owned binding live across a curried call chain: an alias reaches the first stage's
-  environment, every later stage copies it into the closure it returns, so applying an
-  alias-holding closure (or a devirtualized stage over an alias-holding environment) yields an
-  alias while that result is applied again; and treat a borrowed read of an owned binding passed as
-  a call argument (a byte view of it taken at the call site) as the binding's reference, never as a
-  consumed fresh result to release after the call.
+- [x] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
+  and whole-program SCC provenance summaries.
 - [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
   another function: the same `BorrowInspectExpression`/`BorrowInspectOnly` walk that lets a TCO loop
   borrow its own tail parameter across match/head/tail uses and its own tail self-call is computed
@@ -1229,7 +1217,19 @@ same public behavior.
   field count, nor the reverse). Build the classifier with this layout from the start rather than
   porting the uniform tagged layout and unboxing it afterwards.
 - [ ] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
-  exceptional, handler, and coroutine control flow.
+  exceptional, handler, and coroutine control flow. Include the entry normalization of a parameter
+  that always reaches the function's result: such a function advertises that it accepts a
+  runtime-managed argument and, at entry, keeps an owned reference or copies a borrowed one, for
+  `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
+  first limited this to `Str`; a curried stage capturing a reference-counted ADT argument for the
+  closure it returns then held a pointer its caller freed, which is why the self-hosted lexer
+  deep-copied every token until the fix). Include, in lifetime placement, the owner-alias walk that
+  keeps an owned binding live across a curried call chain: an alias reaches the first stage's
+  environment, every later stage copies it into the closure it returns, so applying an
+  alias-holding closure (or a devirtualized stage over an alias-holding environment) yields an
+  alias while that result is applied again; and treat a borrowed read of an owned binding passed as
+  a call argument (a byte view of it taken at the call site) as the binding's reference, never as a
+  consumed fresh result to release after the call.
 - [ ] Retain a runtime-managed owned binding that a tail self-call argument carries out of its scope:
   `let label = helper(...) in loop(n - 1)(Wrapped(instruction = Jump(label), ...) :: acc)` stores the
   let-bound RC call result into the constructor field, and the binding's own scope-exit release
