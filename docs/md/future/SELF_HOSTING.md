@@ -301,8 +301,20 @@ same public behavior.
   all, only the `ProgramSyntax` already being lowered. Regressions:
   `expectForwardReferenceToLaterBindingIsRejected`, `expectSelfReferenceWithoutRecursiveIsRejected`,
   `expectGenuinelyUnknownNameStillRejectedAsUnknown` (proving the two error paths — forward
-  reference vs. genuinely undefined — stay correctly distinguished). `ASH015` (`and` without `let
-  recursive`) and `ASH016` (conflicting unqualified import selectors) remain unported.
+  reference vs. genuinely undefined — stay correctly distinguished). **Correcting an assumption
+  from this same pass**: `ASH016` (conflicting unqualified import selectors) is NOT missing —
+  `ImportResolution.ash`'s `resolveImports`/`ConflictingResolvedImport` already detects exactly this
+  (two selectors resolving to the same local name), is called from the real pipeline
+  (`ModulePlan.ash`), and is tested (`ImportResolutionTests.ash`'s `checkResolvedCollision`); it's
+  covered by the "Resolve whole-module, aliased, value-selector, and type-selector imports..."
+  item's own "post-resolution collision checks" clause, already `[x]` elsewhere in this file — this
+  paragraph should not have called it unported without checking. `ASH015` (`and` without a
+  preceding `let recursive`) genuinely has no stage-0 reference implementation to port at all — no
+  trace of its message or a dedicated check anywhere in `src/Ashes.Semantics`/`src/Ashes.Frontend`;
+  either the parser's own syntax rules already make a bare `and` unreachable, or this is a
+  documented-but-unimplemented-in-stage-0 code, the same "stable codes remain uncoded in stage 0"
+  situation the match-exhaustiveness item above already flags for a different diagnostic family. Not
+  something to port until stage 0 has a real implementation to port from.
 
 #### Capabilities and handlers
 
