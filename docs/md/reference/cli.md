@@ -673,7 +673,7 @@ ashes remove json-parser
 ### `ashes restore`
 
 Resolve and materialize dependencies for the selected project manifest, or for the nearest `ashes.json`
-when `--project` is omitted. (`ashes install` is retired.)
+when `--project` is omitted.
 
 #### Synopsis
 

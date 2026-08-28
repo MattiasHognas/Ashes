@@ -358,7 +358,7 @@ ashes fmt examples -w       # auto-format in place
 ashes init                  # create a new project
 ashes add json-parser       # add a dependency
 ashes remove json-parser    # remove a dependency
-ashes install               # list project dependencies
+ashes restore               # resolve and materialize dependencies
 ```
 
 ### VS Code Extension

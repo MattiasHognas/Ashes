@@ -10,13 +10,14 @@
 // - The command name is matched case-insensitively (stage 0 lowercases `args[0]` before
 //   dispatch); every other argument is passed through unchanged and unsliced beyond dropping the
 //   command name itself.
-// - `install` is permanently retired and always fails with stage 0's own message (exit code 1).
 // - Dispatch only covers the six subcommands this package has actually ported so far
-//   (`add`/`fmt`/`init`/`remove`/`tree`/`why`) plus `install`'s retirement and the shared
-//   usage/help paths — `compile`/`run`/`repl`/`test`/`restore`/the registry commands, and
-//   `--version`/`-v` (stage 0's version string comes from assembly metadata this package has no
-//   equivalent of yet) all remain unported and fall through to usage like any other unknown
-//   command, rather than reproducing behavior that doesn't exist here yet.
+//   (`add`/`fmt`/`init`/`remove`/`tree`/`why`) plus the shared usage/help paths —
+//   `compile`/`run`/`repl`/`test`/`restore`/the registry commands, and `--version`/`-v` (stage 0's
+//   version string comes from assembly metadata this package has no equivalent of yet) all remain
+//   unported and fall through to usage like any other unknown command, rather than reproducing
+//   behavior that doesn't exist here yet. Ashes doesn't preserve backward compatibility for
+//   retired commands: an unrecognized name (including a former command name) is just an
+//   unrecognized name.
 
 import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Fmt
@@ -80,9 +81,6 @@ let dispatchCommand command rest =
         | "remove" -> runRemove(rest)
         | "tree" -> runTree(rest)
         | "why" -> runWhy(rest)
-        | "install" ->
-            let _ = Ashes.IO.writeErrorLine("`ashes install` has been retired. Use `ashes restore` to materialize dependencies (or `ashes add` to add one).")
-            in 1
         | _ -> printUsage(2)
 
 // The full `ashes` entry point: parses `args`, dispatches to the matching subcommand, and returns

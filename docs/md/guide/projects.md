@@ -327,7 +327,6 @@ Materializes and validates dependencies.
   selected lock entry's namespace and version; the registry-only lock graph is unchanged.
 - `ashes build` / `run` / `test` **auto-restore** first when the lock is missing or stale, so running
   `restore` explicitly is rarely necessary.
-- `ashes install` is retired; use `restore` (or `add` to add a dependency).
 
 ---
 
