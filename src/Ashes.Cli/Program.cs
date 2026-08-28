@@ -618,7 +618,6 @@ try
         "restore" => await RunRestore(args.Skip(1).ToArray()).ConfigureAwait(false),
         "tree" => RunTree(args.Skip(1).ToArray()),
         "why" => RunWhy(args.Skip(1).ToArray()),
-        "install" => throw new CliUserException("`ashes install` has been retired. Use `ashes restore` to materialize dependencies (or `ashes add` to add one)."),
         "login" => await RegistryCommands.LoginAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "publish" => await RegistryCommands.PublishAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),
         "yank" => await RegistryCommands.YankAsync(args.Skip(1).ToArray(), CancellationToken.None).ConfigureAwait(false),

@@ -430,15 +430,6 @@ public sealed class PackageManagementCliTests
         }
     }
 
-    [Test]
-    public async Task Install_is_retired()
-    {
-        var result = await RunCliAsync(["install"]).ConfigureAwait(false);
-
-        result.ExitCode.ShouldBe(1);
-        result.Stderr.ShouldContain("retired");
-    }
-
     // --help and unexpected args
 
     [Test]

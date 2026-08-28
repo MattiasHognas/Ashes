@@ -949,16 +949,6 @@ let testRunCliReportsUsageForUnknownCommand unit =
     |> runCli
     |> test.assertEqual(2)
 
-let testRunCliInstallIsRetired unit =
-    ["install"]
-    |> runCli
-    |> test.assertEqual(1)
-
-let testRunCliDispatchIsCaseInsensitive unit =
-    ["INSTALL"]
-    |> runCli
-    |> test.assertEqual(1)
-
 // The next several tests dispatch to each ported subcommand's OWN distinct failure exit code
 // (rather than exercising a real filesystem) specifically to prove routing and case-insensitivity
 // reach the right function with the rest of the arguments intact, not just that SOME exit code
@@ -1080,8 +1070,6 @@ let run unit =
     |> testRunCliShortHelpIsGlobal
     |> testRunCliHelpShortCircuitsRegardlessOfTrailingArgs
     |> testRunCliReportsUsageForUnknownCommand
-    |> testRunCliInstallIsRetired
-    |> testRunCliDispatchIsCaseInsensitive
     |> testRunCliDispatchesToAddCaseInsensitively
     |> testRunCliDispatchesToFmtCaseInsensitively
     |> testRunCliDispatchesToRemove
