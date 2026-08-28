@@ -121,6 +121,21 @@
       CopyToOutputDirectory="PreserveNewest"
       CopyToPublishDirectory="PreserveNewest"
       Link="$(_ExpectedLlvmLinkFileName)" />
+    <!--
+      libLLVM.so's own shared-library dependencies (see LLVM_DEPENDENCY_PACKAGES in
+      scripts/download-llvm-native.sh): vendored next to it in runtimes/<rid>/ with a matching
+      $ORIGIN RPATH, so the loader resolves them from here and never falls back to whatever (if
+      anything) is installed system-wide. A bare wildcard rather than one entry per file, so this
+      doesn't need editing every time that script's dependency list changes; excludes libLLVM.so
+      itself since it's already covered above, and matches nothing at all on Windows (these are
+      Linux .so files; libLLVM.dll has no analogous sibling dependencies to bundle).
+    -->
+    <None Include="..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\lib*.so*"
+      Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true'"
+      Exclude="$(_ExpectedLlvmAssetPath)"
+      CopyToOutputDirectory="PreserveNewest"
+      CopyToPublishDirectory="PreserveNewest"
+      Link="%(Filename)%(Extension)" />
     <None Include="$(_ExpectedOpenlibmAssetPath)"
       Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true' and Exists('$(_ExpectedOpenlibmAssetPath)')"
       CopyToOutputDirectory="PreserveNewest"

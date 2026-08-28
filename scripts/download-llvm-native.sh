@@ -11,6 +11,18 @@
 # copies (not symlinks) libLLVM-<major>.so into runtimes/linux-{x64,arm64}/libLLVM.so
 # so that dotnet on Windows can include it in cross-builds.
 #
+# Every Linux .so (libLLVM itself and its six non-universal shared-library dependencies,
+# see LLVM_DEPENDENCY_PACKAGES below) is downloaded directly from Debian-style package
+# archives (apt.llvm.org, archive.ubuntu.com, ports.ubuntu.com) and extracted with `ar`/`tar`,
+# regardless of the host's own OS or package manager — this script never runs `apt-get
+# install`/`pacman -S` for any of them, so the vendored files are reproducible byte-for-byte
+# from any dev machine or CI runner and are never tied to (or left stale by) whatever the
+# local system's package manager happens to have installed. Running `ashes` — the vendored
+# libLLVM.so and its dependencies are only ever loaded by the *compiler itself*, never by a
+# compiled program — must not require anything from this script's own build-time toolchain
+# (wget/ar/tar/patchelf) or any of these packages to be present system-wide; that is the whole
+# point of vendoring them into runtimes/<target>/ with an $ORIGIN RPATH on libLLVM.so.
+#
 # Usage:
 #   ./scripts/download-llvm-native.sh              # default LLVM major = 22, auto-detect arch
 #   ./scripts/download-llvm-native.sh 23            # specify a different major
@@ -23,7 +35,8 @@
 #   ./scripts/download-llvm-native.sh --all         # download all four: linux-x64, linux-arm64, win-x64, win-arm64
 #   ./scripts/download-llvm-native.sh --all 22.1.2  # specify full LLVM version for the Windows DLLs
 #
-# Prerequisites: apt, root access (directly or via sudo), wget (for LLVM apt repo key), tar (for Windows DLL)
+# Prerequisites: wget, ar (binutils), tar, patchelf, root access (directly or via sudo, only to
+# auto-install patchelf if it's missing)
 
 set -euo pipefail
 
@@ -61,13 +74,40 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 LIB_DIR="$REPO_ROOT/runtimes"
 
+# libLLVM.so's six shared-library dependencies beyond the universal Linux baseline
+# (libc/libm/libstdc++/libgcc_s/the dynamic loader itself, which every dynamically-linked
+# ELF binary already assumes). Each is used only by an LLVM feature ordinary Ashes codegen
+# never exercises (Z3 constraint solving, libedit command-line editing for lli/opt-style
+# REPL tools, libxml2 coverage-format support), but the dynamic loader still requires every
+# one to be openable at process startup regardless of whether its code ever runs. Confirmed
+# against a clean `mcr.microsoft.com/dotnet/runtime-deps:10.0` image (ci/images/Containerfile.base
+# only lists six of these, because `apt-get install`ing them there lets apt's own dependency
+# resolver silently pull in the rest transitively — this script has no such resolver and must
+# vendor the complete closure explicitly, one level of transitive dependency deeper than that
+# Containerfile spells out) — a bare Linux host cannot be assumed to have any of them.
+# "package:file[,file...]" — the Ubuntu binary package to fetch, and the exact runtime .so
+# filename(s) to extract from it (most packages ship exactly one; libicu74 ships two: the
+# actual code libxml2 links against, plus the data blob that code itself depends on).
+LLVM_DEPENDENCY_PACKAGES=(
+    "libffi8:libffi.so.8"
+    "libedit2:libedit.so.2"
+    "libz3-4:libz3.so.4"
+    "zlib1g:libz.so.1"
+    "libzstd1:libzstd.so.1"
+    "libxml2:libxml2.so.2"
+    "libicu74:libicuuc.so.74,libicudata.so.74"
+    "liblzma5:liblzma.so.5"
+    "libtinfo6:libtinfo.so.6"
+    "libbsd0:libbsd.so.0"
+    "libmd0:libmd.so.0"
+)
+
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=()
 elif command -v sudo >/dev/null 2>&1; then
     SUDO=(sudo)
 else
-    echo "ERROR: This script requires root privileges. Run it as root or install sudo." >&2
-    exit 1
+    SUDO=()
 fi
 
 as_root() {
@@ -75,6 +115,28 @@ as_root() {
         "$@"
     else
         "${SUDO[@]}" "$@"
+    fi
+}
+
+# Installs $2 (a package name) via whichever of apt/pacman is present, only if $1 (a command
+# name) isn't already on PATH. Used solely for build-time tooling this script itself needs
+# (e.g. patchelf) — never for anything the compiled `ashes` executable depends on at runtime.
+ensure_command_any_package_manager() {
+    local command_name="$1"
+    local package_name="$2"
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return
+    fi
+
+    echo "Installing missing prerequisite: $package_name"
+    if command -v apt-get >/dev/null 2>&1; then
+        as_root apt-get install -y -qq "$package_name"
+    elif command -v pacman >/dev/null 2>&1; then
+        as_root pacman -Sy --noconfirm --needed "$package_name"
+    else
+        echo "ERROR: Unsupported package manager. Install '$package_name' manually and retry." >&2
+        exit 1
     fi
 }
 
@@ -163,21 +225,6 @@ resolve_llvm_apt_codename() {
     exit 1
 }
 
-detect_package_manager() {
-    if command -v apt-get >/dev/null 2>&1; then
-        echo "apt"
-        return
-    fi
-
-    if command -v pacman >/dev/null 2>&1; then
-        echo "pacman"
-        return
-    fi
-
-    echo "ERROR: Unsupported package manager. Install apt-get or pacman." >&2
-    exit 1
-}
-
 # Resolve target architecture
 resolve_arch() {
     local arch="$1"
@@ -197,236 +244,28 @@ resolve_arch() {
 
 HOST_ARCH="$(uname -m)"
 HOST_NORMALIZED=$(resolve_arch "$HOST_ARCH")
-PACKAGE_MANAGER="$(detect_package_manager)"
 
-# Helper: install native Linux .so via apt
-install_linux_native() {
-    local llvm_major="$1"
-    local target_normalized="$2"
-    local rid lib_arch_dir
+# Downloads a single .deb from $1 and extracts its data.tar.* payload into $2 (created if
+# missing). Uses only `ar`/`tar`, never `dpkg-deb` — `dpkg-deb` isn't installed by default on
+# non-Debian-family hosts (e.g. Arch/CachyOS), and this script must work identically on every
+# supported dev environment, not just Debian-family ones.
+extract_deb_payload() {
+    local deb_url="$1"
+    local extract_dir="$2"
 
-    case "$target_normalized" in
-        x64) rid="linux-x64"; lib_arch_dir="x86_64-linux-gnu" ;;
-        arm64) rid="linux-arm64"; lib_arch_dir="aarch64-linux-gnu" ;;
-    esac
-
-    echo ""
-    echo "=== Installing LLVM ${llvm_major} shared library ($rid) ==="
-
-    if [ "$PACKAGE_MANAGER" = "apt" ]; then
-        if ! apt-cache show "libllvm${llvm_major}" &>/dev/null; then
-            echo "Adding LLVM apt repository..."
-            as_root mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
-            wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-                | gpg --dearmor | as_root tee /usr/share/keyrings/llvm-archive-keyring.gpg > /dev/null
-            local codename
-            codename=$(resolve_llvm_apt_codename "$llvm_major")
-            echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" \
-                | as_root tee /etc/apt/sources.list.d/llvm-${llvm_major}.list
-            as_root apt-get update -qq
-        fi
-
-        as_root apt-get install -y -qq "libllvm${llvm_major}"
-    elif [ "$PACKAGE_MANAGER" = "pacman" ]; then
-        echo "Installing LLVM shared library via pacman..."
-        as_root pacman -Sy --noconfirm --needed llvm-libs
-    else
-        echo "ERROR: Unsupported package manager: $PACKAGE_MANAGER" >&2
-        exit 1
-    fi
-
-    local so_path
-    so_path=$(ldconfig -p | grep -E "libLLVM[-.]${llvm_major}[.]so|libLLVM[.]so[.]${llvm_major}" | awk '{print $NF}' | head -1 || true)
-    if [ -z "$so_path" ]; then
-        for candidate in \
-            "/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so" \
-            "/usr/lib/${lib_arch_dir}/libLLVM.so.${llvm_major}"* \
-            "/usr/lib/libLLVM-${llvm_major}.so" \
-            "/usr/lib/libLLVM.so.${llvm_major}"*; do
-            if [ -f "$candidate" ]; then
-                so_path="$candidate"
-                break
-            fi
-        done
-    fi
-
-    if [ -z "$so_path" ] && [ "$PACKAGE_MANAGER" = "pacman" ]; then
-        so_path=$(ls -1 /usr/lib/libLLVM-*.so 2>/dev/null | sort -V | tail -1 || true)
-    fi
-
-    if [ ! -f "$so_path" ]; then
-        echo "ERROR: libLLVM-${llvm_major}.so not found after install" >&2
-        exit 1
-    fi
-
-    echo "  -> $so_path ($(du -h "$so_path" | cut -f1))"
-
-    local linux_out="$LIB_DIR/$rid"
-    mkdir -p "$linux_out"
-    cp -f "$so_path" "$linux_out/libLLVM.so"
-    echo "  -> Copied to $linux_out/libLLVM.so"
-
-    if grep -qi microsoft /proc/version 2>/dev/null; then
-        echo ""
-        echo "  (WSL detected — file was copied, not symlinked, so it is"
-        echo "   accessible from the Windows side via the repo's runtimes/ directory.)"
-    fi
-}
-
-# Helper: cross-download Linux .so via apt multiarch
-download_linux_cross() {
-    local llvm_major="$1"
-    local target_normalized="$2"
-    local rid lib_arch_dir deb_arch
-
-    case "$target_normalized" in
-        x64) rid="linux-x64"; lib_arch_dir="x86_64-linux-gnu"; deb_arch="amd64" ;;
-        arm64) rid="linux-arm64"; lib_arch_dir="aarch64-linux-gnu"; deb_arch="arm64" ;;
-    esac
-
-    echo ""
-    echo "=== Downloading LLVM ${llvm_major} shared library for $rid (cross from $HOST_NORMALIZED) ==="
-
-    local codename
-    codename=$(resolve_llvm_apt_codename "$llvm_major")
-
-    if [ "$PACKAGE_MANAGER" != "apt" ]; then
-        if [ "$target_normalized" = "arm64" ]; then
-            download_linux_cross_from_llvm_release "$llvm_major" "$target_normalized"
-            return
-        fi
-
-        echo "ERROR: Cross-architecture Linux download for $target_normalized is unsupported on pacman systems." >&2
-        exit 1
-    fi
-
-    as_root dpkg --add-architecture "$deb_arch"
-    as_root mkdir -p /usr/share/keyrings /etc/apt/sources.list.d
-
-    local ports_url
-    if [ "$deb_arch" = "arm64" ]; then
-        ports_url="https://ports.ubuntu.com/ubuntu-ports"
-    else
-        ports_url="https://archive.ubuntu.com/ubuntu"
-    fi
-    echo "deb [arch=${deb_arch}] ${ports_url} ${codename} main universe" \
-        | as_root tee /etc/apt/sources.list.d/${deb_arch}-ports.list
-    echo "deb [arch=${deb_arch}] ${ports_url} ${codename}-updates main universe" \
-        | as_root tee -a /etc/apt/sources.list.d/${deb_arch}-ports.list
-
-    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-        | gpg --dearmor | as_root tee /usr/share/keyrings/llvm-archive-keyring-${deb_arch}.gpg > /dev/null
-    echo "deb [arch=${deb_arch},signed-by=/usr/share/keyrings/llvm-archive-keyring-${deb_arch}.gpg] https://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-${llvm_major} main" \
-        | as_root tee /etc/apt/sources.list.d/llvm-${llvm_major}-${deb_arch}.list
-
-    if ! as_root apt-get update -qq 2>/tmp/apt-update-cross.log; then
-        echo "  (apt-get update reported warnings — this is expected when adding a cross-arch; check /tmp/apt-update-cross.log if the download below fails)"
-    fi
-
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    (
-        cd "$tmpdir"
-        apt-get download "libllvm${llvm_major}:${deb_arch}"
-        dpkg-deb -x libllvm${llvm_major}_*.deb extracted/
-
-        local so_path=""
-        for candidate in \
-            "extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so" \
-            extracted/usr/lib/${lib_arch_dir}/libLLVM.so.${llvm_major}* \
-            extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so.*; do
-            if [ -f "$candidate" ]; then
-                so_path="$candidate"
-                break
-            fi
-        done
-
-        if [ -z "$so_path" ]; then
-            echo "ERROR: libLLVM for ${deb_arch} not found in extracted .deb." >&2
-            echo "  This may indicate the package structure has changed or DEB_ARCH='${deb_arch}' is incorrect." >&2
-            echo "  Expected path: extracted/usr/lib/${lib_arch_dir}/libLLVM-${llvm_major}.so (or similar)" >&2
-            ls -la "extracted/usr/lib/${lib_arch_dir}/" 2>/dev/null || true
-            exit 1
-        fi
-
-        echo "  -> $so_path ($(du -h "$so_path" | cut -f1))"
-
-        local linux_out="$LIB_DIR/$rid"
-        mkdir -p "$linux_out"
-        cp -f "$so_path" "$linux_out/libLLVM.so"
-        echo "  -> Copied to $linux_out/libLLVM.so"
-    )
-
-    rm -rf "$tmpdir"
-}
-
-# Helper: cross-download Linux .so from apt.llvm.org packages (pacman hosts)
-download_linux_cross_from_llvm_release() {
-    local llvm_major="$1"
-    local target_normalized="$2"
-    local rid
-
-    case "$target_normalized" in
-        arm64) rid="linux-arm64" ;;
-        *)
-            echo "ERROR: LLVM release cross-download only supports arm64 target currently." >&2
-            exit 1
-            ;;
-    esac
-
-    echo ""
-    echo "=== Downloading LLVM ${llvm_major} shared library for $rid from apt.llvm.org package index ==="
-
-    require_command wget "Install wget and retry."
     require_command ar "Install binutils and retry."
     require_command tar "Install tar and retry."
 
-    local codename
-    codename=$(resolve_llvm_apt_codename "$llvm_major")
-
-    local suite="llvm-toolchain-${codename}-${llvm_major}"
-    local base_url="https://apt.llvm.org/${codename}"
-    local index_plain_url="${base_url}/dists/${suite}/main/binary-arm64/Packages"
-    local index_gz_url="${index_plain_url}.gz"
-
     local tmpdir
     tmpdir=$(mktemp -d)
+    local deb_file="$tmpdir/package.deb"
 
-    local index_file="$tmpdir/Packages"
-    if wget -qO "$index_file" "$index_plain_url"; then
-        :
-    elif wget -qO "$tmpdir/Packages.gz" "$index_gz_url"; then
-        require_command gzip "Install gzip and retry."
-        gzip -dc "$tmpdir/Packages.gz" > "$index_file"
-    else
-        echo "ERROR: Could not download package index from apt.llvm.org for ${suite} (arm64)." >&2
-        rm -rf "$tmpdir"
-        exit 1
-    fi
-
-    local deb_rel_path
-    deb_rel_path=$(awk -v pkg="libllvm${llvm_major}" '
-        $1 == "Package:" { in_pkg = ($2 == pkg) }
-        in_pkg && $1 == "Filename:" { print $2; exit }
-    ' "$index_file")
-
-    if [ -z "$deb_rel_path" ]; then
-        echo "ERROR: Could not locate package entry for libllvm${llvm_major} in apt.llvm.org index." >&2
-        echo "  Tried suite: ${suite} (arm64)" >&2
-        rm -rf "$tmpdir"
-        exit 1
-    fi
-
-    local deb_url="${base_url}/${deb_rel_path}"
-    local deb_file="$tmpdir/libllvm${llvm_major}-arm64.deb"
-
-    echo "  Downloading from $deb_url ..."
-    wget -q --show-progress -O "$deb_file" "$deb_url"
+    wget -q -O "$deb_file" "$deb_url"
 
     local data_member
     data_member=$(ar t "$deb_file" | grep -E '^data\.tar\.(xz|gz|zst)$' | head -1 || true)
     if [ -z "$data_member" ]; then
-        echo "ERROR: Could not find data.tar.* member in downloaded .deb" >&2
+        echo "ERROR: Could not find a data.tar.* member in $deb_url" >&2
         rm -rf "$tmpdir"
         exit 1
     fi
@@ -434,9 +273,7 @@ download_linux_cross_from_llvm_release() {
     local data_tar="$tmpdir/$data_member"
     ar p "$deb_file" "$data_member" > "$data_tar"
 
-    local extract_dir="$tmpdir/extracted"
     mkdir -p "$extract_dir"
-
     case "$data_member" in
         *.tar.xz)
             tar -xJf "$data_tar" -C "$extract_dir"
@@ -454,34 +291,179 @@ download_linux_cross_from_llvm_release() {
             ;;
     esac
 
-    local so_path
-    so_path=$(find "$extract_dir" -type f -name 'libLLVM.so*' | sort -V | tail -1 || true)
-    if [ -z "$so_path" ]; then
-        echo "ERROR: libLLVM.so not found in extracted package payload" >&2
+    rm -rf "$tmpdir"
+}
+
+# Resolves a Debian-style package's Filename: field from a dists Packages index (plain text,
+# falling back to gzip-compressed), trying each given component in order. Echoes the
+# archive-relative path (e.g. "pool/universe/z/z3/libz3-4_..._amd64.deb") on success.
+# $1 = base archive URL (e.g. https://apt.llvm.org/noble or https://archive.ubuntu.com/ubuntu)
+# $2 = dists path segment (e.g. llvm-toolchain-noble-22, or noble)
+# $3 = deb_arch (amd64 | arm64)
+# $4 = package name
+# $5.. = component candidates to try in order (e.g. main universe)
+resolve_deb_filename() {
+    local base_url="$1" dists="$2" deb_arch="$3" package="$4"
+    shift 4
+    local components=("$@")
+
+    local component
+    for component in "${components[@]}"; do
+        local index_plain_url="${base_url}/dists/${dists}/${component}/binary-${deb_arch}/Packages"
+        local index_gz_url="${index_plain_url}.gz"
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        local index_file="$tmpdir/Packages"
+
+        if wget -q -O "$index_file" "$index_plain_url" 2>/dev/null; then
+            :
+        elif wget -q -O "$tmpdir/Packages.gz" "$index_gz_url" 2>/dev/null; then
+            require_command gzip "Install gzip and retry."
+            gzip -dc "$tmpdir/Packages.gz" > "$index_file"
+        else
+            rm -rf "$tmpdir"
+            continue
+        fi
+
+        local filename
+        filename=$(awk -v pkg="$package" '
+            $1 == "Package:" { in_pkg = ($2 == pkg) }
+            in_pkg && $1 == "Filename:" { print $2 }
+        ' "$index_file" | head -1)
         rm -rf "$tmpdir"
+
+        if [ -n "$filename" ]; then
+            echo "$filename"
+            return
+        fi
+    done
+
+    echo "ERROR: Could not locate package '${package}' for ${deb_arch} under dists/${dists} (tried components: ${components[*]})." >&2
+    exit 1
+}
+
+# Downloads libLLVM.so for $2 directly from apt.llvm.org's package archive (never via the
+# local system's package manager, and identically whether $2 matches the host arch or not),
+# so the vendored file is fully reproducible from any dev machine or CI runner and is never
+# tied to whatever a particular machine's package manager happens to have installed at the
+# moment the script runs.
+download_linux_llvm() {
+    local llvm_major="$1"
+    local target_normalized="$2"
+    local codename="$3"
+    local rid deb_arch
+
+    case "$target_normalized" in
+        x64) rid="linux-x64"; deb_arch="amd64" ;;
+        arm64) rid="linux-arm64"; deb_arch="arm64" ;;
+    esac
+
+    echo ""
+    echo "=== Downloading LLVM ${llvm_major} shared library for $rid ==="
+
+    local suite="llvm-toolchain-${codename}-${llvm_major}"
+    local base_url="https://apt.llvm.org/${codename}"
+
+    local deb_rel_path
+    deb_rel_path=$(resolve_deb_filename "$base_url" "$suite" "$deb_arch" "libllvm${llvm_major}" "main")
+
+    local extract_dir
+    extract_dir=$(mktemp -d)
+    echo "  Downloading ${base_url}/${deb_rel_path} ..."
+    extract_deb_payload "${base_url}/${deb_rel_path}" "$extract_dir"
+
+    local so_path
+    so_path=$(find -L "$extract_dir" -type f \( -name "libLLVM-${llvm_major}.so" -o -name "libLLVM.so.${llvm_major}*" -o -name "libLLVM-${llvm_major}.so.*" \) 2>/dev/null | sort -V | tail -1 || true)
+    if [ -z "$so_path" ]; then
+        echo "ERROR: libLLVM for ${deb_arch} not found in extracted libllvm${llvm_major} package." >&2
+        find "$extract_dir" -iname 'libLLVM*' >&2 || true
+        rm -rf "$extract_dir"
         exit 1
     fi
-
-    echo "  -> $so_path ($(du -h "$so_path" | cut -f1))"
 
     local linux_out="$LIB_DIR/$rid"
     mkdir -p "$linux_out"
     cp -f "$so_path" "$linux_out/libLLVM.so"
-    echo "  -> Copied to $linux_out/libLLVM.so"
+    echo "  -> $linux_out/libLLVM.so ($(du -Lh "$linux_out/libLLVM.so" | cut -f1))"
 
-    rm -rf "$tmpdir"
+    rm -rf "$extract_dir"
+
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo ""
+        echo "  (WSL detected — file was copied, not symlinked, so it is"
+        echo "   accessible from the Windows side via the repo's runtimes/ directory.)"
+    fi
 }
 
-# Helper: download a single Linux .so (native or cross as needed)
+# Downloads libLLVM.so's six non-universal shared-library dependencies (LLVM_DEPENDENCY_PACKAGES
+# above) straight from Ubuntu's package archive, and sets an $ORIGIN RPATH on the vendored
+# libLLVM.so so it resolves them from runtimes/<target>/ first, every time — never falling
+# back to whatever (if anything) happens to be installed system-wide, on any host.
+download_linux_llvm_dependencies() {
+    local target_normalized="$1"
+    local codename="$2"
+    local rid deb_arch archive_base
+
+    case "$target_normalized" in
+        x64) rid="linux-x64"; deb_arch="amd64"; archive_base="https://archive.ubuntu.com/ubuntu" ;;
+        arm64) rid="linux-arm64"; deb_arch="arm64"; archive_base="https://ports.ubuntu.com/ubuntu-ports" ;;
+    esac
+
+    echo ""
+    echo "=== Downloading libLLVM's native dependencies for $rid ==="
+
+    ensure_command_any_package_manager patchelf patchelf
+
+    local linux_out="$LIB_DIR/$rid"
+    mkdir -p "$linux_out"
+
+    local entry package want_sos want_so deb_rel_path extract_dir found_so
+    for entry in "${LLVM_DEPENDENCY_PACKAGES[@]}"; do
+        package="${entry%%:*}"
+        IFS=',' read -r -a want_sos <<< "${entry#*:}"
+
+        deb_rel_path=$(resolve_deb_filename "$archive_base" "$codename" "$deb_arch" "$package" "main" "universe")
+
+        extract_dir=$(mktemp -d)
+        echo "  Downloading ${archive_base}/${deb_rel_path} ..."
+        extract_deb_payload "${archive_base}/${deb_rel_path}" "$extract_dir"
+
+        for want_so in "${want_sos[@]}"; do
+            found_so=$(find -L "$extract_dir" -type f -name "$want_so" 2>/dev/null | head -1 || true)
+            if [ -z "$found_so" ]; then
+                echo "ERROR: ${want_so} not found in extracted ${package} package." >&2
+                find "$extract_dir" -iname "lib*" >&2 || true
+                rm -rf "$extract_dir"
+                exit 1
+            fi
+
+            cp -f "$found_so" "$linux_out/$want_so"
+            echo "  -> $linux_out/$want_so"
+
+            # Each vendored file needs its OWN $ORIGIN RPATH, not just libLLVM.so's: the loader
+            # resolves a library's transitive dependencies (e.g. libedit.so.2 -> libtinfo.so.6,
+            # libxml2.so.2 -> libicuuc.so.74) using THAT library's own RPATH, never the RPATH of
+            # whatever loaded it — so every link in the chain must point back at this directory.
+            patchelf --set-rpath '$ORIGIN' "$linux_out/$want_so"
+        done
+        rm -rf "$extract_dir"
+    done
+
+    patchelf --set-rpath '$ORIGIN' "$linux_out/libLLVM.so"
+    echo "  -> Set \$ORIGIN RPATH on libLLVM.so and all its vendored dependencies"
+}
+
+# Helper: download everything needed for one Linux target (libLLVM.so + its six dependencies),
+# identically regardless of the host's own architecture or package manager.
 download_linux() {
     local llvm_major="$1"
     local target_normalized="$2"
 
-    if [ "$target_normalized" = "$HOST_NORMALIZED" ]; then
-        install_linux_native "$llvm_major" "$target_normalized"
-    else
-        download_linux_cross "$llvm_major" "$target_normalized"
-    fi
+    local codename
+    codename=$(resolve_llvm_apt_codename "$llvm_major")
+
+    download_linux_llvm "$llvm_major" "$target_normalized" "$codename"
+    download_linux_llvm_dependencies "$target_normalized" "$codename"
 }
 
 # Helper: download a Windows LLVM-C.dll from the GitHub release.
