@@ -30,8 +30,12 @@ RUN rm -f /etc/apt/apt.conf.d/docker-clean \
 # Base utilities + the runtime libraries Electron/VS Code need to launch headless.
 # Library names follow the Ubuntu 24.04 (noble) t64 transition used by the .NET
 # SDK base image: libasound2t64, libcups2t64, libatk*t64, libgtk-3-0t64.
-# libz3-4 provides libz3.so.4, a runtime dependency of the bundled libLLVM.so
-# (present on dev hosts via system packages, but absent from this base image).
+# The bundled libLLVM.so's own shared-library dependencies (libz3 and friends —
+# see LLVM_DEPENDENCY_PACKAGES in scripts/download-llvm-native.sh) are vendored
+# into runtimes/linux-x64/ with a matching $ORIGIN RPATH, so none of them need to
+# be installed here; installing them as system packages was the very bug that
+# investigation fixed (a vendored libLLVM.so silently drifting out of sync with
+# whatever this image happens to have installed).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -41,7 +45,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libgtk-3-0t64 libx11-xcb1 \
         libsecret-1-0 \
-        libz3-4 \
     && test -x /usr/bin/time \
     && clang --version
 

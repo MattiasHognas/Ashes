@@ -14,15 +14,19 @@
 # explicit `qemu-aarch64 <bin>` wrapper cannot follow the compiler's exec of its
 # output — which is why the previous design was compile-only. See docs/LOCAL_CI.md.
 #
-# Based on dotnet `runtime-deps` (the native deps for a self-contained .NET app);
-# the published arm64 `ashes` additionally bundles libLLVM.so, so its extra native
-# deps (libffi/libedit/libz3/zlib/zstd/xml2) are installed on top.
+# Based on dotnet `runtime-deps` (the native deps for a self-contained .NET app).
+# The published arm64 `ashes` bundles libLLVM.so AND its own shared-library
+# dependencies (libffi/libedit/libz3/zlib/zstd/xml2 and libxml2's own further
+# transitive deps — see LLVM_DEPENDENCY_PACKAGES in scripts/download-llvm-native.sh)
+# in runtimes/linux-arm64/ with a matching $ORIGIN RPATH, so none of them need to be
+# installed here — installing them as system packages was the very bug that
+# investigation fixed (a vendored libLLVM.so silently drifting out of sync with
+# whatever this image happens to have installed).
 FROM --platform=linux/arm64 mcr.microsoft.com/dotnet/runtime-deps:10.0
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates \
-        libffi8 libedit2 libz3-4 zlib1g libzstd1 libxml2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Writable HOME at /home/ci for uid 1000 (the runtime-deps image already ships a
