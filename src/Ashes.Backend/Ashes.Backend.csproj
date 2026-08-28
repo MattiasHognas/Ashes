@@ -93,6 +93,7 @@
   <PropertyGroup Condition="'$(_ExpectedNativeRuntimeIdentifier)' != ''">
     <_ExpectedLlvmAssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmAssetPath>
     <_ExpectedLlvmLinkFileName>libLLVM$(_ExpectedNativeLibraryExtension)</_ExpectedLlvmLinkFileName>
+    <_ExpectedLlvmDependencyAssetPattern>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\lib*.so*</_ExpectedLlvmDependencyAssetPattern>
     <_ExpectedOpenlibmAssetPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetPath>
     <_ExpectedOpenlibmVersionPath>..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\openlibm.version</_ExpectedOpenlibmVersionPath>
     <_ExpectedOpenlibmAssetLinkPath>runtimes\$(_ExpectedNativeRuntimeIdentifier)\$(_ExpectedOpenlibmLibraryFileName)</_ExpectedOpenlibmAssetLinkPath>
@@ -130,7 +131,7 @@
       itself since it's already covered above, and matches nothing at all on Windows (these are
       Linux .so files; libLLVM.dll has no analogous sibling dependencies to bundle).
     -->
-    <None Include="..\..\runtimes\$(_ExpectedNativeRuntimeIdentifier)\lib*.so*"
+    <None Include="$(_ExpectedLlvmDependencyAssetPattern)"
       Condition="'$(_ShouldCopyResolvedNativeAssets)' == 'true'"
       Exclude="$(_ExpectedLlvmAssetPath)"
       CopyToOutputDirectory="PreserveNewest"
