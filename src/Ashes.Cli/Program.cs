@@ -1684,6 +1684,13 @@ static int RunAdd(string[] a)
     map[packageName] = value;
     obj[field] = map;
 
+    // `deps` (the project's existing `dependencies`) is never in `obj` — ReadProjectJson always
+    // strips it out — so an `--dev` add must write it back explicitly or the field is lost.
+    if (deps.Count > 0)
+    {
+        obj["dependencies"] = deps;
+    }
+
     WriteProjectJson(projectFilePath, obj);
 
     AnsiConsole.MarkupLine($"[green]Added[/] {Markup.Escape(packageName)} to {field}.");

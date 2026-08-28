@@ -409,6 +409,28 @@ public sealed class PackageManagementCliTests
     }
 
     [Test]
+    public async Task Add_dev_preserves_existing_dependencies()
+    {
+        var tempDir = CreateTempDir();
+        try
+        {
+            await RunCliAsync(["init"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "json-parser"], workingDirectory: tempDir).ConfigureAwait(false);
+            await RunCliAsync(["add", "test-helper", "--dev"], workingDirectory: tempDir).ConfigureAwait(false);
+
+            var json = await File.ReadAllTextAsync(Path.Combine(tempDir, "ashes.json")).ConfigureAwait(false);
+            json.ShouldContain("\"dependencies\"");
+            json.ShouldContain("json-parser");
+            json.ShouldContain("devDependencies");
+            json.ShouldContain("test-helper");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task Install_is_retired()
     {
         var result = await RunCliAsync(["install"]).ConfigureAwait(false);
