@@ -210,8 +210,22 @@ public sealed class ReuseTokenTests
             function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
     }
 
+    // Previously asserted that moveBodies got list-reuse-specialized inside run's own TCO loop
+    // function, once advance (a fresh-result helper) spliced into the loop's back-edge argument.
+    // That relied on ExpandFreshInlinableCaptures unconditionally pre-populating a splice target's
+    // OWN transitive callees (moveBodies, makeBodies) into every lambda that merely calls it,
+    // regardless of whether that particular call site ever splices — which is also what let an
+    // ordinary (never-inlined) caller like HashMap.get capture its callee's callee (Ord's
+    // `compareComposite` capturing its own `strCompare`) for no reason, doubling a 48-byte
+    // dictionary bundle into every such closure. ExpandFreshInlinableCaptures is now gated to the
+    // two contexts (_inSpecialization, a live reuse token) where a splice is actually imminent;
+    // recovering the TCO-back-edge case too needs predicting, before the loop's own captures are
+    // computed, which argument will splice — a prediction that changed which of the lowering's two
+    // passes ends up owning the final capture set (see git history for the abandoned attempt), an
+    // effect with no connection to this test's own call shape. moveBodies still runs correctly here,
+    // just through an ordinary closure call instead of a list-reusing specialization.
     [Test]
-    public void Fresh_helper_is_inlined_into_tco_back_edge_before_list_reuse()
+    public void Helper_referencing_reuse_specializable_function_falls_back_to_ordinary_call_outside_reuse_context()
     {
         IrProgram program = LowerProgram("""
             type Body =
@@ -242,18 +256,15 @@ public sealed class ReuseTokenTests
             run(10)([])
             """);
 
-        program.Functions.Any(function =>
-            function.LocalNames?.Values.Contains("turns", StringComparer.Ordinal) == true
-            && function.Instructions.Any(instruction =>
+        program.Functions
+            .Where(function => function.LocalNames?.Values.Contains("turns", StringComparer.Ordinal) == true)
+            .Any(function => function.Instructions.Any(instruction =>
                 instruction is IrInst.MakeClosure { FuncLabel: var label }
-                    && label.StartsWith("moveBodies__reuse", StringComparison.Ordinal))
-            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
-                && label.Contains("rc_list_overwrite_preflight", StringComparison.Ordinal))
-            && function.Instructions.Any(instruction => instruction is IrInst.Label { Name: var label }
-                && label.Contains("rc_list_overwrite_fallback", StringComparison.Ordinal))
-            && function.Instructions.Count(instruction => instruction is IrInst.RcIsUnique) >= 2
-            && function.Instructions.Any(instruction => instruction is IrInst.RestoreStackPointer))
-            .ShouldBeTrue();
+                    && label.StartsWith("moveBodies__reuse", StringComparison.Ordinal)))
+            .ShouldBeFalse();
+
+        program.Functions.ShouldContain(function =>
+            function.Label.StartsWith("moveBodies__reuse", StringComparison.Ordinal));
     }
 
     [Test]
