@@ -26,6 +26,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TraitEvidenceRewriting
+import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
@@ -67,6 +68,7 @@ type CoreLoweringError =
     | DuplicateTopLevelBinding(Str)
     | UnsupportedOperationArmResume(Str, Str)
     | ForwardTopLevelReference(Str)
+    | UnresolvedTraitEvidenceForwarding(TraitEvidenceForwardingError)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -4767,35 +4769,14 @@ let recursive allTopLevelBindingNames items =
             |> append(letBindingSyntaxNames(bindings))
         | _ :: rest -> allTopLevelBindingNames(rest)
 
-// Pure, no lowering: the trait constraints attached to a binding's own generalized TypeScheme, as
-// recorded by inference in the TypeEnvironment's flat (name, TypeScheme) binding list.
-let recursive findBindingScheme name bindings =
-    match bindings with
-        | [] -> None
-        | (candidate, scheme) :: rest ->
-            if name == candidate
-            then Some(scheme)
-            else findBindingScheme(name)(rest)
-
-let bindingTraitConstraints name environment =
-    match environment with
-        | TypeEnvironment { bindings = bindings } ->
-            match findBindingScheme(name)(bindings) with
-                | Some(TypeScheme { constraints = constraints }) -> constraints
-                | None -> []
-
 // When an inference environment is available, elaborates a constrained top-level binding's value
-// into ordinary syntax with hidden dictionary parameters (rewriteTraitConstrainedValue) before it
-// reaches lowering; a binding with no constraints, or no environment supplied at all (the existing
-// no-environment entry points), lowers unchanged.
-let traitRewrittenTopLevelValue name value environment =
-    match environment with
-        | None -> value
-        | Some(env) ->
-            match bindingTraitConstraints(name)(env) with
-                | [] -> value
-                | constraints -> rewriteTraitConstrainedValue(value)(constraints)(env)
-
+// into ordinary syntax with hidden dictionary parameters and forwards evidence at any call site
+// inside it that reaches another constrained top-level binding
+// (rewriteTraitConstrainedTopLevelValue, AshesCompiler.Semantics.TraitEvidenceRewriting); a binding
+// with no constraints, or no environment supplied at all (the existing no-environment entry
+// points), lowers unchanged. A forwarding failure (no active dictionary supplies the callee's
+// required evidence) surfaces as UnresolvedTraitEvidenceForwarding at the two call sites below,
+// rather than silently emitting a call the callee's hidden parameter can't be supplied for.
 // As isProvablyArenaSafeExpr, but over the flat top-level `let`/trailing-expression sequence
 // lowerCoreProgramItems walks (Model A: sequential, not one nested Expr). A self-recursive
 // TopLevelLet or a TopLevelRecursiveGroup conservatively stops the chain — recursive bindings
@@ -4835,23 +4816,26 @@ let lowerArenaBracketedTopLevelLet name value environment continuation outerBind
                     let saved =
                         emit(SaveArenaState(cursorSlot)(endSlot)(false))(endAllocated)
                     in
-                        match saved
-                        |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
-                        |> finishLetValue(
-                            name,
-                            topLevelContinuationBody,
-                            continuation,
-                            outerBindings
-                        ) with
-                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
-                            | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
-                                match freshLocal(bodyState) with
-                                    | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                                        let closed =
-                                            preRestoreAllocated
-                                            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                                            |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                                        in success(resultTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
+                        match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+                            | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure((saved with arenaBracketingArmed = restoreArmedTo))(UnresolvedTraitEvidenceForwarding(error))
+                            | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
+                                match saved
+                                |> lowerCore(rewrittenValue)
+                                |> finishLetValue(
+                                    name,
+                                    topLevelContinuationBody,
+                                    continuation,
+                                    outerBindings
+                                ) with
+                                    | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
+                                    | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                                        match freshLocal(bodyState) with
+                                            | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                                                let closed =
+                                                    preRestoreAllocated
+                                                    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                                in success(resultTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
@@ -4886,14 +4870,17 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                     if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)
                                     then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)((state with arenaBracketingArmed = true))
                                     else
-                                        state
-                                        |> lowerCore(traitRewrittenTopLevelValue(name)(value)(environment))
-                                        |> finishLetValue(
-                                            name,
-                                            topLevelContinuationBody,
-                                            continuation,
-                                            outerBindings
-                                        )
+                                        match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+                                            | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
+                                            | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
+                                                state
+                                                |> lowerCore(rewrittenValue)
+                                                |> finishLetValue(
+                                                    name,
+                                                    topLevelContinuationBody,
+                                                    continuation,
+                                                    outerBindings
+                                                )
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
