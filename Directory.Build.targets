@@ -14,7 +14,11 @@
 
     The bitcode payloads are target-specific but tiny (~5 MB for all three RIDs together), so every
     RID's payloads are staged — that is what lets a released compiler honour a foreign compilation
-    target. libLLVM (~144 MB) is host-only and is staged for the publish RID alone.
+    target. libLLVM (~144 MB) and its own shared-library dependencies (see LLVM_DEPENDENCY_PACKAGES
+    in scripts/download-llvm-native.sh — libedit, libz3, libxml2 and its own further transitive
+    deps, etc.) are host-only and staged for the publish RID alone: a released `ashes` must never
+    fall back to whatever (if anything) is installed system-wide for any of these, on any target,
+    so every one of them has to travel with the executable exactly the way libLLVM.so itself does.
 
     Projects that don't link the backend (Ashes.Lsp, Ashes.Dap) set BundleNativeRuntimes=false to
     opt out — they use none of this, and copying libLLVM would only bloat their output.
@@ -26,11 +30,13 @@
     <ItemGroup>
       <!-- Wrong-arch payloads left by the RID-less project-reference evaluation (problem 1). The
            host libLLVM is one of them: a win-x64 publish otherwise carried a 144 MB Linux
-           libLLVM.so next to the libLLVM.dll it actually loads. -->
+           libLLVM.so next to the libLLVM.dll it actually loads — same for its dependency .so
+           files, none of which belong in a Windows publish at all. -->
       <_StalePublishedRuntimePayload Include="$(PublishDir)runtimes/**/*.bc" />
       <_StalePublishedRuntimePayload Include="$(PublishDir)runtimes/**/*.version" />
       <_StalePublishedRuntimePayload Include="$(PublishDir)libLLVM.so" Condition="$(RuntimeIdentifier.StartsWith('win-'))" />
       <_StalePublishedRuntimePayload Include="$(PublishDir)libLLVM.dll" Condition="$(RuntimeIdentifier.StartsWith('linux-'))" />
+      <_StalePublishedRuntimePayload Include="$(PublishDir)lib*.so*" Condition="$(RuntimeIdentifier.StartsWith('win-'))" />
 
       <!-- Every RID's bitcode + version markers, so foreign compilation targets work too. -->
       <_VendoredRuntimePayload Include="$(MSBuildThisFileDirectory)runtimes/**/*.bc" />
@@ -52,5 +58,19 @@
       DestinationFiles="$(PublishDir)libLLVM.dll"
       SkipUnchangedFiles="false"
       Condition="$(RuntimeIdentifier.StartsWith('win-')) and Exists('$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.dll')" />
+
+    <!-- libLLVM.so's own shared-library dependencies, each already carrying its own $ORIGIN
+         RPATH from scripts/download-llvm-native.sh — staged flat next to it, exactly like
+         libLLVM.so itself, so a published Linux compiler never touches the host system for any
+         of them. Nothing analogous exists (or is staged) for libLLVM.dll on Windows. -->
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('linux-'))">
+      <_LlvmDependencyRuntimePayload Include="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/lib*.so*"
+        Exclude="$(MSBuildThisFileDirectory)runtimes/$(RuntimeIdentifier)/libLLVM.so" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(_LlvmDependencyRuntimePayload)"
+      DestinationFiles="@(_LlvmDependencyRuntimePayload->'$(PublishDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false"
+      Condition="$(RuntimeIdentifier.StartsWith('linux-'))" />
   </Target>
 </Project>
