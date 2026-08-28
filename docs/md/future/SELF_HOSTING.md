@@ -1639,10 +1639,31 @@ same public behavior.
 
 #### CLI, package management, and registry client
 
-- [ ] Implement shared argument scanning, help, validation, exit codes, stdout/stderr discipline, target
+- [~] Implement shared argument scanning, help, validation, exit codes, stdout/stderr discipline, target
   selection, CPU/worker/stack options, optimization levels, and debug options. Source of truth:
   `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` and `CliDiagnosticsTests` as the behavioral oracle;
   the [CLI reference](../reference/cli.md) is the authoritative surface for every command and flag.
+  The shared top-level dispatcher is ported for the six commands this package actually has
+  (`Dispatch.ash` in `selfhost/packages/cli`, wired as `Package.ash`'s own entry point via
+  `Ashes.IO.exit(runCli(Ashes.IO.args))` — turning the CLI package from a set of independently
+  testable command modules into an actual runnable `ashes` executable for the first time): no
+  arguments falls through to usage (exit 2); a bare `--help`/`-h` as the first argument is global
+  help (exit 0) regardless of what follows it, matching stage 0's own check on `args[0]` alone
+  before any subcommand parsing runs; every other command name is matched case-insensitively
+  (stage 0 lowercases `args[0]` before dispatch) and routed to `add`/`fmt`/`init`/`remove`/`tree`/
+  `why` with the rest of the arguments untouched; `install` is permanently retired with stage 0's
+  own message (exit 1). Verified by actually compiling and running the resulting executable
+  end-to-end (`init` → `add` → `tree` → `remove`, plus `--help`/unknown-command/`install`), not
+  just unit tests, and separately by pure tests over `runCli` that dispatch to each subcommand's
+  own DISTINCT failure exit code (e.g. `runCli(["Add"])` returning 1, `runCli(["why"])` returning
+  2) specifically to prove routing and case-insensitivity reach the right function with arguments
+  intact, without needing a real filesystem for most cases. Deliberately deferred, since stage 0's
+  own equivalent has no self-hosted counterpart yet: `--version`/`-v` (the version string comes
+  from assembly metadata this package doesn't have an analog of) falls through to usage like any
+  other unknown command rather than reproducing a version string; target selection, CPU/worker/
+  stack options, optimization levels, and debug options don't apply to any command this package
+  has ported (they're all `compile`/`run`/`test`-only flags, and none of those three commands
+  exist here yet).
 - [ ] Implement `compile` for files, expressions, projects, output selection, IR dumps, and compiler
   reports.
 - [ ] Implement `run`, program argument forwarding, temporary outputs, and propagation of program exit
@@ -1754,8 +1775,10 @@ same public behavior.
 - [ ] Implement registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and
   `info`, including package capability extraction from compiler metadata, against the unchanged .NET
   registry server ([Package registry](../internals/architecture.md#package-registry) documents the wire protocol).
-- [ ] Preserve the documented retired-`install` diagnostic and compatibility behavior for every current
-  command and flag.
+- [~] Preserve the documented retired-`install` diagnostic and compatibility behavior for every current
+  command and flag. The `install` diagnostic itself is ported (`Dispatch.ash`'s `runCli`, see
+  above); "for every current command and flag" remains open for the many commands/flags this
+  package hasn't ported at all yet.
 - [ ] Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
   `concurrency`, and `memory` reports with stable filtering and stderr behavior. Source of truth:
   `IrExplainReporter.cs`, `ExplainReportFormatter.cs`, `IrTextFormatter.cs`, and `IrFunctionSelector.cs` in

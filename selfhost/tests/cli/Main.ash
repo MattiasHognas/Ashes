@@ -3,6 +3,7 @@ import Ashes.Collection.List.length
 import Ashes.IO.Path
 import Ashes.Text.Json
 import AshesCompiler.Cli.Add
+import AshesCompiler.Cli.Dispatch
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
 import AshesCompiler.Cli.Remove
@@ -923,6 +924,75 @@ let testRunRemoveInProjectFailsWhenManifestMissing unit =
             let _ = removeRemoveScratch(Unit)
             in result)
 
+let testRunCliReportsUsageWhenNoArguments unit =
+    []
+    |> runCli
+    |> test.assertEqual(2)
+
+let testRunCliHelpIsGlobal unit =
+    ["--help"]
+    |> runCli
+    |> test.assertEqual(0)
+
+let testRunCliShortHelpIsGlobal unit =
+    ["-h"]
+    |> runCli
+    |> test.assertEqual(0)
+
+let testRunCliHelpShortCircuitsRegardlessOfTrailingArgs unit =
+    ["--help", "whatever", "else"]
+    |> runCli
+    |> test.assertEqual(0)
+
+let testRunCliReportsUsageForUnknownCommand unit =
+    ["bogus-command"]
+    |> runCli
+    |> test.assertEqual(2)
+
+let testRunCliInstallIsRetired unit =
+    ["install"]
+    |> runCli
+    |> test.assertEqual(1)
+
+let testRunCliDispatchIsCaseInsensitive unit =
+    ["INSTALL"]
+    |> runCli
+    |> test.assertEqual(1)
+
+// The next several tests dispatch to each ported subcommand's OWN distinct failure exit code
+// (rather than exercising a real filesystem) specifically to prove routing and case-insensitivity
+// reach the right function with the rest of the arguments intact, not just that SOME exit code
+// came back.
+let testRunCliDispatchesToAddCaseInsensitively unit =
+    ["Add"]
+    |> runCli
+    |> test.assertEqual(1)
+
+let testRunCliDispatchesToFmtCaseInsensitively unit =
+    ["FMT"]
+    |> runCli
+    |> test.assertEqual(1)
+
+let testRunCliDispatchesToRemove unit =
+    ["remove"]
+    |> runCli
+    |> test.assertEqual(1)
+
+let testRunCliDispatchesToWhy unit =
+    ["why"]
+    |> runCli
+    |> test.assertEqual(2)
+
+let testRunCliDispatchesToTreeWithRemainingArguments unit =
+    ["TREE", "--help"]
+    |> runCli
+    |> test.assertEqual(0)
+
+let testRunCliDispatchesToInitWithRemainingArguments unit =
+    ["init", "unexpected-arg"]
+    |> runCli
+    |> test.assertEqual(2)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -1005,6 +1075,19 @@ let run unit =
     |> testRunRemoveInProjectKeepsOtherDependencies
     |> testRunRemoveInProjectReportsNotADependency
     |> testRunRemoveInProjectFailsWhenManifestMissing
+    |> testRunCliReportsUsageWhenNoArguments
+    |> testRunCliHelpIsGlobal
+    |> testRunCliShortHelpIsGlobal
+    |> testRunCliHelpShortCircuitsRegardlessOfTrailingArgs
+    |> testRunCliReportsUsageForUnknownCommand
+    |> testRunCliInstallIsRetired
+    |> testRunCliDispatchIsCaseInsensitive
+    |> testRunCliDispatchesToAddCaseInsensitively
+    |> testRunCliDispatchesToFmtCaseInsensitively
+    |> testRunCliDispatchesToRemove
+    |> testRunCliDispatchesToWhy
+    |> testRunCliDispatchesToTreeWithRemainingArguments
+    |> testRunCliDispatchesToInitWithRemainingArguments
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
