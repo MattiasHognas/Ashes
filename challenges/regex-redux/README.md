@@ -74,6 +74,14 @@ Correct at every scale, but time grows **superlinearly** (5x input -> ~18x time 
 each variant count is a fresh scan of the whole subject and each substitution pass materializes a
 new large string, so the constant re-copying of a tens-of-MB subject dominates once it falls out
 of cache. Memory is bounded (the chunk fix) at ~40x the input — up from ~25x at the previous
-measurement, not yet traced to a specific change. Closing the time gap needs
-match-iteration over a shared subject view rather than per-pass materialization — stdlib work, not
-a compiler flaw.
+measurement. Root-caused (2026-08-28): the jump traces to PR #408 (the trait system's introduction —
+"user-defined traits, coherent implementations, dictionary passing"), confirmed via a
+build-and-measure comparison at the commit immediately before and after #408 (124.4 MB -> 213.2 MB
+peak RSS on a 500k-fasta input, output byte-identical). regex-redux itself uses zero user-defined
+traits; this is a global cost of the trait system's presence in the compiler, not anything specific
+to this program — see `docs/md/internals/changelog.md`'s "Overload-generic `==` / `!=` / `+`
+helpers *(superseded by traits)*" entry for why: traits replaced an unsound generic-`==` inlining
+mechanism (a correctness fix), and a real memory recovery needs a new dictionary-specialization
+optimizer feature, not a point patch. Full trace in project memory
+(`project_knucleotide_regexredux_rss_root_cause.md`). Closing the time gap needs match-iteration
+over a shared subject view rather than per-pass materialization — stdlib work, not a compiler flaw.

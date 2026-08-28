@@ -70,8 +70,21 @@ peak RSS:
 | 1,000,000 | 5M | 5.20 s | 210 MB |
 
 Time and memory scale linearly with the sequence. Against the previous measurement (2.83 s / 44 MB
-and 11.3 s / 123 MB) time has halved while peak RSS has roughly doubled; the higher resident set
-has not been traced to a specific change and is worth a look on its own. The cost profile is the expected one: every
+and 11.3 s / 123 MB) time has halved while peak RSS has roughly doubled. Root-caused (2026-08-28):
+about a third of the memory growth (44 -> 66 MB) is the RC Perceus memory-model migration, an
+already-documented architectural cost; the rest traces to one specific commit, PR #408 (the trait
+system's introduction — "user-defined traits, coherent implementations, dictionary passing"),
+confirmed via build-and-measure at the commits immediately before and after it (68 MB -> 89 MB peak
+RSS on this same 250k input). k-nucleotide itself uses zero user-defined traits and its
+`Ashes.Collection.HashMap` dependency is internally concrete (`Str`-keyed, no generic `Eq`
+dictionary anywhere in `lib/Ashes/Collection.HashMap.ash`) — this is a global cost of the trait
+system's mere presence in the compiler, not anything k-nucleotide's own code asks for. See
+`docs/md/internals/changelog.md`'s "Overload-generic `==` / `!=` / `+` helpers *(superseded by
+traits)*" entry for why: traits replaced an unsound generic-`==` inlining mechanism as a correctness
+fix, and recovering the lost performance needs a new dictionary-specialization optimizer feature,
+not a point patch. The time improvement is unrelated and came later, mostly from the OPT-001..017
+optimizer arc. Full trace in project memory (`project_knucleotide_regexredux_rss_root_cause.md`).
+The cost profile is otherwise the expected one: every
 k-mer count is an immutable `Map` update (O(log n) + path allocation), where the reference uses a
 mutable O(1) hashtable — that constant-factor gap, not any remaining compiler flaw, is what
 separates this from the leaderboard. The standard 25M-base input is reachable but was skipped to
