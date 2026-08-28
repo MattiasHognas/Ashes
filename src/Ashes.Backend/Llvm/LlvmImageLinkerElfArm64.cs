@@ -914,6 +914,8 @@ internal static partial class LlvmImageLinker
     {
         var dynstrStream = new MemoryStream();
         dynstrStream.WriteByte(0);
+        dynstrOffsets[LinuxDynamicRunPath] = checked((int)dynstrStream.Position);
+        dynstrStream.Write(Encoding.ASCII.GetBytes(LinuxDynamicRunPath + "\0"));
         foreach (string library in libraries)
         {
             dynstrOffsets[library] = checked((int)dynstrStream.Position);

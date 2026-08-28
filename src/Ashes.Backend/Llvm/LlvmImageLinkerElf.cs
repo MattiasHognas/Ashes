@@ -28,6 +28,7 @@ internal static partial class LlvmImageLinker
     private const uint ElfProgramTypeTls = 7;
     private const long ElfDynamicTagNull = 0;
     private const long ElfDynamicTagNeeded = 1;
+    private const long ElfDynamicTagRunPath = 29;
     private const long ElfDynamicTagHash = 4;
     private const long ElfDynamicTagStrtab = 5;
     private const long ElfDynamicTagSymtab = 6;
@@ -41,6 +42,15 @@ internal static partial class LlvmImageLinker
     private const byte ElfSymbolBindGlobal = 1;
     private const byte ElfSymbolTypeFunc = 2;
     private const string LinuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2";
+
+    // Every Ashes-produced Linux executable that dynamically links anything (even a built-in libc
+    // symbol) searches its own directory first, so a program's `external ... = "sym@lib.so"` can
+    // resolve a library placed next to the executable without depending on the host's install
+    // state. The compiler makes no promise about *which* libraries live there or about their own
+    // transitive dependencies — placing the file (and satisfying whatever it itself needs) is the
+    // Ashes program author's responsibility, exactly like the compiler's own build stages
+    // libLLVM.so and its dependencies next to the compiler executable.
+    private const string LinuxDynamicRunPath = "$ORIGIN";
 
     private static readonly IReadOnlyDictionary<string, string> LinuxDynamicImportLibraries =
         new Dictionary<string, string>(StringComparer.Ordinal)
@@ -1314,6 +1324,8 @@ internal static partial class LlvmImageLinker
         var dynstrStream = new MemoryStream();
         dynstrStream.WriteByte(0);
         var dynstrOffsets = new Dictionary<string, int>(StringComparer.Ordinal);
+        dynstrOffsets[LinuxDynamicRunPath] = checked((int)dynstrStream.Position);
+        dynstrStream.Write(Encoding.ASCII.GetBytes(LinuxDynamicRunPath + "\0"));
         foreach (string library in libraries)
         {
             dynstrOffsets[library] = checked((int)dynstrStream.Position);
@@ -1442,12 +1454,13 @@ internal static partial class LlvmImageLinker
         ulong relaVa,
         int relaSize)
     {
-        var entries = new List<(long Tag, ulong Value)>(libraries.Count + 8);
+        var entries = new List<(long Tag, ulong Value)>(libraries.Count + 9);
         foreach (string library in libraries)
         {
             entries.Add((ElfDynamicTagNeeded, checked((ulong)dynstrOffsets[library])));
         }
 
+        entries.Add((ElfDynamicTagRunPath, checked((ulong)dynstrOffsets[LinuxDynamicRunPath])));
         entries.Add((ElfDynamicTagHash, hashVa));
         entries.Add((ElfDynamicTagStrtab, dynstrVa));
         entries.Add((ElfDynamicTagSymtab, dynsymVa));
