@@ -10886,6 +10886,23 @@ public sealed partial class Lowering
             && quantifiedIds.Contains(argVar.Id);
     }
 
+    // Whether the callee's own result may alias this specific parameter, per the whole-program
+    // fixed-point analysis in Lowering.MoveAnalysis.cs (the same fact --explain ownership reports
+    // under "Result: aliases:") — computed over fully-resolved types, unlike a fresh AST walk, and
+    // using may-alias (not must-on-every-arm) semantics. Used by LowerAppliedClosureCall to force
+    // retention for a callee this compiler cannot otherwise prove keeps the argument safe.
+    // Gated on IsRuntimeManagedResultTemp(argumentTemp) — the *actual* tracked runtime representation
+    // of this specific argument temp, not just its static type — because ResultReaches doesn't know
+    // the callee may be a generic function compiled once, uniformly, for every instantiation (a user
+    // `setTree`/`HashMap.set`): the parameter genuinely reaches such a function's result, but the
+    // argument temp backing it can still be an arena pointer with no RC header at all, which forcing
+    // an RcDup on would corrupt rather than protect.
+    private bool CalleeResultMayReachParameter(Expr rootExpr, int argumentIndex, int argumentTemp)
+        => IsRuntimeManagedResultTemp(argumentTemp)
+            && GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex < summary.Parameters.Count
+            && summary.ResultReaches(summary.Parameters[argumentIndex]);
+
     private int LowerAppliedClosureCall(
         Expr rootExpr,
         Expr argument,
@@ -10909,12 +10926,21 @@ public sealed partial class Lowering
         bool transfersFreshRuntimeArgument = !borrowsOnly
             && freshRuntimeArgument
             && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
+        bool calleeResultMayReachThisParameter =
+            CalleeResultMayReachParameter(rootExpr, argumentIndex, originalArgumentTemp);
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
             argumentType,
             closureTemp,
             borrowsOnly,
             transfersFreshRuntimeArgument,
+            // A freshly-produced, one-off argument (not a named variable) has no second owner in the
+            // caller to protect, so it never needs the forced retain below — ResultReach is a
+            // conservative (may-alias) analysis that can say "may reach" for a parameter whose
+            // pattern-destructured pieces merely flow into a self-call (e.g. reverse's accumulator
+            // spine) without the parameter itself ever escaping; restrict the override to named
+            // variables, where a second, still-alive reference is the actual concern.
+            calleeResultMayReachThisParameter && !freshRuntimeArgument,
             ref argumentTemp);
         if (!borrowsOnly)
         {
@@ -10954,6 +10980,7 @@ public sealed partial class Lowering
         int closureTemp,
         bool borrowsOnly,
         bool transfersFreshRuntimeArgument,
+        bool calleeResultMayReachThisParameter,
         ref int argumentTemp)
     {
         if (borrowsOnly
@@ -10978,9 +11005,38 @@ public sealed partial class Lowering
         }
         if (!transfersFreshRuntimeArgument)
         {
-            argumentTemp = EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
+            // The callee's own AcceptsRuntimeManagedArgument bit (flagTemp) is a trustworthy signal
+            // only for a callee the compiler has statically proven entry-normalized — its own entry
+            // code reads the flag and adopts or copies accordingly, so the caller may conditionally
+            // skip retaining. For every other callee that bit says nothing about this call. Rather
+            // than always trusting it (the bug: it happens to read as false for most curry-stage
+            // closures, since entry-normalization requires every match arm to route the parameter to
+            // the result, and an Error/None arm that simply ignores it is enough to disqualify a
+            // function whose Ok/Some arm embeds it just fine), force an unconditional retain whenever
+            // the whole-program alias analysis (calleeResultMayReachThisParameter, computed with
+            // fully-resolved types — see LowerAppliedClosureCall) already proves the callee's result
+            // may keep this argument alive past the call. This is skipped for a still-pending TCO
+            // parameter (pendingParameterSlot >= 0): its runtime-managed classification isn't settled
+            // yet, and forcing a retain here would dup a value that finalization may yet decide
+            // carries no RC header at all.
+            argumentTemp = calleeResultMayReachThisParameter && pendingParameterSlot < 0
+                ? EmitRuntimeManagedArgumentRetain(argumentTemp, argumentType)
+                : EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
         }
         return flagTemp;
+    }
+
+    private int EmitRuntimeManagedArgumentRetain(int argumentTemp, TypeRef argumentType)
+    {
+        if (Prune(argumentType) is TypeRef.TList)
+        {
+            return EmitRuntimeManagedNullableDup(argumentTemp);
+        }
+
+        int retainedTemp = NewTemp();
+        Emit(new IrInst.RcDup(retainedTemp, argumentTemp, RuntimeManaged: true));
+        MarkRuntimeManagedTemp(retainedTemp);
+        return retainedTemp;
     }
 
     private int EmitConditionallyRetainedRuntimeArgument(
@@ -10992,17 +11048,7 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(resultSlot, argumentTemp));
         string doneLabel = NewLabel("rc_call_argument_not_retained");
         Emit(new IrInst.JumpIfFalse(ownershipFlagTemp, doneLabel));
-        int retainedTemp;
-        if (Prune(argumentType) is TypeRef.TList)
-        {
-            retainedTemp = EmitRuntimeManagedNullableDup(argumentTemp);
-        }
-        else
-        {
-            retainedTemp = NewTemp();
-            Emit(new IrInst.RcDup(retainedTemp, argumentTemp, RuntimeManaged: true));
-            MarkRuntimeManagedTemp(retainedTemp);
-        }
+        int retainedTemp = EmitRuntimeManagedArgumentRetain(argumentTemp, argumentType);
         Emit(new IrInst.StoreLocal(resultSlot, retainedTemp));
         Emit(new IrInst.Label(doneLabel));
         int resultTemp = NewTemp();
