@@ -1462,8 +1462,10 @@ static (IReadOnlyList<string> Imports, string SourceWithoutImports) ExtractImpor
 static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? source, string displayPath, CombinedCompilationLayout? layout = null)
 {
     // Compilation runs on the combined (stitched) source, so diagnostic spans are offsets into it.
-    // With the layout at hand, map them back to the entry file's own coordinates before rendering;
-    // spans inside stitched module regions render header-only, attributed to the owning file.
+    // With the layout at hand, map them back to the entry file's own coordinates before rendering; a
+    // span inside a stitched module region renders with a path:line:column header (resolved through
+    // the region's own fragment anchors) but no snippet, since only the entry file's text is loaded
+    // here — or header-only with no position at all when no anchor covers it.
     if (layout is { } combinedLayout && source is not null)
     {
         string stripped;
@@ -1477,16 +1479,18 @@ static void PrintCompilerDiagnostics(CompileDiagnosticException ex, string? sour
         }
 
         var mapped = ProjectSupport.MapDiagnosticsToOriginal(combinedLayout, ex.StructuredErrors, displayPath, source, stripped)
-            .OrderBy(m => m.HasPosition ? 0 : 1)
+            .OrderBy(m => m.HasPosition ? 0 : m.Line is not null ? 1 : 2)
             .ThenBy(m => m.Entry.Start)
             .ToArray();
         var sb = new System.Text.StringBuilder();
         for (var i = 0; i < mapped.Length; i++)
         {
-            sb.Append(DiagnosticTextRenderer.RenderCompilerDiagnostics(
-                [mapped[i].Entry],
-                mapped[i].HasPosition ? source : null,
-                mapped[i].FilePath));
+            sb.Append(mapped[i] switch
+            {
+                { HasPosition: true } => DiagnosticTextRenderer.RenderCompilerDiagnostics([mapped[i].Entry], source, mapped[i].FilePath),
+                { Line: { } line, Column: { } column } => DiagnosticTextRenderer.RenderCompilerDiagnosticAtPosition(mapped[i].Entry, mapped[i].FilePath, line, column),
+                _ => DiagnosticTextRenderer.RenderCompilerDiagnostics([mapped[i].Entry], null, mapped[i].FilePath),
+            });
             if (i < mapped.Length - 1)
             {
                 sb.AppendLine();

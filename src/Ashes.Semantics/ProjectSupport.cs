@@ -1714,9 +1714,13 @@ public static class ProjectSupport
 
     /// <summary>A diagnostic mapped from combined-source coordinates back to a user-visible location:
     /// the owning file, and — when the region is position-preserving — a span rebased into the entry
-    /// file's original text. <see cref="HasPosition"/> is false for spans inside stitched
-    /// (reconstructed) module regions, where only the owning file is recoverable.</summary>
-    public readonly record struct MappedDiagnostic(DiagnosticEntry Entry, string FilePath, bool HasPosition);
+    /// file's original text. <see cref="HasPosition"/> is false for a span inside a stitched
+    /// (reconstructed) module region, where the entry file's own text cannot render a snippet for it;
+    /// <see cref="Line"/>/<see cref="Column"/> are populated there instead when the region's fragment
+    /// table (<see cref="CombinedCompilationLayout.SourceLineAnchors"/>) can resolve a real position in
+    /// the owning file, for a header-only (no snippet) rendering.</summary>
+    public readonly record struct MappedDiagnostic(
+        DiagnosticEntry Entry, string FilePath, bool HasPosition, int? Line = null, int? Column = null);
 
     /// <summary>
     /// Maps diagnostic spans from combined-source offsets (what compilation ran on) back to the entry
@@ -1724,9 +1728,13 @@ public static class ProjectSupport
     /// the combined source is line/column-preserving with respect to the original file (imports and
     /// hoisted declarations are blanked keeping newlines; alias preludes overwrite blank lines), so
     /// entry-region spans map by line/column rather than direct offset. Hoisted entry declarations map
-    /// exactly via <see cref="CombinedCompilationLayout.EntryTypeDeclFragments"/>. Spans inside a
-    /// stitched (reconstructed) module region cannot be positioned — they are attributed to the
-    /// owning file with <c>HasPosition = false</c>.
+    /// exactly via <see cref="CombinedCompilationLayout.EntryTypeDeclFragments"/>. A span inside a
+    /// stitched (reconstructed) module region resolves through <see cref="CombinedCompilationLayout.SourceLineAnchors"/>
+    /// (the same per-fragment line anchors that back debug-info locations for stitched code, see
+    /// <c>Lowering.SourceContext.cs</c>'s <c>TryResolveAnchoredLocation</c>) to a real line/column in
+    /// the owning file — <see cref="MappedDiagnostic.HasPosition"/> stays false since the entry file's
+    /// own text still cannot render a snippet for it, but <see cref="MappedDiagnostic.Line"/>/
+    /// <see cref="MappedDiagnostic.Column"/> carry the resolved position when a covering anchor exists.
     /// </summary>
     public static IReadOnlyList<MappedDiagnostic> MapDiagnosticsToOriginal(
         CombinedCompilationLayout layout,
@@ -1776,10 +1784,42 @@ public static class ProjectSupport
                 }
             }
 
-            results.Add(new MappedDiagnostic(entry, filePath, HasPosition: false));
+            var (moduleLine, moduleColumn) = ResolveModuleRegionPosition(combined, layout.SourceLineAnchors, start);
+            results.Add(new MappedDiagnostic(entry, filePath, HasPosition: false, moduleLine, moduleColumn));
         }
 
         return results;
+    }
+
+    /// <summary>Resolves <paramref name="start"/> (a UTF-16 offset into the combined source) to a
+    /// 1-based (line, column) in the owning file via the fragment covering it, or (null, null) when no
+    /// anchor covers the position (a module region the stitcher did not record fragments for). Mirrors
+    /// <c>Lowering.SourceContext.cs</c>'s <c>TryResolveAnchoredLocation</c>: a fragment is a verbatim,
+    /// line-for-line copy of the owning file's text, so a position on the fragment's own first line
+    /// offsets the anchor's column, and a position on any later line reuses that line's own column
+    /// unchanged.</summary>
+    private static (int? Line, int? Column) ResolveModuleRegionPosition(
+        string combined, IReadOnlyList<SourceLineAnchor>? anchors, int start)
+    {
+        if (anchors is null)
+        {
+            return (null, null);
+        }
+
+        foreach (var anchor in anchors)
+        {
+            if (start < anchor.CombinedStart || start >= anchor.CombinedEnd)
+            {
+                continue;
+            }
+
+            var (relativeLine, relativeColumn) = OffsetToLineColumn(combined, anchor.CombinedStart, start);
+            return relativeLine == 1
+                ? (anchor.Line, anchor.Column + relativeColumn - 1)
+                : (anchor.Line + relativeLine - 1, relativeColumn);
+        }
+
+        return (null, null);
     }
 
     private static bool TryMapTypeDeclFragmentDiagnostic(
