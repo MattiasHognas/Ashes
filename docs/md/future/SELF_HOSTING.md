@@ -1733,8 +1733,21 @@ same public behavior.
   manifest. Porting it surfaced a genuine stage-0 bug, fixed first in #673 (not an `add`-specific
   self-hosting issue): `RunAdd`'s `--dev` branch never reattached the project's existing
   `dependencies` field to the rebuilt object, so `ashes add X --dev` on a project that already
-  declared `dependencies` silently deleted that field on write. `remove` and `restore` remain
-  unported.
+  declared `dependencies` silently deleted that field on write. `remove` is ported (`Remove.ash`
+  in `selfhost/packages/cli`): removes the named package from BOTH `dependencies` and
+  `devDependencies` (matching stage 0's `RunRemove` exactly — the CLI reference's own prose only
+  mentions `dependencies`, but the actual check covers both fields), failing with
+  `Package '<name>' is not a dependency.` when it was in neither, and omitting either field
+  entirely from the written manifest once removal empties it out. Shares `add`'s raw-JSON model
+  and its private indented writer (`AshesCompiler.Cli.Add`'s `stringifyIndented`/
+  `setJsonObjectField`) instead of duplicating that pretty-printer a second time — real
+  serialization logic the two commands must agree on, unlike `why`/`tree`'s small independently-
+  duplicated linear-search helpers. Verified with pure unit tests over `removeObjectField`
+  (removes an existing key, leaves an unrelated one untouched) and `removePackageFromManifest`
+  (omits an emptied field, keeps a field with remaining entries, checks `devDependencies` too,
+  leaves the manifest unchanged when the package isn't found), plus an end-to-end scratch fixture
+  covering the last-dependency-removed/field-omitted case, a kept-sibling case, a not-a-dependency
+  case, and a missing manifest. `restore` remains unported.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).

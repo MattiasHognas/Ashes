@@ -4,12 +4,13 @@
 // - Package-level entry only: this package wires already-implemented frontend/formatter/semantics
 //   APIs into the observable `ashes` command contract (docs/md/reference/cli.md). It must not
 //   duplicate parsing, formatting, or inference logic those packages already own.
-// - Only `add`, `fmt`, `init`, `tree`, and `why` are implemented so far; the other subcommands
-//   remain unported (see docs/md/future/SELF_HOSTING.md's CLI checklist).
+// - Only `add`, `fmt`, `init`, `remove`, `tree`, and `why` are implemented so far; the other
+//   subcommands remain unported (see docs/md/future/SELF_HOSTING.md's CLI checklist).
 
 import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
+import AshesCompiler.Cli.Remove
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 Unit
