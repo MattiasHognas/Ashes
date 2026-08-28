@@ -5,6 +5,7 @@ import Ashes.Text.Json
 import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
+import AshesCompiler.Cli.Remove
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 let testParseFmtArgumentsHelp unit =
@@ -722,6 +723,206 @@ let testRunAddInProjectFailsWhenManifestMissing unit =
             let _ = removeAddScratch(Unit)
             in result)
 
+let testParseRemoveArgumentsHelp unit =
+    match parseRemoveArguments(["--help"]) with
+        | RemoveHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseRemoveArgumentsShortHelp unit =
+    match parseRemoveArguments(["-h"]) with
+        | RemoveHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected -h to request help")
+
+let testParseRemoveArgumentsMissingPackageName unit =
+    match parseRemoveArguments([]) with
+        | RemoveMissingPackageName -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected zero arguments to report a missing package name")
+
+let testParseRemoveArgumentsPlainPackageName unit =
+    match parseRemoveArguments(["json-parser"]) with
+        | RemoveParsedArguments(RemoveArguments { packageName = packageName, projectOption = projectOption }) ->
+            packageName
+            |> test.assertEqual("json-parser")
+            |> (given (_) -> test.assertEqual(None)(projectOption))
+        | _ -> test.fail("expected a single package name to parse")
+
+let testParseRemoveArgumentsAcceptsProjectOption unit =
+    match parseRemoveArguments(["--project", "other/ashes.json", "json-parser"]) with
+        | RemoveParsedArguments(RemoveArguments { packageName = packageName, projectOption = projectOption }) ->
+            packageName
+            |> test.assertEqual("json-parser")
+            |> (given (_) -> test.assertEqual(Some("other/ashes.json"))(projectOption))
+        | _ -> test.fail("expected --project to be captured alongside the package name")
+
+let testRemoveObjectFieldRemovesExistingKey unit =
+    match JsonObjectEnd
+    |> JsonObject("b")(JsonStr("2"))
+    |> JsonObject("a")(JsonStr("1"))
+    |> removeObjectField("a") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(true)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{\"b\":\"2\"}"))
+
+let testRemoveObjectFieldReturnsUnchangedWhenKeyMissing unit =
+    match JsonObjectEnd
+    |> JsonObject("a")(JsonStr("1"))
+    |> removeObjectField("missing") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(false)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{\"a\":\"1\"}"))
+
+let testRemovePackageFromManifestOmitsFieldWhenEmpty unit =
+    match JsonObjectEnd
+    |> JsonObject("dependencies")(JsonObject("json-parser")(JsonStr("*"))(JsonObjectEnd))
+    |> removePackageFromManifest("json-parser") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(true)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{}"))
+
+let testRemovePackageFromManifestKeepsFieldWithRemainingEntries unit =
+    match JsonObjectEnd
+    |> JsonObject("dependencies")(JsonObjectEnd
+    |> JsonObject("other-pkg")(JsonStr("*"))
+    |> JsonObject("json-parser")(JsonStr("*")))
+    |> removePackageFromManifest("json-parser") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(true)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{\"dependencies\":{\"other-pkg\":\"*\"}}"))
+
+let testRemovePackageFromManifestChecksDevDependenciesToo unit =
+    match JsonObjectEnd
+    |> JsonObject("devDependencies")(JsonObject("test-helper")(JsonStr("*"))(JsonObjectEnd))
+    |> removePackageFromManifest("test-helper") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(true)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{}"))
+
+let testRemovePackageFromManifestReturnsUnchangedWhenNotADependency unit =
+    match JsonObjectEnd
+    |> JsonObject("dependencies")(JsonObject("json-parser")(JsonStr("*"))(JsonObjectEnd))
+    |> removePackageFromManifest("missing") with
+        | (updated, removed) ->
+            removed
+            |> test.assertEqual(false)
+            |> (given (_) ->
+                updated
+                |> stringify
+                |> test.assertEqual("{\"dependencies\":{\"json-parser\":\"*\"}}"))
+
+// End-to-end tests below exercise the real filesystem, matching the other commands' own scratch-
+// directory pattern above.
+let removeScratchRoot = "cli-remove-scratch"
+
+let removeRemoveScratch unit =
+    match Ashes.IO.Directory.removeTree(removeScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let writeRemoveScratchFile relativePath content =
+    match Ashes.IO.File.writeText(removeScratchRoot + "/" + relativePath)(content) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to write scratch file: " + message)
+
+let removeManifestPath = removeScratchRoot + "/ashes.json"
+
+let testRunRemoveInProjectOmitsFieldWhenLastDependencyRemoved unit =
+    (let _ = removeRemoveScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(removeScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeRemoveScratchFile("ashes.json")("{\"name\":\"app\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"json-parser\":\"*\"}}")
+            in
+                let result =
+                    match runRemoveInProject(removeManifestPath)("json-parser") with
+                        | RemoveSucceeded(packageName) ->
+                            packageName
+                            |> test.assertEqual("json-parser")
+                            |> (given (_) ->
+                                match Ashes.IO.File.readText(removeManifestPath) with
+                                    | Ok(text) -> test.assertEqual("{\n  \"name\": \"app\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ]\n}\n")(text)
+                                    | Error(message) -> test.fail("expected the rewritten manifest to be readable: " + message))
+                        | RemoveNotADependency(_) -> test.fail("expected json-parser to be found")
+                        | RemoveFailed(message) -> test.fail("expected remove to succeed: " + message)
+                in
+                    let _ = removeRemoveScratch(Unit)
+                    in result)
+
+let testRunRemoveInProjectKeepsOtherDependencies unit =
+    (let _ = removeRemoveScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(removeScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeRemoveScratchFile("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"json-parser\":\"*\",\"other-pkg\":\"*\"}}")
+            in
+                let result =
+                    match runRemoveInProject(removeManifestPath)("json-parser") with
+                        | RemoveSucceeded(_packageName) ->
+                            match Ashes.IO.File.readText(removeManifestPath) with
+                                | Ok(text) -> test.assertEqual("{\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ],\n  \"dependencies\": {\n    \"other-pkg\": \"*\"\n  }\n}\n")(text)
+                                | Error(message) -> test.fail("expected the rewritten manifest to be readable: " + message)
+                        | RemoveNotADependency(_) -> test.fail("expected json-parser to be found")
+                        | RemoveFailed(message) -> test.fail("expected remove to succeed: " + message)
+                in
+                    let _ = removeRemoveScratch(Unit)
+                    in result)
+
+let testRunRemoveInProjectReportsNotADependency unit =
+    (let _ = removeRemoveScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(removeScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeRemoveScratchFile("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}")
+            in
+                let result =
+                    match runRemoveInProject(removeManifestPath)("missing") with
+                        | RemoveNotADependency(packageName) -> test.assertEqual("missing")(packageName)
+                        | RemoveSucceeded(_) -> test.fail("expected 'missing' not to be a dependency")
+                        | RemoveFailed(message) -> test.fail("expected a not-a-dependency outcome, not a failure: " + message)
+                in
+                    let _ = removeRemoveScratch(Unit)
+                    in result)
+
+let testRunRemoveInProjectFailsWhenManifestMissing unit =
+    (let _ = removeRemoveScratch(Unit)
+    in
+        let result =
+            match runRemoveInProject(removeManifestPath)("json-parser") with
+                | RemoveFailed(_message) -> test.assertEqual(true)(true)
+                | RemoveSucceeded(_) -> test.fail("expected a missing manifest to fail")
+                | RemoveNotADependency(_) -> test.fail("expected a missing manifest to fail, not a not-a-dependency outcome")
+        in
+            let _ = removeRemoveScratch(Unit)
+            in result)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -789,6 +990,21 @@ let run unit =
     |> testRunAddInProjectDevPreservesExistingDependencies
     |> testRunAddInProjectWithPathNormalizesSeparators
     |> testRunAddInProjectFailsWhenManifestMissing
+    |> testParseRemoveArgumentsHelp
+    |> testParseRemoveArgumentsShortHelp
+    |> testParseRemoveArgumentsMissingPackageName
+    |> testParseRemoveArgumentsPlainPackageName
+    |> testParseRemoveArgumentsAcceptsProjectOption
+    |> testRemoveObjectFieldRemovesExistingKey
+    |> testRemoveObjectFieldReturnsUnchangedWhenKeyMissing
+    |> testRemovePackageFromManifestOmitsFieldWhenEmpty
+    |> testRemovePackageFromManifestKeepsFieldWithRemainingEntries
+    |> testRemovePackageFromManifestChecksDevDependenciesToo
+    |> testRemovePackageFromManifestReturnsUnchangedWhenNotADependency
+    |> testRunRemoveInProjectOmitsFieldWhenLastDependencyRemoved
+    |> testRunRemoveInProjectKeepsOtherDependencies
+    |> testRunRemoveInProjectReportsNotADependency
+    |> testRunRemoveInProjectFailsWhenManifestMissing
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
