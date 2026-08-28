@@ -1711,7 +1711,30 @@ same public behavior.
   the project's entry file rather than the helper itself; the existing `containsText` helper in
   `ProjectDependencyGraph.ash` already carries the fix as its own convention — annotate such a
   helper's parameters explicitly (`(namespace: Str) (list: List(Str))`) rather than leaving them
-  fully polymorphic. `add`, `remove`, and `restore` remain unported.
+  fully polymorphic. `add` is ported (`Add.ash` in `selfhost/packages/cli`): unlike every other
+  ported command, it edits the manifest's raw JSON (`Ashes.Text.Json`'s `Json` value, not the typed
+  `ProjectManifest` model) so unknown/forward-compatible fields survive untouched, matching stage
+  0's own `Dictionary<string, object?>` round trip in `RunAdd`/`ReadProjectJson`/`WriteProjectJson`
+  — but by updating the parsed key/value list in place (`setJsonObjectField`) rather than stripping
+  and re-appending a field the way stage 0's dictionary rebuild does, this port does NOT reproduce
+  stage 0's incidental quirk of relocating `dependencies`/`devDependencies` to the end of the
+  object on every write; a deliberate deviation; the CLI reference's own contract for `add` never
+  mentions field order. Re-serializes with a new private 2-space indented writer
+  (`stringifyIndented`) matching `System.Text.Json`'s `WriteIndented = true` default (compact
+  `{}`/`[]`, one member per line otherwise) — `Ashes.Text.Json`'s shipped `stringify` only produces
+  compact JSON, so this was added as a private helper scoped to `Add.ash` rather than touching the
+  shared stdlib module; deliberately deferred, matching `escStr`'s existing escaping rather than
+  `System.Text.Json`'s stricter default encoder (no HTML-sensitive-character or non-ASCII
+  `\uXXXX` escaping). Verified with pure unit tests over `setJsonObjectField` (in-place update vs.
+  append), `addPackageToManifest` (creates a missing field, preserves the other dependency field,
+  overwrites an existing package entry), and `stringifyIndented` (matches `init`'s own byte-exact
+  sample shape, renders empty collections compactly), plus an end-to-end scratch fixture covering
+  a fresh `dependencies` field, a `--path` dependency with backslash normalization, and a missing
+  manifest. Porting it surfaced a genuine stage-0 bug, fixed first in #673 (not an `add`-specific
+  self-hosting issue): `RunAdd`'s `--dev` branch never reattached the project's existing
+  `dependencies` field to the rebuilt object, so `ashes add X --dev` on a project that already
+  declared `dependencies` silently deleted that field on write. `remove` and `restore` remain
+  unported.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).

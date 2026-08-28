@@ -1,6 +1,8 @@
 import Ashes.Test as test
 import Ashes.Collection.List.length
 import Ashes.IO.Path
+import Ashes.Text.Json
+import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
 import AshesCompiler.Cli.Tree
@@ -523,6 +525,203 @@ let testRunTreeInProjectFailsWhenManifestMissing unit =
             let _ = removeTreeScratch(Unit)
             in result)
 
+let testParseAddArgumentsHelp unit =
+    match parseAddArguments(["--help"]) with
+        | AddHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseAddArgumentsShortHelp unit =
+    match parseAddArguments(["-h"]) with
+        | AddHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected -h to request help")
+
+let testParseAddArgumentsMissingPackageName unit =
+    match parseAddArguments([]) with
+        | AddMissingPackageName -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected zero arguments to report a missing package name")
+
+let testParseAddArgumentsPlainPackageName unit =
+    match parseAddArguments(["json-parser"]) with
+        | AddParsedArguments(AddArguments { packageName = packageName, pathOption = pathOption, isDev = isDev, projectOption = projectOption }) ->
+            packageName
+            |> test.assertEqual("json-parser")
+            |> (given (_) -> test.assertEqual(None)(pathOption))
+            |> (given (_) -> test.assertEqual(false)(isDev))
+            |> (given (_) -> test.assertEqual(None)(projectOption))
+        | _ -> test.fail("expected a single package name to parse")
+
+let testParseAddArgumentsCapturesPathDevAndProject unit =
+    match parseAddArguments(["json-parser", "--path", "../dep", "--dev", "--project", "other/ashes.json"]) with
+        | AddParsedArguments(AddArguments { packageName = packageName, pathOption = pathOption, isDev = isDev, projectOption = projectOption }) ->
+            packageName
+            |> test.assertEqual("json-parser")
+            |> (given (_) -> test.assertEqual(Some("../dep"))(pathOption))
+            |> (given (_) -> test.assertEqual(true)(isDev))
+            |> (given (_) -> test.assertEqual(Some("other/ashes.json"))(projectOption))
+        | _ -> test.fail("expected path/dev/project to be captured")
+
+let testDependencyValueDefaultsToWildcardVersion unit =
+    None
+    |> dependencyValue
+    |> stringify
+    |> test.assertEqual("\"*\"")
+
+let testDependencyValueWithPathNormalizesSeparators unit =
+    Some("..\\dep")
+    |> dependencyValue
+    |> stringify
+    |> test.assertEqual("{\"path\":\"../dep\"}")
+
+let testSetJsonObjectFieldUpdatesExistingKeyInPlace unit =
+    JsonObjectEnd
+    |> JsonObject("b")(JsonStr("2"))
+    |> JsonObject("a")(JsonStr("1"))
+    |> setJsonObjectField("a")(JsonStr("updated"))
+    |> stringify
+    |> test.assertEqual("{\"a\":\"updated\",\"b\":\"2\"}")
+
+let testSetJsonObjectFieldAppendsNewKeyAtEnd unit =
+    JsonObjectEnd
+    |> JsonObject("a")(JsonStr("1"))
+    |> setJsonObjectField("b")(JsonStr("2"))
+    |> stringify
+    |> test.assertEqual("{\"a\":\"1\",\"b\":\"2\"}")
+
+let testAddPackageToManifestCreatesFieldWhenMissing unit =
+    JsonObjectEnd
+    |> JsonObject("name")(JsonStr("app"))
+    |> addPackageToManifest("dependencies")("json-parser")(JsonStr("*"))
+    |> stringify
+    |> test.assertEqual("{\"name\":\"app\",\"dependencies\":{\"json-parser\":\"*\"}}")
+
+let testAddPackageToManifestPreservesOtherDependencyField unit =
+    JsonObjectEnd
+    |> JsonObject("dependencies")(JsonObject("json-parser")(JsonStr("*"))(JsonObjectEnd))
+    |> addPackageToManifest("devDependencies")("test-helper")(JsonStr("*"))
+    |> stringify
+    |> test.assertEqual("{\"dependencies\":{\"json-parser\":\"*\"},\"devDependencies\":{\"test-helper\":\"*\"}}")
+
+let testAddPackageToManifestOverwritesExistingPackageEntry unit =
+    JsonObjectEnd
+    |> JsonObject("dependencies")(JsonObject("json-parser")(JsonStr("1.0.0"))(JsonObjectEnd))
+    |> addPackageToManifest("dependencies")("json-parser")(JsonStr("*"))
+    |> stringify
+    |> test.assertEqual("{\"dependencies\":{\"json-parser\":\"*\"}}")
+
+let testStringifyIndentedMatchesInitSampleShape unit =
+    JsonObjectEnd
+    |> JsonObject("sourceRoots")(JsonArray(JsonStr("src"))(JsonArrayEnd))
+    |> JsonObject("entry")(JsonStr("src/Main.ash"))
+    |> JsonObject("name")(JsonStr("myapp"))
+    |> stringifyIndented(0)
+    |> test.assertEqual("{\n  \"name\": \"myapp\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ]\n}")
+
+let testStringifyIndentedRendersEmptyCollectionsCompactly unit =
+    JsonObjectEnd
+    |> JsonObject("tags")(JsonArrayEnd)
+    |> JsonObject("dependencies")(JsonObjectEnd)
+    |> stringifyIndented(0)
+    |> test.assertEqual("{\n  \"dependencies\": {},\n  \"tags\": []\n}")
+
+// End-to-end tests below exercise the real filesystem, matching the other commands' own scratch-
+// directory pattern above.
+let addScratchRoot = "cli-add-scratch"
+
+let removeAddScratch unit =
+    match Ashes.IO.Directory.removeTree(addScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let writeAddScratchFile relativePath content =
+    match Ashes.IO.File.writeText(addScratchRoot + "/" + relativePath)(content) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to write scratch file: " + message)
+
+let addManifestPath = addScratchRoot + "/ashes.json"
+
+let testRunAddInProjectCreatesDependenciesFieldWhenMissing unit =
+    (let _ = removeAddScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(addScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeAddScratchFile("ashes.json")("{\"name\":\"app\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}")
+            in
+                let result =
+                    match runAddInProject(addManifestPath)("json-parser")(None)(false) with
+                        | AddSucceeded(packageName, field) ->
+                            packageName
+                            |> test.assertEqual("json-parser")
+                            |> (given (_) ->
+                                field
+                                |> test.assertEqual("dependencies")
+                                |> (given (_) ->
+                                    match Ashes.IO.File.readText(addManifestPath) with
+                                        | Ok(text) -> test.assertEqual("{\n  \"name\": \"app\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ],\n  \"dependencies\": {\n    \"json-parser\": \"*\"\n  }\n}\n")(text)
+                                        | Error(message) -> test.fail("expected the rewritten manifest to be readable: " + message)))
+                        | AddFailed(message) -> test.fail("expected add to succeed: " + message)
+                in
+                    let _ = removeAddScratch(Unit)
+                    in result)
+
+let testRunAddInProjectDevPreservesExistingDependencies unit =
+    (let _ = removeAddScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(addScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeAddScratchFile("ashes.json")("{\"name\":\"app\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"json-parser\":\"*\"}}")
+            in
+                let result =
+                    match runAddInProject(addManifestPath)("test-helper")(None)(true) with
+                        | AddSucceeded(_packageName, field) ->
+                            field
+                            |> test.assertEqual("devDependencies")
+                            |> (given (_) ->
+                                match Ashes.IO.File.readText(addManifestPath) with
+                                    | Ok(text) -> test.assertEqual("{\n  \"name\": \"app\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ],\n  \"dependencies\": {\n    \"json-parser\": \"*\"\n  },\n  \"devDependencies\": {\n    \"test-helper\": \"*\"\n  }\n}\n")(text)
+                                    | Error(message) -> test.fail("expected the rewritten manifest to be readable: " + message))
+                        | AddFailed(message) -> test.fail("expected add to succeed: " + message)
+                in
+                    let _ = removeAddScratch(Unit)
+                    in result)
+
+let testRunAddInProjectWithPathNormalizesSeparators unit =
+    (let _ = removeAddScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(addScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ = writeAddScratchFile("ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}")
+            in
+                let result =
+                    match runAddInProject(addManifestPath)("greet")(Some("..\\dep"))(false) with
+                        | AddSucceeded(_packageName, _field) ->
+                            match Ashes.IO.File.readText(addManifestPath) with
+                                | Ok(text) -> test.assertEqual("{\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ],\n  \"dependencies\": {\n    \"greet\": {\n      \"path\": \"../dep\"\n    }\n  }\n}\n")(text)
+                                | Error(message) -> test.fail("expected the rewritten manifest to be readable: " + message)
+                        | AddFailed(message) -> test.fail("expected add to succeed: " + message)
+                in
+                    let _ = removeAddScratch(Unit)
+                    in result)
+
+let testRunAddInProjectFailsWhenManifestMissing unit =
+    (let _ = removeAddScratch(Unit)
+    in
+        let result =
+            match runAddInProject(addManifestPath)("json-parser")(None)(false) with
+                | AddFailed(_message) -> test.assertEqual(true)(true)
+                | AddSucceeded(_packageName, _field) -> test.fail("expected a missing manifest to fail")
+        in
+            let _ = removeAddScratch(Unit)
+            in result)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -572,6 +771,24 @@ let run unit =
     |> testRenderDependencyTreeCutsCyclesAlongTheSamePath
     |> testRunTreeInProjectRendersDirectDevAndTransitiveDependencies
     |> testRunTreeInProjectFailsWhenManifestMissing
+    |> testParseAddArgumentsHelp
+    |> testParseAddArgumentsShortHelp
+    |> testParseAddArgumentsMissingPackageName
+    |> testParseAddArgumentsPlainPackageName
+    |> testParseAddArgumentsCapturesPathDevAndProject
+    |> testDependencyValueDefaultsToWildcardVersion
+    |> testDependencyValueWithPathNormalizesSeparators
+    |> testSetJsonObjectFieldUpdatesExistingKeyInPlace
+    |> testSetJsonObjectFieldAppendsNewKeyAtEnd
+    |> testAddPackageToManifestCreatesFieldWhenMissing
+    |> testAddPackageToManifestPreservesOtherDependencyField
+    |> testAddPackageToManifestOverwritesExistingPackageEntry
+    |> testStringifyIndentedMatchesInitSampleShape
+    |> testStringifyIndentedRendersEmptyCollectionsCompactly
+    |> testRunAddInProjectCreatesDependenciesFieldWhenMissing
+    |> testRunAddInProjectDevPreservesExistingDependencies
+    |> testRunAddInProjectWithPathNormalizesSeparators
+    |> testRunAddInProjectFailsWhenManifestMissing
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
