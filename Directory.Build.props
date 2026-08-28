@@ -24,6 +24,14 @@
 
     <!-- Respect .editorconfig -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- The codebase already compares strings ordinally throughout (never culture-aware), so
+         culture-aware globalization is dead weight, not a real capability: it pulls in a
+         dependency on system ICU that a "no separate runtimes required" compiler cannot assume
+         is present (confirmed missing on a bare linux-arm64 qemu sysroot). Also removes a latent
+         determinism risk: without this, diagnostic/IR text formatting could theoretically vary by
+         the host machine's locale even though every current call site is already ordinal/invariant. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
     <!-- Analyzers applied to every project (PrivateAssets=all: analyzer-only, not a runtime dep). -->
