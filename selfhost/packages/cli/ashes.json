@@ -7,10 +7,12 @@
   "outDir": "out",
   "dependencies": {
     "AshesCompiler.Frontend": "=0.1.0",
-    "AshesCompiler.Formatter": "=0.1.0"
+    "AshesCompiler.Formatter": "=0.1.0",
+    "AshesCompiler.Semantics": "=0.1.0"
   },
   "overrides": {
     "AshesCompiler.Frontend": { "path": "../frontend" },
-    "AshesCompiler.Formatter": { "path": "../formatter" }
+    "AshesCompiler.Formatter": { "path": "../formatter" },
+    "AshesCompiler.Semantics": { "path": "../semantics" }
   }
 }

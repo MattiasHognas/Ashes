@@ -1,7 +1,9 @@
 import Ashes.Test as test
 import Ashes.Collection.List.length
+import Ashes.IO.Path
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
+import AshesCompiler.Cli.Why
 let testParseFmtArgumentsHelp unit =
     match parseFmtArguments(["--help"]) with
         | FmtHelpRequested -> test.assertEqual(true)(true)
@@ -273,6 +275,149 @@ let testRunInitInDirectoryPreservesExistingMain unit =
                     let _ = removeInitScratch(Unit)
                     in result)
 
+let testParseWhyArgumentsHelp unit =
+    match parseWhyArguments(["--help"]) with
+        | WhyHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseWhyArgumentsShortHelp unit =
+    match parseWhyArguments(["-h"]) with
+        | WhyHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected -h to request help")
+
+let testParseWhyArgumentsMissingTarget unit =
+    match parseWhyArguments([]) with
+        | WhyUsageError(message) -> test.assertEqual("Usage: ashes why <namespace>")(message)
+        | _ -> test.fail("expected zero arguments to be a usage error")
+
+let testParseWhyArgumentsPascalCasesTarget unit =
+    match parseWhyArguments(["some-package"]) with
+        | WhyParsedArguments(WhyArguments { target = target, projectOption = projectOption }) ->
+            target
+            |> test.assertEqual("SomePackage")
+            |> (given (_) -> test.assertEqual(None)(projectOption))
+        | _ -> test.fail("expected a single target to parse")
+
+let testParseWhyArgumentsAcceptsProjectOption unit =
+    match parseWhyArguments(["--project", "other/ashes.json", "base"]) with
+        | WhyParsedArguments(WhyArguments { target = target, projectOption = projectOption }) ->
+            target
+            |> test.assertEqual("Base")
+            |> (given (_) -> test.assertEqual(Some("other/ashes.json"))(projectOption))
+        | _ -> test.fail("expected --project to be captured alongside the target")
+
+let testFindDependencyPathReturnsDirectRoot unit =
+    [("Mid", ["Base"])]
+    |> findDependencyPath(["Mid", "Helper"])("Helper")
+    |> test.assertEqual(Some(["Helper"]))
+
+let testFindDependencyPathReturnsTransitivePath unit =
+    [("Mid", ["Base"]), ("Helper", [])]
+    |> findDependencyPath(["Mid", "Helper"])("Base")
+    |> test.assertEqual(Some(["Mid", "Base"]))
+
+let testFindDependencyPathReturnsNoneWhenMissing unit =
+    [("Mid", ["Base"]), ("Base", [])]
+    |> findDependencyPath(["Mid"])("Missing")
+    |> test.assertEqual(None)
+
+let testFindDependencyPathTerminatesOnCycle unit =
+    [("A", ["B"]), ("B", ["A"])]
+    |> findDependencyPath(["A"])("Missing")
+    |> test.assertEqual(None)
+
+// End-to-end tests below build a real registry-style dependency graph on disk, matching how the
+// selfhost packages themselves declare dependencies (a `dependencies`/`devDependencies` registry
+// entry paired with a same-named `overrides` path, e.g. selfhost/packages/cli/ashes.json): `why`
+// reads root namespaces from the manifest and edges from the lock file, so `app` directly overrides
+// `Mid` and (as a devDependency) `Testing`, and the hand-written lock records that `Mid` itself
+// depends on `Base` — a namespace that never needs to exist on disk, since BFS only ever consults
+// lock-recorded edges (mirroring stage 0's own `ReadLockGraph`/`FindPath`, never live resolution).
+let whyScratchRoot = "cli-why-scratch"
+
+let removeWhyScratch unit =
+    match Ashes.IO.Directory.removeTree(whyScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let requireWhyUnit name result =
+    match result with
+        | Ok(_) -> Unit
+        | Error(error) -> test.fail(name + " failed: " + error)
+
+let writeWhyFile relativePath contents =
+    contents
+    |> Ashes.IO.File.writeText(whyScratchRoot + "/" + relativePath)
+    |> requireWhyUnit("write " + relativePath)
+
+let createWhyDirectory relativePath =
+    whyScratchRoot + "/" + relativePath
+    |> Ashes.IO.Directory.createAll
+    |> requireWhyUnit("create " + relativePath)
+
+let prepareWhyFixture unit =
+    Unit
+    |> removeWhyScratch
+    |> (given (_) -> createWhyDirectory("app/src"))
+    |> (given (_) -> createWhyDirectory("mid/src"))
+    |> (given (_) -> createWhyDirectory("helper/src"))
+    |> (given (_) -> writeWhyFile("app/src/Main.ash")("0"))
+    |> (given (_) -> writeWhyFile("mid/src/Mid.ash")("0"))
+    |> (given (_) -> writeWhyFile("helper/src/Testing.ash")("0"))
+    |> (given (_) -> writeWhyFile("mid/ashes.json")("{\"name\":\"mid\",\"namespace\":\"Mid\",\"version\":\"0.1.0\",\"entry\":\"src/Mid.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeWhyFile("helper/ashes.json")("{\"name\":\"helper\",\"namespace\":\"Testing\",\"version\":\"0.1.0\",\"entry\":\"src/Testing.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeWhyFile("app/ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"Mid\":\"=0.1.0\"},\"devDependencies\":{\"Testing\":\"=0.1.0\"},\"overrides\":{\"Mid\":{\"path\":\"../mid\"},\"Testing\":{\"path\":\"../helper\"}}}"))
+    |> (given (_) -> writeWhyFile("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Mid\",\"version\":\"0.1.0\",\"source\":\"registry+https://pkg.ashes-lang.org\",\"hash\":\"ash1:0000000000000000000000000000000000000000000000000000000000000\",\"dependencies\":[\"Base\"]},{\"namespace\":\"Testing\",\"version\":\"0.1.0\",\"source\":\"registry+https://pkg.ashes-lang.org\",\"hash\":\"ash1:0000000000000000000000000000000000000000000000000000000000001\",\"dependencies\":[]}]}"))
+
+let whyAppManifestPath = whyScratchRoot + "/app/ashes.json"
+
+let testRunWhyInProjectFindsTransitivePath unit =
+    (let _ = prepareWhyFixture(Unit)
+    in
+        let result =
+            match runWhyInProject(Unix)(whyAppManifestPath)("Base") with
+                | WhyFound(path) -> test.assertEqual(["Mid", "Base"])(path)
+                | WhyNotFound(target) -> test.fail("expected Base to be found via Mid, got not-found for " + target)
+                | WhyFailed(message) -> test.fail("expected why to succeed: " + message)
+        in
+            let _ = removeWhyScratch(Unit)
+            in result)
+
+let testRunWhyInProjectFindsDirectDevDependency unit =
+    (let _ = prepareWhyFixture(Unit)
+    in
+        let result =
+            match runWhyInProject(Unix)(whyAppManifestPath)("Testing") with
+                | WhyFound(path) -> test.assertEqual(["Testing"])(path)
+                | WhyNotFound(target) -> test.fail("expected Testing to be found directly, got not-found for " + target)
+                | WhyFailed(message) -> test.fail("expected why to succeed: " + message)
+        in
+            let _ = removeWhyScratch(Unit)
+            in result)
+
+let testRunWhyInProjectReportsNotFoundForUnrelatedNamespace unit =
+    (let _ = prepareWhyFixture(Unit)
+    in
+        let result =
+            match runWhyInProject(Unix)(whyAppManifestPath)("Nowhere") with
+                | WhyFound(path) -> test.fail("expected Nowhere not to be a dependency, found path " + Ashes.Text.join(" -> ")(path))
+                | WhyNotFound(target) -> test.assertEqual("Nowhere")(target)
+                | WhyFailed(message) -> test.fail("expected why to succeed: " + message)
+        in
+            let _ = removeWhyScratch(Unit)
+            in result)
+
+let testRunWhyInProjectFailsWhenManifestMissing unit =
+    (let _ = removeWhyScratch(Unit)
+    in
+        let result =
+            match runWhyInProject(Unix)(whyAppManifestPath)("Base") with
+                | WhyFailed(_message) -> test.assertEqual(true)(true)
+                | _ -> test.fail("expected a missing manifest to fail")
+        in
+            let _ = removeWhyScratch(Unit)
+            in result)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -299,6 +444,19 @@ let run unit =
     |> testRunInitInDirectoryScaffoldsProject
     |> testRunInitInDirectoryFailsWhenManifestExists
     |> testRunInitInDirectoryPreservesExistingMain
+    |> testParseWhyArgumentsHelp
+    |> testParseWhyArgumentsShortHelp
+    |> testParseWhyArgumentsMissingTarget
+    |> testParseWhyArgumentsPascalCasesTarget
+    |> testParseWhyArgumentsAcceptsProjectOption
+    |> testFindDependencyPathReturnsDirectRoot
+    |> testFindDependencyPathReturnsTransitivePath
+    |> testFindDependencyPathReturnsNoneWhenMissing
+    |> testFindDependencyPathTerminatesOnCycle
+    |> testRunWhyInProjectFindsTransitivePath
+    |> testRunWhyInProjectFindsDirectDevDependency
+    |> testRunWhyInProjectReportsNotFoundForUnrelatedNamespace
+    |> testRunWhyInProjectFailsWhenManifestMissing
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
