@@ -26,7 +26,7 @@ changed merely to make the self-hosted port easier.
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
 | IR, optimizer, ownership, backend, linker | Complete IR model/text form plus core lowering for constants, lexical locals, calls, closures, captures, control flow, recursion, structural values and patterns, operators, BigInt literals, and the shipped non-async/non-FFI builtin operations | In progress; external/evidence/async lowering, optimization, ownership, backend, and linking remain |
-| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined, but the tools are not ported | Not started |
+| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined; `fmt` is ported (see the checklist below) | Started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
 
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
@@ -1617,8 +1617,30 @@ same public behavior.
   status.
 - [ ] Implement the stateful `repl`, target/optimization commands, recovery after diagnostics, and
   deterministic cleanup.
-- [ ] Implement `fmt` discovery, preview/write behavior, project awareness, malformed-file handling, and
-  canonical exit codes.
+- [~] Implement `fmt` discovery, preview/write behavior, project awareness, malformed-file handling, and
+  canonical exit codes. A new `selfhost/packages/cli` package (`Fmt.ash`, depending only on the
+  already-complete `frontend` and `formatter`) implements the observable contract
+  (`docs/md/reference/cli.md#ashes-fmt`): recursive `.ash` discovery under a directory (sorted,
+  deterministic), the `-w`/`--write` vs. preview split, only rewriting a file whose formatted
+  content actually changed, the inline-`module`-block skip carve-out (reusing
+  `AshesCompiler.Frontend.InlineModules.containsInlineModule`, not reimplementing it), and stage
+  0's exact `0`/`1`/`2` exit-code split (a missing path is a *user* error, exit 1; an ambiguous
+  invocation — wrong argument count, a bare `-w` with no path — is a *usage* error, exit 2).
+  Verified against stage 0 byte-for-byte: `fmt`'s `-w` output on a real repository file
+  (`tests/trait_deriving.ash`) is identical to this port's own output for the same file (a raw
+  stdout *preview* diff is not a valid comparison for this — Spectre.Console line-wraps
+  `AnsiConsole.Write` output to a fixed console width when stdout is piped to a non-TTY, which
+  cosmetically splits long lines/comments with no relationship to the canonical formatted text;
+  the `-w` path writes via a plain file write and is unaffected). **Deliberately deferred, noted
+  as open follow-ups in the port's own header comment**: `.editorconfig` resolution
+  (`indent_style`/`indent_size`/`tab_width`/`end_of_line`; `formatSource` always applies the
+  formatter's fixed 4-space/`\n` defaults) and the elapsed-time clause in the write-mode summary
+  line (no monotonic-clock capability is shipped in `Ashes.IO` yet). "Project awareness" turned
+  out to mean only the inline-module carve-out above — stage 0's own `fmt` handler
+  (`src/Ashes.Cli/Program.cs`) does not consult `ashes.json`/project discovery at all, contrary to
+  what the phrase suggests. Tested end-to-end against the real filesystem (a scratch directory
+  tree, matching `tests/io_directory_operations.ash`'s own pattern) in
+  `selfhost/tests/cli/Main.ash`, not just against in-memory strings.
 - [ ] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
   dependencies, lock files, frozen/offline modes, and the content-addressed source cache. Contract:
   [Projects](../guide/projects.md) and [Package manager](../internals/architecture.md#package-manager); source of truth

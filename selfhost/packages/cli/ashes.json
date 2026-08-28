@@ -1,0 +1,16 @@
+{
+  "name": "ashes-compiler-cli",
+  "namespace": "AshesCompiler.Cli",
+  "version": "0.1.0",
+  "entry": "Package.ash",
+  "sourceRoots": ["src"],
+  "outDir": "out",
+  "dependencies": {
+    "AshesCompiler.Frontend": "=0.1.0",
+    "AshesCompiler.Formatter": "=0.1.0"
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../frontend" },
+    "AshesCompiler.Formatter": { "path": "../formatter" }
+  }
+}
