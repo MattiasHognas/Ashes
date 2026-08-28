@@ -26,7 +26,7 @@ changed merely to make the self-hosted port easier.
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
 | IR, optimizer, ownership, backend, linker | Complete IR model/text form plus core lowering for constants, lexical locals, calls, closures, captures, control flow, recursion, structural values and patterns, operators, BigInt literals, and the shipped non-async/non-FFI builtin operations | In progress; external/evidence/async lowering, optimization, ownership, backend, and linking remain |
-| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined; `fmt` is ported (see the checklist below) | Started |
+| CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined; `fmt` and `init` are ported (see the checklist below) | Started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
 
 The current packages intentionally form the same strict dependency graph as the existing toolchain:
@@ -1641,10 +1641,18 @@ same public behavior.
   what the phrase suggests. Tested end-to-end against the real filesystem (a scratch directory
   tree, matching `tests/io_directory_operations.ash`'s own pattern) in
   `selfhost/tests/cli/Main.ash`, not just against in-memory strings.
-- [ ] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
+- [~] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
   dependencies, lock files, frozen/offline modes, and the content-addressed source cache. Contract:
   [Projects](../guide/projects.md) and [Package manager](../internals/architecture.md#package-manager); source of truth
   `src/Ashes.Semantics/ProjectSupport.cs` (manifest, planning, stitching) and the CLI commands.
+  `init` is ported (`Init.ash` in `selfhost/packages/cli`, the smallest of the six — no discovery,
+  no dependency graph, just existence checks plus two fixed-shape file writes): a bare `--help`/
+  `-h` prints usage, any other argument is a usage error, an existing `ashes.json` in the target
+  directory fails without writing anything, and otherwise it writes the manifest (`name` from the
+  directory's own basename, `entry`/`sourceRoots` fixed) and `src/Main.ash` (only if absent, never
+  overwriting a file the user already has there) — verified byte-for-byte identical to stage 0's
+  own output (`RunInit` in `src/Ashes.Cli/Program.cs`) for both files, and the same "already
+  exists" exit code. `add`, `remove`, `restore`, `tree`, and `why` remain unported.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).

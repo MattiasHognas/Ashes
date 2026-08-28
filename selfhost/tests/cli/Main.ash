@@ -1,6 +1,7 @@
 import Ashes.Test as test
 import Ashes.Collection.List.length
 import AshesCompiler.Cli.Fmt
+import AshesCompiler.Cli.Init
 let testParseFmtArgumentsHelp unit =
     match parseFmtArguments(["--help"]) with
         | FmtHelpRequested -> test.assertEqual(true)(true)
@@ -173,6 +174,105 @@ let testRunFmtReportsUsageErrorExitCode unit =
     |> runFmt
     |> test.assertEqual(1)
 
+let testParseInitArgumentsAcceptsNoArguments unit =
+    match parseInitArguments([]) with
+        | InitParsedArguments -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected no arguments to parse")
+
+let testParseInitArgumentsAcceptsHelp unit =
+    match parseInitArguments(["--help"]) with
+        | InitHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseInitArgumentsRejectsExtraArguments unit =
+    match parseInitArguments(["unexpected"]) with
+        | InitUsageError(message) -> test.assertEqual("Unknown argument.")(message)
+        | _ -> test.fail("expected an unexpected argument to be a usage error")
+
+let testInitProjectJsonMatchesStage0Format unit =
+    "myapp"
+    |> initProjectJson
+    |> test.assertEqual("{\n  \"name\": \"myapp\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ]\n}\n")
+
+// End-to-end tests below exercise the real filesystem, matching the fmt tests' own scratch-
+// directory pattern above (a separate scratch root, so the two test groups never interfere).
+let initScratchRoot = "cli-init-scratch"
+
+let removeInitScratch unit =
+    match Ashes.IO.Directory.removeTree(initScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let testRunInitInDirectoryScaffoldsProject unit =
+    (let _ = removeInitScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(initScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let result =
+                match runInitInDirectory(initScratchRoot) with
+                    | InitSucceeded ->
+                        match Ashes.IO.File.readText(initScratchRoot + "/ashes.json") with
+                            | Error(message) -> test.fail("expected ashes.json to be readable: " + message)
+                            | Ok(manifestText) ->
+                                manifestText
+                                |> test.assertEqual(initProjectJson(initScratchRoot))
+                                |> (given (_) ->
+                                    match Ashes.IO.File.readText(initScratchRoot + "/src/Main.ash") with
+                                        | Error(message) -> test.fail("expected src/Main.ash to be readable: " + message)
+                                        | Ok(mainText) -> test.assertEqual("Ashes.IO.print(\"hello, ashes!\")\n")(mainText))
+                    | InitFailed(message) -> test.fail("expected scaffolding to succeed: " + message)
+            in
+                let _ = removeInitScratch(Unit)
+                in result)
+
+let testRunInitInDirectoryFailsWhenManifestExists unit =
+    (let _ = removeInitScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(initScratchRoot) with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ =
+                match Ashes.IO.File.writeText(initScratchRoot + "/ashes.json")("{}") with
+                    | Ok(_) -> Unit
+                    | Error(message) -> test.fail("failed to write scratch manifest: " + message)
+            in
+                let result =
+                    match runInitInDirectory(initScratchRoot) with
+                        | InitFailed(message) -> test.assertEqual("ashes.json already exists in this directory.")(message)
+                        | InitSucceeded -> test.fail("expected an existing manifest to fail init")
+                in
+                    let _ = removeInitScratch(Unit)
+                    in result)
+
+let testRunInitInDirectoryPreservesExistingMain unit =
+    (let _ = removeInitScratch(Unit)
+    in
+        let _ =
+            match Ashes.IO.Directory.createAll(initScratchRoot + "/src") with
+                | Ok(_) -> Unit
+                | Error(message) -> test.fail("failed to create scratch directory: " + message)
+        in
+            let _ =
+                match Ashes.IO.File.writeText(initScratchRoot + "/src/Main.ash")("Ashes.IO.print(\"custom\")\n") with
+                    | Ok(_) -> Unit
+                    | Error(message) -> test.fail("failed to write scratch Main.ash: " + message)
+            in
+                let result =
+                    match runInitInDirectory(initScratchRoot) with
+                        | InitFailed(message) -> test.fail("expected scaffolding to succeed: " + message)
+                        | InitSucceeded ->
+                            match Ashes.IO.File.readText(initScratchRoot + "/src/Main.ash") with
+                                | Error(message) -> test.fail("expected src/Main.ash to be readable: " + message)
+                                | Ok(mainText) -> test.assertEqual("Ashes.IO.print(\"custom\")\n")(mainText)
+                in
+                    let _ = removeInitScratch(Unit)
+                    in result)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -192,6 +292,13 @@ let run unit =
     |> testRunFmtWritesInPlaceOnlyWhenChanged
     |> testRunFmtOnEmptyDirectorySucceeds
     |> testRunFmtReportsUsageErrorExitCode
-    |> (given (_) -> Ashes.IO.print("all self-hosted cli fmt tests passed"))
+    |> testParseInitArgumentsAcceptsNoArguments
+    |> testParseInitArgumentsAcceptsHelp
+    |> testParseInitArgumentsRejectsExtraArguments
+    |> testInitProjectJsonMatchesStage0Format
+    |> testRunInitInDirectoryScaffoldsProject
+    |> testRunInitInDirectoryFailsWhenManifestExists
+    |> testRunInitInDirectoryPreservesExistingMain
+    |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
