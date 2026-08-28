@@ -7242,8 +7242,32 @@ public sealed partial class Lowering
         return (envPtrTemp, captureAllocIndex, fillRanges);
     }
 
+    // A saturated call to a fresh-result helper is only ever spliced into this lambda's own body
+    // (needing the helper's transitive captures visible here too) inside a reuse arm or a
+    // specialization body — `_reuseTokens.Count > 0` / `_inSpecialization`, both ambient state
+    // already current by the time captures are computed. Outside both, a call this lambda makes to
+    // such a helper stays an ordinary closure call: the helper keeps its own environment, so its
+    // transitive dependencies must not be duplicated into this lambda's — each redundant slot
+    // doubles up memory the helper's own closure already owns (e.g. Ord's `compareComposite`
+    // capturing its own `strCompare` reference, which an ordinary caller like `get` never needs).
+    //
+    // A TCO loop's own back-edge argument is a third splice site (`_loweringTcoBackEdgeArguments`),
+    // but that flag is only live once BODY lowering reaches the self-call's arguments — captures for
+    // the loop's own closure are computed once, up front, before body lowering starts, so it is
+    // always false here even for a loop that does splice a helper into a back-edge argument.
+    // Recovering that case needs predicting which self-tail-call argument will inline before body
+    // lowering runs; an earlier attempt at that static prediction changed which of the two lowering
+    // passes ends up determining the final capture set (order-sensitive in a way not tied to this
+    // function's own logic), regressing a passing reuse-specialization test through a channel this
+    // function does not otherwise touch. Left unhandled: reuse-specialization through a TCO-inlined
+    // intermediate helper falls back to an ordinary (still correct, just not list-reusing) call.
     private void ExpandFreshInlinableCaptures(HashSet<string> free, IReadOnlySet<string> outerBound)
     {
+        if (!_inSpecialization && _reuseTokens.Count == 0)
+        {
+            return;
+        }
+
         foreach (string helperName in free.ToArray())
         {
             if (!_inlinableFunctions.TryGetValue(helperName, out var helper)
