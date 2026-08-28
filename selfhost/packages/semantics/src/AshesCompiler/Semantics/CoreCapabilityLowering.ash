@@ -75,13 +75,56 @@ let recursive findCapabilityOperationIndex (opName: Str) (ops: List(CoreCapabili
             then Some(idx)
             else findCapabilityOperationIndex(opName)(tail)
 
-let recursive findStaticProvider (capabilityName: Str) (providers: List(CoreStaticProviderLayout)) =
+let recursive findStaticProviderExact (capabilityName: Str) (requiredTypeArguments: List(SemanticType)) (providers: List(CoreStaticProviderLayout)) =
     match providers with
         | [] -> None
-        | (CoreStaticProviderLayout { capabilityName = candidate } as provider) :: tail ->
-            if capabilityName == candidate
-            then Some(provider)
-            else findStaticProvider(capabilityName)(tail)
+        | (CoreStaticProviderLayout { capabilityName = candidateName, typeArguments = candidateArguments } as provider) :: tail ->
+            if capabilityName == candidateName
+            then
+                if requiredTypeArguments == candidateArguments
+                then Some(provider)
+                else findStaticProviderExact(capabilityName)(requiredTypeArguments)(tail)
+            else findStaticProviderExact(capabilityName)(requiredTypeArguments)(tail)
+
+let recursive collectStaticProvidersByName (capabilityName: Str) (providers: List(CoreStaticProviderLayout)) =
+    match providers with
+        | [] -> []
+        | (CoreStaticProviderLayout { capabilityName = candidateName } as provider) :: tail ->
+            if capabilityName == candidateName
+            then provider :: collectStaticProvidersByName(capabilityName)(tail)
+            else collectStaticProvidersByName(capabilityName)(tail)
+
+let recursive allStaticProvidersShareTypeArguments (typeArguments: List(SemanticType)) (providers: List(CoreStaticProviderLayout)) =
+    match providers with
+        | [] -> true
+        | CoreStaticProviderLayout { typeArguments = candidateArguments } :: tail ->
+            if typeArguments == candidateArguments
+            then allStaticProvidersShareTypeArguments(typeArguments)(tail)
+            else false
+
+// Stage 0 registers a static provider under a key built from capability name AND resolved type
+// arguments (`Lowering.Capabilities.cs`'s `BuildProviderKey`), so `provide Log(Int)` and
+// `provide Log(Str)` are two distinct, individually valid registrations that a name-only lookup
+// can never tell apart. When the caller supplies `requiredTypeArguments` (known concrete type(s)
+// for this call site), match on both name and type arguments exactly — sound because a `provide`
+// declaration's own type arguments are always concrete (no free variables), so structural equality
+// is meaningful regardless of which pass produced either side. When the caller doesn't know the
+// required type arguments yet (`[]` — CoreLowering.ash's own call site has no way to derive them
+// today), fall back to matching by name alone, but only when every candidate for that name shares
+// the SAME type arguments (including the common case of a non-generic capability, where every
+// provider's type arguments are trivially `[]` too) — a name match across genuinely DIFFERENT type
+// arguments is ambiguous and correctly reports no match rather than silently picking whichever
+// provider happens to be listed first.
+let findStaticProvider (capabilityName: Str) (requiredTypeArguments: List(SemanticType)) (providers: List(CoreStaticProviderLayout)) =
+    match requiredTypeArguments with
+        | [] ->
+            match collectStaticProvidersByName(capabilityName)(providers) with
+                | [] -> None
+                | (CoreStaticProviderLayout { typeArguments = firstArguments } as first) :: rest ->
+                    if allStaticProvidersShareTypeArguments(firstArguments)(rest)
+                    then Some(first)
+                    else None
+        | _ -> findStaticProviderExact(capabilityName)(requiredTypeArguments)(providers)
 
 let recursive findProviderOperation (opName: Str) (operations: List((Str, Expr))) =
     match operations with

@@ -3985,7 +3985,12 @@ let lowerPerform operation lower state =
             else
                 match state with
                     | CoreLoweringState { capabilityLayouts = capLayouts, staticProviders = providers, capabilityGlobalCount = globalCount } ->
-                        match findStaticProvider(capName)(providers) with
+                        // No whole-program entry point wires real ProviderInfo into `providers` yet
+                        // (see docs/md/future/SELF_HOSTING.md's "generic capability evidence" item),
+                        // so this call site has no per-call-site type argument to disambiguate with
+                        // — `[]` correctly matches by capability name alone, ambiguous only when two
+                        // registered providers for the same name genuinely differ.
+                        match findStaticProvider(capName)([])(providers) with
                             | Some(provider) ->
                                 match findProviderOperation(opName)(provider.operations) with
                                     | Some(implExpr) ->
