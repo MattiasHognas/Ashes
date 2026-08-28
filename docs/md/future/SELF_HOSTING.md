@@ -1695,7 +1695,23 @@ same public behavior.
   against a hand-built three-package registry+override fixture end-to-end (the shape every real
   selfhost package's own manifest takes) — the shape that surfaced a genuine stage-0 compiler bug
   in argument retention across a curried call boundary, fixed in #663, not a `why`-specific issue.
-  `add`, `remove`, `restore`, and `tree` remain unported.
+  `tree` is ported (`Tree.ash` in `selfhost/packages/cli`, reusing `why`'s project/lock-file
+  infrastructure and its BFS-adjacent root-dependency resolution): renders the resolved dependency
+  tree (project root, its own direct `dependencies`/`devDependencies` in that order, then each
+  one's lock-recorded transitive dependencies) as plain-text guide-connected lines (`└── `/`├── `
+  with `    `/`│   ` continuations, matching the CLI reference's own example rendering byte for
+  byte) rather than stage 0's Spectre.Console `Tree` widget markup, a namespace shared by two
+  branches expanded in both while a cycle along a single path is cut and marked `(cycle)`, and a
+  path dependency suffixed `(path)` instead of a lock version. Verified with pure unit tests over
+  `renderDependencyTree` (root-only, direct+transitive, path-dependency-and-sibling-ordering,
+  cycle) and an end-to-end scratch two-package registry+override fixture matching `why`'s own.
+  Porting it surfaced a real Ashes inference gotcha, not a stage-0 bug: an unannotated self-recursive
+  helper built on `==` (`containsNamespace`-shaped) left ambiguous inside a project with several
+  other call chains reports `ASH010`/"no hidden dictionary parameter" with the location pinned to
+  the project's entry file rather than the helper itself; the existing `containsText` helper in
+  `ProjectDependencyGraph.ash` already carries the fix as its own convention — annotate such a
+  helper's parameters explicitly (`(namespace: Str) (list: List(Str))`) rather than leaving them
+  fully polymorphic. `add`, `remove`, and `restore` remain unported.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).

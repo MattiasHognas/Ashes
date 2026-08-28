@@ -3,6 +3,7 @@ import Ashes.Collection.List.length
 import Ashes.IO.Path
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
+import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 let testParseFmtArgumentsHelp unit =
     match parseFmtArguments(["--help"]) with
@@ -418,6 +419,110 @@ let testRunWhyInProjectFailsWhenManifestMissing unit =
             let _ = removeWhyScratch(Unit)
             in result)
 
+let testParseTreeArgumentsHelp unit =
+    match parseTreeArguments(["--help"]) with
+        | TreeHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseTreeArgumentsShortHelp unit =
+    match parseTreeArguments(["-h"]) with
+        | TreeHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected -h to request help")
+
+let testParseTreeArgumentsNoArguments unit =
+    match parseTreeArguments([]) with
+        | TreeParsedArguments(TreeArguments { projectOption = projectOption }) -> test.assertEqual(None)(projectOption)
+        | _ -> test.fail("expected zero arguments to parse with no project override")
+
+let testParseTreeArgumentsAcceptsProjectOption unit =
+    match parseTreeArguments(["--project", "other/ashes.json"]) with
+        | TreeParsedArguments(TreeArguments { projectOption = projectOption }) -> test.assertEqual(Some("other/ashes.json"))(projectOption)
+        | _ -> test.fail("expected --project to be captured")
+
+let testRenderDependencyTreeRendersRootOnlyWithNoDependencies unit =
+    []
+    |> renderDependencyTree("app")([])([])
+    |> test.assertEqual(["app"])
+
+let testRenderDependencyTreeRendersDirectAndTransitiveDependencies unit =
+    [("Json", "1.2.0"), ("Utf8", "0.4.3")]
+    |> renderDependencyTree("app")([("Json", false)])([("Json", ["Utf8"])])
+    |> test.assertEqual(["app", "└── Json 1.2.0", "    └── Utf8 0.4.3"])
+
+let testRenderDependencyTreeMarksPathDependenciesAndSeparatesSiblings unit =
+    [("Testing", "0.1.0")]
+    |> renderDependencyTree("app")([("Mid", true), ("Testing", false)])([("Mid", ["Base"])])
+    |> test.assertEqual(["app", "├── Mid (path)", "│   └── Base ?", "└── Testing 0.1.0"])
+
+let testRenderDependencyTreeCutsCyclesAlongTheSamePath unit =
+    []
+    |> renderDependencyTree("app")([("A", false)])([("A", ["B"]), ("B", ["A"])])
+    |> test.assertEqual(["app", "└── A ?", "    └── B ?", "        └── A (cycle)"])
+
+// End-to-end tests below build a real registry-style dependency graph on disk, mirroring the
+// `why` fixture above (`app` overrides a registry dependency `Mid` and a devDependency
+// `Testing`, and the hand-written lock records that `Mid` itself depends on `Base`, a namespace
+// that never needs to exist on disk since the tree is rendered purely from lock-recorded edges).
+let treeScratchRoot = "cli-tree-scratch"
+
+let removeTreeScratch unit =
+    match Ashes.IO.Directory.removeTree(treeScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let requireTreeUnit name result =
+    match result with
+        | Ok(_) -> Unit
+        | Error(error) -> test.fail(name + " failed: " + error)
+
+let writeTreeFile relativePath contents =
+    contents
+    |> Ashes.IO.File.writeText(treeScratchRoot + "/" + relativePath)
+    |> requireTreeUnit("write " + relativePath)
+
+let createTreeDirectory relativePath =
+    treeScratchRoot + "/" + relativePath
+    |> Ashes.IO.Directory.createAll
+    |> requireTreeUnit("create " + relativePath)
+
+let prepareTreeFixture unit =
+    Unit
+    |> removeTreeScratch
+    |> (given (_) -> createTreeDirectory("app/src"))
+    |> (given (_) -> createTreeDirectory("mid/src"))
+    |> (given (_) -> createTreeDirectory("helper/src"))
+    |> (given (_) -> writeTreeFile("app/src/Main.ash")("0"))
+    |> (given (_) -> writeTreeFile("mid/src/Mid.ash")("0"))
+    |> (given (_) -> writeTreeFile("helper/src/Testing.ash")("0"))
+    |> (given (_) -> writeTreeFile("mid/ashes.json")("{\"name\":\"mid\",\"namespace\":\"Mid\",\"version\":\"0.1.0\",\"entry\":\"src/Mid.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeTreeFile("helper/ashes.json")("{\"name\":\"helper\",\"namespace\":\"Testing\",\"version\":\"0.1.0\",\"entry\":\"src/Testing.ash\",\"sourceRoots\":[\"src\"]}"))
+    |> (given (_) -> writeTreeFile("app/ashes.json")("{\"name\":\"app\",\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"Mid\":\"=0.1.0\"},\"devDependencies\":{\"Testing\":\"=0.1.0\"},\"overrides\":{\"Mid\":{\"path\":\"../mid\"},\"Testing\":{\"path\":\"../helper\"}}}"))
+    |> (given (_) -> writeTreeFile("app/ashes.lock")("{\"version\":1,\"package\":[{\"namespace\":\"Mid\",\"version\":\"0.1.0\",\"source\":\"registry+https://pkg.ashes-lang.org\",\"hash\":\"ash1:0000000000000000000000000000000000000000000000000000000000000\",\"dependencies\":[\"Base\"]},{\"namespace\":\"Testing\",\"version\":\"0.1.0\",\"source\":\"registry+https://pkg.ashes-lang.org\",\"hash\":\"ash1:0000000000000000000000000000000000000000000000000000000000001\",\"dependencies\":[]}]}"))
+
+let treeAppManifestPath = treeScratchRoot + "/app/ashes.json"
+
+let testRunTreeInProjectRendersDirectDevAndTransitiveDependencies unit =
+    (let _ = prepareTreeFixture(Unit)
+    in
+        let result =
+            match runTreeInProject(Unix)(treeAppManifestPath) with
+                | TreeRendered(text) -> test.assertEqual("app\n├── Mid 0.1.0\n│   └── Base ?\n└── Testing 0.1.0")(text)
+                | TreeFailed(message) -> test.fail("expected tree to succeed: " + message)
+        in
+            let _ = removeTreeScratch(Unit)
+            in result)
+
+let testRunTreeInProjectFailsWhenManifestMissing unit =
+    (let _ = removeTreeScratch(Unit)
+    in
+        let result =
+            match runTreeInProject(Unix)(treeAppManifestPath) with
+                | TreeFailed(_message) -> test.assertEqual(true)(true)
+                | TreeRendered(_text) -> test.fail("expected a missing manifest to fail")
+        in
+            let _ = removeTreeScratch(Unit)
+            in result)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -457,6 +562,16 @@ let run unit =
     |> testRunWhyInProjectFindsDirectDevDependency
     |> testRunWhyInProjectReportsNotFoundForUnrelatedNamespace
     |> testRunWhyInProjectFailsWhenManifestMissing
+    |> testParseTreeArgumentsHelp
+    |> testParseTreeArgumentsShortHelp
+    |> testParseTreeArgumentsNoArguments
+    |> testParseTreeArgumentsAcceptsProjectOption
+    |> testRenderDependencyTreeRendersRootOnlyWithNoDependencies
+    |> testRenderDependencyTreeRendersDirectAndTransitiveDependencies
+    |> testRenderDependencyTreeMarksPathDependenciesAndSeparatesSiblings
+    |> testRenderDependencyTreeCutsCyclesAlongTheSamePath
+    |> testRunTreeInProjectRendersDirectDevAndTransitiveDependencies
+    |> testRunTreeInProjectFailsWhenManifestMissing
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
