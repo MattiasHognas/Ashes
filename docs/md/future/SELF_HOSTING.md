@@ -396,27 +396,40 @@ same public behavior.
   control flow, the posts-fold mechanism: #642, exercised end-to-end by every one-shot test since).
 - [~] Lower static-provider dictionaries and generic capability evidence into IR. Static-provider
   dictionaries: done and tested (`emitStaticProviderCall`, `CoreCapabilityLowering.ash`). Generic
-  capability evidence: **confirmed reachable gap, not yet fixed**. Stage 0 registers a static
-  provider under a key built from its capability name AND its resolved type arguments
+  capability evidence: **matching logic fixed; whole-program wiring still open.** Stage 0 registers
+  a static provider under a key built from its capability name AND its resolved type arguments
   (`Lowering.Capabilities.cs`'s `BuildProviderKey`/`_providers`), so `provide Log(Int)` and
   `provide Log(Str)` in the same program are two distinct, individually valid registrations —
   inference's own ambiguity rejection (ASH026/ASH027, the item above this section) only fires on
   two providers sharing the exact same key, never on two providers sharing only a capability name,
   so it does NOT guarantee `staticProviders` is free of same-named entries the way handler-arm
-  completeness turned out to already be enforced at the inference phase. `findStaticProvider`
-  matches by `capabilityName` alone and ignores `CoreStaticProviderLayout.typeArguments` entirely,
-  so it can never distinguish the two: `findStaticProvider("Log")([intProvider, strProvider])`
-  always returns whichever provider is listed first, regardless of `typeArguments` or list order,
-  proven directly (both orderings) by
-  `testStaticProviderGenericEvidenceAmbiguityIsUnresolved` in
-  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`. Fixing this needs the same
-  prerequisite the call-site trait-dictionary forwarding gap above is blocked on
-  (`CoreLowering.ash`'s own local type reconstruction becoming constraint-aware, or merging it with
-  the external inference pass) — there is also no whole-program entry point wiring real
-  `ProviderInfo` into `CoreStaticProviderLayout` yet (`CoreStaticProviderLayout(...)` is
-  constructed nowhere outside test fixtures), so this is not reachable through the current
-  production pipeline yet either, the same situation the trait-evidence item was in before
-  `lowerCoreProgramWithEnvironment` existed.
+  completeness turned out to already be enforced at the inference phase. `findStaticProvider` used
+  to match by `capabilityName` alone, ignoring `CoreStaticProviderLayout.typeArguments` entirely, so
+  it could never distinguish the two. **Fixed**: `findStaticProvider` now also takes the caller's
+  own `requiredTypeArguments : List(SemanticType)`. Given a specific, concrete type argument (the
+  common case — a `provide` declaration's own type arguments are always concrete, no free
+  variables, so structural equality is meaningful regardless of which pass produced either side),
+  it picks the exactly-matching provider regardless of registration order
+  (`expectExactTypeArgumentsSelectTheMatchingProvider`,
+  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`). Given `[]` (the only shape
+  `CoreLowering.ash`'s own call site, `lowerPerform`, can supply today), it matches by name alone
+  only when every candidate for that name shares the same type arguments — including the common
+  case of a non-generic capability — and correctly reports no match (ambiguous) rather than
+  silently picking whichever provider is listed first when they genuinely diverge
+  (`expectAmbiguousProvidersWithoutRequiredTypeArgumentsAreUnresolved`).
+  **Still open, deliberately out of scope for this fix**: unlike the call-site trait-dictionary
+  forwarding gap above (fixed via a pure pre-lowering AST rewrite over the external
+  `TypeEnvironment`), there is no analogous existing whole-program entry point here to extend —
+  `CoreStaticProviderLayout(...)` is still constructed nowhere outside test fixtures, so
+  `lowerPerform`'s static-provider branch remains unreachable from a real compile.
+  `TypeEnvironment.providers : List(CapabilityProviderInferenceDefinition)` carries each provider's
+  resolved `capabilityType`, but `CapabilityProviderOperationInferenceDefinition` only carries an
+  operation's `name`/`semanticType`, not its implementation `Expr` — wiring real provider info needs
+  new infrastructure to also walk the parsed program's own `ProviderDecl` AST nodes for those
+  bodies, not just a `TypeEnvironment` lookup (a bigger, separate slice). Even once that exists,
+  deriving `lowerPerform`'s own `requiredTypeArguments` per call site is not always as simple as
+  reading an argument's type — an operation whose capability type parameter appears in RETURN
+  position (e.g. `State`'s `get : Unit -> a`) has no argument to read it from at all.
 - [ ] Validate capability explanations and observable behavior against normal, optimization-disabled,
   and reuse-disabled C# compilation.
 
