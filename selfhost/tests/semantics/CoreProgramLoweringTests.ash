@@ -105,12 +105,9 @@ let inferredProgramAndEnvironment source =
 // `requires` clause is the only thing making it generic over the trait — proves
 // lowerCoreProgramWithEnvironment threads a real inference TypeEnvironment (not a hand-built test
 // fixture, the way every other TraitEvidence*Tests.ash file constructs one) into
-// rewriteTraitConstrainedValue for the first time. No call site references `describe`: this first
-// wiring slice only rewrites a constrained BINDING's own value (extra hidden dictionary parameter
-// prepended, `Greet.greet` rewritten to read from it); a caller like `describe(5)` would need the
-// matching call-site rewrite (rewriteTraitConstrainedReference), deliberately out of scope here —
-// without it, `describe` now takes the dictionary as its real first argument, so a plain-looking
-// call would type-mismatch, which is exactly what a follow-up piece needs to fix, not this one.
+// rewriteTraitConstrainedValue for the first time. No call site references `describe`: this proves
+// the value-side rewrite alone (extra hidden dictionary parameter prepended, `Greet.greet`
+// rewritten to read from it) independent of the call-site forwarding covered below.
 let traitConstrainedProgramSource unit = "trait Greet(a) =\n    | greet : a -> Str\n\nimplement Greet(Int) =\n    | greet = given (n) -> \"hi\"\n\nlet describe : a -> Str requires {Greet(a)} = given (x) -> Greet.greet(x)\n\n42"
 
 let expectTraitConstrainedBindingLowersWithEnvironment unit =
@@ -137,6 +134,57 @@ let expectTraitConstrainedBindingFailsWithoutEnvironment unit =
                 | CoreLoweringResult { error = Some(_error) } -> Unit
                 | CoreLoweringResult { error = None } -> test.fail("expected trait-constrained program lowering to fail without an environment, but it produced a program")
 
+// `wrapper` is itself generic over the trait (`requires {Greet(a)}`) and calls `describe`, which
+// carries the SAME requirement — the abstract-caller-to-abstract-callee case
+// rewriteTraitConstrainedTopLevelValue's call-site forwarding exists for: `wrapper`'s own hidden
+// dictionary parameter is the only evidence available inside its body (the type variable is not
+// yet unified with anything concrete), so `describe(y)` must forward it rather than resolve it
+// globally. Before this piece was wired, `describe`'s own rewrite (above) silently made this call
+// ill-formed — the callee now expects the dictionary as its real first argument, but the call site
+// never supplied one.
+let forwardingProgramSource unit = "trait Greet(a) =\n    | greet : a -> Str\n\nimplement Greet(Int) =\n    | greet = given (n) -> \"hi\"\n\nlet describe : a -> Str requires {Greet(a)} = given (x) -> Greet.greet(x)\n\nlet wrapper : a -> Str requires {Greet(a)} = given (y) -> describe(y)\n\n42"
+
+let expectCallSiteForwardingLowersWithEnvironment unit =
+    match Unit
+    |> forwardingProgramSource
+    |> inferredProgramAndEnvironment with
+        | (program, environment) ->
+            match lowerCoreProgramWithEnvironment(environment)(program) with
+                | CoreLoweringResult { program = Some(_loweredProgram), error = None } -> Unit
+                | CoreLoweringResult { error = Some(error) } -> test.fail("call-site forwarding program lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("call-site forwarding program lowering produced no program")
+
+// `callsWithoutEvidence` carries no `requires` clause of its own and calls `describe` with a bare
+// `Int` literal — the call-site walker's own-parameter guard (a forwarding candidate's argument
+// must be one of the ENCLOSING binding's own written lambda parameters, never a literal or local)
+// correctly declines to touch it: `5` isn't `callsWithoutEvidence`'s own parameter (it has none),
+// so the reference is left exactly as it was before this piece existed. `describe` still expects
+// its hidden dictionary as a real first argument, so the plain-looking `describe(5)` type-mismatches
+// through CoreLowering's ordinary call-argument type check — proving the guard's conservatism holds
+// (no bogus forwarding, no miscompile) rather than the walker inventing evidence that isn't there.
+let missingEvidenceProgramSource unit = "trait Greet(a) =\n    | greet : a -> Str\n\nimplement Greet(Int) =\n    | greet = given (n) -> \"hi\"\n\nlet describe : a -> Str requires {Greet(a)} = given (x) -> Greet.greet(x)\n\nlet callsWithoutEvidence = describe(5)\n\n42"
+
+let expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches unit =
+    match Unit
+    |> missingEvidenceProgramSource
+    |> inferredProgramAndEnvironment with
+        | (program, environment) ->
+            match lowerCoreProgramWithEnvironment(environment)(program) with
+                | CoreLoweringResult { error = Some(CoreCallTypeMismatch(_unificationError)) } -> Unit
+                | CoreLoweringResult { error = Some(error) } -> test.fail("expected CoreCallTypeMismatch, got " + Ashes.Trait.Show.show(error))
+                | CoreLoweringResult { error = None } -> test.fail("expected the unguarded concrete call to fail lowering, but it produced a program")
+
+// A well-typed program that reaches lowering with a genuinely ambiguous/mismatched active
+// dictionary (two active parameters for the same trait at different type variables) proved hard to
+// construct: this compiler's inference rejects any written `requires` clause it can't independently
+// justify from the body (MissingWrittenTraitRequirement, UnjustifiedWrittenTraitRequirement — even
+// `+` desugars through an implicit Add requirement), so a caller can't simply carry unrelated
+// evidence for the walker to misuse. The MissingActiveTraitEvidence error path itself — including
+// the exact-match vs. single-active-shape-fallback distinction the call-site walker's forwarding
+// depends on — is already covered directly, with hand-built constraints, in
+// TraitEvidenceForwardingTests.ash and TraitEvidenceCallRewritingTests.ash; this file's own
+// integration coverage is expectCallSiteForwardingLowersWithEnvironment (the success path) and
+// expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches (the guard correctly declining).
 // Both top-level lets and the trailing `a + b` are provably arena-safe (scalar Int throughout), so
 // this now matches stage-0's own always-bracketed shape byte-for-byte: SaveArenaState before each
 // value, RestoreArenaState + ReclaimArenaChunks after the rest of the program, innermost first.
@@ -181,4 +229,6 @@ let runCoreProgramLoweringTests unit =
     |> expectGenuinelyUnknownNameStillRejectedAsUnknown
     |> expectTraitConstrainedBindingLowersWithEnvironment
     |> expectTraitConstrainedBindingFailsWithoutEnvironment
+    |> expectCallSiteForwardingLowersWithEnvironment
+    |> expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))

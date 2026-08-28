@@ -14,6 +14,8 @@ import AshesCompiler.Semantics.ModuleSemanticStitching
 export (
     value rewriteStitchedModuleReferences,
     value rewriteStitchedProjectReferences,
+    value patternNames,
+    value patternListNames,
 )
 
 let recursive textExists name names =
