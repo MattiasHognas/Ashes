@@ -89,3 +89,21 @@ k-mer count is an immutable `Map` update (O(log n) + path allocation), where the
 mutable O(1) hashtable — that constant-factor gap, not any remaining compiler flaw, is what
 separates this from the leaderboard. The standard 25M-base input is reachable but was skipped to
 keep the sweep short (~5 min extrapolated).
+
+**Closed as an intentional, documented trade-off (2026-08-28), not a bug.** #408's own commit
+message measured this exact regression at merge time ("real, moderate, trait-branch-specific
+regression (~1.9x time, ~1.3x RSS, output unchanged) ... filed as a separate, non-blocking
+follow-up rather than left unexplained, since fixing it requires trait-call specialization work
+in Map's hot path") — the ~1.3x figure matches the later 68->89 MB bisection almost exactly, so
+this is the same, already-catalogued cost, not a newly-hiding defect. Two independent, targeted
+bug hunts against it this session both found something real but neither explained the magnitude
+when isolated and measured: (1) a genuine redundant-transitive-closure-capture bug (fixed in #670)
+measured zero RSS effect before/after, byte-identical, on this same input; (2) a minimal repro of
+the specific "let-bound accumulator borrowed into a match scrutinee, dropped after" shape the
+earlier RC-allocator-counter trace flagged also measured zero difference between the pre-#408 and
+current compiler (991508 KB vs 991248 KB). Combined with the earlier finding that HashMap's own
+reachable compiled code (`get`/`set`/`go`) is structurally unchanged pre/post #408, the cost is
+diffuse — spread across the trait system's general dictionary-dispatch machinery now sitting in
+the compiler's codegen path globally, not concentrated in one fixable call site. Recovering it
+needs the dictionary-specialization/monomorphization optimizer feature #408's own author already
+named, not a point patch; not pursued further here.

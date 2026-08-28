@@ -85,3 +85,12 @@ mechanism (a correctness fix), and a real memory recovery needs a new dictionary
 optimizer feature, not a point patch. Full trace in project memory
 (`project_knucleotide_regexredux_rss_root_cause.md`). Closing the time gap needs match-iteration
 over a shared subject view rather than per-pass materialization — stdlib work, not a compiler flaw.
+
+**Closed as an intentional, documented trade-off (2026-08-28), not a bug.** Same conclusion and
+same evidence as [`../k-nucleotide/README.md`](../k-nucleotide/README.md)'s matching section:
+#408's own commit message measured this exact regression at merge time and filed it as a known,
+non-blocking follow-up requiring a future dictionary-specialization optimizer pass; two further
+targeted bug hunts in the same session (a real redundant-capture fix, a minimal drop-timing repro)
+both measured zero RSS effect on k-nucleotide when isolated, and HashMap's own reachable compiled
+code is unchanged pre/post #408 — so the cost is diffuse trait-dispatch overhead, not a discrete
+fixable defect reachable from this program's own code.
