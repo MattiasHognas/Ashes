@@ -1652,7 +1652,18 @@ same public behavior.
   directory's own basename, `entry`/`sourceRoots` fixed) and `src/Main.ash` (only if absent, never
   overwriting a file the user already has there) — verified byte-for-byte identical to stage 0's
   own output (`RunInit` in `src/Ashes.Cli/Program.cs`) for both files, and the same "already
-  exists" exit code. `add`, `remove`, `restore`, `tree`, and `why` remain unported.
+  exists" exit code. `why` is ported (`Why.ash` in `selfhost/packages/cli`): resolves the target
+  project's manifest, flattens its dependency graph
+  (`AshesCompiler.Semantics.ProjectDependencyGraph`), then runs a breadth-first search from the
+  root's own direct dependency namespaces (not the flattened graph, which would let an unrelated
+  transitive package masquerade as a root) over the lock-recorded dependency edges to report the
+  shortest path to the target namespace, or that it isn't a dependency at all. Verified against a
+  scratch two-package registry+override fixture (`selfhost/tests/cli/Main.ash`) covering a direct
+  dependency, a transitive one, an unrelated namespace, and a missing manifest, and separately
+  against a hand-built three-package registry+override fixture end-to-end (the shape every real
+  selfhost package's own manifest takes) — the shape that surfaced a genuine stage-0 compiler bug
+  in argument retention across a curried call boundary, fixed in #663, not a `why`-specific issue.
+  `add`, `remove`, `restore`, and `tree` remain unported.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).

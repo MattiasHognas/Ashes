@@ -17,6 +17,7 @@ export (
     type ResolvedProjectDependency(..),
     type ProjectDependencyGraph(..),
     type ProjectDependencyGraphError(..),
+    value pascalCase,
     value resolveProjectDependencyGraph,
     value resolveProjectDependencyGraphFromCache,
 )
