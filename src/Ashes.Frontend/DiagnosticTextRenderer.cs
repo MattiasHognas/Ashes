@@ -101,6 +101,20 @@ public static class DiagnosticTextRenderer
     }
 
     /// <summary>
+    /// Renders a single diagnostic's <c>path:line:column</c> header at an already-resolved position,
+    /// with no source snippet — for a diagnostic whose text lives in a file this call site has no
+    /// buffer for (e.g. a stitched module region resolved through its own fragment anchors rather than
+    /// the entry file's text), where a real position is known but a caret-underlined snippet is not
+    /// available.
+    /// </summary>
+    public static string RenderCompilerDiagnosticAtPosition(DiagnosticEntry entry, string displayPath, int line, int column)
+    {
+        var sb = new StringBuilder();
+        AppendHeader(sb, displayPath, line, column, entry);
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Renders a standalone failure not tied to a source span: a <paramref name="kind"/>-prefixed
     /// <paramref name="message"/>, optionally followed by an <c>--&gt;</c> line naming
     /// <paramref name="displayPath"/>.

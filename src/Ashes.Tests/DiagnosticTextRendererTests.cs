@@ -184,4 +184,17 @@ public sealed class DiagnosticTextRendererTests
 
         result.ShouldContain("^");
     }
+
+    [Test]
+    public void RenderCompilerDiagnosticAtPosition_should_render_header_with_line_and_column_but_no_snippet()
+    {
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(0, 5), "Some error.", DiagnosticCodes.ParseError);
+
+        var result = DiagnosticTextRenderer.RenderCompilerDiagnosticAtPosition(entry, "list.ash", 12, 5);
+
+        result.ShouldContain("list.ash:12:5");
+        result.ShouldContain(DiagnosticCodes.ParseError);
+        result.ShouldContain("Some error.");
+        result.ShouldNotContain("|");
+    }
 }

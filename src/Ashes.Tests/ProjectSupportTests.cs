@@ -886,23 +886,100 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
-    public void MapDiagnosticsToOriginal_attributes_module_region_spans_to_the_owning_file_without_position()
+    public void MapDiagnosticsToOriginal_attributes_module_region_spans_to_the_owning_file_without_a_snippet()
     {
         var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
         var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
         var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
         layout.EntryOffset.ShouldBeGreaterThan(0);
+        layout.SourceLineAnchors.ShouldNotBeNull();
 
-        // A synthetic diagnostic inside the stitched module prefix: exact positions are not
-        // recoverable from reconstructed module text, but the owning file must be attributed.
+        // A synthetic diagnostic inside the stitched module prefix but outside any binding's own
+        // rendered value (the fragment anchors only cover binding values, not the surrounding
+        // `name = (...)` stitching text) — the single-character gap right after the first anchor's
+        // own fragment, before the next one begins: no anchor covers it, so only the owning file is
+        // recoverable, not a position.
         var moduleRegion = layout.ModuleOffsets.First(m => !string.Equals(m.FilePath, "<memory>", StringComparison.Ordinal));
-        var entry = new DiagnosticEntry(TextSpan.FromBounds(moduleRegion.StartOffset + 1, moduleRegion.StartOffset + 2), "synthetic");
+        var firstAnchor = layout.SourceLineAnchors.First(a => string.Equals(a.FilePath, moduleRegion.FilePath, StringComparison.Ordinal));
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(firstAnchor.CombinedEnd, firstAnchor.CombinedEnd + 1), "synthetic");
 
         var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, [entry], "<memory>", original, parsed.SourceWithoutImports);
 
         mapped.Count.ShouldBe(1);
         mapped[0].HasPosition.ShouldBeFalse();
         mapped[0].FilePath.ShouldBe(moduleRegion.FilePath);
+        mapped[0].Line.ShouldBeNull();
+        mapped[0].Column.ShouldBeNull();
+    }
+
+    [Test]
+    public void MapDiagnosticsToOriginal_resolves_module_region_spans_to_a_real_position_without_a_snippet()
+    {
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        layout.EntryOffset.ShouldBeGreaterThan(0);
+        layout.SourceLineAnchors.ShouldNotBeNull();
+
+        // A synthetic diagnostic inside a stitched module binding's own rendered value: its position
+        // resolves through that binding's fragment anchor to a real line/column in the owning file,
+        // even though no snippet can be shown (only the entry file's own text is loaded here). The
+        // second character of the anchor's fragment exercises the same-line column-offset arithmetic,
+        // not just the fragment's exact start.
+        var anchor = layout.SourceLineAnchors.First(a => !string.Equals(a.FilePath, "<memory>", StringComparison.Ordinal)
+            && a.CombinedEnd - a.CombinedStart > 1);
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(anchor.CombinedStart + 1, anchor.CombinedStart + 2), "synthetic");
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, [entry], "<memory>", original, parsed.SourceWithoutImports);
+
+        mapped.Count.ShouldBe(1);
+        mapped[0].HasPosition.ShouldBeFalse();
+        mapped[0].FilePath.ShouldBe(anchor.FilePath);
+        mapped[0].Line.ShouldBe(anchor.Line);
+        mapped[0].Column.ShouldBe(anchor.Column + 1);
+    }
+
+    [Test]
+    public void MapDiagnosticsToOriginal_resolves_a_later_line_inside_a_multi_line_module_fragment()
+    {
+        var original = "import Ashes.IO as io\nimport Ashes.Collection.List as list\nio.print(\"z\")";
+        var parsed = ProjectSupport.ParseImportHeader(original, "<memory>");
+        var layout = ProjectSupport.BuildStandaloneCompilationLayout(parsed.SourceWithoutImports, parsed.ImportNames, "<memory>");
+        layout.SourceLineAnchors.ShouldNotBeNull();
+
+        // A fragment spanning multiple lines: a position past its first newline exercises the
+        // line-delta branch (the resolved line advances past the anchor's own start line, and the
+        // resolved column comes from the position's own line rather than being offset against the
+        // anchor's starting column) rather than only the same-line column-offset arithmetic the
+        // previous test covers. The expected line/column are computed independently here (counting
+        // newlines in the combined source) rather than by calling the same helper the implementation
+        // uses, so this cannot pass by sharing a bug with it.
+        var anchor = layout.SourceLineAnchors.First(a =>
+        {
+            var newlineCount = 0;
+            for (var i = a.CombinedStart; i < a.CombinedEnd; i++)
+            {
+                if (layout.Source[i] == '\n')
+                {
+                    newlineCount++;
+                }
+            }
+
+            return newlineCount > 1;
+        });
+
+        var firstNewline = layout.Source.IndexOf('\n', anchor.CombinedStart);
+        var secondNewline = layout.Source.IndexOf('\n', firstNewline + 1);
+        var position = secondNewline + 3; // third character of the fragment's third line
+        var expectedColumn = position - (secondNewline + 1) + 1;
+        var entry = new DiagnosticEntry(TextSpan.FromBounds(position, position + 1), "synthetic");
+
+        var mapped = ProjectSupport.MapDiagnosticsToOriginal(layout, [entry], "<memory>", original, parsed.SourceWithoutImports);
+
+        mapped.Count.ShouldBe(1);
+        mapped[0].FilePath.ShouldBe(anchor.FilePath);
+        mapped[0].Line.ShouldBe(anchor.Line + 2);
+        mapped[0].Column.ShouldBe(expectedColumn);
     }
 
     [Test]
