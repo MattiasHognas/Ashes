@@ -1526,12 +1526,19 @@ same public behavior.
 
 #### LLVM code generation and runtime integration
 
-- [ ] Define pure-Ashes bindings to the required LLVM C API and load the installed-layout host
+- [~] Define pure-Ashes bindings to the required LLVM C API and load the installed-layout host
   `libLLVM` without checkout-relative assumptions. Source of truth:
   `src/Ashes.Backend/Llvm/Interop/LlvmApi.cs` — its `LibraryImport` surface is the complete list of
   entry points the backend needs (no more are exposed on purpose; there is no `phi` binding, values
   that merge across branches go through a slot allocated before the branch), and
-  `LlvmTargetSetup.cs` initializes the targets.
+  `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
+  `AshesCompiler.Backend.Llvm` binds a small subset (context/module/builder/type/value/basic-block
+  creation, `functionType`, `addFunction`, `appendBasicBlock`, `constInt`, `buildRet`,
+  `verifyModule`) and `selfhost/tests/backend` proves it builds and verifies a trivial function in a
+  real LLVM module end to end. The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's
+  own `$ORIGIN` RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
+  but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
+  installed layout itself) is still unstarted.
 - [ ] Locate the installed layout from the compiler binary itself: the shipped standard-library copies
   (`dist/` per target, `lib/Ashes/` in a checkout), the vendored bitcode payloads under
   `runtimes/<rid>/` with their `.version` markers (`HermeticRuntimeAssets.cs` validates them against

@@ -1,0 +1,15 @@
+{
+  "name": "ashes-compiler-backend-tests",
+  "entry": "Main.ash",
+  "sourceRoots": ["."],
+  "outDir": "out",
+  "devDependencies": {
+    "AshesCompiler.Frontend": "=0.1.0",
+    "AshesCompiler.Semantics": "=0.1.0",
+    "backend": { "path": "../../packages/backend" }
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../../packages/frontend" },
+    "AshesCompiler.Semantics": { "path": "../../packages/semantics" }
+  }
+}

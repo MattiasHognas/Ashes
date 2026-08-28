@@ -1,0 +1,15 @@
+{
+  "name": "ashes-compiler-backend",
+  "namespace": "AshesCompiler.Backend",
+  "version": "0.1.0",
+  "entry": "Package.ash",
+  "sourceRoots": ["src"],
+  "outDir": "out",
+  "dependencies": {
+    "AshesCompiler.Semantics": "=0.1.0"
+  },
+  "overrides": {
+    "AshesCompiler.Frontend": { "path": "../frontend" },
+    "AshesCompiler.Semantics": { "path": "../semantics" }
+  }
+}
