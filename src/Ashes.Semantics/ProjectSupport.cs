@@ -4424,6 +4424,11 @@ public static class ProjectSupport
                     TopLevelItem.Type type => AstSpans.GetOrDefault(type.Decl),
                     TopLevelItem.TypeAlias alias => AstSpans.GetOrDefault(alias.Decl),
                     TopLevelItem.ZeroCostType zeroCostType => AstSpans.GetOrDefault(zeroCostType.Decl),
+                    TopLevelItem.External external => AstSpans.GetOrDefault(external.Decl),
+                    TopLevelItem.Capability capability => AstSpans.GetOrDefault(capability.Decl),
+                    TopLevelItem.Provide provide => AstSpans.GetOrDefault(provide.Decl),
+                    TopLevelItem.Trait trait => AstSpans.GetOrDefault(trait.Decl),
+                    TopLevelItem.Implementation implementation => AstSpans.GetOrDefault(implementation.Decl),
                     _ => default,
                 };
                 if (span.Length == 0)
