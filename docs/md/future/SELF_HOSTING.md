@@ -1819,10 +1819,20 @@ same public behavior.
   to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
   read back (`p.x`) compiles through the complete self-hosted pipeline and runs on a real Linux
   process, printing `3` — the first user-defined type this compiler has ever taken from source to a
-  running executable. **Explicitly still open**: type parameters (generics), multiple constructors
-  sharing a type beyond simple sequential tagging (untested, though the same mechanism as `Maybe`/
-  `Result` should already cover it), `deriving`, and non-primitive (nested-ADT, function, tuple)
-  field types.
+  running executable. Multiple constructors sharing a type are also verified: `type Shape = Circle(Int)
+  | Square(Int)` tags `Circle` `0` and `Square` `1` (declaration order, the same convention `Maybe`/
+  `Result` use) with no constructor-specific code, and each dead binding drops independently — a
+  program constructing both compiles and runs without crashing. Positional constructor fields (as
+  opposed to a record's named fields) cannot be read back without `match`, which this item does not
+  cover, so that case is verified structurally rather than by observing a printed value. **Explicitly
+  still open**: type parameters (generics), `deriving`, and non-primitive (nested-ADT, function,
+  tuple) field types. **Known, currently harmless inaccuracy**: `lowerDeadRcTopLevelLet`'s `RcDrop`
+  carries the CONSTRUCTOR's own name in its `typeName` field (e.g. `Circle`/`Square`) rather than the
+  DECLARING TYPE's name (`Shape`) stage-0's real semantics use — confirmed via `--emit-ir` that
+  stage-0 reports `TypeName=Maybe` for a `Some` drop, not `TypeName=Some`. `IrCodegen`'s `RcDrop`
+  case ignores `typeName` entirely today (it is purely diagnostic metadata), so this has no runtime
+  effect; fixing it properly needs a new field on `CoreConstructorLayout` for the owning type's name,
+  a larger change than this item's own scope justifies today.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
