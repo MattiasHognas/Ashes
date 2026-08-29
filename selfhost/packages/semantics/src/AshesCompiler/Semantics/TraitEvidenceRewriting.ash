@@ -243,6 +243,14 @@ and rewriteTraitMethodReferences shapes expression =
             operand
             |> rewriteTraitMethodReferences(shapes)
             |> ExprLogicalNot
+        | ExprLogicalAnd(left, right) ->
+            right
+            |> rewriteTraitMethodReferences(shapes)
+            |> ExprLogicalAnd(rewriteTraitMethodReferences(shapes)(left))
+        | ExprLogicalOr(left, right) ->
+            right
+            |> rewriteTraitMethodReferences(shapes)
+            |> ExprLogicalOr(rewriteTraitMethodReferences(shapes)(left))
         | ExprGreaterThan(left, right) ->
             right
             |> rewriteTraitMethodReferences(shapes)
@@ -673,6 +681,12 @@ and rewriteTraitCallSiteReferences activeConstraints ownParameters locals enviro
         | ExprLogicalNot(operand) ->
             match rewriteTraitCallSiteReferences(activeConstraints)(ownParameters)(locals)(environment)(operand) with
                 | TraitReferenceRewriting { expression = operandExpr, error = error } -> TraitReferenceRewriting(expression = ExprLogicalNot(operandExpr), error = error)
+        | ExprLogicalAnd(left, right) ->
+            match rewriteTraitCallSiteBinaryOperand(activeConstraints)(ownParameters)(locals)(environment)(left)(right) with
+                | (leftExpr, rightExpr, error) -> TraitReferenceRewriting(expression = ExprLogicalAnd(leftExpr)(rightExpr), error = error)
+        | ExprLogicalOr(left, right) ->
+            match rewriteTraitCallSiteBinaryOperand(activeConstraints)(ownParameters)(locals)(environment)(left)(right) with
+                | (leftExpr, rightExpr, error) -> TraitReferenceRewriting(expression = ExprLogicalOr(leftExpr)(rightExpr), error = error)
         | ExprGreaterThan(left, right) ->
             match rewriteTraitCallSiteBinaryOperand(activeConstraints)(ownParameters)(locals)(environment)(left)(right) with
                 | (leftExpr, rightExpr, error) -> TraitReferenceRewriting(expression = ExprGreaterThan(leftExpr)(rightExpr), error = error)

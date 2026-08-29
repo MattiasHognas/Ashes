@@ -1305,6 +1305,8 @@ public static partial class DocumentService
             Expr.NotEqual ne => (ne.Left, ne.Right),
             Expr.ResultPipe pipe => (pipe.Left, pipe.Right),
             Expr.ResultMapErrorPipe pipe => (pipe.Left, pipe.Right),
+            Expr.LogicalAnd and => (and.Left, and.Right),
+            Expr.LogicalOr or => (or.Left, or.Right),
             _ => null,
         };
     }

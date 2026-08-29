@@ -2144,6 +2144,10 @@ public sealed partial class Lowering
                 return ExprReferencesName(bitwiseNot.Operand, targetName, shadowed);
             case Expr.LogicalNot logicalNot:
                 return ExprReferencesName(logicalNot.Operand, targetName, shadowed);
+            case Expr.LogicalAnd logicalAnd:
+                return ExprReferencesName(logicalAnd.Left, targetName, shadowed) || ExprReferencesName(logicalAnd.Right, targetName, shadowed);
+            case Expr.LogicalOr logicalOr:
+                return ExprReferencesName(logicalOr.Left, targetName, shadowed) || ExprReferencesName(logicalOr.Right, targetName, shadowed);
             case Expr.GreaterThan gt:
                 return ExprReferencesName(gt.Left, targetName, shadowed) || ExprReferencesName(gt.Right, targetName, shadowed);
             case Expr.GreaterOrEqual ge:

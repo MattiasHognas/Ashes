@@ -292,6 +292,14 @@ let recursive mentionsVar (expr: Expr) (param: Str) =
             else mentionsVar(right)(param)
         | ExprBitwiseNot(operand) -> mentionsVar(operand)(param)
         | ExprLogicalNot(operand) -> mentionsVar(operand)(param)
+        | ExprLogicalAnd(left, right) ->
+            if mentionsVar(left)(param)
+            then true
+            else mentionsVar(right)(param)
+        | ExprLogicalOr(left, right) ->
+            if mentionsVar(left)(param)
+            then true
+            else mentionsVar(right)(param)
         | ExprEqual(left, right) ->
             if mentionsVar(left)(param)
             then true
@@ -434,6 +442,8 @@ let recursive collectFreeVars (expr: Expr) (bound: List(Str)) (acc: List(Str)) =
         | ExprShiftRight(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
         | ExprBitwiseNot(operand) -> collectFreeVars(operand)(bound)(acc)
         | ExprLogicalNot(operand) -> collectFreeVars(operand)(bound)(acc)
+        | ExprLogicalAnd(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
+        | ExprLogicalOr(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
         | ExprEqual(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
         | ExprNotEqual(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
         | ExprLessThan(left, right) -> collectFreeVarsPair(left)(right)(bound)(acc)
@@ -583,6 +593,14 @@ let recursive isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) =
             else false
         | ExprBitwiseNot(operand) -> isParamUsedOnlyAsBorrowRead(operand)(param)
         | ExprLogicalNot(operand) -> isParamUsedOnlyAsBorrowRead(operand)(param)
+        | ExprLogicalAnd(left, right) ->
+            if isParamUsedOnlyAsBorrowRead(left)(param)
+            then isParamUsedOnlyAsBorrowRead(right)(param)
+            else false
+        | ExprLogicalOr(left, right) ->
+            if isParamUsedOnlyAsBorrowRead(left)(param)
+            then isParamUsedOnlyAsBorrowRead(right)(param)
+            else false
         | ExprEqual(left, right) ->
             if isParamUsedOnlyAsBorrowRead(left)(param)
             then isParamUsedOnlyAsBorrowRead(right)(param)
@@ -803,6 +821,16 @@ let recursive analyzeExprReach (expr: Expr) (env: List((Str, ResultReachState)))
                 in reachSum(lReach)(rReach)
         | ExprBitwiseNot(operand) -> analyzeExprReach(operand)(env)
         | ExprLogicalNot(operand) -> analyzeExprReach(operand)(env)
+        | ExprLogicalAnd(left, right) ->
+            let lReach = analyzeExprReach(left)(env)
+            in
+                let rReach = analyzeExprReach(right)(env)
+                in reachSum(lReach)(rReach)
+        | ExprLogicalOr(left, right) ->
+            let lReach = analyzeExprReach(left)(env)
+            in
+                let rReach = analyzeExprReach(right)(env)
+                in reachSum(lReach)(rReach)
         | ExprEqual(left, right) ->
             let lReach = analyzeExprReach(left)(env)
             in

@@ -198,6 +198,8 @@ public sealed partial class Lowering
             Expr.NotEqual x => (x.Left, x.Right),
             Expr.ResultPipe x => (x.Left, x.Right),
             Expr.ResultMapErrorPipe x => (x.Left, x.Right),
+            Expr.LogicalAnd x => (x.Left, x.Right),
+            Expr.LogicalOr x => (x.Left, x.Right),
             _ => null,
         };
 

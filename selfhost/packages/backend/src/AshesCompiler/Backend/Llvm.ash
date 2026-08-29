@@ -88,6 +88,7 @@ export (
     value buildSRem,
     value buildSelect,
     value buildTrunc,
+    value buildZExt,
     value buildPtrToInt,
     value buildIntToPtr,
     value buildICmp,
@@ -112,6 +113,7 @@ export (
     value linkageExternal,
     value linkageInternal,
     value int64Type,
+    value int1Type,
     value voidType,
     value pointerType,
     value structType,
@@ -177,6 +179,7 @@ external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMV
 external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSRem@libLLVM.so"
 external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
 external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
+external LLVMBuildZExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildZExt@libLLVM.so"
 external LLVMBuildPtrToInt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildPtrToInt@libLLVM.so"
 external LLVMBuildIntToPtr(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildIntToPtr@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
@@ -194,6 +197,7 @@ external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitia
 external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
 external LLVMSetLinkage(LLVMValueRef, u32) -> void = "LLVMSetLinkage@libLLVM.so"
 external LLVMInt64TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt64TypeInContext@libLLVM.so"
+external LLVMInt1TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt1TypeInContext@libLLVM.so"
 external LLVMVoidTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMVoidTypeInContext@libLLVM.so"
 external LLVMPointerTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMPointerTypeInContext@libLLVM.so"
 external LLVMStructTypeInContext(LLVMContextRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMStructTypeInContext@libLLVM.so"
@@ -339,6 +343,8 @@ let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)
 
 let buildTrunc builder value destType name = LLVMBuildTrunc(builder)(value)(destType)(name)
 
+let buildZExt builder value destType name = LLVMBuildZExt(builder)(value)(destType)(name)
+
 let buildPtrToInt builder value destType name = LLVMBuildPtrToInt(builder)(value)(destType)(name)
 
 let buildIntToPtr builder value destType name = LLVMBuildIntToPtr(builder)(value)(destType)(name)
@@ -420,6 +426,8 @@ let linkageExternal = 0u32
 let linkageInternal = 8u32
 
 let int64Type context = LLVMInt64TypeInContext(context)
+
+let int1Type context = LLVMInt1TypeInContext(context)
 
 let voidType context = LLVMVoidTypeInContext(context)
 

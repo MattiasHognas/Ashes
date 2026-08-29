@@ -480,7 +480,34 @@ falsey conversion for other values. Unary `!` is right-associative and has the s
 unary `-` and bitwise `~`. The lexer treats `!=` as one inequality operator, not as unary `!`
 followed by `=`.
 
-### 3.4 Trait-backed operators across types
+### 3.4 Short-circuit and / or
+
+`&&` and `||` are short-circuit logical operators. The right operand is evaluated only when needed
+to determine the result:
+
+```ash
+true && true     // => true
+true && false    // => false
+false && true    // => false (right operand not evaluated)
+
+true || false    // => true (right operand not evaluated)
+false || false   // => false
+false || true    // => true
+```
+
+`a && b` evaluates `a` first. If `a` is `false`, the result is `false` and `b` is never evaluated.
+Otherwise the result is `b`.
+
+`a || b` evaluates `a` first. If `a` is `true`, the result is `true` and `b` is never evaluated.
+Otherwise the result is `b`.
+
+Both operands must have type `Bool`, and the result has type `Bool`. `&&` and `||` are left-
+associative; `&&` binds tighter than `||`, so `a && b || c` reads as `(a && b) || c`. Neither is
+trait-backed like `+` or `==` — the right operand's evaluation is conditional, which no trait method
+call (always eager) can express, so both are handled directly as a two-armed conditional rather than
+dispatched through `Ashes.Trait`.
+
+### 3.5 Trait-backed operators across types
 
 Operators select their standard trait implementation from the operand type. A function using an
 operator at an abstract type therefore infers the corresponding ordinary trait constraint and may
@@ -497,7 +524,7 @@ Primitive implementations keep their specialized IR instructions. Nominal implem
 same statically selected dictionary evidence as an explicit trait-method call. See
 [Traits and Implementations](#21-traits-and-implementations) for the complete operator mapping.
 
-### 3.5 Bitwise
+### 3.6 Bitwise
 
 Bitwise operators operate on integer values (`Int`, `u8`, `u16`, `u32`,
 `u64`) and return the same type as the left operand.
@@ -515,7 +542,7 @@ Where `T` is `Int` or one unsigned integer type (`u8`, `u16`, `u32`, `u64`).
 Shift counts are masked to the low 6 bits for the 64-bit `Int`
 representation.
 
-### 3.6 Cons
+### 3.7 Cons
 
 `::` constructs a new list by prepending a head value to a tail list.
 
@@ -525,7 +552,7 @@ Example:
 1 :: [2,3]  // => [1,2,3]
 ```
 
-### 3.7 Pipes
+### 3.8 Pipes
 
 Ashes supports three left-to-right pipeline operators.
 
@@ -588,23 +615,25 @@ let bumpIfOk2 result =
     in
     Ok(n + 1)
 
-### 3.8 Precedence and Associativity
+### 3.9 Precedence and Associativity
 
 From lowest precedence to highest:
 
 | Level | Operators                      | Associativity |
 |-------|--------------------------------|---------------|
 | 1     | `|>`, `|?>`, `|!>`             | left          |
-| 2     | `>=`, `<=`, `==`, `!=`         | left          |
-| 3     | `\|`                           | left          |
-| 4     | `^`                            | left          |
-| 5     | `&`                            | left          |
-| 6     | `::`                           | right         |
-| 7     | `<<`, `>>`                     | left          |
-| 8     | `+`, `-`                       | left          |
-| 9     | `*`, `/`                       | left          |
-| 10    | unary `-`, `!`, `~`            | right         |
-| 11    | function application           | left          |
+| 2     | `\|\|`                         | left          |
+| 3     | `&&`                           | left          |
+| 4     | `>=`, `<=`, `==`, `!=`         | left          |
+| 5     | `\|`                           | left          |
+| 6     | `^`                            | left          |
+| 7     | `&`                            | left          |
+| 8     | `::`                           | right         |
+| 9     | `<<`, `>>`                     | left          |
+| 10    | `+`, `-`                       | left          |
+| 11    | `*`, `/`                       | left          |
+| 12    | unary `-`, `!`, `~`            | right         |
+| 13    | function application           | left          |
 
 `>=`, `<=`, `==`, and `!=` share the same precedence level in the current grammar.
 Function application (both `f(x)` and `f x` whitespace syntax) binds tighter than
@@ -3724,8 +3753,9 @@ The source operators map as follows:
 | `>>` | `ShiftRight.shiftRight` |
 | `~` | `BitwiseNot.bitwiseNot` |
 
-Function application, pipelines, Result pipelines, list construction, patterns, record access, and
-record updates remain dedicated language operations.
+Function application, pipelines, Result pipelines, list construction, patterns, record access,
+record updates, and short-circuit `&&`/`||` (see [3.4](#34-short-circuit-and--or)) remain dedicated
+language operations.
 
 ### 21.12 Primitive and structural implementations
 

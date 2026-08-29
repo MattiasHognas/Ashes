@@ -49,6 +49,7 @@ type TokenKind =
     | BigInt
     | Tilde
     | Ampersand
+    | AmpersandAmpersand
     | Caret
     | LessLess
     | GreaterGreater
@@ -62,6 +63,7 @@ type TokenKind =
     | Equals
     | Comma
     | Pipe
+    | PipePipe
     | PipeGreater
     | PipeQuestionGreater
     | PipeBangGreater
@@ -158,6 +160,7 @@ let tokenKindName (kind: TokenKind) =
         | BigInt -> "BigInt"
         | Tilde -> "Tilde"
         | Ampersand -> "Ampersand"
+        | AmpersandAmpersand -> "AmpersandAmpersand"
         | Caret -> "Caret"
         | LessLess -> "LessLess"
         | GreaterGreater -> "GreaterGreater"
@@ -171,6 +174,7 @@ let tokenKindName (kind: TokenKind) =
         | Equals -> "Equals"
         | Comma -> "Comma"
         | Pipe -> "Pipe"
+        | PipePipe -> "PipePipe"
         | PipeGreater -> "PipeGreater"
         | PipeQuestionGreater -> "PipeQuestionGreater"
         | PipeBangGreater -> "PipeBangGreater"

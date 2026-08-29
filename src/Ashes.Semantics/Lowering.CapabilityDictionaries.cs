@@ -538,6 +538,8 @@ public sealed partial class Lowering
             case Expr.ShiftRight x: return new Expr.ShiftRight(f(x.Left), f(x.Right));
             case Expr.BitwiseNot x: return new Expr.BitwiseNot(f(x.Operand));
             case Expr.LogicalNot x: return new Expr.LogicalNot(f(x.Operand));
+            case Expr.LogicalAnd x: return new Expr.LogicalAnd(f(x.Left), f(x.Right));
+            case Expr.LogicalOr x: return new Expr.LogicalOr(f(x.Left), f(x.Right));
             case Expr.GreaterThan x: return new Expr.GreaterThan(f(x.Left), f(x.Right));
             case Expr.LessThan x: return new Expr.LessThan(f(x.Left), f(x.Right));
             case Expr.GreaterOrEqual x: return new Expr.GreaterOrEqual(f(x.Left), f(x.Right));

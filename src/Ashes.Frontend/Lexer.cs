@@ -140,6 +140,8 @@ public sealed class Lexer
         ("<=", TokenKind.LessEquals),
         ("==", TokenKind.EqualsEquals),
         ("!=", TokenKind.BangEquals),
+        ("&&", TokenKind.AmpersandAmpersand),
+        ("||", TokenKind.PipePipe),
         ("<<", TokenKind.LessLess),
         (">>", TokenKind.GreaterGreater),
         ("::", TokenKind.ColonColon),

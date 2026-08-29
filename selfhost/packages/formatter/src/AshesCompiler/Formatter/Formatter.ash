@@ -193,6 +193,8 @@ let recursive formatterContainsRecordUpdate : Expr -> Bool =
             | ExprShiftRight(left, right) -> formatterContainsRecordUpdateIn(left)(right)
             | ExprBitwiseNot(operand) -> formatterContainsRecordUpdate(operand)
             | ExprLogicalNot(operand) -> formatterContainsRecordUpdate(operand)
+            | ExprLogicalAnd(left, right) -> formatterContainsRecordUpdateIn(left)(right)
+            | ExprLogicalOr(left, right) -> formatterContainsRecordUpdateIn(left)(right)
             | ExprGreaterThan(left, right) -> formatterContainsRecordUpdateIn(left)(right)
             | ExprLessThan(left, right) -> formatterContainsRecordUpdateIn(left)(right)
             | ExprGreaterOrEqual(left, right) -> formatterContainsRecordUpdateIn(left)(right)
@@ -476,38 +478,40 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                     else "false"
                                 | ExprVar(name) -> name
                                 | ExprQualifiedVar(moduleName, name) -> moduleName + "." + name
-                                | ExprAdd(left, right) -> formatterBinary(parent)(10)("+")(left)(right)(preferPipelines)
-                                | ExprSubtract(left, right) -> formatterBinary(parent)(10)("-")(left)(right)(preferPipelines)
-                                | ExprMultiply(left, right) -> formatterBinary(parent)(11)("*")(left)(right)(preferPipelines)
-                                | ExprDivide(left, right) -> formatterBinary(parent)(11)("/")(left)(right)(preferPipelines)
-                                | ExprModulo(left, right) -> formatterBinary(parent)(11)("%")(left)(right)(preferPipelines)
-                                | ExprBitwiseAnd(left, right) -> formatterBinary(parent)(7)("&")(left)(right)(preferPipelines)
-                                | ExprBitwiseOr(left, right) -> formatterBinary(parent)(5)("|")(left)(right)(preferPipelines)
-                                | ExprBitwiseXor(left, right) -> formatterBinary(parent)(6)("^")(left)(right)(preferPipelines)
-                                | ExprShiftLeft(left, right) -> formatterBinary(parent)(9)("<<")(left)(right)(preferPipelines)
-                                | ExprShiftRight(left, right) -> formatterBinary(parent)(9)(">>")(left)(right)(preferPipelines)
-                                | ExprGreaterThan(left, right) -> formatterBinary(parent)(4)(">")(left)(right)(preferPipelines)
-                                | ExprLessThan(left, right) -> formatterBinary(parent)(4)("<")(left)(right)(preferPipelines)
-                                | ExprGreaterOrEqual(left, right) -> formatterBinary(parent)(4)(">=")(left)(right)(preferPipelines)
-                                | ExprLessOrEqual(left, right) -> formatterBinary(parent)(4)("<=")(left)(right)(preferPipelines)
-                                | ExprEqual(left, right) -> formatterBinary(parent)(4)("==")(left)(right)(preferPipelines)
-                                | ExprNotEqual(left, right) -> formatterBinary(parent)(4)("!=")(left)(right)(preferPipelines)
+                                | ExprAdd(left, right) -> formatterBinary(parent)(12)("+")(left)(right)(preferPipelines)
+                                | ExprSubtract(left, right) -> formatterBinary(parent)(12)("-")(left)(right)(preferPipelines)
+                                | ExprMultiply(left, right) -> formatterBinary(parent)(13)("*")(left)(right)(preferPipelines)
+                                | ExprDivide(left, right) -> formatterBinary(parent)(13)("/")(left)(right)(preferPipelines)
+                                | ExprModulo(left, right) -> formatterBinary(parent)(13)("%")(left)(right)(preferPipelines)
+                                | ExprBitwiseAnd(left, right) -> formatterBinary(parent)(9)("&")(left)(right)(preferPipelines)
+                                | ExprBitwiseOr(left, right) -> formatterBinary(parent)(7)("|")(left)(right)(preferPipelines)
+                                | ExprBitwiseXor(left, right) -> formatterBinary(parent)(8)("^")(left)(right)(preferPipelines)
+                                | ExprShiftLeft(left, right) -> formatterBinary(parent)(11)("<<")(left)(right)(preferPipelines)
+                                | ExprShiftRight(left, right) -> formatterBinary(parent)(11)(">>")(left)(right)(preferPipelines)
+                                | ExprGreaterThan(left, right) -> formatterBinary(parent)(6)(">")(left)(right)(preferPipelines)
+                                | ExprLessThan(left, right) -> formatterBinary(parent)(6)("<")(left)(right)(preferPipelines)
+                                | ExprGreaterOrEqual(left, right) -> formatterBinary(parent)(6)(">=")(left)(right)(preferPipelines)
+                                | ExprLessOrEqual(left, right) -> formatterBinary(parent)(6)("<=")(left)(right)(preferPipelines)
+                                | ExprEqual(left, right) -> formatterBinary(parent)(6)("==")(left)(right)(preferPipelines)
+                                | ExprNotEqual(left, right) -> formatterBinary(parent)(6)("!=")(left)(right)(preferPipelines)
+                                | ExprLogicalOr(left, right) -> formatterBinary(parent)(4)("||")(left)(right)(preferPipelines)
+                                | ExprLogicalAnd(left, right) -> formatterBinary(parent)(5)("&&")(left)(right)(preferPipelines)
                                 | ExprResultPipe(left, right) -> formatterBinary(parent)(3)("|?>")(left)(right)(preferPipelines)
                                 | ExprResultMapErrorPipe(left, right) -> formatterBinary(parent)(3)("|!>")(left)(right)(preferPipelines)
                                 | ExprCons(head, tail) ->
                                     formatterWrap(
                                         parent,
-                                        8,
-                                        formatterExpr(head)(9)(indent)(preferPipelines) + " :: " + formatterExpr(tail)(8)(indent)(preferPipelines)
+                                        10,
+                                        formatterExpr(head)(11)(indent)(preferPipelines) + " :: " + formatterExpr(tail)(10)(indent)(preferPipelines)
                                     )
-                                | ExprBitwiseNot(operand) -> formatterWrap(parent)(12)("~" + formatterExpr(operand)(12)(indent)(preferPipelines))
-                                | ExprLogicalNot(operand) -> formatterWrap(parent)(12)("!" + formatterExpr(operand)(12)(indent)(preferPipelines))
+                                | ExprBitwiseNot(operand) -> formatterWrap(parent)(14)("~" + formatterExpr(operand)(14)(indent)(preferPipelines))
+                                | ExprLogicalNot(operand) -> formatterWrap(parent)(14)("!" + formatterExpr(operand)(14)(indent)(preferPipelines))
                                 | ExprCall(function, argument, whitespace, layout) ->
                                     let rendered =
                                         if whitespace
-                                        then formatterExpr(function)(13)(indent)(preferPipelines) + " " + formatterExpr(argument)(14)(indent)(preferPipelines)
+                                        then formatterExpr(function)(15)(indent)(preferPipelines) + " " + formatterExpr(argument)(16)(indent)(preferPipelines)
                                         else formatterParenthesizedCall(expression)(function)(argument)(layout)(indent)(preferPipelines)
-                                    in formatterWrap(parent)(13)(rendered)
+                                    in formatterWrap(parent)(15)(rendered)
                                 | ExprTuple(elements) ->
                                     "(" + formatterJoin(", ")(given (item) -> formatterOperandInline(item)(preferPipelines))(elements) + ")"
                                 | ExprList(elements, isMultiline) ->
@@ -530,12 +534,12 @@ and formatterExpr : Expr -> Int -> Int -> Bool -> Str =
                                             preferPipelines
                                         ) + " with " + formatterJoin(", ")(given (field) -> formatterUpdateField(field)(preferPipelines))(fields)
                                     )
-                                | ExprAwait(task) -> formatterWrap(parent)(12)("await " + formatterExpr(task)(12)(indent)(preferPipelines))
+                                | ExprAwait(task) -> formatterWrap(parent)(14)("await " + formatterExpr(task)(14)(indent)(preferPipelines))
                                 | ExprPerform(operation) ->
                                     formatterWrap(
                                         parent,
-                                        12,
-                                        "perform " + formatterExpr(operation)(12)(indent)(preferPipelines)
+                                        14,
+                                        "perform " + formatterExpr(operation)(14)(indent)(preferPipelines)
                                     )
                                 | ExprIf(condition, thenBranch, elseBranch) ->
                                     formatterWrap(
@@ -645,7 +649,7 @@ and formatterParenthesizedCall : Expr -> Expr -> Expr -> CallArgumentListLayout 
                         given (preferPipelines) ->
                             if layout == callArgumentsInline
                             then
-                                formatterExpr(function)(13)(indent)(preferPipelines) + "(" + formatterExpr(argument)(formatterOperandPrecedence(argument))(indent)(preferPipelines) + ")"
+                                formatterExpr(function)(15)(indent)(preferPipelines) + "(" + formatterExpr(argument)(formatterOperandPrecedence(argument))(indent)(preferPipelines) + ")"
                             else formatterMultilineCall(expression)(indent)(preferPipelines)
 // Inline record-literal fields, comma-separated. Only a field with a following sibling needs
 // protection against an unparenthesized `with` absorbing the next `name = value` pair — the last
@@ -693,7 +697,7 @@ and formatterMultilineCall : Expr -> Int -> Bool -> Str =
             given (preferPipelines) ->
                 match formatterCollectMultilineCall(expression)([]) with
                     | (function, arguments) ->
-                        formatterExpr(function)(13)(indent)(preferPipelines) + "(\n" + formatterMultilineExpressions(
+                        formatterExpr(function)(15)(indent)(preferPipelines) + "(\n" + formatterMultilineExpressions(
                             arguments,
                             indent + 4,
                             preferPipelines

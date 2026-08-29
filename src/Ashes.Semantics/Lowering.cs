@@ -261,6 +261,8 @@ public sealed partial class Lowering
             case Expr.NotEqual value: CountBoth(value.Left, value.Right, counts); return true;
             case Expr.ResultPipe value: CountBoth(value.Left, value.Right, counts); return true;
             case Expr.ResultMapErrorPipe value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.LogicalAnd value: CountBoth(value.Left, value.Right, counts); return true;
+            case Expr.LogicalOr value: CountBoth(value.Left, value.Right, counts); return true;
             default: return false;
         }
     }
@@ -966,6 +968,8 @@ public sealed partial class Lowering
         Expr.LessOrEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.Equal x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.NotEqual x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.LogicalAnd x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
+        Expr.LogicalOr x => ExprHasCallOrAggregate(x.Left) || ExprHasCallOrAggregate(x.Right),
         Expr.If x => ExprHasCallOrAggregate(x.Cond) || ExprHasCallOrAggregate(x.Then) || ExprHasCallOrAggregate(x.Else),
         Expr.Let x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
         Expr.LetRecursive x => ExprHasCallOrAggregate(x.Value) || ExprHasCallOrAggregate(x.Body),
@@ -2657,6 +2661,8 @@ public sealed partial class Lowering
             Expr.ShiftRight shiftRight => LowerShiftRight(shiftRight),
             Expr.BitwiseNot bitwiseNot => LowerBitwiseNot(bitwiseNot),
             Expr.LogicalNot logicalNot => LowerLogicalNot(logicalNot),
+            Expr.LogicalAnd logicalAnd => LowerLogicalAnd(logicalAnd, request),
+            Expr.LogicalOr logicalOr => LowerLogicalOr(logicalOr, request),
             Expr.GreaterThan gt => LowerGreaterThan(gt),
             Expr.GreaterOrEqual ge => LowerGreaterOrEqual(ge),
             Expr.LessThan lt => LowerLessThan(lt),
@@ -12558,6 +12564,11 @@ public sealed partial class Lowering
             return;
         }
 
+        if (FreeVarsVisitLogical(ex, bnd, res))
+        {
+            return;
+        }
+
         if (FreeVarsVisitApplicationOrAggregate(ex, bnd, res))
         {
             return;
@@ -12704,6 +12715,23 @@ public sealed partial class Lowering
             case Expr.NotEqual ne:
                 FreeVarsVisit(ne.Left, bnd, res);
                 FreeVarsVisit(ne.Right, bnd, res);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private bool FreeVarsVisitLogical(Expr ex, HashSet<string> bnd, HashSet<string> res)
+    {
+        switch (ex)
+        {
+            case Expr.LogicalAnd logicalAnd:
+                FreeVarsVisit(logicalAnd.Left, bnd, res);
+                FreeVarsVisit(logicalAnd.Right, bnd, res);
+                return true;
+            case Expr.LogicalOr logicalOr:
+                FreeVarsVisit(logicalOr.Left, bnd, res);
+                FreeVarsVisit(logicalOr.Right, bnd, res);
                 return true;
             default:
                 return false;
@@ -12921,6 +12949,8 @@ public sealed partial class Lowering
             case Expr.ShiftRight b: return new Expr.ShiftRight(S(b.Left), S(b.Right));
             case Expr.BitwiseNot b: return new Expr.BitwiseNot(S(b.Operand));
             case Expr.LogicalNot b: return new Expr.LogicalNot(S(b.Operand));
+            case Expr.LogicalAnd b: return new Expr.LogicalAnd(S(b.Left), S(b.Right));
+            case Expr.LogicalOr b: return new Expr.LogicalOr(S(b.Left), S(b.Right));
             case Expr.GreaterThan b: return new Expr.GreaterThan(S(b.Left), S(b.Right));
             case Expr.GreaterOrEqual b: return new Expr.GreaterOrEqual(S(b.Left), S(b.Right));
             case Expr.LessThan b: return new Expr.LessThan(S(b.Left), S(b.Right));

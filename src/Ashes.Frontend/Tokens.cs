@@ -69,6 +69,8 @@ public enum TokenKind
     Tilde,
     /// <summary>The <c>&amp;</c> bitwise-and operator.</summary>
     Ampersand,
+    /// <summary>The <c>&amp;&amp;</c> short-circuit logical-and operator.</summary>
+    AmpersandAmpersand,
     /// <summary>The <c>^</c> bitwise-xor operator.</summary>
     Caret,
     /// <summary>The <c>&lt;&lt;</c> left-shift operator.</summary>
@@ -95,6 +97,8 @@ public enum TokenKind
     Comma,
     /// <summary>The <c>|</c> token (bitwise-or, match/type alternatives).</summary>
     Pipe,
+    /// <summary>The <c>||</c> short-circuit logical-or operator.</summary>
+    PipePipe,
     /// <summary>The <c>|&gt;</c> pipe-forward operator.</summary>
     PipeGreater,
     /// <summary>The <c>|?&gt;</c> result-pipe operator.</summary>

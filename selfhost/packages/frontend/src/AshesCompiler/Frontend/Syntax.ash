@@ -114,6 +114,8 @@ type Expr =
     | ExprShiftRight(Expr, Expr)
     | ExprBitwiseNot(Expr)
     | ExprLogicalNot(Expr)
+    | ExprLogicalAnd(Expr, Expr)
+    | ExprLogicalOr(Expr, Expr)
     | ExprGreaterThan(Expr, Expr)
     | ExprLessThan(Expr, Expr)
     | ExprGreaterOrEqual(Expr, Expr)

@@ -1291,7 +1291,7 @@ and parserParseUpdateFields reversed state =
                                         | (_comma, afterComma) -> parserParseUpdateFields(fields)(afterComma)
                                 else (reverseList(fields), afterValue)
 and parserParsePipe state =
-    match parserParseComparison(state) with
+    match parserParseLogicalOr(state) with
         | (left, nextState) -> parserParsePipeTail(left)(nextState)
 and parserParsePipeTail left state =
     (let current = parserCurrent(state)
@@ -1300,7 +1300,7 @@ and parserParsePipeTail left state =
             | PipeGreater ->
                 match parserAdvance(state) with
                     | (_operator, afterOperator) ->
-                        match parserParseComparison(afterOperator) with
+                        match parserParseLogicalOr(afterOperator) with
                             | (right, afterRight) ->
                                 parserParsePipeTail(
                                     parserAt(
@@ -1313,7 +1313,7 @@ and parserParsePipeTail left state =
             | PipeQuestionGreater ->
                 match parserAdvance(state) with
                     | (_operator, afterOperator) ->
-                        match parserParseComparison(afterOperator) with
+                        match parserParseLogicalOr(afterOperator) with
                             | (right, afterRight) ->
                                 parserParsePipeTail(
                                     right
@@ -1324,7 +1324,7 @@ and parserParsePipeTail left state =
             | PipeBangGreater ->
                 match parserAdvance(state) with
                     | (_operator, afterOperator) ->
-                        match parserParseComparison(afterOperator) with
+                        match parserParseLogicalOr(afterOperator) with
                             | (right, afterRight) ->
                                 parserParsePipeTail(
                                     parserAt(
@@ -1335,6 +1335,44 @@ and parserParsePipeTail left state =
                                     afterRight
                                 )
             | _ -> (left, state))
+and parserParseLogicalOr state =
+    match parserParseLogicalAnd(state) with
+        | (left, nextState) -> parserParseLogicalOrTail(left)(nextState)
+and parserParseLogicalOrTail left state =
+    (let current = parserCurrent(state)
+    in
+        if current.kind != PipePipe
+        then (left, state)
+        else
+            match parserAdvance(state) with
+                | (_operator, afterOperator) ->
+                    match parserParseLogicalAnd(afterOperator) with
+                        | (right, afterRight) ->
+                            parserParseLogicalOrTail(
+                                right
+                                |> ExprLogicalOr(left)
+                                |> parserAt(parserExprStart(left))(parserExprEnd(right)),
+                                afterRight
+                            ))
+and parserParseLogicalAnd state =
+    match parserParseComparison(state) with
+        | (left, nextState) -> parserParseLogicalAndTail(left)(nextState)
+and parserParseLogicalAndTail left state =
+    (let current = parserCurrent(state)
+    in
+        if current.kind != AmpersandAmpersand
+        then (left, state)
+        else
+            match parserAdvance(state) with
+                | (_operator, afterOperator) ->
+                    match parserParseComparison(afterOperator) with
+                        | (right, afterRight) ->
+                            parserParseLogicalAndTail(
+                                right
+                                |> ExprLogicalAnd(left)
+                                |> parserAt(parserExprStart(left))(parserExprEnd(right)),
+                                afterRight
+                            ))
 and parserParseComparison state =
     match parserParseBitwiseOr(state) with
         | (left, nextState) -> parserParseComparisonTail(left)(nextState)
