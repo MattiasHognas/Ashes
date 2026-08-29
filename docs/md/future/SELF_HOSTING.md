@@ -1541,18 +1541,15 @@ same public behavior.
   has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
   verifying, and emitting a small real function to genuine linux-x64 ELF objects and assembly
   listings, checked with `readelf` and, independently, exact-instruction assembly dumps for each
-  (not just a byte-length assertion in the test itself) — restating the exact proof-point list here
-  every PR has proven just as unmaintainable as the binding list above; see the test file itself
-  for the current set (as of this writing: primitives/arithmetic/branching, module-local and
-  external calls, globals, structs, arrays/byte strings, a tagged-union ADT `match`, a closure call
-  through a function-pointer value on a stack struct, a heap-allocated struct, and a struct
-  capturing more than one scalar value, and RC end to end —
-  a cell matching this doc's own header layout, cascading release to an owned child, and
-  tag-directed dispatch over which fields actually get dropped, including a `Node` arm that drops
-  more than one owned field in sequence, and the Perceus reuse contract's token handoff — a drop
-  that reaches zero hands its freed memory back as a token instead of calling `free`, and a
-  subsequent alloc consumes that token instead of calling `malloc`). The bindings resolve a bare
-  `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
+  (not just a byte-length assertion in the test itself) — the exact proof-point list has needed
+  re-condensing here three times now as unmaintainable, so it stops here for good: see the test
+  file itself for the current set. As of this writing it covers every instruction category above
+  plus a tagged-union ADT `match`, closures over both a stack and a heap-allocated struct (single
+  and multi-capture) calling through a loaded function pointer, and RC fully demonstrated —
+  alloc/retain/release matching this doc's own header layout below, cascading and tag-directed
+  child drop (including a multi-field arm), the Perceus reuse token handoff, and a closure whose
+  one capture is itself RC-managed, composing the closure and RC mechanisms together. The bindings
+  resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
