@@ -1622,6 +1622,30 @@ same public behavior.
   Verified past the automated test (which only checks for `"syscall"` and the absence of `"retq"` in
   the disassembly) by hand-disassembling a real `1 + 2 * 3` program compiled through this path and
   confirming zero `ret` occurrences anywhere in the output.
+- [~] Link the emitted object into a real executable. Source of truth: `LlvmImageLinkerElf.cs`
+  (linux-x64; `LlvmImageLinkerElfArm64.cs` and `LlvmImageLinkerPe.cs` cover the other three targets
+  and are unstarted). First slice, `AshesCompiler.Backend.ElfLinker`: a STATIC-ONLY linux-x64 ELF64
+  linker in pure Ashes byte manipulation (`Ashes.Byte`), no LLVM calls and no external `ld`/`lld`
+  invoked. Parses the relocatable object `targetMachineEmitToMemoryBuffer` emits (section headers,
+  `.symtab`/`.strtab`, the named entry symbol — skipping any symbol not `STT_FUNC`, since an
+  object's `FILE` symbol can share the entry function's own name when a test names its LLVM module
+  after its one function), refuses (`Error`) any object whose `.text` carries relocations, and
+  writes a minimal ELF header + one `PT_LOAD` program header + the raw `.text` bytes, with `e_entry`
+  set to the entry symbol's own address (not merely the start of `.text`, matching
+  `ParseElfObject`'s own symbol-table-driven lookup) placed one page after `ElfBaseVa`
+  (`0x400000`), the same base the real linker uses. Deliberately narrow, matching what
+  `AshesCompiler.Backend.IrCodegen` can produce today (a single self-contained function, no
+  external calls, no global data): the real linker's argv-passing trampoline, dynamic linking
+  (PLT/GOT, imported libraries, `.dynamic`), TLS sections, and relocation application are all
+  unimplemented follow-up slices, needed once `IrCodegen` grows closures/RC/external calls.
+  Verified past the automated test (which only checks the ELF header fields) by writing a linked
+  binary to disk, `chmod +x`ing it, and running it directly under `strace`: the kernel loads and
+  executes it with no `ld.so` involved (`statically linked, no section header`), and it makes
+  exactly one syscall, `exit(0)`. Also compiled and ran a real `.ash` **file** (not an embedded
+  string literal) through the complete self-hosted pipeline — parse, lower, codegen, LLVM object
+  emission, link — for the first time in this arc; timing the self-hosted pipeline's own stages
+  (excluding the stage-0 compile of the pipeline's own Ashes source, a separate and much larger
+  number) on a trivial `let`/`if` program: all five stages combined in ~2ms.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
