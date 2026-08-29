@@ -1955,6 +1955,17 @@ let buildAdtFieldTagReadModule name context =
             )
         in codegenEntryFunction(name)(context)(irFunction))
 
+// The first real-IR module driven by a USER-DEFINED type declaration, not one of the intrinsic
+// `Unit`/`Maybe`/`Result` constructors: `CoreLowering.ash`'s `registerTopLevelTypeDeclaration`
+// resolves `Point`'s two `Int` fields and registers a constructor layout for it, after which
+// `Point(x=3, y=4)`'s construction and `p.x`'s field access lower through the exact same
+// `lowerRecord`/`emitRecordFieldLoad` paths `Some(42)` and pattern-matched field access already
+// use — no new lowering or codegen was needed for this, only the registration step. Prints `3`
+// (field `x`), proving `GetAdtField` reads back the exact word `SetAdtField` wrote for a
+// record-style, named-field constructor, not just the positional single-field one from
+// `buildAdtFieldTagReadModule`.
+let buildRealIrRecordFieldModule name context = codegenRealSource("type Point =\n    | x: Int\n    | y: Int\n\nlet p = Point(x = 3, y = 4)\nAshes.IO.print(p.x)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2334,6 +2345,33 @@ let testRunStaticExecutableForAdtFieldTagReadModule unit =
                                                         let _ = test.assertEqual("3")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrRecordFieldModule`'s executable end to end: a user-defined `type Point`
+// declaration, constructed with named fields and read back through `.x`, compiled through the
+// complete self-hosted pipeline and executed on a real Linux process.
+let testRunStaticExecutableForRealIrRecordFieldModule unit =
+    match emitModule(buildRealIrRecordFieldModule)("selfhostBackendRunRecordField")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunRecordField") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_record_field_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_record_field_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_record_field_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("3")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2409,6 +2447,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
+    |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

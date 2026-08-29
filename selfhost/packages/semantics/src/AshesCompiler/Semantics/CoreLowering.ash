@@ -15,6 +15,9 @@ import AshesCompiler.Frontend.Syntax.Pattern
 import AshesCompiler.Frontend.Syntax.LetBindingSyntax
 import AshesCompiler.Frontend.Syntax.TopLevelItem
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
+import AshesCompiler.Frontend.Syntax.TypeDecl
+import AshesCompiler.Frontend.Syntax.TypeConstructor
+import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CoreBuiltinLowering
@@ -70,6 +73,7 @@ type CoreLoweringError =
     | UnsupportedOperationArmResume(Str, Str)
     | ForwardTopLevelReference(Str)
     | UnresolvedTraitEvidenceForwarding(TraitEvidenceForwardingError)
+    | UnsupportedTypeDeclaration(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -5149,6 +5153,91 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
                             |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(None))
                             |> continuation(topLevelContinuationBody)
 
+// A user-defined top-level `type` declaration's field types are resolved against exactly the
+// scalar primitives listed here — not through `TypeResolution.ash`'s real `resolveTypeExpression`,
+// which needs a full `TypeEnvironment` this single-file pipeline does not build. A field type
+// outside this list (a generic parameter, a function, a tuple, another named type) answers `None`.
+let recursive typeExprToPrimitiveSemanticType (typeExpr: TypeExpr) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprToPrimitiveSemanticType(inner)
+        | TypeNamed("Int") -> Some(SemInt)
+        | TypeNamed("Str") -> Some(SemString)
+        | TypeNamed("Bool") -> Some(SemBool)
+        | TypeNamed("Float") -> Some(SemFloat)
+        | TypeNamed("BigInt") -> Some(SemBigInt)
+        | TypeNamed("Rune") -> Some(SemRune)
+        | TypeNamed("Bytes") -> Some(SemBytes)
+        | TypeUnit ->
+            []
+            |> SemNamed(0)("Unit")
+            |> Some
+        | _other -> None
+
+let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) =
+    match parameters with
+        | [] -> Some([])
+        | parameter :: rest ->
+            match typeExprToPrimitiveSemanticType(parameter) with
+                | None -> None
+                | Some(fieldType) ->
+                    match constructorFieldSemanticTypes(rest) with
+                        | None -> None
+                        | Some(restTypes) -> Some(fieldType :: restTypes)
+
+// A constructor's scheme is a right-associated curried chain ending at the type's own result type
+// — `field0 -> field1 -> ... -> T` — matching `standardConstructorLayouts`' intrinsic entries
+// exactly (`Some`'s single-field scheme is the one-field case of this same shape).
+let recursive buildConstructorSchemeBody (fieldTypes: List(SemanticType)) (resultType: SemanticType) =
+    match fieldTypes with
+        | [] -> resultType
+        | fieldType :: rest ->
+            SemFunction(fieldType)(buildConstructorSchemeBody(rest)(resultType))(None)
+
+let buildUserConstructorLayout (resultType: SemanticType) (tag: Int) (constructor: TypeConstructor) =
+    match constructor with
+        | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } ->
+            match constructorFieldSemanticTypes(parameters) with
+                | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit)"))
+                | Some(fieldTypes) ->
+                    Ok(CoreConstructorLayout(
+                        name = name,
+                        tag = tag,
+                        scheme = TypeScheme(quantified = [], body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
+                        fieldNames = fieldNames,
+                        isZeroCost = false
+                    ))
+
+let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (index: Int) (constructors: List(TypeConstructor)) =
+    match constructors with
+        | [] -> Ok([])
+        | constructor :: rest ->
+            match buildUserConstructorLayout(resultType)(index)(constructor) with
+                | Error(error) -> Error(error)
+                | Ok(layout) ->
+                    match buildUserConstructorLayoutsFromIndex(resultType)(index + 1)(rest) with
+                        | Error(error) -> Error(error)
+                        | Ok(restLayouts) -> Ok(layout :: restLayouts)
+
+// Registers one `CoreConstructorLayout` per constructor of a top-level `type` declaration into
+// `state.constructorLayouts` — the same list `standardConstructorLayouts` seeds intrinsically, read
+// live at lookup time by `findConstructorLayout`/`constructorLayout`, so a later `TopLevelLet`
+// referencing this type's constructors resolves correctly without any further wiring:
+// `lowerRecord`/`lowerConstructor`/`emitRecordFieldLoad` already handle any registered layout the
+// same way regardless of where it came from. Refuses a type with its own type parameters (no
+// substitution machinery here to instantiate a generic constructor's fields against concrete type
+// arguments) with a clear error rather than registering an incorrect, unsubstituted layout.
+let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
+    match declaration with
+        | TypeDecl { name = name, typeParameters = [], constructors = constructors } ->
+            let resultType = SemNamed(0)(name)([])
+            in
+                match buildUserConstructorLayoutsFromIndex(resultType)(0)(constructors) with
+                    | Error(error) -> Error(error)
+                    | Ok(newLayouts) ->
+                        match state with
+                            | CoreLoweringState { constructorLayouts = existingLayouts } -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts)))
+        | TypeDecl { name = name } -> Error(UnsupportedTypeDeclaration("type '" + name + "' declares type parameters, which top-level type-declaration lowering does not support yet"))
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -5166,6 +5255,10 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
     match items with
         | [] -> lowerCore(trailingBody)(state)
         | TopLevelAt(_span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(state)
+        | TopLevelType(declaration) :: rest ->
+            match registerTopLevelTypeDeclaration(declaration)(state) with
+                | Error(error) -> failure(state)(error)
+                | Ok(nextState) -> lowerCoreProgramItems(rest)(trailingBody)(seen)(environment)(nextState)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))

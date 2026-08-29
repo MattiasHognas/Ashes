@@ -1804,6 +1804,25 @@ same public behavior.
   add them, print the sum) run end to end on a real Linux process — the one exception to this
   package's real-lowering-only testing rule, matching the same "prove the primitive first" precedent
   `AshesCompiler.Backend.ElfLinker`'s dynamic-linking mechanism used before real IR could reach it.
+- [~] `CoreLowering.ash` lowers a top-level, non-generic `type` declaration into one
+  `CoreConstructorLayout` per constructor (`registerTopLevelTypeDeclaration`), appended to
+  `state.constructorLayouts` — the same live list `standardConstructorLayouts` seeds intrinsically —
+  so a later `TopLevelLet` referencing the type's constructors resolves normally with no further
+  wiring: `lowerRecord`, `lowerConstructor`, and `emitRecordFieldLoad` already handle any registered
+  layout uniformly, whether intrinsic or user-defined. Each constructor field's `TypeExpr` resolves
+  against a small hand-written primitive map (`Int`/`Str`/`Bool`/`Float`/`BigInt`/`Rune`/`Bytes`/
+  `Unit`) rather than `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full
+  `TypeEnvironment` this single-file pipeline does not build; a type with its own type parameters,
+  or a constructor field outside that primitive set, refuses cleanly with a new
+  `UnsupportedTypeDeclaration` error rather than registering an incorrect layout. `isZeroCost` is
+  always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
+  to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
+  read back (`p.x`) compiles through the complete self-hosted pipeline and runs on a real Linux
+  process, printing `3` — the first user-defined type this compiler has ever taken from source to a
+  running executable. **Explicitly still open**: type parameters (generics), multiple constructors
+  sharing a type beyond simple sequential tagging (untested, though the same mechanism as `Maybe`/
+  `Result` should already cover it), `deriving`, and non-primitive (nested-ADT, function, tuple)
+  field types.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
