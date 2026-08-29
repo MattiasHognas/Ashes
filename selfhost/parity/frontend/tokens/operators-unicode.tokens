@@ -22,17 +22,19 @@ Slash	2f	0	0	126	1
 Percent	25	0	0	128	1
 Tilde	7e	0	0	130	1
 Ampersand	26	0	0	132	1
-Caret	5e	0	0	134	1
-Bang	21	0	0	136	1
-Equals	3d	0	0	138	1
-Comma	2c	0	0	140	1
-Pipe	7c	0	0	142	1
-LParen	28	0	0	144	1
-RParen	29	0	0	146	1
-LBracket	5b	0	0	148	1
-RBracket	5d	0	0	150	1
-Dot	2e	0	0	152	1
-Colon	3a	0	0	154	1
-LBrace	7b	0	0	156	1
-RBrace	7d	0	0	158	1
-EOF		0	0	160	0
+AmpersandAmpersand	2626	0	0	134	2
+Caret	5e	0	0	137	1
+Bang	21	0	0	139	1
+Equals	3d	0	0	141	1
+Comma	2c	0	0	143	1
+Pipe	7c	0	0	145	1
+PipePipe	7c7c	0	0	147	2
+LParen	28	0	0	150	1
+RParen	29	0	0	152	1
+LBracket	5b	0	0	154	1
+RBracket	5d	0	0	156	1
+Dot	2e	0	0	158	1
+Colon	3a	0	0	160	1
+LBrace	7b	0	0	162	1
+RBrace	7d	0	0	164	1
+EOF		0	0	166	0

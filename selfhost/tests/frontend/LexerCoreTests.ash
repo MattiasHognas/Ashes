@@ -91,11 +91,13 @@ let run unit =
                 "Percent",
                 "Tilde",
                 "Ampersand",
+                "AmpersandAmpersand",
                 "Caret",
                 "Bang",
                 "Equals",
                 "Comma",
                 "Pipe",
+                "PipePipe",
                 "LParen",
                 "RParen",
                 "LBracket",
@@ -106,7 +108,7 @@ let run unit =
                 "RBrace",
                 "EOF"
             ],
-            "|?> |!> -> >= <= == != << >> :: |> < > + - * / % ~ & ^ ! = , | ( ) [ ] . : { }"
+            "|?> |!> -> >= <= == != << >> :: |> < > + - * / % ~ & && ^ ! = , | || ( ) [ ] . : { }"
         ))
     |> (given (_) ->
         let tokens =

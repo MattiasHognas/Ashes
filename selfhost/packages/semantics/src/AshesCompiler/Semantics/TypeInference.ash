@@ -4125,6 +4125,42 @@ and inferWith expression environment substitution supply ambientRow =
                 ambientRow
             )
         | ExprLogicalNot(operand) -> inferUnaryTrait("Not")(operand)(environment)(substitution)(supply)(ambientRow)
+        | ExprLogicalAnd(left, right) ->
+            match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
+                | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
+                    let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                    in
+                        match mergeUnification(leftSubstitution, leftUnification, leftSupply, SemBool) with
+                            | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
+                                match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
+                                    | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
+                                        let rightUnification = unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                        in
+                                            addConstraints(
+                                                appendConstraints(leftConstraints)(rightConstraints),
+                                                mergeUnification(rightSubstitution, rightUnification, rightSupply, SemBool)
+                                            )
+                                    | failure -> failure
+                            | failure -> failure
+                | failure -> failure
+        | ExprLogicalOr(left, right) ->
+            match inferWith(left)(environment)(substitution)(supply)(ambientRow) with
+                | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
+                    let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
+                    in
+                        match mergeUnification(leftSubstitution, leftUnification, leftSupply, SemBool) with
+                            | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
+                                match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
+                                    | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
+                                        let rightUnification = unify(applySubstitution(rightSubstitution)(rightType))(SemBool)
+                                        in
+                                            addConstraints(
+                                                appendConstraints(leftConstraints)(rightConstraints),
+                                                mergeUnification(rightSubstitution, rightUnification, rightSupply, SemBool)
+                                            )
+                                    | failure -> failure
+                            | failure -> failure
+                | failure -> failure
         | _ ->
             inferenceFailure(
                 SemNever,

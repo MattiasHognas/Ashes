@@ -1905,6 +1905,15 @@ let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then
 // no `import`, no caller-supplied glue — not just a case this test file happened to wire up.
 let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 - 84)")(name)(context)
 
+// Exercises the new `&&`/`||` short-circuit operators through the same real-IR path: each desugars
+// to `lowerIf` (see CoreLowering.ash's `ExprLogicalAnd`/`ExprLogicalOr` cases), so this proves that
+// desugaring produces the exact same JumpIfFalse/Jump/StoreLocal/LoadLocal shape the codegen already
+// handles for a plain `if` — including the new `LoadConstBool`/zero-extend/truncate plumbing this
+// needed in `IrCodegen.ash` and `Llvm.ash`, not just that it lowers without error. `true && false ||
+// true` is `(true && false) || true = false || true = true`, so the outer `if` always takes its
+// `then` arm and prints `1`.
+let buildRealIrLogicalOperatorsModule name context = codegenRealSource("Ashes.IO.print(if true && false || true then 1 else 0)")(name)(context)
+
 // The first real string literal this compiler has taken from source to a running executable.
 // `CoreBuiltinLowering.ash`'s `printValue` already dispatches `Ashes.IO.print` to `PrintStr` for a
 // `SemString`-typed argument (confirmed by reading it — this was not new lowering work, only its
@@ -2423,6 +2432,33 @@ let testRunStaticExecutableForRealIrPrintModule unit =
                                                         let _ = test.assertEqual("-42")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Same end-to-end proof as testRunStaticExecutableForRealIrPrintModule, for the `&&`/`||`
+// desugaring instead of a plain `if`: writes, links, chmods, and runs a real executable, checking
+// its actual stdout (`"1"`) and exit code.
+let testRunStaticExecutableForRealIrLogicalOperatorsModule unit =
+    match emitModule(buildRealIrLogicalOperatorsModule)("selfhostBackendRunLogicalOperators")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunLogicalOperators") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_logical_ops_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_logical_ops_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_logical_ops_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("1")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // Runs `buildRealIrStringLiteralModule`'s executable end to end: `LoadConstStr`'s global and
 // `PrintStr`'s syscall-based write, proven on a real Linux process, not just a hand-inspected IR
 // shape.
@@ -2781,6 +2817,7 @@ let run unit =
     |> testLinkStaticExecutableForRealIrArithmeticModule
     |> testLinkStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrPrintModule
+    |> testRunStaticExecutableForRealIrLogicalOperatorsModule
     |> testRunStaticExecutableForRealIrStringLiteralModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testRunStaticExecutableForAdtFieldTagReadModule

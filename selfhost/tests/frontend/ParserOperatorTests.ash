@@ -16,6 +16,8 @@ let operatorRootName expression =
         | ExprShiftRight(_, _) -> "shift-right"
         | ExprBitwiseNot(_) -> "not-bits"
         | ExprLogicalNot(_) -> "not"
+        | ExprLogicalAnd(_, _) -> "logical-and"
+        | ExprLogicalOr(_, _) -> "logical-or"
         | ExprGreaterThan(_, _) -> "greater"
         | ExprLessThan(_, _) -> "less"
         | ExprGreaterOrEqual(_, _) -> "greater-equal"
@@ -72,6 +74,8 @@ let run unit =
         ("1 >> 2", "shift-right"),
         ("~1", "not-bits"),
         ("!true", "not"),
+        ("true && false", "logical-and"),
+        ("true || false", "logical-or"),
         ("1 > 2", "greater"),
         ("1 < 2", "less"),
         ("1 >= 2", "greater-equal"),

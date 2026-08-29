@@ -673,15 +673,18 @@ let lexerFixedToken (bytes: Bytes) (byteCount: Int) (position: Int) =
                     if second == 62
                     then lexerFixed(PipeGreater)("|>")(position)(2)
                     else
-                        if lexerByteOr(bytes)(byteCount)(position + 2) == 62
-                        then
-                            if second == 63
-                            then lexerFixed(PipeQuestionGreater)("|?>")(position)(3)
-                            else
-                                if second == 33
-                                then lexerFixed(PipeBangGreater)("|!>")(position)(3)
-                                else lexerFixed(Pipe)("|")(position)(1)
-                        else lexerFixed(Pipe)("|")(position)(1)
+                        if second == 124
+                        then lexerFixed(PipePipe)("||")(position)(2)
+                        else
+                            if lexerByteOr(bytes)(byteCount)(position + 2) == 62
+                            then
+                                if second == 63
+                                then lexerFixed(PipeQuestionGreater)("|?>")(position)(3)
+                                else
+                                    if second == 33
+                                    then lexerFixed(PipeBangGreater)("|!>")(position)(3)
+                                    else lexerFixed(Pipe)("|")(position)(1)
+                            else lexerFixed(Pipe)("|")(position)(1)
                 | 45 ->
                     if second == 62
                     then lexerFixed(Arrow)("->")(position)(2)
@@ -717,7 +720,10 @@ let lexerFixedToken (bytes: Bytes) (byteCount: Int) (position: Int) =
                 | 47 -> lexerFixed(Slash)("/")(position)(1)
                 | 37 -> lexerFixed(Percent)("%")(position)(1)
                 | 126 -> lexerFixed(Tilde)("~")(position)(1)
-                | 38 -> lexerFixed(Ampersand)("&")(position)(1)
+                | 38 ->
+                    if second == 38
+                    then lexerFixed(AmpersandAmpersand)("&&")(position)(2)
+                    else lexerFixed(Ampersand)("&")(position)(1)
                 | 94 -> lexerFixed(Caret)("^")(position)(1)
                 | 44 -> lexerFixed(Comma)(",")(position)(1)
                 | 40 -> lexerFixed(LParen)("(")(position)(1)

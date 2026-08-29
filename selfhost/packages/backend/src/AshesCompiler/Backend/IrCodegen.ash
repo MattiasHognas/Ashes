@@ -93,6 +93,7 @@ type CodegenContext =
     | function_: LLVMValueRef
     | i64: LLVMTypeRef
     | i8: LLVMTypeRef
+    | i1: LLVMTypeRef
     | ptrType: LLVMTypeRef
     | localSlots: List((IrLocal, LLVMValueRef))
     | labelBlocks: List((Str, LLVMBasicBlockRef))
@@ -469,10 +470,20 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, stringLiteralGlobals = stringLiteralGlobals } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, stringLiteralGlobals = stringLiteralGlobals } ->
                     match kind with
                         | LoadConstInt(target, value) ->
                             ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
+                        // Represented the same as every other scalar in `tempEnv` — a plain `i64`
+                        // (0 or 1), matching `StoreLocal`/`LoadLocal`'s uniform `i64` local slots.
+                        // `CmpIntGt`/`CmpIntEq`/`CmpIntNe` below zero-extend their native `i1`
+                        // `icmp` result to the same representation for exactly this reason: a Bool
+                        // value must round-trip through a local slot (the `&&`/`||` desugaring in
+                        // `CoreLowering.ash` stores its branch result into one) with no bits lost.
+                        | LoadConstBool(target, value) ->
+                            ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(if value
+                            then 1
+                            else 0))(true)) :: tempEnv, terminated)
                         // The global's own value IS a pointer (to its header word), so the value
                         // pointer (past the header, matching `AllocAdt`'s own convention) is just a
                         // `+16` byte GEP off it directly — no `buildIntToPtr` round-trip needed
@@ -489,11 +500,11 @@ let codegenInstructionKind cx builder kind state =
                         | SubInt(target, left, right) ->
                             ((target, buildSub(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | CmpIntGt(target, left, right) ->
-                            ((target, buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | CmpIntEq(target, left, right) ->
-                            ((target, buildICmp(builder)(intPredicateEq)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateEq)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | CmpIntNe(target, left, right) ->
-                            ((target, buildICmp(builder)(intPredicateNe)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateNe)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
@@ -533,13 +544,20 @@ let codegenInstructionKind cx builder kind state =
                         | JumpIfFalse(cond, target) ->
                             let fallthroughBlock = appendBasicBlock(context)(function_)("fallthrough")
                             in
-                                let _ =
-                                    labelBlocks
-                                    |> lookupIndexed(target)
-                                    |> buildCondBr(builder)(lookupIndexed(cond)(tempEnv))(fallthroughBlock)
+                                // Every Bool value in `tempEnv` is a canonical 0/1 `i64` (see
+                                // `LoadConstBool`/`CmpIntGt` above), but `buildCondBr` requires an
+                                // `i1` condition — truncate back down right at the branch, the one
+                                // place this codegen actually needs the narrower type.
+                                let condI1 =
+                                    buildTrunc(builder)(lookupIndexed(cond)(tempEnv))(i1)("cond_i1")
                                 in
-                                    let _ = positionBuilderAtEnd(builder)(fallthroughBlock)
-                                    in (tempEnv, false)
+                                    let _ =
+                                        labelBlocks
+                                        |> lookupIndexed(target)
+                                        |> buildCondBr(builder)(condI1)(fallthroughBlock)
+                                    in
+                                        let _ = positionBuilderAtEnd(builder)(fallthroughBlock)
+                                        in (tempEnv, false)
                         | SwitchTag(tagTemp, cases, defaultLabel) ->
                             let resolved = resolveSwitchCases(cases)(labelBlocks)
                             in
@@ -752,56 +770,59 @@ let codegenEntryFunction name context irFunction stringLiterals =
     in
         let i64 = int64Type(context)
         in
-            let i8 = int8Type(context)
+            let i1 = int1Type(context)
             in
-                let ptrType = pointerType(context)(0u32)
+                let i8 = int8Type(context)
                 in
-                    let mallocType = functionType(ptrType)([i64])(1u32)(false)
+                    let ptrType = pointerType(context)(0u32)
                     in
-                        let mallocFn = addFunction(module_)("malloc")(mallocType)
+                        let mallocType = functionType(ptrType)([i64])(1u32)(false)
                         in
-                            let freeType =
-                                functionType(voidType(context))([ptrType])(1u32)(false)
+                            let mallocFn = addFunction(module_)("malloc")(mallocType)
                             in
-                                let freeFn = addFunction(module_)("free")(freeType)
+                                let freeType =
+                                    functionType(voidType(context))([ptrType])(1u32)(false)
                                 in
-                                    let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
+                                    let freeFn = addFunction(module_)("free")(freeType)
                                     in
-                                        let functionValue =
-                                            false
-                                            |> functionType(voidType(context))([])(0u32)
-                                            |> addFunction(module_)(name)
+                                        let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
                                         in
-                                            let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                            let functionValue =
+                                                false
+                                                |> functionType(voidType(context))([])(0u32)
+                                                |> addFunction(module_)(name)
                                             in
-                                                let builder = createBuilder(context)
+                                                let entryBlock = appendBasicBlock(context)(functionValue)("entry")
                                                 in
-                                                    let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                    let builder = createBuilder(context)
                                                     in
-                                                        match irFunction with
-                                                            | IrFunction { instructions = instructions, localCount = localCount } ->
-                                                                let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
-                                                                in
-                                                                    let labelBlocks =
-                                                                        instructions
-                                                                        |> collectLabelNames
-                                                                        |> createLabelBlocks(context)(functionValue)
+                                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                        in
+                                                            match irFunction with
+                                                                | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
                                                                     in
-                                                                        let cx =
-                                                                            CodegenContext(
-                                                                                context = context,
-                                                                                function_ = functionValue,
-                                                                                i64 = i64,
-                                                                                i8 = i8,
-                                                                                ptrType = ptrType,
-                                                                                localSlots = localSlots,
-                                                                                labelBlocks = labelBlocks,
-                                                                                mallocFn = mallocFn,
-                                                                                mallocType = mallocType,
-                                                                                freeFn = freeFn,
-                                                                                freeType = freeType,
-                                                                                stringLiteralGlobals = stringLiteralGlobals
-                                                                            )
+                                                                        let labelBlocks =
+                                                                            instructions
+                                                                            |> collectLabelNames
+                                                                            |> createLabelBlocks(context)(functionValue)
                                                                         in
-                                                                            let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                                            in (module_, builder))
+                                                                            let cx =
+                                                                                CodegenContext(
+                                                                                    context = context,
+                                                                                    function_ = functionValue,
+                                                                                    i64 = i64,
+                                                                                    i8 = i8,
+                                                                                    i1 = i1,
+                                                                                    ptrType = ptrType,
+                                                                                    localSlots = localSlots,
+                                                                                    labelBlocks = labelBlocks,
+                                                                                    mallocFn = mallocFn,
+                                                                                    mallocType = mallocType,
+                                                                                    freeFn = freeFn,
+                                                                                    freeType = freeType,
+                                                                                    stringLiteralGlobals = stringLiteralGlobals
+                                                                                )
+                                                                            in
+                                                                                let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                                in (module_, builder))

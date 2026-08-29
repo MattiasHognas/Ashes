@@ -1453,6 +1453,8 @@ and expressionDependsOnTraitMethod traitName methodName expression =
         | ExprCons(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
         | ExprBitwiseNot(operand) -> expressionDependsOnTraitMethod(traitName)(methodName)(operand)
         | ExprLogicalNot(operand) -> expressionDependsOnTraitMethod(traitName)(methodName)(operand)
+        | ExprLogicalAnd(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
+        | ExprLogicalOr(left, right) -> expressionPairDependsOnTraitMethod(traitName)(methodName)(left)(right)
         | ExprLet(_name, value, body, _parameters, _annotation, _requirements) ->
             expressionPairDependsOnTraitMethod(
                 traitName,

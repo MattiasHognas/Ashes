@@ -251,6 +251,15 @@ let run unit =
         ))
     |> (given (_) -> assertExpression("1 + 2 * 3\n")("1+2*3"))
     |> (given (_) -> assertExpression("(1 + 2) * 3\n")("(1+2)*3"))
+    |> (given (_) -> assertExpression("a && b || c\n")("a&&b||c"))
+    |> (given (_) -> assertExpression("a || b && c\n")("a||b&&c"))
+    |> (given (_) -> assertExpression("(a || b) && c\n")("(a||b)&&c"))
+    |> (given (_) -> assertExpression("1 < 2 && 3 > 2 || 1 > 5\n")("1<2&&3>2||1>5"))
+    |> (given (_) -> assertExpression("x || false\n")("x||false"))
+    |> (given (_) -> assertExpression("x && true\n")("x&&true"))
+    |> (given (_) -> assertIdempotent("x || false"))
+    |> (given (_) -> assertIdempotent("x && true"))
+    |> (given (_) -> assertIdempotent("a && b || c"))
     |> (given (_) -> assertExpression("map transform values\n")("map transform values"))
     |> (given (_) ->
         assertExpression(

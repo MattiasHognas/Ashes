@@ -446,6 +446,14 @@ and rewriteExpression project moduleName boundary locals expression =
             operand
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
             |> ExprLogicalNot
+        | ExprLogicalAnd(left, right) ->
+            right
+            |> rewriteExpression(project)(moduleName)(boundary)(locals)
+            |> ExprLogicalAnd(rewriteExpression(project)(moduleName)(boundary)(locals)(left))
+        | ExprLogicalOr(left, right) ->
+            right
+            |> rewriteExpression(project)(moduleName)(boundary)(locals)
+            |> ExprLogicalOr(rewriteExpression(project)(moduleName)(boundary)(locals)(left))
         | ExprGreaterThan(left, right) ->
             right
             |> rewriteExpression(project)(moduleName)(boundary)(locals)
