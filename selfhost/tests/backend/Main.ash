@@ -13,8 +13,6 @@ import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
-import AshesCompiler.Semantics.CoreBuiltinLowering
-import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Ir
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
@@ -1837,49 +1835,15 @@ let buildRealIrLetBindingsModule name context = codegenRealSource("let x = 10\nl
 // evaluates to `42`.
 let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then 42 else 99")(name)(context)
 
-// `ProgramSyntax` (this package's `parseProgram` output) carries no import information at all, and
-// nothing in self-hosted `CoreLowering` yet populates a builtin's availability from it — every
-// caller must construct, by hand, the layout for each builtin its source calls (see
-// `lowerCoreProgramWithSourceAndContext`'s own header comment). `Ashes.IO.print`'s scheme here is
-// monomorphic (`Int -> Unit`, not the real polymorphic `print`), matching exactly what
-// `AshesCompiler.Backend.IrCodegen`'s `PrintInt` case supports today.
-let printIntBuiltinLayout =
-    CoreBuiltinLayout(
-        moduleName = "Ashes.IO",
-        memberName = "print",
-        scheme = TypeScheme(quantified = [], body = SemFunction(SemInt)(SemNamed(0)("Unit")([]))(None), constraints = []),
-        kind = CorePrint
-    )
-
-// `Ashes.IO.print`'s own `Unit` result is materialized through the same constructor-allocation
-// path a user's own zero-field ADT would use (`finishBuiltinUnit` looks up a real
-// `CoreConstructorLayout` named `"Unit"`, not a hardcoded shape) — `tag = 0`, no fields, matching
-// `AllocAdt Tag=0 FieldCount=0` in stage-0's own `--emit-ir` dump for any `Unit`-returning call.
-let unitConstructorLayout =
-    CoreConstructorLayout(
-        name = "Unit",
-        tag = 0,
-        scheme = TypeScheme(quantified = [], body = SemNamed(0)("Unit")([]), constraints = []),
-        fieldNames = [],
-        isZeroCost = false
-    )
-
-let codegenRealSourceWithContext source name context =
-    match parseProgram(source) with
-        | ProgramParseResult { program = program, diagnostics = [] } ->
-            match lowerCoreProgramWithSourceAndContext(name + ".ash")(source)(program)([unitConstructorLayout])([printIntBuiltinLayout]) with
-                | CoreLoweringResult { program = Some(lowered), error = None } ->
-                    match lowered with
-                        | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
-                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
-                | _ -> test.fail("lowering produced no program")
-        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
-
 // Exercises `PrintInt` and the zero-field `AllocAdt` case together — the first genuinely
 // user-observable real-IR module in this arc: `codegenEntryFunction` walks IR containing a real
 // builtin call, not just arithmetic/locals/control-flow. `42 - 84 = -42`, deliberately negative to
-// exercise `emitPrintInt`'s sign-handling path, not just its common case.
-let buildRealIrPrintModule name context = codegenRealSourceWithContext("Ashes.IO.print(42 - 84)")(name)(context)
+// exercise `emitPrintInt`'s sign-handling path, not just its common case. Uses the plain
+// `codegenRealSource` (no hand-built layouts): `Ashes.IO.print` is intrinsic now
+// (`CoreLowering.ash`'s `standardBuiltinLayouts`/`standardConstructorLayouts`, matching
+// language.md's "qualified access (no import required)"), proving the real language semantics —
+// no `import`, no caller-supplied glue — not just a case this test file happened to wire up.
+let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 - 84)")(name)(context)
 
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
