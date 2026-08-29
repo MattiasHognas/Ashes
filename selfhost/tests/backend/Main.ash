@@ -8,6 +8,11 @@ import Ashes.Ffi
 import Ashes.Test as test
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
+import AshesCompiler.Backend.IrCodegen
+import AshesCompiler.Frontend.Parser
+import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.Ir
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
 // `None` for `existingBuilder` for a module's first (or only) function; pass `Some(builder)` for a
@@ -1791,6 +1796,28 @@ let buildRcTriReleaseModule name context =
                                                                                                                                         let _ = buildRet(builder)(sum)
                                                                                                                                         in (module_, builder))
 
+// The first genuinely IR-DRIVEN test in this arc: every module builder above hand-encodes the
+// LLVM calls a human decided represent some IR shape. This one instead runs `1 + 2 * 3` through
+// the REAL self-hosted `AshesCompiler.Frontend.Parser.parseProgram` +
+// `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource` pipeline (the same one
+// `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR text output for this
+// exact source) and hands the resulting REAL `IrFunction` to
+// `AshesCompiler.Backend.IrCodegen.codegenEntryFunction`. If the shape `IrProgram`/`IrFunction`
+// actually produce didn't match what a codegen walker expects, this is where it would show up —
+// no earlier test in this arc could ever catch that, since they all supplied the IR shape by hand.
+let buildRealIrArithmeticModule name context =
+    (let source = "1 + 2 * 3"
+    in
+        match parseProgram(source) with
+            | ProgramParseResult { program = program, diagnostics = [] } ->
+                match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                    | CoreLoweringResult { program = Some(lowered), error = None } ->
+                        match lowered with
+                            | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
+                    | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                    | _ -> test.fail("lowering produced no program")
+            | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics)))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -1983,6 +2010,11 @@ let testEmitAssemblyForRcTriReleaseModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcTriLifecycle")
 
+let testEmitAssemblyForRealIrArithmeticModule unit =
+    match emitModule(buildRealIrArithmeticModule)("selfhostBackendRealIrArith")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrArith")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2006,6 +2038,7 @@ let run unit =
     |> testEmitAssemblyForRcReuseModule
     |> testEmitAssemblyForRcClosureModule
     |> testEmitAssemblyForRcTriReleaseModule
+    |> testEmitAssemblyForRealIrArithmeticModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

@@ -1573,7 +1573,7 @@ same public behavior.
   (`applyDataLayout`, mirroring `LlvmTargetSetup.cs`'s own helper), and emits an object file to a
   memory buffer — but has no optimization-level selection beyond a hardcoded `None` and binds none
   of the other three target RIDs.
-- [ ] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
+- [~] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
   allocations, RC/drop/reuse, globals, and calls. Source of truth: `LlvmCodegen.cs`,
   `LlvmCodegenExpressions.cs`, and `LlvmCodegenMemory.cs` (allocation, RC headers and free-list bins,
   copy-out, string operations); the layout contracts are in
@@ -1582,6 +1582,19 @@ same public behavior.
   allocation and layout, scoped arenas, runtime payload layouts, and stacks. Every value is an `i64`
   word (pointers included) and every temp and local is an entry-block slot; the closure object layout
   `{code, env, packed size and flag bits, dropper}` is read by both codegen and the optimizer.
+  `selfhost/packages/backend`'s `AshesCompiler.Backend.IrCodegen` is the first genuinely IR-driven
+  slice: it walks a REAL `IrFunction` (produced by running actual source through
+  `AshesCompiler.Frontend.Parser.parseProgram` + `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource`
+  — the same pipeline `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR
+  text for `1 + 2 * 3`) and drives `AshesCompiler.Backend.Llvm` from its actual instructions, not a
+  human hand-simulating what codegen should produce (every earlier `selfhost/tests/backend` proof
+  point did exactly that). Deliberately covers only `LoadConstInt`/`MulInt`/`AddInt`/`Return` —
+  panics on anything else — since that is the complete instruction set a no-`let`, no-arena scalar
+  arithmetic entry function needs; locals, arena bookkeeping, and every other instruction kind are
+  unstarted follow-up slices. Uncovered a genuine, separate compiler gap along the way: Ashes had no
+  `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s only narrows to `u8`), needed
+  to turn an IR constant's `Int` payload into `constInt`'s `u64` parameter — fixed as
+  `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
