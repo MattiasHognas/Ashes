@@ -5022,6 +5022,45 @@ public sealed partial class Lowering
         return (resultTemp, new TypeRef.TUInt(8));
     }
 
+    // Ashes.Number.UInt.fromInt64 : Int -> u64 (the widening counterpart to UIntToInt, and the only
+    // Int-to-unsigned conversion that needs no mask: u64 is the full 64-bit width, so every bit of
+    // the internal i64 representation is already valid).
+    private Binding.Intrinsic CreateUIntFromInt64Binding()
+    {
+        return new Binding.Intrinsic(
+            IntrinsicKind.UIntFromInt64,
+            new TypeScheme([], new TypeRef.TFun(new TypeRef.TInt(), new TypeRef.TUInt(64)))
+        );
+    }
+
+    // Ashes.Number.UInt.fromInt64(x) : u64 — bit-reinterpret a signed Int as unsigned. Int and u64 are both
+    // full-width i64 words, so unlike fromInt's u8 narrowing this needs no mask: no runtime
+    // instruction, just a retype, mirroring UIntToInt's own "no runtime instruction" shape exactly.
+    private (int, TypeRef) LowerUIntFromInt64(Expr arg)
+    {
+        using var argDiagnosticSpan = PushDiagnosticSpan(arg);
+        var (argTemp, argType) = LowerExpr(arg);
+        var pruned = Prune(argType);
+        if (pruned is TypeRef.TNever)
+        {
+            return (argTemp, pruned);
+        }
+
+        if (pruned is TypeRef.TVar)
+        {
+            Unify(pruned, new TypeRef.TInt());
+            pruned = new TypeRef.TInt();
+        }
+
+        if (pruned is not TypeRef.TInt)
+        {
+            ReportDiagnostic(GetSpan(arg), $"Ashes.Number.UInt.fromInt64() expects Int but got {Pretty(pruned)}.");
+            return (argTemp, new TypeRef.TUInt(64));
+        }
+
+        return (argTemp, new TypeRef.TUInt(64));
+    }
+
     // Ashes.Number.Math Layer-1 numeric conversions and Float unary primitives.
 
     private Binding.Intrinsic CreateMathToFloatBinding() =>

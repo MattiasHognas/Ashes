@@ -671,6 +671,7 @@ public sealed partial class Lowering
         BytesGetU64Le,
         UIntToInt,
         UIntFromInt,
+        UIntFromInt64,
         MathToFloat,
         MathSqrt,
         MathFloor,

@@ -368,6 +368,7 @@ public sealed partial class Lowering
             BuiltinRegistry.BuiltinValueKind.TextAsciiLower => LowerQualifiedBuiltinFunctionReference(name, CreateTextAsciiCaseBinding(upper: false).S.Body),
             BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntToIntBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerQualifiedBuiltinFunctionReference(name, CreateUIntFromIntBinding().S.Body),
+            BuiltinRegistry.BuiltinValueKind.UIntFromInt64 => LowerQualifiedBuiltinFunctionReference(name, CreateUIntFromInt64Binding().S.Body),
             BuiltinRegistry.BuiltinValueKind k when LibmBuiltinKinds.TryGetValue(k, out var libmKind) => LowerQualifiedBuiltinFunctionReference(name, CreateLibmBinding(libmKind).S.Body),
             BuiltinRegistry.BuiltinValueKind.IoReadExact => LowerQualifiedBuiltinFunctionReference(name, CreateReadExactBinding().S.Body),
             BuiltinRegistry.BuiltinValueKind.ConsoleEnableRaw => LowerQualifiedBuiltinFunctionReference(name, CreateConsoleEnableRawBinding().S.Body),

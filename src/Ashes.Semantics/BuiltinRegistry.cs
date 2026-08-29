@@ -254,8 +254,10 @@ public static class BuiltinRegistry
         BytesGetU64Le,
         /// <summary>Reinterprets an unsigned integer as a signed machine integer.</summary>
         UIntToInt,
-        /// <summary>Reinterprets a signed machine integer as unsigned.</summary>
+        /// <summary>Narrows a signed machine integer to an unsigned byte, wrapping modulo 256.</summary>
         UIntFromInt,
+        /// <summary>Reinterprets a signed machine integer's full 64 bits as unsigned, with no narrowing.</summary>
+        UIntFromInt64,
         /// <summary>Converts an integer to a floating-point number.</summary>
         MathToFloat,
         /// <summary>Square root.</summary>
@@ -719,7 +721,8 @@ public static class BuiltinRegistry
                 new Dictionary<string, BuiltinModuleMember>(StringComparer.Ordinal)
                 {
                     ["toInt"] = new("toInt", BuiltinValueKind.UIntToInt, IsCallable: true, Arity: 1),
-                    ["fromInt"] = new("fromInt", BuiltinValueKind.UIntFromInt, IsCallable: true, Arity: 1)
+                    ["fromInt"] = new("fromInt", BuiltinValueKind.UIntFromInt, IsCallable: true, Arity: 1),
+                    ["fromInt64"] = new("fromInt64", BuiltinValueKind.UIntFromInt64, IsCallable: true, Arity: 1)
                 }),
             ["Ashes.Net.Http"] = new(
                 "Ashes.Net.Http",

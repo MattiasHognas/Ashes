@@ -10023,6 +10023,7 @@ public sealed partial class Lowering
     {
         IntrinsicKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
         IntrinsicKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
+        IntrinsicKind.UIntFromInt64 => LowerUIntFromInt64(collectedArgs[0]),
         IntrinsicKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
         IntrinsicKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.sqrt", "llvm.sqrt.f64"),
         IntrinsicKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.floor", "llvm.floor.f64"),
@@ -10295,6 +10296,7 @@ public sealed partial class Lowering
     {
         BuiltinRegistry.BuiltinValueKind.UIntToInt => LowerUIntToInt(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.UIntFromInt => LowerUIntFromInt(collectedArgs[0]),
+        BuiltinRegistry.BuiltinValueKind.UIntFromInt64 => LowerUIntFromInt64(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.MathToFloat => LowerMathToFloat(collectedArgs[0]),
         BuiltinRegistry.BuiltinValueKind.MathSqrt => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.sqrt", "llvm.sqrt.f64"),
         BuiltinRegistry.BuiltinValueKind.MathFloor => LowerMathFloatUnary(collectedArgs[0], "Ashes.Number.Math.floor", "llvm.floor.f64"),
