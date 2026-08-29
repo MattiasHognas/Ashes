@@ -78,6 +78,13 @@ export (
     value hostCpuFeatures,
     value getParam,
     value buildAdd,
+    value buildICmp,
+    value intPredicateSgt,
+    value buildCondBr,
+    value buildBr,
+    value buildAlloca,
+    value buildStore,
+    value buildLoad,
 )
 
 external type LLVMContextRef
@@ -125,6 +132,12 @@ external LLVMGetHostCPUName() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHost
 external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUFeatures@libLLVM.so"
 external LLVMGetParam(LLVMValueRef, u32) -> LLVMValueRef = "LLVMGetParam@libLLVM.so"
 external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAdd@libLLVM.so"
+external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
+external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
+external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildBr@libLLVM.so"
+external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
+external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
+external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -234,3 +247,23 @@ let hostCpuFeatures unit = LLVMGetHostCPUFeatures(Unit)
 let getParam function index = LLVMGetParam(function)(index)
 
 let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)
+
+// `LLVMIntPredicate` (llvm-c/Core.h). Only the one value currently in use is named, matching the
+// existing pattern for the target-machine enum constants above.
+let intPredicateSgt = 38u32
+
+let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
+
+let buildCondBr builder cond thenBlock elseBlock = LLVMBuildCondBr(builder)(cond)(thenBlock)(elseBlock)
+
+let buildBr builder destBlock = LLVMBuildBr(builder)(destBlock)
+
+// LLVM has no binding for `phi` on purpose (see this file's own header comment and
+// `LlvmApi.cs`'s): a value that merges across branches goes through a slot allocated with
+// `buildAlloca` before the branch instead, written with `buildStore` in each arm and read back
+// with `buildLoad` after the arms rejoin.
+let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
+
+let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
+
+let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
