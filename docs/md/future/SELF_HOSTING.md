@@ -1586,20 +1586,26 @@ same public behavior.
   slice: it walks a REAL `IrFunction` (produced by running actual source through
   `AshesCompiler.Frontend.Parser.parseProgram` + `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource`
   — the same pipeline `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR
-  text for its `simple_arith`/`let_bindings` fixtures) and drives `AshesCompiler.Backend.Llvm` from
-  its actual instructions, not a human hand-simulating what codegen should produce (every earlier
+  text for its `simple_arith`/`let_bindings` fixtures, plus a plain `if`/`then`/`else` confirmed
+  directly against real self-hosted lowering) and drives `AshesCompiler.Backend.Llvm` from its
+  actual instructions, not a human hand-simulating what codegen should produce (every earlier
   `selfhost/tests/backend` proof point did exactly that). Covers `LoadConstInt`/`MulInt`/`AddInt`/
-  `StoreLocal`/`LoadLocal`/`Return` — panics on anything else — matching `simple_arith` (no locals,
-  no arena bracketing) and `let_bindings` (locals plus arena bracketing, since even a
-  provably-scalar top-level `let` scope gets one). Locals get one `buildAlloca`d `i64` slot each
-  from `IrFunction`'s own `localCount`; `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`
-  are genuine no-ops — real scoped-arena codegen is a separate, much bigger slice not attempted
-  here, so these are explicitly ignored rather than silently producing wrong code for a case they
-  can't yet handle. Closures, ADTs, strings, RC, and every other instruction kind remain unstarted
-  follow-up slices. Uncovered a genuine, separate compiler gap along the way: Ashes had no
-  `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s only narrows to `u8`), needed
-  to turn an IR constant's `Int` payload into `constInt`'s `u64` parameter — fixed as
-  `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
+  `CmpIntGt`/`StoreLocal`/`LoadLocal`/`Label`/`Jump`/`JumpIfFalse`/`Return` — panics on anything
+  else. Locals get one `buildAlloca`d `i64` slot each from `IrFunction`'s own `localCount`;
+  `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` are genuine no-ops — real scoped-arena
+  codegen is a separate, much bigger slice not attempted here. Labels are pre-created in one pass
+  (a `Jump`/`JumpIfFalse` can name a label appearing later in the instruction stream) and the fold
+  tracks a `terminated` flag exactly like `LlvmCodegen.cs`'s own, since the IR itself can rely on
+  implicit fallthrough at a label boundary that LLVM basic blocks have no concept of — `if`'s own
+  lowered IR turned out to need this fix (an untracked fallthrough segfaulted
+  `LLVMTargetMachineEmitToMemoryBuffer` outright rather than failing cleanly) and otherwise matches
+  the same no-`phi` alloca/store/load slot pattern this arc's earlier hand-built tests already used
+  for branching (`buildMaxModule` et al.) — the real compiler's own control-flow strategy matches
+  this package's LLVM codegen model exactly. Closures, ADTs, strings, RC, and every other
+  instruction kind remain unstarted follow-up slices. Uncovered a genuine, separate compiler gap
+  along the way: Ashes had no `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s
+  only narrows to `u8`), needed to turn an IR constant's `Int` payload into `constInt`'s `u64`
+  parameter — fixed as `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
