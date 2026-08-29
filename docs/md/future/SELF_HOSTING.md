@@ -1545,8 +1545,10 @@ same public behavior.
   call through a function-pointer value loaded out of a struct field, that same closure struct
   heap-allocated via `malloc`/`free` rather than a stack `alloca`, a real RC cell matching this
   doc's own header layout below — allocate/retain/release/read-while-alive/release-to-zero-and-free
-  — and a two-cell owner/child graph proving release cascades to a child's own release before the
-  owner frees itself, as of this writing) to genuine linux-x64 ELF objects and assembly listings,
+  — a two-cell owner/child graph proving release cascades to a child's own release before the
+  owner frees itself, and a tagged `Some`/`None` payload proving that cascade is TAG-DIRECTED —
+  the `Some` path drops its owned child before freeing, the `None` path never calls the child
+  release at all — as of this writing) to genuine linux-x64 ELF objects and assembly listings,
   checked with `readelf` and,
   independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
   test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
