@@ -98,6 +98,8 @@ type CodegenContext =
     | labelBlocks: List((Str, LLVMBasicBlockRef))
     | mallocFn: LLVMValueRef
     | mallocType: LLVMTypeRef
+    | freeFn: LLVMValueRef
+    | freeType: LLVMTypeRef
 
 let recursive lookupIndexed key env =
     match env with
@@ -360,7 +362,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType } ->
                     match kind with
                         | LoadConstInt(target, value) -> ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
                         | MulInt(target, left, right) -> ((target, buildMul(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
@@ -462,6 +464,53 @@ let codegenInstructionKind cx builder kind state =
                                 in
                                     let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
                                     in (tempEnv, terminated)
+                        // A single, non-cascading release: walks back to the RC header with the
+                        // NEGATIVE byte-offset GEP that mirrors `AllocAdt`'s own forward one (the
+                        // public value pointer never carries the header with it — same contract as
+                        // `selfhost/tests/backend/Main.ash`'s hand-built `defineRcRetainFunction`),
+                        // decrements the count, and `free`s the header only once it reaches zero.
+                        // `CoreLowering.ash`'s `lowerDeadRcTopLevelLet` only ever emits this with
+                        // `runtimeManaged = true`, `mayBeEmpty = false`, `structuralDropperLabel =
+                        // None` (every constructor it can currently fire on wraps one plain scalar
+                        // field, nothing to cascade into) — any other combination panics rather than
+                        // silently dropping the wrong thing or leaking a child that needed its own
+                        // release first.
+                        | RcDrop(sourceTemp, _typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
+                            if runtimeManaged == false
+                            then Ashes.IO.panic("codegen: non-RC-managed RcDrop not yet supported")
+                            else
+                                if mayBeEmpty
+                                then Ashes.IO.panic("codegen: mayBeEmpty RcDrop not yet supported")
+                                else
+                                    match structuralDropperLabel with
+                                        | Some(_label) -> Ashes.IO.panic("codegen: cascading RcDrop (structuralDropperLabel) not yet supported")
+                                        | None ->
+                                            let valuePtr = buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("rc_drop_value_ptr")
+                                            in
+                                                let headerPtr = gepBytes(builder)(i64)(i8)(valuePtr)(-16)("rc_drop_header_ptr")
+                                                in
+                                                    let oldCount = buildLoad(builder)(i64)(headerPtr)("rc_drop_old_count")
+                                                    in
+                                                        let newCount = buildSub(builder)(oldCount)(constInt(i64)(1u64)(false))("rc_drop_new_count")
+                                                        in
+                                                            let _ = buildStore(builder)(newCount)(headerPtr)
+                                                            in
+                                                                let isZero = buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("rc_drop_is_zero")
+                                                                in
+                                                                    let freeBlock = appendBasicBlock(context)(function_)("rc_drop_free")
+                                                                    in
+                                                                        let continueBlock = appendBasicBlock(context)(function_)("rc_drop_continue")
+                                                                        in
+                                                                            let _ = buildCondBr(builder)(isZero)(freeBlock)(continueBlock)
+                                                                            in
+                                                                                let _ = positionBuilderAtEnd(builder)(freeBlock)
+                                                                                in
+                                                                                    let _ = buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)("")
+                                                                                    in
+                                                                                        let _ = buildBr(builder)(continueBlock)
+                                                                                        in
+                                                                                            let _ = positionBuilderAtEnd(builder)(continueBlock)
+                                                                                            in (tempEnv, false)
                         | Return(_) ->
                             let _ = emitLinuxProcessExit(builder)(i64)
                             in (tempEnv, true)
@@ -479,12 +528,10 @@ let recursive codegenInstructions cx builder instructions state =
 // the same `emitModule` verification pipeline applies unchanged. `void`, not `i64`, since the
 // function genuinely never returns a value anymore — every path ends in the exit syscall's
 // `unreachable`, not a `ret`. `i64` (the type internal temps/locals use) is a separate local value.
-// `malloc` is declared once per module (not re-declared per `AllocAdt` site) with the same
-// `ptr malloc(i64)` signature `selfhost/tests/backend/Main.ash`'s own `buildMallocFreeModule`/
-// `defineRcAllocFunction` establish — a real pointer return/param type, not `i64`, matching every
-// existing malloc declaration in this arc; `AllocAdt`'s own codegen converts the result to the
-// `i64` word every temp is represented as via `buildPtrToInt`, same as the existing arena-`alloca`
-// case already does.
+// `malloc`/`free` are declared once per module (not re-declared per `AllocAdt`/`RcDrop` site) with
+// real pointer return/param types (`ptr malloc(i64)`, `void free(ptr)`), not `i64`; `AllocAdt`/
+// `RcDrop`'s own codegen convert to/from the `i64` word every temp is represented as via
+// `buildPtrToInt`/`buildIntToPtr`, same as the existing arena-`alloca` case already does.
 let codegenEntryFunction name context irFunction =
     (let module_ = createModule(name)(context)
     in
@@ -498,32 +545,38 @@ let codegenEntryFunction name context irFunction =
                     in
                         let mallocFn = addFunction(module_)("malloc")(mallocType)
                         in
-                            let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
+                            let freeType = functionType(voidType(context))([ptrType])(1u32)(false)
                             in
-                                let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                let freeFn = addFunction(module_)("free")(freeType)
                                 in
-                                    let builder = createBuilder(context)
+                                    let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
                                     in
-                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                        let entryBlock = appendBasicBlock(context)(functionValue)("entry")
                                         in
-                                            match irFunction with
-                                                | IrFunction { instructions = instructions, localCount = localCount } ->
-                                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
-                                                    in
-                                                        let labelBlocks = createLabelBlocks(context)(functionValue)(collectLabelNames(instructions))
-                                                        in
-                                                            let cx =
-                                                                CodegenContext(
-                                                                    context = context,
-                                                                    function_ = functionValue,
-                                                                    i64 = i64,
-                                                                    i8 = i8,
-                                                                    ptrType = ptrType,
-                                                                    localSlots = localSlots,
-                                                                    labelBlocks = labelBlocks,
-                                                                    mallocFn = mallocFn,
-                                                                    mallocType = mallocType
-                                                                )
+                                            let builder = createBuilder(context)
+                                            in
+                                                let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                in
+                                                    match irFunction with
+                                                        | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                            let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
                                                             in
-                                                                let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                                in (module_, builder))
+                                                                let labelBlocks = createLabelBlocks(context)(functionValue)(collectLabelNames(instructions))
+                                                                in
+                                                                    let cx =
+                                                                        CodegenContext(
+                                                                            context = context,
+                                                                            function_ = functionValue,
+                                                                            i64 = i64,
+                                                                            i8 = i8,
+                                                                            ptrType = ptrType,
+                                                                            localSlots = localSlots,
+                                                                            labelBlocks = labelBlocks,
+                                                                            mallocFn = mallocFn,
+                                                                            mallocType = mallocType,
+                                                                            freeFn = freeFn,
+                                                                            freeType = freeType
+                                                                        )
+                                                                    in
+                                                                        let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                        in (module_, builder))

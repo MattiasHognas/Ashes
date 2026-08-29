@@ -4941,6 +4941,214 @@ let lowerArenaBracketedTopLevelLet name value environment continuation outerBind
                                                     |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
                                                 in success(resultTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
 
+// A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
+// fully-saturated call to a known field-carrying constructor (see
+// `directSingleArgRcConstructorLayout` below) and whose name is never referenced again by the rest
+// of the program. Two independent checks gate this, both biased toward "leave it alone" whenever
+// unsure — a missed drop leaks; an incorrect one is a use-after-free:
+//
+// 1. `exprMayReferenceName` matches every one of `Expr`'s constructors explicitly, with no wildcard
+//    case — the compiler rejects this file if a new `Expr` variant is ever left unhandled. It does
+//    not reason about name shadowing (an inner `let`/lambda/pattern rebinding the same name): it
+//    always recurses into every subexpression regardless, which only ever under-counts dead names,
+//    never mistakes a live one for dead.
+// 2. `directSingleArgRcConstructorLayout` only recognizes one, fully-saturating argument
+//    (`Ctor(arg)` — every constructor `standardConstructorLayouts` registers is exactly this
+//    shape). A zero-cost constructor, a multi-argument/curried constructor, or a partial
+//    application (a closure value, not an allocated cell — dropping it as a raw ADT pointer would
+//    be a type confusion) all answer `None`.
+//
+// Every constructor reachable here wraps one plain scalar field, so `RcDrop`'s
+// `structuralDropperLabel` is always `None` — a field that is itself RC-managed and needs its own
+// release before this cell's header is freed is not handled.
+let recursive exprMayReferenceName (expr: Expr) (name: Str) =
+    match expr with
+        | ExprAt(_span, inner) -> exprMayReferenceName(inner)(name)
+        | ExprInt(_value) -> false
+        | ExprBigInt(_value) -> false
+        | ExprUInt(_value, _bitWidth, _suffix) -> false
+        | ExprFloat(_value, _suffix) -> false
+        | ExprString(_value) -> false
+        | ExprRune(_value) -> false
+        | ExprBool(_value) -> false
+        | ExprVar(varName) -> varName == name
+        | ExprQualifiedVar(_moduleName, _memberName) -> false
+        | ExprAdd(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprSubtract(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprMultiply(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprDivide(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprModulo(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprBitwiseAnd(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprBitwiseOr(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprBitwiseXor(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprShiftLeft(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprShiftRight(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprBitwiseNot(operand) -> exprMayReferenceName(operand)(name)
+        | ExprLogicalNot(operand) -> exprMayReferenceName(operand)(name)
+        | ExprGreaterThan(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprLessThan(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprGreaterOrEqual(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprLessOrEqual(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprEqual(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprNotEqual(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprResultPipe(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprResultMapErrorPipe(left, right) -> exprOrMayReferenceName(left)(right)(name)
+        | ExprLet(_boundName, letValue, letBody, _params, _ann, _traits) -> exprOrMayReferenceName(letValue)(letBody)(name)
+        | ExprLetResult(_boundName, letValue, letBody) -> exprOrMayReferenceName(letValue)(letBody)(name)
+        | ExprLetRecursive(_boundName, letValue, letBody, _params, _ann, _traits) -> exprOrMayReferenceName(letValue)(letBody)(name)
+        | ExprIf(cond, thenBranch, elseBranch) ->
+            if exprMayReferenceName(cond)(name)
+            then true
+            else exprOrMayReferenceName(thenBranch)(elseBranch)(name)
+        | ExprLambda(_param, body, _ann) -> exprMayReferenceName(body)(name)
+        | ExprCall(func, arg, _isSugar, _layout) -> exprOrMayReferenceName(func)(arg)(name)
+        | ExprTuple(elements) -> exprListMayReferenceName(elements)(name)
+        | ExprList(elements, _isMultiline) -> exprListMayReferenceName(elements)(name)
+        | ExprCons(head, tail) -> exprOrMayReferenceName(head)(tail)(name)
+        | ExprMatch(scrutinee, arms, _defaultArm) ->
+            if exprMayReferenceName(scrutinee)(name)
+            then true
+            else exprMatchArmsMayReferenceName(arms)(name)
+        | ExprAwait(inner) -> exprMayReferenceName(inner)(name)
+        | ExprRecord(_typeName, fields, _isMultiline) -> exprFieldsMayReferenceName(fields)(name)
+        | ExprRecordUpdate(record, fields) ->
+            if exprMayReferenceName(record)(name)
+            then true
+            else exprFieldsMayReferenceName(fields)(name)
+        | ExprPerform(inner) -> exprMayReferenceName(inner)(name)
+        | ExprHandle(inner, arms) ->
+            if exprMayReferenceName(inner)(name)
+            then true
+            else exprHandleArmsMayReferenceName(arms)(name)
+and exprOrMayReferenceName left right name =
+    if exprMayReferenceName(left)(name)
+    then true
+    else exprMayReferenceName(right)(name)
+and exprListMayReferenceName (list: List(Expr)) (name: Str) =
+    match list with
+        | [] -> false
+        | head :: tail ->
+            if exprMayReferenceName(head)(name)
+            then true
+            else exprListMayReferenceName(tail)(name)
+and exprFieldsMayReferenceName (fields: List((Str, Expr))) (name: Str) =
+    match fields with
+        | [] -> false
+        | (_fieldName, fieldExpr) :: tail ->
+            if exprMayReferenceName(fieldExpr)(name)
+            then true
+            else exprFieldsMayReferenceName(tail)(name)
+and exprMatchArmsMayReferenceName (arms: List((Pattern, Expr, Maybe(Expr)))) (name: Str) =
+    match arms with
+        | [] -> false
+        | (_pattern, body, guard) :: tail ->
+            let guardMayReference =
+                match guard with
+                    | None -> false
+                    | Some(guardExpr) -> exprMayReferenceName(guardExpr)(name)
+            in
+                if guardMayReference
+                then true
+                else
+                    if exprMayReferenceName(body)(name)
+                    then true
+                    else exprMatchArmsMayReferenceName(tail)(name)
+and exprHandleArmsMayReferenceName (arms: List((Maybe(Str), Str, List(Pattern), Expr))) (name: Str) =
+    match arms with
+        | [] -> false
+        | (_resumeName, _operationName, _patterns, body) :: tail ->
+            if exprMayReferenceName(body)(name)
+            then true
+            else exprHandleArmsMayReferenceName(tail)(name)
+
+let recursive letBindingSyntaxListMayReferenceName (bindings: List(LetBindingSyntax)) (name: Str) =
+    match bindings with
+        | [] -> false
+        | LetBindingSyntax { value = value } :: rest ->
+            if exprMayReferenceName(value)(name)
+            then true
+            else letBindingSyntaxListMayReferenceName(rest)(name)
+
+// As `exprMayReferenceName`, but over the flat top-level `let`/trailing-expression sequence
+// `lowerCoreProgramItems` walks (Model A), matching `topLevelItemsProvablyArenaSafe`'s own shape.
+// Conservative the same way: any item this isn't specifically taught about (a recursive group, a
+// self-recursive let) answers `true` via its value/binding expressions rather than trying to reason
+// about what it could shadow or capture.
+let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailingBody: Expr) (name: Str) =
+    match items with
+        | [] -> exprMayReferenceName(trailingBody)(name)
+        | TopLevelAt(_span, inner) :: rest -> topLevelItemsMayReferenceName(inner :: rest)(trailingBody)(name)
+        | TopLevelLet(LetBindingSyntax { value = value }, _isRecursive) :: rest ->
+            if exprMayReferenceName(value)(name)
+            then true
+            else topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            if letBindingSyntaxListMayReferenceName(bindings)(name)
+            then true
+            else topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+        | _other :: rest -> topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+
+let recursive stripExprAt (expr: Expr) =
+    match expr with
+        | ExprAt(_span, inner) -> stripExprAt(inner)
+        | other -> other
+
+// Recognizes ONLY `Ctor(arg)` — one, fully-saturating argument — against a known constructor whose
+// scheme is exactly `a -> T(...)` (not itself a function, ruling out a curried/multi-argument
+// constructor this slice does not attempt) and that isn't zero-cost (a zero-cost constructor never
+// reaches `finishConstructorAllocation`'s `AllocAdt` path at all, so there is nothing to drop).
+// Every constructor `standardConstructorLayouts` registers today (`Some`, `Ok`, `Error`) is exactly
+// this shape. A partial application of a real multi-argument constructor would also syntactically
+// match `ExprCall(ExprVar(ctorName), _, _, _)` here, which is why the scheme's OWN arity is checked
+// against — not just that the call produces one argument — before ever answering `Some`.
+let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(CoreConstructorLayout)) =
+    match stripExprAt(expr) with
+        | ExprCall(callee, _arg, _isSugar, _argLayout) ->
+            match stripExprAt(callee) with
+                | ExprVar(constructorName) ->
+                    match findConstructorLayout(constructorName)(constructorLayouts) with
+                        | Some(CoreConstructorLayout { isZeroCost = true }) -> None
+                        | Some(CoreConstructorLayout { scheme = TypeScheme { body = SemFunction(_parameterType, resultType, _effect) } } as layout) ->
+                            match resultType with
+                                | SemFunction(_, _, _) -> None
+                                | _ -> Some(layout)
+                        | _ -> None
+                | _ -> None
+        | _ -> None
+
+// The ordinary (non-arena-bracketed) top-level `let` path: stores the value into a fresh local and
+// lowers the rest of the program with `name` bound to it.
+let lowerOrdinaryTopLevelLet name value environment continuation outerBindings state =
+    match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+        | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
+        | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
+            state
+            |> lowerCore(rewrittenValue)
+            |> finishLetValue(
+                name,
+                topLevelContinuationBody,
+                continuation,
+                outerBindings
+            )
+
+// Called only once the caller has confirmed `value` is a direct, fully-saturating call to a
+// field-carrying constructor and `name` is provably dead. Skips `finishLetValue`'s local-slot/
+// binding machinery entirely (nothing will ever read `name` back): lowers the value, immediately
+// releases it with a single non-cascading `RcDrop` (`ownerSlot = -1`, since this value is never
+// stored to a local), then continues lowering the rest of the program.
+let lowerDeadRcTopLevelLet name value layout environment continuation state =
+    match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+        | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
+        | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
+            match lowerCore(rewrittenValue)(state) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                | LoweredCoreValue { state = valueState, temp = valueTemp, error = None } ->
+                    match layout with
+                        | CoreConstructorLayout { name = constructorName } ->
+                            valueState
+                            |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(None))
+                            |> continuation(topLevelContinuationBody)
+
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
 // `let recursive ... and ...` group has no expression-level representation (the language only
@@ -4963,7 +5171,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
-                        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = alreadyArmed } ->
+                        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = alreadyArmed, constructorLayouts = constructorLayouts } ->
                             let continuation =
                                 given (_ignoredBody) ->
                                     given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s)
@@ -4974,17 +5182,12 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                     if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)
                                     then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)((state with arenaBracketingArmed = true))
                                     else
-                                        match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
-                                            | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
-                                            | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-                                                state
-                                                |> lowerCore(rewrittenValue)
-                                                |> finishLetValue(
-                                                    name,
-                                                    topLevelContinuationBody,
-                                                    continuation,
-                                                    outerBindings
-                                                )
+                                        match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
+                                            | Some(layout) ->
+                                                if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+                                                then lowerOrdinaryTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(state)
+                                                else lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(continuation)(state)
+                                            | None -> lowerOrdinaryTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(state)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))

@@ -1767,6 +1767,29 @@ same public behavior.
   where a false "dead" verdict is a use-after-free, not just a missed optimization) plus a single
   non-cascading leaf `RcDrop`, mirroring how the RC-primitives arc itself started leaf-only
   (`defineRcAllocFunction`'s lifecycle test) before cascading/tag-directed drops.
+- [~] `CoreLowering.ash` emits a single, non-cascading `RcDrop` for a top-level `let` whose value is
+  a direct, fully-saturating call to a field-carrying constructor (`Ctor(arg)` — every constructor
+  `standardConstructorLayouts` registers is exactly this shape) and whose name is never referenced
+  again by the rest of the program. `exprMayReferenceName` matches every `Expr` constructor
+  explicitly with no wildcard case, so a new AST variant left unhandled is a compile error rather
+  than a silent gap; it does not reason about name shadowing, which only ever makes it miss a
+  droppable binding, never mistake a live one for dead. `directSingleArgRcConstructorLayout` rejects
+  a zero-cost constructor, a multi-argument constructor, and a partial application (a closure value,
+  not an allocated cell) — only a fully-saturated, single-argument, field-carrying call qualifies.
+  `AshesCompiler.Backend.IrCodegen`'s `RcDrop` case walks back to the RC header with a negative
+  byte-offset GEP, decrements the count, and calls `free` only once it reaches zero; it panics on
+  `mayBeEmpty` or a non-`None` `structuralDropperLabel` (cascading release) rather than dropping the
+  wrong thing.
+  Verified both automatically and manually: the existing real-IR end-to-end test
+  (`let x = Some(42)` then `Ashes.IO.print(1)`) now also exercises this drop, since `x` is provably
+  dead there, and still runs correctly; a manual assembly dump of that module confirmed a byte-exact
+  `malloc`→header/tag/field-write→negative-GEP→decrement→`free` sequence, the first fully real
+  alloc/use/drop cycle produced by this pipeline; a second manual check
+  (`let x = Some(42)\nlet y = x\n...`, where `x` is referenced) confirmed no `free` call appears —
+  the reference correctly suppresses the drop.
+  **Explicitly still open**: cascading drops (a field that is itself RC-managed), multi-argument/
+  curried constructors, shadowing-aware liveness, and every other Perceus-placement concern named in
+  the previous item remain unimplemented — this covers exactly one narrow, always-safe case.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
