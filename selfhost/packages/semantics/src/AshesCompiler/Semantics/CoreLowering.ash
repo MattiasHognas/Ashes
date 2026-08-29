@@ -2869,10 +2869,28 @@ let finishConstructorAllocation layout resultType lowered =
         | (CoreConstructorLayout { tag = tag }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
             match freshTemp(state) with
                 | FreshTemp { state = allocatedState, temp = resultTemp } ->
-                    allocatedState
-                    |> emit(AllocAdt(resultTemp)(tag)(coreListLength(temps))(false))
-                    |> emitAdtFields(resultTemp)(0)(temps)
-                    |> success(resultTemp)(resolveType(allocatedState)(resultType))
+                    let fieldCount = coreListLength(temps)
+                    in
+                        // A zero-field constructor (`Unit`, `None`) carries no payload to leak or
+                        // double-free, so it stays arena-shaped (`runtimeManaged = false`) exactly as
+                        // before. Any field-carrying constructor now allocates via RC
+                        // (`runtimeManaged = true`) rather than the previous unconditional `false`:
+                        // architecture.md calls RC "the general lifetime substrate ... region[s]
+                        // remain for compiler-proven scoped values" — a plain field-count check is a
+                        // conservative stand-in for the real per-value escape analysis that decision
+                        // deserves (nothing here proves a given allocation is scope-confined), but it
+                        // is never UNSAFE: over-classifying a value as RC-managed only costs an extra
+                        // header word and a heap allocation, never a use-after-free or leaked-as-arena
+                        // heap value. `AshesCompiler.Backend.IrCodegen` gained real `malloc`-backed
+                        // codegen for this case (see its own header comment); nothing yet inserts the
+                        // matching `RcDrop` (no lowering site constructs one anywhere in this file),
+                        // so a runtime-managed value from this path leaks today — an explicit,
+                        // temporary limitation matching every other stand-in in this arc, closed by
+                        // the next slice (Perceus drop insertion).
+                        allocatedState
+                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(fieldCount != 0))
+                        |> emitAdtFields(resultTemp)(0)(temps)
+                        |> success(resultTemp)(resolveType(allocatedState)(resultType))
 
 let finishConstructorArguments arguments lower shape =
     match shape with

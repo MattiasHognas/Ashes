@@ -1904,6 +1904,21 @@ let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then
 // no `import`, no caller-supplied glue — not just a case this test file happened to wire up.
 let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 - 84)")(name)(context)
 
+// Exercises the RC-managed `AllocAdt`/`SetAdtField` codegen this PR added: `Some(42)` is the first
+// field-carrying constructor call `CoreLowering.ash` lowers as `runtimeManaged = true` (any
+// constructor with at least one field, per its own layout comment), so this is the first real-IR
+// module in this arc that genuinely calls `malloc` from ordinary constructor-application codegen
+// rather than a hand-built module. `x` is never read back (no `match`/field-read codegen exists
+// yet — a separate, later slice), so the only observable behavior is the independent
+// `Ashes.IO.print(1)` afterward; this proves the RC-managed allocation path codegens, links (a real
+// `call malloc@PLT` relocation makes `linkLinuxExecutable` choose its dynamic path automatically,
+// the same mechanism `buildMallocFreeEntryModule` proved by hand in the dynamic-linking PR), and
+// runs without crashing — not yet that the stored field round-trips correctly (unverifiable through
+// real IR until reads exist; verified manually instead, by dumping the module's LLVM IR text and
+// confirming the expected `malloc`/GEP/store sequence appears exactly once, matching the layout
+// documented on `AllocAdt`'s own codegen case).
+let buildRealIrSomeConstructorModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(1)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2227,6 +2242,34 @@ let testRunStaticExecutableForRealIrPrintModule unit =
                                                         let _ = test.assertEqual("-42")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrSomeConstructorModule`'s executable end to end, same shape as
+// `testRunStaticExecutableForRealIrPrintModule` above: proves the RC-managed `AllocAdt`/
+// `SetAdtField` codegen this PR added actually links (dynamically, since it calls real `malloc`)
+// and runs without crashing on a genuine Linux process, not just that `emitModule` didn't panic.
+let testRunStaticExecutableForRealIrSomeConstructorModule unit =
+    match emitModule(buildRealIrSomeConstructorModule)("selfhostBackendRunSomeCtor")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunSomeCtor") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_some_ctor_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_some_ctor_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_some_ctor_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("1")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2300,6 +2343,7 @@ let run unit =
     |> testLinkStaticExecutableForRealIrArithmeticModule
     |> testLinkStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrPrintModule
+    |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

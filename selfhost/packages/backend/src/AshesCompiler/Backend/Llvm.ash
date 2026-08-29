@@ -89,6 +89,7 @@ export (
     value buildSelect,
     value buildTrunc,
     value buildPtrToInt,
+    value buildIntToPtr,
     value buildICmp,
     value intPredicateEq,
     value intPredicateSgt,
@@ -175,6 +176,7 @@ external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMV
 external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
 external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
 external LLVMBuildPtrToInt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildPtrToInt@libLLVM.so"
+external LLVMBuildIntToPtr(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildIntToPtr@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
 external LLVMBuildSwitch(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, u32) -> LLVMValueRef = "LLVMBuildSwitch@libLLVM.so"
 external LLVMAddCase(LLVMValueRef, LLVMValueRef, LLVMBasicBlockRef) -> void = "LLVMAddCase@libLLVM.so"
@@ -335,6 +337,8 @@ let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)
 let buildTrunc builder value destType name = LLVMBuildTrunc(builder)(value)(destType)(name)
 
 let buildPtrToInt builder value destType name = LLVMBuildPtrToInt(builder)(value)(destType)(name)
+
+let buildIntToPtr builder value destType name = LLVMBuildIntToPtr(builder)(value)(destType)(name)
 
 // `LLVMIntPredicate` (llvm-c/Core.h). Only the values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.

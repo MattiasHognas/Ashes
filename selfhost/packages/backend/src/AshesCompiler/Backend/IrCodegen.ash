@@ -92,8 +92,12 @@ type CodegenContext =
     | context: LLVMContextRef
     | function_: LLVMValueRef
     | i64: LLVMTypeRef
+    | i8: LLVMTypeRef
+    | ptrType: LLVMTypeRef
     | localSlots: List((IrLocal, LLVMValueRef))
     | labelBlocks: List((Str, LLVMBasicBlockRef))
+    | mallocFn: LLVMValueRef
+    | mallocType: LLVMTypeRef
 
 let recursive lookupIndexed key env =
     match env with
@@ -345,11 +349,18 @@ let emitPrintInt context function_ i64 builder value =
                                                                                                                                                                 let _ = buildBr(builder)(continueBlock)
                                                                                                                                                                 in positionBuilderAtEnd(builder)(continueBlock))
 
+// Byte-offset pointer arithmetic shared by `AllocAdt`'s RC-managed header/payload writes and
+// `SetAdtField`'s field store: an `i8`-element `buildGEP` with a single scalar index, the same
+// "different element type than every struct/array `buildGEP` use" shape
+// `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction`/`defineRcRetainFunction`
+// established for RC header arithmetic.
+let gepBytes builder i64 i8 ptr offset name = buildGEP(builder)(i8)(ptr)([constInt(i64)(Ashes.Number.UInt.fromInt64(offset))(false)])(1u32)(name)
+
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, localSlots = localSlots, labelBlocks = labelBlocks } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType } ->
                     match kind with
                         | LoadConstInt(target, value) -> ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
                         | MulInt(target, left, right) -> ((target, buildMul(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
@@ -396,19 +407,61 @@ let codegenInstructionKind cx builder kind state =
                         // instruction sequence that allocates inside a loop body would leak native stack
                         // every iteration, exactly the failure mode documented in
                         // docs/md/future/SELF_HOSTING.md's entry-block-alloca checklist item) — it only
-                        // covers today's single-shot, non-looping call sites. Any field-carrying or
-                        // RC-managed `AllocAdt` panics rather than silently miscompiling.
+                        // covers today's single-shot, non-looping call sites.
+                        //
+                        // A field-carrying, RC-managed `AllocAdt` (`CoreLowering.ash` now emits this for
+                        // any constructor with at least one field) `malloc`s the real 16-byte
+                        // `{i64 reference_count, i64 allocation_size}` header from architecture.md plus
+                        // one `i64` word per tag/field (`[tag][field0]...[fieldN-1]`, matching
+                        // architecture.md's own `ADT / record` layout row), writes `count = 1` and the
+                        // payload size, and returns the PAYLOAD pointer (past the header) as the temp's
+                        // `i64` value — the same "public pointer never carries the header" contract
+                        // `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction` established.
+                        // `SetAdtField` below writes into this same payload region. **Explicitly out of
+                        // scope**: nothing drops this allocation yet (`CoreLowering.ash` does not emit
+                        // `RcDrop` anywhere), so a runtime-managed value from this path leaks today — an
+                        // explicit, temporary limitation matching every other stand-in in this arc,
+                        // closed by the next slice (Perceus drop insertion). A non-RC-managed `AllocAdt`
+                        // with fields panics rather than silently miscompiling — `CoreLowering.ash` never
+                        // emits that combination today.
                         | AllocAdt(target, tag, fieldCount, runtimeManaged) ->
                             if runtimeManaged
-                            then Ashes.IO.panic("codegen: RC-managed AllocAdt not yet supported")
+                            then
+                                let payloadWords = fieldCount + 1
+                                in
+                                    let totalSize = constInt(i64)(Ashes.Number.UInt.fromInt64(16 + payloadWords * 8))(false)
+                                    in
+                                        let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("adt_header")
+                                        in
+                                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("adt_size_ptr")
+                                            in
+                                                let _ = buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                in
+                                                    let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadWords * 8))(false))(sizePtr)
+                                                    in
+                                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("adt_payload_ptr")
+                                                        in
+                                                            let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
+                                                            in ((target, buildPtrToInt(builder)(payloadPtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                             else
                                 if fieldCount != 0
-                                then Ashes.IO.panic("codegen: AllocAdt with fields not yet supported")
+                                then Ashes.IO.panic("codegen: non-RC-managed AllocAdt with fields not yet supported")
                                 else
                                     let cell = buildAlloca(builder)(i64)("adt_cell")
                                     in
                                         let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(cell)
                                         in ((target, buildPtrToInt(builder)(cell)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // Stores one field into an already-allocated ADT's payload (word `1 + fieldIndex`,
+                        // since word `0` is the tag — see `AllocAdt`'s own layout comment above). The
+                        // `ptr` operand arrives as this codegen's universal `i64` word representation, so
+                        // it round-trips through `buildIntToPtr` before the byte-offset GEP.
+                        | SetAdtField(ptr, fieldIndex, source) ->
+                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
+                            in
+                                let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
+                                in
+                                    let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
+                                    in (tempEnv, terminated)
                         | Return(_) ->
                             let _ = emitLinuxProcessExit(builder)(i64)
                             in (tempEnv, true)
@@ -426,33 +479,51 @@ let recursive codegenInstructions cx builder instructions state =
 // the same `emitModule` verification pipeline applies unchanged. `void`, not `i64`, since the
 // function genuinely never returns a value anymore — every path ends in the exit syscall's
 // `unreachable`, not a `ret`. `i64` (the type internal temps/locals use) is a separate local value.
+// `malloc` is declared once per module (not re-declared per `AllocAdt` site) with the same
+// `ptr malloc(i64)` signature `selfhost/tests/backend/Main.ash`'s own `buildMallocFreeModule`/
+// `defineRcAllocFunction` establish — a real pointer return/param type, not `i64`, matching every
+// existing malloc declaration in this arc; `AllocAdt`'s own codegen converts the result to the
+// `i64` word every temp is represented as via `buildPtrToInt`, same as the existing arena-`alloca`
+// case already does.
 let codegenEntryFunction name context irFunction =
     (let module_ = createModule(name)(context)
     in
         let i64 = int64Type(context)
         in
-            let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
+            let i8 = int8Type(context)
             in
-                let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                let ptrType = pointerType(context)(0u32)
                 in
-                    let builder = createBuilder(context)
+                    let mallocType = functionType(ptrType)([i64])(1u32)(false)
                     in
-                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                        let mallocFn = addFunction(module_)("malloc")(mallocType)
                         in
-                            match irFunction with
-                                | IrFunction { instructions = instructions, localCount = localCount } ->
-                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
+                            let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
+                            in
+                                let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                in
+                                    let builder = createBuilder(context)
                                     in
-                                        let labelBlocks = createLabelBlocks(context)(functionValue)(collectLabelNames(instructions))
+                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
                                         in
-                                            let cx =
-                                                CodegenContext(
-                                                    context = context,
-                                                    function_ = functionValue,
-                                                    i64 = i64,
-                                                    localSlots = localSlots,
-                                                    labelBlocks = labelBlocks
-                                                )
-                                            in
-                                                let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                in (module_, builder))
+                                            match irFunction with
+                                                | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
+                                                    in
+                                                        let labelBlocks = createLabelBlocks(context)(functionValue)(collectLabelNames(instructions))
+                                                        in
+                                                            let cx =
+                                                                CodegenContext(
+                                                                    context = context,
+                                                                    function_ = functionValue,
+                                                                    i64 = i64,
+                                                                    i8 = i8,
+                                                                    ptrType = ptrType,
+                                                                    localSlots = localSlots,
+                                                                    labelBlocks = labelBlocks,
+                                                                    mallocFn = mallocFn,
+                                                                    mallocType = mallocType
+                                                                )
+                                                            in
+                                                                let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                in (module_, builder))
