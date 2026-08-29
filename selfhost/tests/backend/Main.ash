@@ -13,6 +13,8 @@ import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.CoreBuiltinLowering
+import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.Ir
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
@@ -1835,6 +1837,50 @@ let buildRealIrLetBindingsModule name context = codegenRealSource("let x = 10\nl
 // evaluates to `42`.
 let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then 42 else 99")(name)(context)
 
+// `ProgramSyntax` (this package's `parseProgram` output) carries no import information at all, and
+// nothing in self-hosted `CoreLowering` yet populates a builtin's availability from it — every
+// caller must construct, by hand, the layout for each builtin its source calls (see
+// `lowerCoreProgramWithSourceAndContext`'s own header comment). `Ashes.IO.print`'s scheme here is
+// monomorphic (`Int -> Unit`, not the real polymorphic `print`), matching exactly what
+// `AshesCompiler.Backend.IrCodegen`'s `PrintInt` case supports today.
+let printIntBuiltinLayout =
+    CoreBuiltinLayout(
+        moduleName = "Ashes.IO",
+        memberName = "print",
+        scheme = TypeScheme(quantified = [], body = SemFunction(SemInt)(SemNamed(0)("Unit")([]))(None), constraints = []),
+        kind = CorePrint
+    )
+
+// `Ashes.IO.print`'s own `Unit` result is materialized through the same constructor-allocation
+// path a user's own zero-field ADT would use (`finishBuiltinUnit` looks up a real
+// `CoreConstructorLayout` named `"Unit"`, not a hardcoded shape) — `tag = 0`, no fields, matching
+// `AllocAdt Tag=0 FieldCount=0` in stage-0's own `--emit-ir` dump for any `Unit`-returning call.
+let unitConstructorLayout =
+    CoreConstructorLayout(
+        name = "Unit",
+        tag = 0,
+        scheme = TypeScheme(quantified = [], body = SemNamed(0)("Unit")([]), constraints = []),
+        fieldNames = [],
+        isZeroCost = false
+    )
+
+let codegenRealSourceWithContext source name context =
+    match parseProgram(source) with
+        | ProgramParseResult { program = program, diagnostics = [] } ->
+            match lowerCoreProgramWithSourceAndContext(name + ".ash")(source)(program)([unitConstructorLayout])([printIntBuiltinLayout]) with
+                | CoreLoweringResult { program = Some(lowered), error = None } ->
+                    match lowered with
+                        | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
+
+// Exercises `PrintInt` and the zero-field `AllocAdt` case together — the first genuinely
+// user-observable real-IR module in this arc: `codegenEntryFunction` walks IR containing a real
+// builtin call, not just arithmetic/locals/control-flow. `42 - 84 = -42`, deliberately negative to
+// exercise `emitPrintInt`'s sign-handling path, not just its common case.
+let buildRealIrPrintModule name context = codegenRealSourceWithContext("Ashes.IO.print(42 - 84)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2063,14 +2109,19 @@ let testEmitAssemblyForRealIrConditionalModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrConditional")
 
+// `PrintInt`'s own `write` syscalls go through the exact same inline-assembly mechanism `Return`'s
+// `exit` syscall does, so `assertLooksLikeAssembly`'s `"syscall"`-independent label check is
+// enough here — there is no separate "ends in syscall, not ret" claim to make for a non-entry
+// instruction the way there was for `Return` itself.
+let testEmitAssemblyForRealIrPrintModule unit =
+    match emitModule(buildRealIrPrintModule)("selfhostBackendRealIrPrint")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrPrint")
+
 // Proves `AshesCompiler.Backend.ElfLinker`'s static-only linker end to end: emit the real IR
 // arithmetic module as an OBJECT (not assembly), link it into a static executable, and check the
 // result is a genuine ET_EXEC ELF64 file (magic, 64-bit class, `e_type`/`e_machine`, one `PT_LOAD`
-// program header) — not just "some bytes came back". Actually running the produced executable
-// (confirming it exits 0, the entry-exit-syscall contract from
-// `testEmitAssemblyForRealIrArithmeticModule`) is verified independently outside this test suite,
-// the same way every earlier codegen slice in this arc was checked past what an automated
-// assertion alone can prove.
+// program header) — not just "some bytes came back".
 let assertLooksLikeStaticExecutable bytes =
     Unit
     |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(bytes) > 4096))
@@ -2115,6 +2166,44 @@ let testLinkStaticExecutableForRealIrArithmeticModule unit =
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) -> assertLooksLikeStaticExecutable(executableBytes)
 
+let testLinkStaticExecutableForRealIrPrintModule unit =
+    match emitModule(buildRealIrPrintModule)("selfhostBackendLinkPrint")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendLinkPrint") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) -> assertLooksLikeStaticExecutable(executableBytes)
+
+// THE genuine end-to-end proof this arc has been building toward: write the self-hosted linker's
+// own output to a real file, make it executable, and actually run it — checking real stdout
+// (`"-42"`, from `42 - 84` — the negative-sign path) and a real `0` exit code, not just that the
+// bytes look ELF-shaped. Every earlier codegen/linker slice in this arc could only be checked this
+// way OUTSIDE the automated suite (a scratch project + manual `chmod`/execute); this is the first
+// self-hosted-produced executable proven correct BY the suite itself.
+let testRunStaticExecutableForRealIrPrintModule unit =
+    match emitModule(buildRealIrPrintModule)("selfhostBackendRunPrint")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendRunPrint") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_print_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_print_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_print_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("-42")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2141,7 +2230,10 @@ let run unit =
     |> testEmitAssemblyForRealIrArithmeticModule
     |> testEmitAssemblyForRealIrLetBindingsModule
     |> testEmitAssemblyForRealIrConditionalModule
+    |> testEmitAssemblyForRealIrPrintModule
     |> testLinkStaticExecutableForRealIrArithmeticModule
+    |> testLinkStaticExecutableForRealIrPrintModule
+    |> testRunStaticExecutableForRealIrPrintModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
