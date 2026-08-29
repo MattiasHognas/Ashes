@@ -100,6 +100,7 @@ type CodegenContext =
     | mallocType: LLVMTypeRef
     | freeFn: LLVMValueRef
     | freeType: LLVMTypeRef
+    | stringLiteralGlobals: List((Str, LLVMValueRef))
 
 let recursive lookupIndexed key env =
     match env with
@@ -150,7 +151,8 @@ let emitLinuxSyscallCall builder i64 nr arg1 arg2 arg3 name =
 let emitLinuxProcessExit builder i64 =
     (let zero = constInt(i64)(0u64)(false)
     in
-        let _ = emitLinuxSyscallCall(builder)(i64)(constInt(i64)(60u64)(false))(zero)(zero)(zero)("sys_exit")
+        let _ =
+            emitLinuxSyscallCall(builder)(i64)(constInt(i64)(60u64)(false))(zero)(zero)(zero)("sys_exit")
         in buildUnreachable(builder))
 
 // `write(fd, ptr, len)` — the raw, unbuffered path `LlvmCodegenPlatform.cs`'s own `EmitWriteBytesRaw`
@@ -158,7 +160,8 @@ let emitLinuxProcessExit builder i64 =
 // implements; a buffered stdout ring, its lock, and the flush-on-exit contract are a separate,
 // bigger, unattempted slice). `ptr` is an `i64` address (from `buildPtrToInt`), not an LLVM
 // pointer value — every syscall argument here is a plain register-width word.
-let emitLinuxWrite builder i64 fd ptr len = emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
+let emitLinuxWrite builder i64 fd ptr len =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
 
 // The five values `PrintInt`'s helper functions all need, computed once by `printIntPrologue` and
 // threaded through unchanged — the same "bundle the fixed values" shape `CodegenContext` uses for
@@ -178,7 +181,8 @@ let storePrintBufferByte builder i64 i8 bufferType buffer index value =
     (let zero = constInt(i64)(0u64)(false)
     in
         let ptr = buildGEP(builder)(bufferType)(buffer)([zero, index])(2u32)("buf_ptr")
-        in buildStore(builder)(buildTrunc(builder)(value)(i8)("to_i8"))(ptr))
+        in
+            buildStore(builder)(buildTrunc(builder)(value)(i8)("to_i8"))(ptr))
 
 // Allocates the 32-byte stack digit buffer plus the index/work stack slots `PrintInt`'s block
 // structure shares, matching `LlvmCodegenPlatform.cs`'s own `EmitPrintIntPrologue`: `workSlot`
@@ -226,13 +230,16 @@ let printIntDigitLoopBody builder i64 i8 printState work =
                         in
                             let idx = buildLoad(builder)(i64)(indexSlot)("digit_idx")
                             in
-                                let writeIndex = buildSub(builder)(constInt(i64)(31u64)(false))(idx)("digit_write_index")
+                                let writeIndex =
+                                    buildSub(builder)(constInt(i64)(31u64)(false))(idx)("digit_write_index")
                                 in
-                                    let asciiDigit = buildAdd(builder)(digit)(constInt(i64)(48u64)(false))("ascii_digit")
+                                    let asciiDigit =
+                                        buildAdd(builder)(digit)(constInt(i64)(48u64)(false))("ascii_digit")
                                     in
                                         let _ = storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(writeIndex)(asciiDigit)
                                         in
-                                            let idxNext = buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("idx_inc")
+                                            let idxNext =
+                                                buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("idx_inc")
                                             in buildStore(builder)(idxNext)(indexSlot)
 
 // Writes the filled portion of the digit buffer (`32 - count` bytes, since it was filled from the
@@ -246,7 +253,8 @@ let printIntWriteAndNewline builder i64 i8 printState =
         | PrintIntState { bufferType = bufferType, buffer = buffer, indexSlot = indexSlot } ->
             let count = buildLoad(builder)(i64)(indexSlot)("print_count")
             in
-                let startIndex = buildSub(builder)(constInt(i64)(32u64)(false))(count)("start_index")
+                let startIndex =
+                    buildSub(builder)(constInt(i64)(32u64)(false))(count)("start_index")
                 in
                     let zero = constInt(i64)(0u64)(false)
                     in
@@ -260,10 +268,14 @@ let printIntWriteAndNewline builder i64 i8 printState =
                                     in
                                         let newlineByte = buildAlloca(builder)(i8)("print_newline")
                                         in
-                                            let _ = buildStore(builder)(constInt(i8)(10u64)(false))(newlineByte)
+                                            let _ =
+                                                buildStore(builder)(constInt(i8)(10u64)(false))(newlineByte)
                                             in
                                                 let newlineAddr = buildPtrToInt(builder)(newlineByte)(i64)("print_newline_addr")
-                                                in emitLinuxWrite(builder)(i64)(stdoutFd)(newlineAddr)(constInt(i64)(1u64)(false))
+                                                in
+                                                    false
+                                                    |> constInt(i64)(1u64)
+                                                    |> emitLinuxWrite(builder)(i64)(stdoutFd)(newlineAddr)
 
 // Orchestrates `PrintInt`'s six extra basic blocks (zero/loop-check/loop-body/maybe-sign/sign/write,
 // plus the continuation the rest of the function's codegen resumes into) around the three helpers
@@ -304,9 +316,11 @@ let emitPrintInt context function_ i64 builder value =
                                                                 in
                                                                     let zeroDigit = constInt(i64)(48u64)(false)
                                                                     in
-                                                                        let _ = storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(constInt(i64)(31u64)(false))(zeroDigit)
+                                                                        let _ =
+                                                                            storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(constInt(i64)(31u64)(false))(zeroDigit)
                                                                         in
-                                                                            let _ = buildStore(builder)(constInt(i64)(1u64)(false))(indexSlot)
+                                                                            let _ =
+                                                                                buildStore(builder)(constInt(i64)(1u64)(false))(indexSlot)
                                                                             in
                                                                                 let _ = buildBr(builder)(writeBlock)
                                                                                 in
@@ -332,13 +346,15 @@ let emitPrintInt context function_ i64 builder value =
                                                                                                                         in
                                                                                                                             let idxBeforeSign = buildLoad(builder)(i64)(indexSlot)("idx_before_sign")
                                                                                                                             in
-                                                                                                                                let signIndex = buildSub(builder)(constInt(i64)(31u64)(false))(idxBeforeSign)("sign_index")
+                                                                                                                                let signIndex =
+                                                                                                                                    buildSub(builder)(constInt(i64)(31u64)(false))(idxBeforeSign)("sign_index")
                                                                                                                                 in
                                                                                                                                     let minusSign = constInt(i64)(45u64)(false)
                                                                                                                                     in
                                                                                                                                         let _ = storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(signIndex)(minusSign)
                                                                                                                                         in
-                                                                                                                                            let idxWithSign = buildAdd(builder)(idxBeforeSign)(constInt(i64)(1u64)(false))("idx_with_sign")
+                                                                                                                                            let idxWithSign =
+                                                                                                                                                buildAdd(builder)(idxBeforeSign)(constInt(i64)(1u64)(false))("idx_with_sign")
                                                                                                                                             in
                                                                                                                                                 let _ = buildStore(builder)(idxWithSign)(indexSlot)
                                                                                                                                                 in
@@ -356,23 +372,106 @@ let emitPrintInt context function_ i64 builder value =
 // "different element type than every struct/array `buildGEP` use" shape
 // `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction`/`defineRcRetainFunction`
 // established for RC header arithmetic.
-let gepBytes builder i64 i8 ptr offset name = buildGEP(builder)(i8)(ptr)([constInt(i64)(Ashes.Number.UInt.fromInt64(offset))(false)])(1u32)(name)
+let gepBytes builder i64 i8 ptr offset name =
+    buildGEP(builder)(i8)(ptr)([constInt(i64)(Ashes.Number.UInt.fromInt64(offset))(false)])(1u32)(name)
+
+// `1 << 62`: the same immortal-refcount sentinel `LlvmCodegenMemory.cs`'s own `EmitHeapStringLiteral`
+// writes into a string literal's header instead of a real count of `1`. Decrementing this value by
+// any realistic number of drops never reaches zero, so the existing `RcDrop` codegen (unchanged for
+// this) naturally never frees a literal's static storage — no sentinel-aware branch needed there.
+let runtimeRcImmortalSentinel = Ashes.Number.UInt.fromInt64(1 << 62)
+
+let recursive stringLiteralByteConstants bytes i8 index length =
+    if index >= length
+    then []
+    else
+        let byteConstant =
+            index
+            |> Ashes.Byte.get(bytes)
+            |> Ashes.Number.UInt.toInt
+            |> Ashes.Number.UInt.fromInt64
+            |> constInt(i8)
+            |> (given (build) -> build(false))
+        in byteConstant :: stringLiteralByteConstants(bytes)(i8)(index + 1)(length)
+
+// Builds one `.rodata`-shaped global per string literal, matching `EmitHeapStringLiteral`'s exact
+// layout — `{i64 immortalRefCount, i64 unusedAllocSize, i64 len, [N x i8] bytes}`, the same 16-byte
+// RC header every heap ADT cell has, immediately followed by the string's own `len`+bytes payload —
+// so a literal's value pointer (header address + 16, computed the same way `AllocAdt` computes its
+// own payload pointer) is safe to pass anywhere an ordinary runtime-managed `Str` is expected, with
+// no real heap allocation at all.
+let buildStringLiteralGlobal module_ context i64 i8 index literal =
+    match literal with
+        | IrStringLiteral { label = label, value = value } ->
+            let bytes = Ashes.Byte.fromText(value)
+            in
+                let length = Ashes.Byte.length(bytes)
+                in
+                    let lengthU64 = Ashes.Number.UInt.fromInt64(length)
+                    in
+                        let byteConstants = stringLiteralByteConstants(bytes)(i8)(0)(length)
+                        in
+                            let arrayTy = arrayType(i8)(lengthU64)
+                            in
+                                let structTy = structType(context)([i64, i64, i64, arrayTy])(4u32)(false)
+                                in
+                                    let structConst =
+                                        constStruct(context)(
+                                            [
+                                                constInt(i64)(runtimeRcImmortalSentinel)(false),
+                                                constInt(i64)(0u64)(false),
+                                                constInt(i64)(lengthU64)(false),
+                                                constArray(i8)(byteConstants)(lengthU64)
+                                            ]
+                                        )(4u32)(false)
+                                    in
+                                        let global = addGlobal(module_)(structTy)(".str_lit_" + Ashes.Text.fromInt(index))
+                                        in
+                                            let _ =
+                                                Unit
+                                                |> (given (_) -> setInitializer(global)(structConst))
+                                                |> (given (_) -> setGlobalConstant(global)(true))
+                                                |> (given (_) -> setLinkage(global)(linkageInternal))
+                                            in (label, global)
+
+let recursive buildStringLiteralGlobalsFromIndex module_ context i64 i8 index literals =
+    match literals with
+        | [] -> []
+        | literal :: rest -> buildStringLiteralGlobal(module_)(context)(i64)(i8)(index)(literal) :: buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(index + 1)(rest)
 
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, stringLiteralGlobals = stringLiteralGlobals } ->
                     match kind with
-                        | LoadConstInt(target, value) -> ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
-                        | MulInt(target, left, right) -> ((target, buildMul(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        | AddInt(target, left, right) -> ((target, buildAdd(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        | SubInt(target, left, right) -> ((target, buildSub(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        | CmpIntGt(target, left, right) -> ((target, buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | LoadConstInt(target, value) ->
+                            ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
+                        // The global's own value IS a pointer (to its header word), so the value
+                        // pointer (past the header, matching `AllocAdt`'s own convention) is just a
+                        // `+16` byte GEP off it directly — no `buildIntToPtr` round-trip needed
+                        // first, unlike a temp-held pointer that already went through `i64`.
+                        | LoadConstStr(target, label) ->
+                            let global = lookupIndexed(label)(stringLiteralGlobals)
+                            in
+                                let valuePtr = gepBytes(builder)(i64)(i8)(global)(16)("str_lit_value_ptr")
+                                in ((target, buildPtrToInt(builder)(valuePtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | MulInt(target, left, right) ->
+                            ((target, buildMul(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | AddInt(target, left, right) ->
+                            ((target, buildAdd(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | SubInt(target, left, right) ->
+                            ((target, buildSub(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | CmpIntGt(target, left, right) ->
+                            ((target, buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | StoreLocal(slot, source) ->
-                            let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(lookupIndexed(slot)(localSlots))
+                            let _ =
+                                localSlots
+                                |> lookupIndexed(slot)
+                                |> buildStore(builder)(lookupIndexed(source)(tempEnv))
                             in (tempEnv, terminated)
-                        | LoadLocal(target, slot) -> ((target, buildLoad(builder)(i64)(lookupIndexed(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | LoadLocal(target, slot) ->
+                            ((target, buildLoad(builder)(i64)(lookupIndexed(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | Label(name) ->
                             let labelBlock = lookupIndexed(name)(labelBlocks)
                             in
@@ -386,12 +485,18 @@ let codegenInstructionKind cx builder kind state =
                                     let _ = positionBuilderAtEnd(builder)(labelBlock)
                                     in (tempEnv, false)
                         | Jump(target) ->
-                            let _ = buildBr(builder)(lookupIndexed(target)(labelBlocks))
+                            let _ =
+                                labelBlocks
+                                |> lookupIndexed(target)
+                                |> buildBr(builder)
                             in (tempEnv, true)
                         | JumpIfFalse(cond, target) ->
                             let fallthroughBlock = appendBasicBlock(context)(function_)("fallthrough")
                             in
-                                let _ = buildCondBr(builder)(lookupIndexed(cond)(tempEnv))(fallthroughBlock)(lookupIndexed(target)(labelBlocks))
+                                let _ =
+                                    labelBlocks
+                                    |> lookupIndexed(target)
+                                    |> buildCondBr(builder)(lookupIndexed(cond)(tempEnv))(fallthroughBlock)
                                 in
                                     let _ = positionBuilderAtEnd(builder)(fallthroughBlock)
                                     in (tempEnv, false)
@@ -399,8 +504,45 @@ let codegenInstructionKind cx builder kind state =
                         | RestoreArenaState(_, _, _, _) -> (tempEnv, terminated)
                         | ReclaimArenaChunks(_, _, _) -> (tempEnv, terminated)
                         | PrintInt(source) ->
-                            let _ = emitPrintInt(context)(function_)(i64)(builder)(lookupIndexed(source)(tempEnv))
+                            let _ =
+                                tempEnv
+                                |> lookupIndexed(source)
+                                |> emitPrintInt(context)(function_)(i64)(builder)
                             in (tempEnv, false)
+                        // Reads a runtime-managed `Str` value's own `[len:i64][bytes...]` header
+                        // (word `0` is `len`, byte offset `8` is where the raw bytes start — the
+                        // SAME layout `LoadConstStr`'s global builds, and the general one every real
+                        // `Str` value uses, not just a literal) and writes it via the raw `write`
+                        // syscall, then a trailing newline byte — matching
+                        // `LlvmCodegenExpressions.cs`'s own `EmitPrintStringFromTemp(appendNewline:
+                        // true)` exactly. `stringRef`'s own `i64` value doubles as the byte address
+                        // once offset by `8`, so writing needs no extra pointer round-trip beyond
+                        // the one `buildLoad` already needs to read `len`.
+                        | PrintStr(source) ->
+                            let stringRef = lookupIndexed(source)(tempEnv)
+                            in
+                                let basePtr = buildIntToPtr(builder)(stringRef)(ptrType)("str_len_ptr")
+                                in
+                                    let len = buildLoad(builder)(i64)(basePtr)("str_len")
+                                    in
+                                        let byteAddress =
+                                            buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))("str_bytes_addr")
+                                        in
+                                            let _ =
+                                                emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
+                                            in
+                                                let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
+                                                in
+                                                    let _ =
+                                                        buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
+                                                    in
+                                                        let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
+                                                        in
+                                                            let _ =
+                                                                false
+                                                                |> constInt(i64)(1u64)
+                                                                |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr)
+                                                            in (tempEnv, false)
                         // A zero-field, arena-shaped (`runtimeManaged = false`) `AllocAdt` — exactly what
                         // a `Unit` result (e.g. `PrintInt`'s own return value) lowers to — gets a plain
                         // stack `alloca` standing in for a real arena bump allocation: this program shape
@@ -431,19 +573,23 @@ let codegenInstructionKind cx builder kind state =
                             then
                                 let payloadWords = fieldCount + 1
                                 in
-                                    let totalSize = constInt(i64)(Ashes.Number.UInt.fromInt64(16 + payloadWords * 8))(false)
+                                    let totalSize =
+                                        constInt(i64)(Ashes.Number.UInt.fromInt64(16 + payloadWords * 8))(false)
                                     in
                                         let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("adt_header")
                                         in
                                             let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("adt_size_ptr")
                                             in
-                                                let _ = buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                let _ =
+                                                    buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
                                                 in
-                                                    let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadWords * 8))(false))(sizePtr)
+                                                    let _ =
+                                                        buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadWords * 8))(false))(sizePtr)
                                                     in
                                                         let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("adt_payload_ptr")
                                                         in
-                                                            let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
+                                                            let _ =
+                                                                buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
                                                             in ((target, buildPtrToInt(builder)(payloadPtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                             else
                                 if fieldCount != 0
@@ -451,28 +597,33 @@ let codegenInstructionKind cx builder kind state =
                                 else
                                     let cell = buildAlloca(builder)(i64)("adt_cell")
                                     in
-                                        let _ = buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(cell)
+                                        let _ =
+                                            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(cell)
                                         in ((target, buildPtrToInt(builder)(cell)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // Stores one field into an already-allocated ADT's payload (word `1 + fieldIndex`,
                         // since word `0` is the tag — see `AllocAdt`'s own layout comment above). The
                         // `ptr` operand arrives as this codegen's universal `i64` word representation, so
                         // it round-trips through `buildIntToPtr` before the byte-offset GEP.
                         | SetAdtField(ptr, fieldIndex, source) ->
-                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
+                            let basePtr =
+                                buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
                             in
                                 let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
                                 in
-                                    let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
+                                    let _ =
+                                        buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
                                     in (tempEnv, terminated)
                         // The read half of `SetAdtField`: same word offset, a load instead of a store.
                         | GetAdtField(target, ptr, fieldIndex) ->
-                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
+                            let basePtr =
+                                buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
                             in
                                 let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
                                 in ((target, buildLoad(builder)(i64)(fieldPtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // Reads word `0` (the tag) — the same offset `AllocAdt` writes it to.
                         | GetAdtTag(target, ptr) ->
-                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
+                            let basePtr =
+                                buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
                             in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A single, non-cascading release: walks back to the RC header with the
                         // NEGATIVE byte-offset GEP that mirrors `AllocAdt`'s own forward one (the
@@ -495,17 +646,20 @@ let codegenInstructionKind cx builder kind state =
                                     match structuralDropperLabel with
                                         | Some(_label) -> Ashes.IO.panic("codegen: cascading RcDrop (structuralDropperLabel) not yet supported")
                                         | None ->
-                                            let valuePtr = buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("rc_drop_value_ptr")
+                                            let valuePtr =
+                                                buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("rc_drop_value_ptr")
                                             in
                                                 let headerPtr = gepBytes(builder)(i64)(i8)(valuePtr)(-16)("rc_drop_header_ptr")
                                                 in
                                                     let oldCount = buildLoad(builder)(i64)(headerPtr)("rc_drop_old_count")
                                                     in
-                                                        let newCount = buildSub(builder)(oldCount)(constInt(i64)(1u64)(false))("rc_drop_new_count")
+                                                        let newCount =
+                                                            buildSub(builder)(oldCount)(constInt(i64)(1u64)(false))("rc_drop_new_count")
                                                         in
                                                             let _ = buildStore(builder)(newCount)(headerPtr)
                                                             in
-                                                                let isZero = buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("rc_drop_is_zero")
+                                                                let isZero =
+                                                                    buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("rc_drop_is_zero")
                                                                 in
                                                                     let freeBlock = appendBasicBlock(context)(function_)("rc_drop_free")
                                                                     in
@@ -531,7 +685,10 @@ let recursive codegenInstructions cx builder instructions state =
         | [] -> state
         | instruction :: rest ->
             match instruction with
-                | IrInstruction { instruction = kind } -> codegenInstructions(cx)(builder)(rest)(codegenInstructionKind(cx)(builder)(kind)(state))
+                | IrInstruction { instruction = kind } ->
+                    state
+                    |> codegenInstructionKind(cx)(builder)(kind)
+                    |> codegenInstructions(cx)(builder)(rest)
 
 // Builds `void <name>()` in a fresh module from `irFunction`'s real instructions and returns
 // `(module_, builder)`, matching every other module builder's shape in `selfhost/tests/backend` so
@@ -542,7 +699,7 @@ let recursive codegenInstructions cx builder instructions state =
 // real pointer return/param types (`ptr malloc(i64)`, `void free(ptr)`), not `i64`; `AllocAdt`/
 // `RcDrop`'s own codegen convert to/from the `i64` word every temp is represented as via
 // `buildPtrToInt`/`buildIntToPtr`, same as the existing arena-`alloca` case already does.
-let codegenEntryFunction name context irFunction =
+let codegenEntryFunction name context irFunction stringLiterals =
     (let module_ = createModule(name)(context)
     in
         let i64 = int64Type(context)
@@ -555,38 +712,48 @@ let codegenEntryFunction name context irFunction =
                     in
                         let mallocFn = addFunction(module_)("malloc")(mallocType)
                         in
-                            let freeType = functionType(voidType(context))([ptrType])(1u32)(false)
+                            let freeType =
+                                functionType(voidType(context))([ptrType])(1u32)(false)
                             in
                                 let freeFn = addFunction(module_)("free")(freeType)
                                 in
-                                    let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
+                                    let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
                                     in
-                                        let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                        let functionValue =
+                                            false
+                                            |> functionType(voidType(context))([])(0u32)
+                                            |> addFunction(module_)(name)
                                         in
-                                            let builder = createBuilder(context)
+                                            let entryBlock = appendBasicBlock(context)(functionValue)("entry")
                                             in
-                                                let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                let builder = createBuilder(context)
                                                 in
-                                                    match irFunction with
-                                                        | IrFunction { instructions = instructions, localCount = localCount } ->
-                                                            let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
-                                                            in
-                                                                let labelBlocks = createLabelBlocks(context)(functionValue)(collectLabelNames(instructions))
+                                                    let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                    in
+                                                        match irFunction with
+                                                            | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                                let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
                                                                 in
-                                                                    let cx =
-                                                                        CodegenContext(
-                                                                            context = context,
-                                                                            function_ = functionValue,
-                                                                            i64 = i64,
-                                                                            i8 = i8,
-                                                                            ptrType = ptrType,
-                                                                            localSlots = localSlots,
-                                                                            labelBlocks = labelBlocks,
-                                                                            mallocFn = mallocFn,
-                                                                            mallocType = mallocType,
-                                                                            freeFn = freeFn,
-                                                                            freeType = freeType
-                                                                        )
+                                                                    let labelBlocks =
+                                                                        instructions
+                                                                        |> collectLabelNames
+                                                                        |> createLabelBlocks(context)(functionValue)
                                                                     in
-                                                                        let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                                        in (module_, builder))
+                                                                        let cx =
+                                                                            CodegenContext(
+                                                                                context = context,
+                                                                                function_ = functionValue,
+                                                                                i64 = i64,
+                                                                                i8 = i8,
+                                                                                ptrType = ptrType,
+                                                                                localSlots = localSlots,
+                                                                                labelBlocks = labelBlocks,
+                                                                                mallocFn = mallocFn,
+                                                                                mallocType = mallocType,
+                                                                                freeFn = freeFn,
+                                                                                freeType = freeType,
+                                                                                stringLiteralGlobals = stringLiteralGlobals
+                                                                            )
+                                                                        in
+                                                                            let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                            in (module_, builder))

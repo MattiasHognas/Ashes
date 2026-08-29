@@ -1851,6 +1851,32 @@ same public behavior.
   case ignores `typeName` entirely today (it is purely diagnostic metadata), so this has no runtime
   effect; fixing it properly needs a new field on `CoreConstructorLayout` for the owning type's name,
   a larger change than this item's own scope justifies today.
+- [~] `AshesCompiler.Backend.IrCodegen` gained `LoadConstStr`/`PrintStr` — the string-literal gap the
+  previous item's `Pair` probe worked around — closing the last blocker on `Ashes.IO.print`'s own
+  existing `SemString` dispatch (`CoreBuiltinLowering.ash`'s `printValue` already routed to `PrintStr`
+  for a string argument; only its codegen was missing). Matches `LlvmCodegenMemory.cs`'s real layout
+  exactly: a string literal's static storage is a `{i64 immortalRefCount, i64 unusedAllocSize, i64
+  len, [N x i8] data}` global constant — the same 16-byte RC header as any `AllocAdt` cell, so
+  `LoadConstStr` (GEP past the header, `ptrtoint`) and `RcDrop` need no string-specific case at all;
+  `RuntimeRcImmortalSentinel = 1 << 62` makes an ordinary decrement-based drop naturally never reach
+  zero and never free static storage. `PrintStr` reads the length word, writes the following bytes via
+  the same raw `write` syscall path `PrintInt` uses, then a trailing newline byte.
+  This surfaced a genuinely new `AshesCompiler.Backend.ElfLinker` gap: `.text`'s `R_X86_64_32`/
+  `R_X86_64_32S` absolute references into a string literal's `.rodata` storage (`S + A`, no
+  patch-site subtraction — confirmed against a real emitted object with `readelf -r`) were a
+  relocation shape the linker had never needed to resolve, since every prior instruction only ever
+  called external functions (`R_X86_64_PLT32`). Fixed by teaching `linkLinuxExecutable` to find an
+  object's own `.rodata` section (if any) and, when present, add a second read-only `PT_LOAD` segment
+  page-aligned after `.text`, patching each absolute reference to the section's final address;
+  `rodataBytes = None` reproduces the prior single-segment output byte-for-byte. An object needing
+  both dynamic imports (`malloc`/`free`) and `.rodata` together is a clean `Error`, not silently
+  wrong — no current codegen path produces that combination.
+  Verified end to end: `Ashes.IO.print("hello")` compiles through the complete self-hosted pipeline —
+  parse, lower, codegen, LLVM object emission, the new `.rodata`-aware link — to a running Linux
+  executable that prints `hello` and exits `0`, the first real string literal this compiler has ever
+  taken from source to output. **Explicitly still open**: multi-string-literal objects, strings
+  reached through anything other than a direct `Ashes.IO.print` argument (stored in a field, compared,
+  concatenated), and the malloc/free-plus-`.rodata` combination named above.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform

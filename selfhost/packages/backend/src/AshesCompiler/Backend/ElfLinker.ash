@@ -4,14 +4,19 @@
 // (`Ashes.Byte`) — no LLVM API calls, no external linker (`ld`/`lld`) invoked.
 //
 // Two paths, chosen automatically from what the object's `.text` relocations need:
-// - No relocations: a fully static, non-PIE executable (one `R+X` `PT_LOAD` segment).
+// - No `R_X86_64_PLT32` relocations: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
+//   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one
+//   (a string literal's own static storage): `.text`'s `R_X86_64_32`/`R_X86_64_32S` absolute
+//   references into it are patched to its final address, `S + A` with no patch-site subtraction.
 // - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
 //   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`): eager
 //   (non-lazy) dynamic linking — a `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD`
 //   data segment, `PT_INTERP`/`PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn`
-//   machinery the dynamic loader needs to resolve them. Any relocation neither path can resolve
-//   correctly (an unrecognized type, or a symbol not in the known-library table) is an `Error`,
-//   never a silently wrong link. The real linker (`LlvmImageLinkerElf.cs`) additionally inserts an
+//   machinery the dynamic loader needs to resolve them. An object needing both dynamic imports AND
+//   `.rodata` together is not yet supported (a clean `Error`, not a silent wrong link) — no current
+//   codegen path produces that combination. Any relocation neither path can resolve correctly (an
+//   unrecognized type, or a symbol not in the known-library table) is likewise an `Error`, never a
+//   silently wrong link. The real linker (`LlvmImageLinkerElf.cs`) additionally inserts an
 //   argv-passing trampoline before the object's own code, supports TLS sections, and recognizes a
 //   much larger library table; none of that exists here yet.
 //
@@ -232,72 +237,108 @@ type TextRelocationPatch =
     | patchSymbolName: Str
     | patchAddend: Int
 
-// Validates and collects every `.text` relocation as a `TextRelocationPatch` in one pass: any
-// relocation this narrow linker cannot resolve correctly (a type other than `R_X86_64_PLT32`, or a
-// symbol not in `linuxDynamicImportLibraries`) becomes an `Error` immediately rather than a
-// silently wrong link. `PLT32` resolves identically to `PC32` for the eager (non-lazy) binding
-// style here (`S + A - P`, matching `LlvmImageLinkerElf.cs`'s own `ApplyElfTextRelocationsPatch`)
-// — the same math every PC-relative x86-64 call/jump relocation uses.
-let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset entryIndex entryCount acc =
+// An absolute (not PC-relative) reference from `.text` into `.rodata` — exactly what taking the
+// address of a string-literal global compiles to at this codegen's non-PIC `relocModeStatic`
+// setting (confirmed via `readelf -r` on a real emitted object: `R_X86_64_32S`/`R_X86_64_32`
+// against the `.rodata` section symbol, never a PC-relative type). Both type codes patch
+// identically — `S + A`, the low 32 bits written directly, no subtraction of the patch site's own
+// address — the only difference between them is the assembler's own range-checking convention
+// (signed vs. unsigned 32-bit overflow), irrelevant once already emitted into an object.
+type DataRelocationPatch =
+    | dataPatchOffset: Int
+    | dataPatchAddend: Int
+
+type CollectedTextRelocations =
+    | functionPatches: List(TextRelocationPatch)
+    | dataPatches: List(DataRelocationPatch)
+
+// Validates and collects every `.text` relocation into `CollectedTextRelocations` in one pass: any
+// relocation this narrow linker cannot resolve correctly (a type other than `R_X86_64_PLT32`
+// against a known external symbol, or `R_X86_64_32`/`R_X86_64_32S` against `.rodata`) becomes an
+// `Error` immediately rather than a silently wrong link. `PLT32` resolves identically to `PC32` for
+// the eager (non-lazy) binding style here (`S + A - P`, matching `LlvmImageLinkerElf.cs`'s own
+// `ApplyElfTextRelocationsPatch`) — the same math every PC-relative x86-64 call/jump relocation
+// uses. `rodataSectionIndex` is `None` when the object has no `.rodata` section at all (most
+// programs, which reference no string literal or other embedded constant), in which case neither
+// absolute type can ever legitimately appear and both still fall through to the same `Error`.
+// Ashes has no `||`; `|` is exclusively `BitOr.bitOr`. A relocation type is one of two values
+// here, so this is a plain equality-or, expressed as an explicit helper rather than nested ifs.
+let isRodataRelocationType relocationType =
+    if relocationType == 10
+    then true
+    else relocationType == 11
+
+let readRelaEntryFields bytes entryOffset =
+    (let relocOffset = getU64(bytes)(entryOffset)
+    in
+        let info = getU64(bytes)(entryOffset + 8)
+        in
+            let addend = getU64(bytes)(entryOffset + 16)
+            in (relocOffset, info >> 32, info & 4294967295, addend))
+
+let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset rodataSectionIndex entryIndex entryCount functionAcc dataAcc =
     if entryIndex >= entryCount
-    then Ok(acc)
+    then Ok(CollectedTextRelocations(functionPatches = functionAcc, dataPatches = dataAcc))
     else
         let entryOffset = section.sectionOffset + entryIndex * 24
         in
-            let relocOffset = getU64(bytes)(entryOffset)
-            in
-                let info = getU64(bytes)(entryOffset + 8)
-                in
-                    let addend = getU64(bytes)(entryOffset + 16)
-                    in
-                        let symbolIndex = info >> 32
+            match readRelaEntryFields(bytes)(entryOffset) with
+                | (relocOffset, symbolIndex, relocationType, addend) ->
+                    if relocationType == 4
+                    then
+                        let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
                         in
-                            let relocationType = info & 4294967295
+                            if symbol.symSectionIndex != 0
+                            then Error("dynamic linker: PLT32 relocation targets a locally-defined symbol, which is not yet supported")
+                            else
+                                let symbolName = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
+                                in
+                                    match lookupImportLibrary(symbolName)(linuxDynamicImportLibraries) with
+                                        | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
+                                        | Some(_) ->
+                                            collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(entryIndex + 1)(entryCount)(
+                                                TextRelocationPatch(patchOffset = relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: functionAcc
+                                            )(dataAcc)
+                    else
+                        if isRodataRelocationType(relocationType)
+                        then
+                            let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
                             in
-                                if relocationType != 4
-                                then
-                                    Error(
-                                        "dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(
-                                            relocationType
-                                        ) + " (only R_X86_64_PLT32 to a known external symbol is supported)"
-                                    )
-                                else
-                                    let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
-                                    in
-                                        if symbol.symSectionIndex != 0
-                                        then Error("dynamic linker: PLT32 relocation targets a locally-defined symbol, which is not yet supported")
-                                        else
-                                            let symbolName = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
-                                            in
-                                                match lookupImportLibrary(symbolName)(linuxDynamicImportLibraries) with
-                                                    | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
-                                                    | Some(_) ->
-                                                        collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(entryIndex + 1)(entryCount)(
-                                                            TextRelocationPatch(patchOffset = relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: acc
-                                                        )
+                                match rodataSectionIndex with
+                                    | Some(index) ->
+                                        if symbol.symSectionIndex == index
+                                        then
+                                            collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(entryIndex + 1)(entryCount)(functionAcc)(
+                                                DataRelocationPatch(dataPatchOffset = relocOffset, dataPatchAddend = addend) :: dataAcc
+                                            )
+                                        else Error("dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(relocationType) + " (only R_X86_64_PLT32 to a known external symbol, or R_X86_64_32/R_X86_64_32S to .rodata, is supported)")
+                                    | None -> Error("dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(relocationType) + " (only R_X86_64_PLT32 to a known external symbol, or R_X86_64_32/R_X86_64_32S to .rodata, is supported)")
+                        else
+                            Error(
+                                "dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(
+                                    relocationType
+                                ) + " (only R_X86_64_PLT32 to a known external symbol, or R_X86_64_32/R_X86_64_32S to .rodata, is supported)"
+                            )
 
-let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset index acc =
+let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset rodataSectionIndex index functionAcc dataAcc =
     if index >= shnum
-    then
-        acc
-        |> reverseList
-        |> Ok
+    then Ok(CollectedTextRelocations(functionPatches = reverseList(functionAcc), dataPatches = reverseList(dataAcc)))
     else
         let section = readSectionHeader(bytes)(shoff)(shentsize)(index)
         in
             if section.sectionSize == 0
-            then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
+            then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(functionAcc)(dataAcc)
             else
                 if section.sectionInfo != textSectionIndex
-                then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
+                then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(functionAcc)(dataAcc)
                 else
                     match section.sectionType with
                         | 4 ->
-                            match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(0)(section.sectionSize / 24)(acc) with
+                            match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(0)(section.sectionSize / 24)(functionAcc)(dataAcc) with
                                 | Error(message) -> Error(message)
-                                | Ok(nextAcc) -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(nextAcc)
+                                | Ok(CollectedTextRelocations { functionPatches = nextFunctionAcc, dataPatches = nextDataAcc }) -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(nextFunctionAcc)(nextDataAcc)
                         | 9 -> Error("dynamic linker: SHT_REL (implicit-addend) .text relocations are not supported")
-                        | _ -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
+                        | _ -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(functionAcc)(dataAcc)
 
 let recursive lookupStubVa symbolName stubVas =
     match stubVas with
@@ -318,6 +359,17 @@ let recursive applyTextPatches patches stubVas textVa codeBytes =
                     codeBytes
                     |> putU32FromInt(patchOffset)(value)
                     |> applyTextPatches(rest)(stubVas)(textVa)
+
+// Absolute patch — `S + A`, no patch-site subtraction — for a `.text` reference into `.rodata`.
+// `rodataVa` is the section's own final base address once laid out; every collected patch targets
+// that same section, so unlike `applyTextPatches` there is no per-symbol lookup at all.
+let recursive applyDataPatches patches rodataVa codeBytes =
+    match patches with
+        | [] -> codeBytes
+        | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend } :: rest ->
+            codeBytes
+            |> putU32FromInt(patchOffset)(rodataVa + patchAddend)
+            |> applyDataPatches(rest)(rodataVa)
 
 let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
 
@@ -732,18 +784,47 @@ let buildHeaderPage entryPoint programHeaderPlans =
 
 // No dynamic imports: one `PT_LOAD` segment (`R+X`) covering the whole file, headers and `.text`
 // together in the first page — exactly the original static-only layout.
-let linkWithoutDynamicImports textBytes entrySymbol =
+// `rodataBytes = None` is the original, unchanged single-segment shape (byte-identical to before
+// `.rodata` support existed — several tests assert on it structurally). `Some(rodata)` adds a
+// second, page-aligned, READ-ONLY `PT_LOAD` right after `.text`'s own page — never `R+W` and never
+// executable, since a string literal's storage is genuinely immutable — and patches every collected
+// absolute `.text` reference to point into it before the text bytes are ever written out.
+let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
     (let textVa = elfBaseVa + pageSize
     in
         let entryPoint = textVa + entrySymbol.symValue
         in
-            let totalLoadSize = pageSize + Ashes.Byte.length(textBytes)
+            let textLoadSize = pageSize + Ashes.Byte.length(textBytes)
             in
-                let plan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = totalLoadSize, phAlignment = pageSize)
-                in
-                    textBytes
-                    |> Ashes.Byte.append(buildHeaderPage(entryPoint)([plan]))
-                    |> Ok)
+                match rodataBytes with
+                    | None ->
+                        let plan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
+                        in
+                            textBytes
+                            |> Ashes.Byte.append(buildHeaderPage(entryPoint)([plan]))
+                            |> Ok
+                    | Some(rodata) ->
+                        let dataFileOffset = alignUp(textLoadSize)(pageSize)
+                        in
+                            let dataVa = elfBaseVa + dataFileOffset
+                            in
+                                let patchedTextBytes = applyDataPatches(dataPatches)(dataVa)(textBytes)
+                                in
+                                    let textPlan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
+                                    in
+                                        let dataPlan = ProgramHeaderPlan(phType = 1, phFlags = 4, phFileOffset = dataFileOffset, phVirtualAddress = dataVa, phSize = Ashes.Byte.length(rodata), phAlignment = pageSize)
+                                        in
+                                            let headerAndText =
+                                                Ashes.Byte.append(buildHeaderPage(entryPoint)([textPlan, dataPlan]))(patchedTextBytes)
+                                            in
+                                                let padded =
+                                                    dataFileOffset - Ashes.Byte.length(headerAndText)
+                                                    |> Ashes.Byte.allocate
+                                                    |> Ashes.Byte.append(headerAndText)
+                                                in
+                                                    rodata
+                                                    |> Ashes.Byte.append(padded)
+                                                    |> Ok)
 
 // Dynamic imports exist: `.text` gains a `jmp *got(%rip)` stub per import (placed right after the
 // object's own code, same page-aligned text segment), followed by a second, page-aligned `R+W`
@@ -865,21 +946,41 @@ let linkLinuxExecutable objectBytes entrySymbolName =
                                                             if entrySymbol.symSectionIndex != textSectionIndex
                                                             then Error("linker: entry symbol '" + entrySymbolName + "' is not defined in .text")
                                                             else
-                                                                match collectTextPatches(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(
-                                                                    strtabSection.sectionOffset
-                                                                )(0)([]) with
-                                                                    | Error(message) -> Error(message)
-                                                                    | Ok(textPatches) ->
-                                                                        let textBytes =
-                                                                            Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
-                                                                                textSection.sectionOffset
-                                                                            )(textSection.sectionSize)
-                                                                        in
-                                                                            match textPatches with
-                                                                                | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)
-                                                                                | _ ->
-                                                                                    let imports =
-                                                                                        collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
-                                                                                            strtabSection.sectionOffset
-                                                                                        )
-                                                                                    in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(textPatches)(imports))
+                                                                let rodataLookup = findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".rodata")(0)
+                                                                in
+                                                                    let rodataSectionIndex =
+                                                                        match rodataLookup with
+                                                                            | None -> None
+                                                                            | Some((index, _section)) -> Some(index)
+                                                                    in
+                                                                        match collectTextPatches(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(
+                                                                            strtabSection.sectionOffset
+                                                                        )(rodataSectionIndex)(0)([])([]) with
+                                                                            | Error(message) -> Error(message)
+                                                                            | Ok(CollectedTextRelocations { functionPatches = functionPatches, dataPatches = dataPatches }) ->
+                                                                                let textBytes =
+                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
+                                                                                        textSection.sectionOffset
+                                                                                    )(textSection.sectionSize)
+                                                                                in
+                                                                                    let rodataBytes =
+                                                                                        match rodataLookup with
+                                                                                            | None -> None
+                                                                                            | Some((_index, section)) ->
+                                                                                                Some(
+                                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(section.sectionSize))(0)(objectBytes)(
+                                                                                                        section.sectionOffset
+                                                                                                    )(section.sectionSize)
+                                                                                                )
+                                                                                    in
+                                                                                        match functionPatches with
+                                                                                            | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataBytes)
+                                                                                            | _ ->
+                                                                                                match dataPatches with
+                                                                                                    | _ :: _ -> Error("linker: an object with both external-symbol calls (malloc/free) and .rodata references (a string literal) is not yet supported together")
+                                                                                                    | [] ->
+                                                                                                        let imports =
+                                                                                                            collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
+                                                                                                                strtabSection.sectionOffset
+                                                                                                            )
+                                                                                                        in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(imports))

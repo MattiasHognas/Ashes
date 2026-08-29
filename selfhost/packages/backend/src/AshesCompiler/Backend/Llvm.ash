@@ -118,6 +118,7 @@ export (
     value int8Type,
     value arrayType,
     value constArray,
+    value constStruct,
 )
 
 external type LLVMContextRef
@@ -199,6 +200,7 @@ external LLVMBuildGEP2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVM
 external LLVMInt8TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt8TypeInContext@libLLVM.so"
 external LLVMArrayType2(LLVMTypeRef, u64) -> LLVMTypeRef = "LLVMArrayType2@libLLVM.so"
 external LLVMConstArray2(LLVMTypeRef, FfiBuffer(LLVMValueRef), u64) -> LLVMValueRef = "LLVMConstArray2@libLLVM.so"
+external LLVMConstStructInContext(LLVMContextRef, FfiBuffer(LLVMValueRef), u32, Bool) -> LLVMValueRef = "LLVMConstStructInContext@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -432,3 +434,5 @@ let int8Type context = LLVMInt8TypeInContext(context)
 let arrayType elementType elementCount = LLVMArrayType2(elementType)(elementCount)
 
 let constArray elementType constantValues length = LLVMConstArray2(elementType)(constantValues)(length)
+
+let constStruct context constantValues count packed = LLVMConstStructInContext(context)(constantValues)(count)(packed)
