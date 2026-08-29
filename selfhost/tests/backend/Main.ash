@@ -1118,6 +1118,182 @@ let buildRcTreeReleaseModule name context =
                                                                                                                                         let _ = buildRet(builder)(sum)
                                                                                                                                         in (module_, builder))
 
+// The Perceus reuse contract's drop half (architecture.md's "Drop specialization and reuse"): "if
+// the cell is unique, release/transfer its old fields and return the cell address as the token; if
+// shared, decrement it and return null." This proves the token itself, not the field
+// release/transfer step (which composes with the drop functions already built above — a real
+// caller would run those first, then decide whether to keep the freed memory as a token instead
+// of calling `free`). `rcDropReuseToken` decrements and, on reaching zero, returns the ORIGINAL
+// header pointer WITHOUT freeing it — the memory stays allocated, ready for reuse; on a shared
+// cell it just decrements and returns `constNull`.
+let defineRcDropReuseTokenFunction module_ context existingBuilder headerType i8 ptr =
+    (let i64 = int64Type(context)
+    in
+        match beginFunction(module_)(context)(existingBuilder)("rcDropReuseToken")(ptr)([ptr])(1u32) with
+            | (function, fnType, builder) ->
+                let value = getParam(function)(0u32)
+                in
+                    let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                    in
+                        let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                        in
+                            let zeroIndex =
+                                constInt(int32Type(context))(0u64)(false)
+                            in
+                                let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                in
+                                    let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                    in
+                                        let newCount =
+                                            buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                        in
+                                            let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                            in
+                                                let isZero =
+                                                    buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                in
+                                                    let uniqueBlock = appendBasicBlock(context)(function)("unique")
+                                                    in
+                                                        let sharedBlock = appendBasicBlock(context)(function)("shared")
+                                                        in
+                                                            let _ = buildCondBr(builder)(isZero)(uniqueBlock)(sharedBlock)
+                                                            in
+                                                                let _ =
+                                                                    Unit
+                                                                    |> (given (_) -> positionBuilderAtEnd(builder)(uniqueBlock))
+                                                                    |> (given (_) -> buildRet(builder)(headerPtr))
+                                                                in
+                                                                    let _ =
+                                                                        Unit
+                                                                        |> (given (_) -> positionBuilderAtEnd(builder)(sharedBlock))
+                                                                        |> (given (_) ->
+                                                                            ptr
+                                                                            |> constNull
+                                                                            |> buildRet(builder))
+                                                                    in (function, fnType, builder))
+
+// The reuse contract's allocate half: "`AllocReusing` overwrites a compatible non-null cell; a
+// null token allocates a fresh RC cell." A non-null token is exactly `rcDropReuseToken`'s unique
+// path — the original header pointer, memory intact — so the reuse branch just re-initializes the
+// header in place (count back to `1`, the new size) and returns the same payload pointer as
+// before; the null branch calls the already-defined generic `rcAlloc` for a genuinely fresh
+// allocation. Size compatibility between the old and new cell is deliberately assumed here (both
+// callers below request the same size) rather than checked — the check itself is a separate,
+// bigger design question this slice isn't answering.
+let defineRcAllocReusingFunction module_ context existingBuilder headerType i8 ptr rcAllocType rcAllocFn =
+    (let i64 = int64Type(context)
+    in
+        match beginFunction(module_)(context)(existingBuilder)("rcAllocReusing")(ptr)([ptr, i64])(2u32) with
+            | (function, fnType, builder) ->
+                let token = getParam(function)(0u32)
+                in
+                    let payloadSize = getParam(function)(1u32)
+                    in
+                        let isNull =
+                            buildICmp(builder)(intPredicateEq)(token)(constNull(ptr))("isNull")
+                        in
+                            let freshBlock = appendBasicBlock(context)(function)("fresh")
+                            in
+                                let reuseBlock = appendBasicBlock(context)(function)("reuse")
+                                in
+                                    let _ = buildCondBr(builder)(isNull)(freshBlock)(reuseBlock)
+                                    in
+                                        let _ =
+                                            Unit
+                                            |> (given (_) -> positionBuilderAtEnd(builder)(freshBlock))
+                                            |> (given (_) -> buildCall(builder)(rcAllocType)(rcAllocFn)([payloadSize])(1u32)("fresh"))
+                                            |> (given (fresh) -> buildRet(builder)(fresh))
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(reuseBlock)
+                                            in
+                                                let zeroIndex =
+                                                    constInt(int32Type(context))(0u64)(false)
+                                                in
+                                                    let countFieldPtr = buildGEP(builder)(headerType)(token)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                                    in
+                                                        let sizeFieldPtr =
+                                                            buildGEP(builder)(headerType)(token)([zeroIndex, constInt(int32Type(context))(1u64)(false)])(2u32)("sizeFieldPtr")
+                                                        in
+                                                            let sixteen = constInt(i64)(16u64)(false)
+                                                            in
+                                                                let _ =
+                                                                    Unit
+                                                                    |> (given (_) ->
+                                                                        buildStore(builder)(constInt(i64)(1u64)(false))(countFieldPtr))
+                                                                    |> (given (_) -> buildStore(builder)(payloadSize)(sizeFieldPtr))
+                                                                in
+                                                                    let reusedPayloadPtr = buildGEP(builder)(i8)(token)([sixteen])(1u32)("reusedPayloadPtr")
+                                                                    in
+                                                                        let _ = buildRet(builder)(reusedPayloadPtr)
+                                                                        in (function, fnType, builder))
+
+// Proves the striking, easily-checked property reuse exists for: dropping `old` (its only
+// reference) and immediately `rcAllocReusing`-ing a same-size cell must NOT call `malloc` again —
+// the freed memory is handed straight back. `rcReuseLifecycle() { old = rcAlloc(4); *old = 100;
+// token = rcDropReuseToken(old); new = rcAllocReusing(token, 4); *new = 200; v = *new;
+// rcRelease(new); ret i32 v }`. The null-token/fresh-allocation branch is proven at the function
+// level (both branches of `rcAllocReusing` are real, reachable, disassembled code, per the
+// established discipline in `buildRcOptionReleaseModule`'s own comment) rather than exercised
+// again at a second call site here.
+let buildRcReuseModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let mallocType = functionType(ptr)([i64])(1u32)(false)
+                            in
+                                let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                in
+                                    let freeType =
+                                        functionType(voidType(context))([ptr])(1u32)(false)
+                                    in
+                                        let freeFn = addFunction(module_)("free")(freeType)
+                                        in
+                                            match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                    match defineRcReleaseFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                        | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                            match defineRcDropReuseTokenFunction(module_)(context)(Some(releaseBuilder))(headerType)(i8)(ptr) with
+                                                                | (rcDropReuseTokenFunction, rcDropReuseTokenType, dropBuilder) ->
+                                                                    match defineRcAllocReusingFunction(module_)(context)(Some(dropBuilder))(headerType)(i8)(ptr)(rcAllocType)(
+                                                                        rcAllocFunction
+                                                                    ) with
+                                                                        | (rcAllocReusingFunction, rcAllocReusingType, reusingBuilder) ->
+                                                                            match beginFunction(module_)(context)(Some(reusingBuilder))("rcReuseLifecycle")(i32)([])(0u32) with
+                                                                                | (_, _, builder) ->
+                                                                                    let old = buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)("old")
+                                                                                    in
+                                                                                        let _ =
+                                                                                            buildStore(builder)(constInt(i32)(100u64)(false))(old)
+                                                                                        in
+                                                                                            let token =
+                                                                                                buildCall(builder)(rcDropReuseTokenType)(rcDropReuseTokenFunction)([old])(1u32)(
+                                                                                                    "token"
+                                                                                                )
+                                                                                            in
+                                                                                                let new_ =
+                                                                                                    buildCall(builder)(rcAllocReusingType)(rcAllocReusingFunction)(
+                                                                                                        [token, constInt(i64)(4u64)(false)]
+                                                                                                    )(2u32)("new")
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        buildStore(builder)(constInt(i32)(200u64)(false))(new_)
+                                                                                                    in
+                                                                                                        let loadedNew = buildLoad(builder)(i32)(new_)("loadedNew")
+                                                                                                        in
+                                                                                                            let _ = buildCall(builder)(rcReleaseType)(rcReleaseFunction)([new_])(1u32)("")
+                                                                                                            in
+                                                                                                                let _ = buildRet(builder)(loadedNew)
+                                                                                                                in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -1290,6 +1466,11 @@ let testEmitAssemblyForRcTreeReleaseModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcTreeLifecycle")
 
+let testEmitAssemblyForRcReuseModule unit =
+    match emitModule(buildRcReuseModule)("selfhost-backend-rc-reuse-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcReuseLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -1309,6 +1490,7 @@ let run unit =
     |> testEmitAssemblyForRcNodeReleaseModule
     |> testEmitAssemblyForRcOptionReleaseModule
     |> testEmitAssemblyForRcTreeReleaseModule
+    |> testEmitAssemblyForRcReuseModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

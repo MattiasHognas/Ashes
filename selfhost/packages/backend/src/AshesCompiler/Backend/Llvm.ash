@@ -54,6 +54,7 @@ export (
     value addFunction,
     value appendBasicBlock,
     value constInt,
+    value constNull,
     value buildRet,
     value buildRetVoid,
     value verifyModule,
@@ -127,6 +128,7 @@ external LLVMFunctionType(LLVMTypeRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLV
 external LLVMAddFunction(LLVMModuleRef, Str, LLVMTypeRef) -> LLVMValueRef = "LLVMAddFunction@libLLVM.so"
 external LLVMAppendBasicBlockInContext(LLVMContextRef, LLVMValueRef, Str) -> LLVMBasicBlockRef = "LLVMAppendBasicBlockInContext@libLLVM.so"
 external LLVMConstInt(LLVMTypeRef, u64, Bool) -> LLVMValueRef = "LLVMConstInt@libLLVM.so"
+external LLVMConstNull(LLVMTypeRef) -> LLVMValueRef = "LLVMConstNull@libLLVM.so"
 external LLVMBuildRet(LLVMBuilderRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildRet@libLLVM.so"
 external LLVMBuildRetVoid(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildRetVoid@libLLVM.so"
 external LLVMDisposeMessage(*u8) -> void = "LLVMDisposeMessage@libLLVM.so"
@@ -193,6 +195,11 @@ let addFunction module_ name type_ = LLVMAddFunction(module_)(name)(type_)
 let appendBasicBlock context function name = LLVMAppendBasicBlockInContext(context)(function)(name)
 
 let constInt type_ value signExtend = LLVMConstInt(type_)(value)(signExtend)
+
+// `LLVMBuildICmp`'s `intPredicateEq` already compares pointer operands correctly (LLVM's `icmp`
+// works uniformly over integer and pointer types), so a null-pointer constant plus the existing
+// comparison is all a "is this token null" check needs — no separate `LLVMBuildIsNull` binding.
+let constNull type_ = LLVMConstNull(type_)
 
 let buildRet builder value = LLVMBuildRet(builder)(value)
 
