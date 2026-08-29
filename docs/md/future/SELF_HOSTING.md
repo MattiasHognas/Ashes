@@ -1532,21 +1532,21 @@ same public behavior.
   entry points the backend needs (no more are exposed on purpose; there is no `phi` binding, values
   that merge across branches go through a slot allocated before the branch), and
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
-  `AshesCompiler.Backend.Llvm` binds a small subset (context/module/builder/type/value/basic-block
-  creation, `functionType`, `addFunction`, `appendBasicBlock`, `getParam`, `constInt`, `buildAdd`,
-  `buildICmp`, `buildCondBr`, `buildBr`, `buildAlloca`, `buildStore`, `buildLoad`, `buildCall`,
-  `buildRet`, `verifyModule`, x86 target initialization, `getTargetFromTriple`, host-CPU detection,
+  `AshesCompiler.Backend.Llvm` binds a growing subset — as of this writing: context/module/builder/
+  type/value/basic-block/global creation and initialization (`addGlobal`, `setInitializer`,
+  `setGlobalConstant`, `setLinkage`), `functionType`, `addFunction`, `appendBasicBlock`, `getParam`,
+  `constInt`, arithmetic and comparison (`buildAdd`, `buildICmp`), control flow (`buildCondBr`,
+  `buildBr`) and the no-`phi` alloca/store/load slot pattern, calls (`buildCall`), `buildRet`,
+  `verifyModule`, x86 target initialization, `getTargetFromTriple`, host-CPU detection,
   `createTargetMachine`, `applyDataLayout`, `targetMachineEmitToMemoryBuffer`, and the memory-buffer
-  accessors) and `selfhost/tests/backend` proves it builds, verifies, and emits a zero-parameter
-  function, a one-parameter function using real arithmetic
-  (`i32 addOne(i32 x) { ret i32 (x + 1) }`), a two-parameter branching function across four
-  basic blocks using the no-`phi` alloca/store/load slot pattern
-  (`i32 max(i32 a, i32 b) { if a > b then a else b }`), and a two-function module where one calls
-  the other twice (`i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }`) to genuine linux-x64 ELF
-  objects and assembly listings end to end (checked with `readelf` and, independently,
-  exact-instruction assembly dumps — `movl %edi, %eax; addl $1, %eax; retq` for `addOne`,
-  `cmpl %esi, %edi; jle ...` for `max`, two `callq addOne@PLT` for `addTwo` — not just a
-  byte-length assertion in the test itself). The bindings resolve a bare `libLLVM.so`/`.dll`
+  accessors. `selfhost/tests/backend` proves each addition by building, verifying, and emitting a
+  small real function to genuine linux-x64 ELF objects and assembly listings end to end: a
+  zero-parameter constant-returning function, `i32 addOne(i32 x) { ret i32 (x + 1) }`,
+  `i32 max(i32 a, i32 b) { if a > b then a else b }` (branching across four basic blocks),
+  `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }` (one module-local function calling another),
+  and a global constant read back by a function — checked with `readelf` and, independently, exact-
+  instruction assembly dumps for each (not just a byte-length assertion in the test itself). The
+  bindings resolve a bare `libLLVM.so`/`.dll`
   via the executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order
   (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
