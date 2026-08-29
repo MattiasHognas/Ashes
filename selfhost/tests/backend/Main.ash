@@ -1987,6 +1987,17 @@ let buildRealIrMultiConstructorModule name context = codegenRealSource("type Sha
 // accidentally-monomorphic scheme. Prints `5`, the field read back through `GetAdtField`.
 let buildRealIrGenericTypeModule name context = codegenRealSource("type Box(a) =\n    | value: a\n\nlet b = Box(value = 5)\nAshes.IO.print(b.value)")(name)(context)
 
+// A generic type with TWO distinct type parameters: `assignTypeParameterIds` mints one fresh id
+// per declared parameter regardless of count, so this needed no code changes at all to already
+// work — this test exists to verify that, not to add support for it. Both fields happen to be
+// instantiated as `Int` here (a genuinely `Str`-instantiated field was tried first and hit a real,
+// separate, already-known gap: `IrCodegen.ash` has no `LoadConstStr` case at all yet — its own
+// header comment already names "strings" as unimplemented — so this test deliberately stays within
+// already-covered instruction territory rather than exercising that unrelated gap). Prints `7`
+// (`p.second`, read back through `GetAdtField` at field index `1`, not `0`), confirming the second
+// type parameter's field lands at its own correctly-ordered offset rather than aliasing the first.
+let buildRealIrMultiParamGenericTypeModule name context = codegenRealSource("type Pair(a, b) =\n    | first: a\n    | second: b\n\nlet p = Pair(first = 5, second = 7)\nAshes.IO.print(p.second)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2446,6 +2457,32 @@ let testRunStaticExecutableForRealIrGenericTypeModule unit =
                                                         let _ = test.assertEqual("5")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrMultiParamGenericTypeModule`'s executable end to end: a two-type-parameter
+// generic type, each parameter instantiated at a different concrete type, printing `5`.
+let testRunStaticExecutableForRealIrMultiParamGenericTypeModule unit =
+    match emitModule(buildRealIrMultiParamGenericTypeModule)("selfhostBackendRunMultiParamGeneric")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunMultiParamGeneric") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_multi_param_generic_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_multi_param_generic_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_multi_param_generic_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("7")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2524,6 +2561,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testRunStaticExecutableForRealIrMultiConstructorModule
     |> testRunStaticExecutableForRealIrGenericTypeModule
+    |> testRunStaticExecutableForRealIrMultiParamGenericTypeModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

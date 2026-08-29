@@ -1832,9 +1832,18 @@ same public behavior.
   cover, so that case is verified structurally rather than by observing a printed value. Generics are
   verified too: `type Box(a) = | value: a` instantiates `a` as `Int` (`Box(value = 5)`, printing `5`
   read back through `GetAdtField`) and, in a separate probe, as `Str` in the same program — genuine
-  polymorphism, not an accidentally-monomorphic scheme. **Explicitly still open**: `deriving`,
-  non-primitive (nested-ADT, function, tuple) field types, and multi-parameter type declarations
-  (`type Pair(a, b) = ...`, which should already work via the same mechanism but is untested).
+  polymorphism, not an accidentally-monomorphic scheme. Multiple type parameters are also verified:
+  `type Pair(a, b) = | first: a | second: b` (`Pair(first = 5, second = 7)`, printing `p.second = 7`
+  — field index `1`, not `0`, confirming the second parameter's field lands at its own correctly-
+  ordered offset). **Found and worked around, not fixed, while probing this**: `Pair`'s first attempt
+  used `second: Str` to prove the two parameters resolve independently; this hit a real, separate,
+  already-known gap instead — `IrCodegen.ash` has no `LoadConstStr` case at all (its own header
+  comment already names "strings" as unimplemented), so any real string LITERAL still panics
+  codegen with "unsupported IrInstructionKind" regardless of whether it reaches the string through a
+  generic field or a plain `let`. The test was changed to two `Int` fields instead, deliberately
+  staying within already-covered instruction territory. **Explicitly still open**: `deriving`,
+  non-primitive (nested-ADT, function, tuple) field types, and — confirmed above, not a projection —
+  string literal codegen for any purpose, generic or otherwise.
   **Known, currently harmless inaccuracy**: `lowerDeadRcTopLevelLet`'s `RcDrop`
   carries the CONSTRUCTOR's own name in its `typeName` field (e.g. `Circle`/`Square`) rather than the
   DECLARING TYPE's name (`Shape`) stage-0's real semantics use — confirmed via `--emit-ir` that
