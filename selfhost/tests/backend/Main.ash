@@ -374,10 +374,10 @@ let buildOptionUnwrapModule name context =
 // Defines `i32 addEnv(i32 env, i32 x) { ret env + x }`, standing in for a compiled closure body
 // (`env` playing the role of a single captured value). Returns the function's own `functionType`
 // alongside it, since the indirect call site needs that exact type, not the callee's definition.
-let defineAddEnvFunction module_ context =
+let defineAddEnvFunction module_ context existingBuilder =
     (let i32 = int32Type(context)
     in
-        match beginFunction(module_)(context)(None)("addEnv")(i32)([i32, i32])(2u32) with
+        match beginFunction(module_)(context)(existingBuilder)("addEnv")(i32)([i32, i32])(2u32) with
             | (function, fnType, builder) ->
                 let env = getParam(function)(0u32)
                 in
@@ -432,7 +432,7 @@ let buildClosureCallModule name context =
         in
             let closureType = structType(context)([ptr, int32Type(context)])(2u32)(false)
             in
-                match defineAddEnvFunction(module_)(context) with
+                match defineAddEnvFunction(module_)(context)(None) with
                     | (_, envFnType, addEnvBuilder) ->
                         match buildCallClosureFunction(module_)(context)(Some(addEnvBuilder))(envFnType)(closureType) with
                             | (_, _, builder) -> (module_, builder))
@@ -464,7 +464,7 @@ let buildHeapClosureModule name context =
                                 in
                                     let freeFn = addFunction(module_)("free")(freeType)
                                     in
-                                        match defineAddEnvFunction(module_)(context) with
+                                        match defineAddEnvFunction(module_)(context)(None) with
                                             | (addEnvFunction, envFnType, addEnvBuilder) ->
                                                 match buildCallClosureFunction(module_)(context)(Some(addEnvBuilder))(envFnType)(closureType) with
                                                     | (callClosureFunction, callClosureType, builder) ->
@@ -1362,6 +1362,227 @@ let buildRcReuseModule name context =
                                                                                                                 let _ = buildRet(builder)(loadedNew)
                                                                                                                 in (module_, builder))
 
+// Drops a closure's ONE owned capture without ever touching its code-pointer field — a genuinely
+// different drop shape than every earlier one in this arc: not tag-gated
+// (`defineRcReleaseOptionFunction`), not "every field is owned"
+// (`defineRcReleaseNodeFunction`/`defineRcReleaseTreeFunction`), but a FIXED mix of one unowned
+// field (the code address, never RC-managed) and one owned field (the capture). `rcClosureType` is
+// `{ptr code, ptr capturedRc}`; on the last reference this drops only field index `1` via the
+// already-defined generic `rcRelease` before freeing its own header.
+let defineRcReleaseClosureFunction module_ context existingBuilder headerType i8 ptr rcClosureType freeType freeFn rcReleaseType rcReleaseFn =
+    (let i64 = int64Type(context)
+    in
+        let i32 = int32Type(context)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("rcReleaseClosure")(voidType(context))([ptr])(1u32) with
+                | (function, fnType, builder) ->
+                    let value = getParam(function)(0u32)
+                    in
+                        let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                        in
+                            let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                            in
+                                let zeroIndex = constInt(i32)(0u64)(false)
+                                in
+                                    let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                    in
+                                        let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                        in
+                                            let newCount =
+                                                buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                            in
+                                                let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                                in
+                                                    let isZero =
+                                                        buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                    in
+                                                        let dropBlock = appendBasicBlock(context)(function)("drop")
+                                                        in
+                                                            let doneBlock = appendBasicBlock(context)(function)("done")
+                                                            in
+                                                                let _ = buildCondBr(builder)(isZero)(dropBlock)(doneBlock)
+                                                                in
+                                                                    let _ =
+                                                                        Unit
+                                                                        |> (given (_) -> positionBuilderAtEnd(builder)(dropBlock))
+                                                                        |> (given (_) ->
+                                                                            buildGEP(builder)(rcClosureType)(value)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)(
+                                                                                "capturedFieldPtr"
+                                                                            ))
+                                                                        |> (given (capturedFieldPtr) -> buildLoad(builder)(ptr)(capturedFieldPtr)("capturedPtr"))
+                                                                        |> (given (capturedPtr) -> buildCall(builder)(rcReleaseType)(rcReleaseFn)([capturedPtr])(1u32)(""))
+                                                                        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                        |> (given (_) -> buildRetVoid(builder))
+                                                                    in
+                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                        in
+                                                                            let _ = buildRetVoid(builder)
+                                                                            in (function, fnType, builder))
+
+// Calls an RC-managed closure: loads the code pointer (field `0`, unowned) and the captured RC
+// pointer (field `1`, owned), dereferences the capture to its `i32` value, and calls the loaded
+// function with the captured value plus the argument — the same indirect-call shape as
+// `buildCallClosureFunction`, just reading its capture through an RC pointer instead of an
+// embedded scalar.
+let defineCallRcClosureFunction module_ context existingBuilder rcClosureType envFnType =
+    (let i32 = int32Type(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("callRcClosure")(i32)([ptr, i32])(2u32) with
+                | (function, fnType, builder) ->
+                    let closurePtr = getParam(function)(0u32)
+                    in
+                        let xArg = getParam(function)(1u32)
+                        in
+                            let zeroIndex = constInt(i32)(0u64)(false)
+                            in
+                                let codePtrFieldPtr = buildGEP(builder)(rcClosureType)(closurePtr)([zeroIndex, zeroIndex])(2u32)("codePtrFieldPtr")
+                                in
+                                    let capturedFieldPtr = buildGEP(builder)(rcClosureType)(closurePtr)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)("capturedFieldPtr")
+                                    in
+                                        let codePtr = buildLoad(builder)(ptr)(codePtrFieldPtr)("codePtr")
+                                        in
+                                            let capturedPtr = buildLoad(builder)(ptr)(capturedFieldPtr)("capturedPtr")
+                                            in
+                                                let capturedValue = buildLoad(builder)(i32)(capturedPtr)("capturedValue")
+                                                in
+                                                    let result = buildCall(builder)(envFnType)(codePtr)([capturedValue, xArg])(2u32)("result")
+                                                    in
+                                                        let _ = buildRet(builder)(result)
+                                                        in (function, fnType, builder))
+
+// The composition every closure and every RC test in this arc has been building toward: a closure
+// whose capture is itself an RC-managed value, retained when captured and released when the
+// closure itself is released — proving the two mechanisms actually compose, not just coexist.
+// `rcClosureLifecycle() { leaf = rcAlloc(4); *leaf = 50; rcRetain(leaf); closure = rcAlloc(16);
+// closure.code = addEnv; closure.capturedRc = leaf; r = callRcClosure(closure, 5);
+// rcReleaseClosure(closure); v = *leaf; rcRelease(leaf); ret i32 (r + v) }` — the retain before
+// capture keeps `leaf` alive independently of the closure's own reference, so releasing the
+// closure (which drops its own reference) must NOT free `leaf`: `*leaf` is still readable
+// afterward, and only the final, separate `rcRelease(leaf)` actually frees it.
+let buildRcClosureModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let rcClosureType = structType(context)([ptr, ptr])(2u32)(false)
+                            in
+                                let mallocType = functionType(ptr)([i64])(1u32)(false)
+                                in
+                                    let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                    in
+                                        let freeType =
+                                            functionType(voidType(context))([ptr])(1u32)(false)
+                                        in
+                                            let freeFn = addFunction(module_)("free")(freeType)
+                                            in
+                                                match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                    | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                        match defineRcRetainFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr) with
+                                                            | (rcRetainFunction, rcRetainType, retainBuilder) ->
+                                                                match defineRcReleaseFunction(module_)(context)(Some(retainBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                                    | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                                        match defineAddEnvFunction(module_)(context)(Some(releaseBuilder)) with
+                                                                            | (addEnvFunction, envFnType, addEnvBuilder) ->
+                                                                                match defineRcReleaseClosureFunction(module_)(context)(Some(addEnvBuilder))(headerType)(i8)(ptr)(
+                                                                                    rcClosureType
+                                                                                )(freeType)(freeFn)(rcReleaseType)(rcReleaseFunction) with
+                                                                                    | (rcReleaseClosureFunction, rcReleaseClosureType, releaseClosureBuilder) ->
+                                                                                        match defineCallRcClosureFunction(module_)(context)(Some(releaseClosureBuilder))(
+                                                                                            rcClosureType
+                                                                                        )(envFnType) with
+                                                                                            | (callRcClosureFunction, callRcClosureType, callBuilder) ->
+                                                                                                match beginFunction(module_)(context)(Some(callBuilder))("rcClosureLifecycle")(i32)(
+                                                                                                    []
+                                                                                                )(0u32) with
+                                                                                                    | (_, _, builder) ->
+                                                                                                        let leaf =
+                                                                                                            buildCall(builder)(rcAllocType)(rcAllocFunction)(
+                                                                                                                [constInt(i64)(4u64)(false)]
+                                                                                                            )(1u32)("leaf")
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                buildStore(builder)(constInt(i32)(50u64)(false))(leaf)
+                                                                                                            in
+                                                                                                                let retainedLeaf =
+                                                                                                                    buildCall(builder)(rcRetainType)(rcRetainFunction)([leaf])(1u32)(
+                                                                                                                        "retainedLeaf"
+                                                                                                                    )
+                                                                                                                in
+                                                                                                                    let closure =
+                                                                                                                        buildCall(builder)(rcAllocType)(rcAllocFunction)(
+                                                                                                                            [constInt(i64)(16u64)(false)]
+                                                                                                                        )(1u32)("closure")
+                                                                                                                    in
+                                                                                                                        let zeroIndex = constInt(i32)(0u64)(false)
+                                                                                                                        in
+                                                                                                                            let codeFieldPtr =
+                                                                                                                                buildGEP(builder)(rcClosureType)(closure)(
+                                                                                                                                    [zeroIndex, zeroIndex]
+                                                                                                                                )(2u32)("codeFieldPtr")
+                                                                                                                            in
+                                                                                                                                let capturedFieldPtr =
+                                                                                                                                    buildGEP(builder)(rcClosureType)(closure)(
+                                                                                                                                        [zeroIndex, constInt(i32)(1u64)(false)]
+                                                                                                                                    )(2u32)("capturedFieldPtr")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        Unit
+                                                                                                                                        |> (given (_) ->
+                                                                                                                                            buildStore(builder)(addEnvFunction)(
+                                                                                                                                                codeFieldPtr
+                                                                                                                                            ))
+                                                                                                                                        |> (given (_) ->
+                                                                                                                                            buildStore(builder)(retainedLeaf)(
+                                                                                                                                                capturedFieldPtr
+                                                                                                                                            ))
+                                                                                                                                    in
+                                                                                                                                        let result =
+                                                                                                                                            buildCall(builder)(callRcClosureType)(
+                                                                                                                                                callRcClosureFunction
+                                                                                                                                            )([closure, constInt(i32)(5u64)(false)])(
+                                                                                                                                                2u32
+                                                                                                                                            )("result")
+                                                                                                                                        in
+                                                                                                                                            let _ =
+                                                                                                                                                buildCall(builder)(
+                                                                                                                                                    rcReleaseClosureType
+                                                                                                                                                )(rcReleaseClosureFunction)([closure])(
+                                                                                                                                                    1u32
+                                                                                                                                                )("")
+                                                                                                                                            in
+                                                                                                                                                let finalLeafValue =
+                                                                                                                                                    buildLoad(builder)(i32)(leaf)(
+                                                                                                                                                        "finalLeafValue"
+                                                                                                                                                    )
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        buildCall(builder)(
+                                                                                                                                                            rcReleaseType
+                                                                                                                                                        )(rcReleaseFunction)([leaf])(
+                                                                                                                                                            1u32
+                                                                                                                                                        )("")
+                                                                                                                                                    in
+                                                                                                                                                        let combined =
+                                                                                                                                                            buildAdd(builder)(result)(
+                                                                                                                                                                finalLeafValue
+                                                                                                                                                            )("combined")
+                                                                                                                                                        in
+                                                                                                                                                            let _ =
+                                                                                                                                                                buildRet(builder)(
+                                                                                                                                                                    combined
+                                                                                                                                                                )
+                                                                                                                                                            in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -1544,6 +1765,11 @@ let testEmitAssemblyForRcReuseModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcReuseLifecycle")
 
+let testEmitAssemblyForRcClosureModule unit =
+    match emitModule(buildRcClosureModule)("selfhost-backend-rc-closure-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcClosureLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -1565,6 +1791,7 @@ let run unit =
     |> testEmitAssemblyForRcOptionReleaseModule
     |> testEmitAssemblyForRcTreeReleaseModule
     |> testEmitAssemblyForRcReuseModule
+    |> testEmitAssemblyForRcClosureModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
