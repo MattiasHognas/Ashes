@@ -678,6 +678,114 @@ let buildRcCellLifecycleModule name context =
                                                                                                     let _ = buildRet(builder)(loaded)
                                                                                                     in (module_, builder))
 
+// The `rcRelease` mirror architecture.md actually describes: "on the last reference it first
+// releases owned children through the type-directed drop path, then releases the cell." This
+// specializes that to the simplest possible shape — a payload that is exactly one owned `ptr`
+// field (offset 0, no GEP needed) — dropping the child via the ALREADY-DEFINED generic
+// `rcRelease` (passed in, not redefined) before freeing the node's own header. Nothing here is
+// specific to being a "node": a real ADT drop path repeats this same shape once per owned field.
+let defineRcReleaseNodeFunction module_ context existingBuilder headerType i8 ptr freeType freeFn rcReleaseType rcReleaseFn =
+    (let i64 = int64Type(context)
+    in
+        match beginFunction(module_)(context)(existingBuilder)("rcReleaseNode")(voidType(context))([ptr])(1u32) with
+            | (function, fnType, builder) ->
+                let value = getParam(function)(0u32)
+                in
+                    let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                    in
+                        let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                        in
+                            let zeroIndex =
+                                constInt(int32Type(context))(0u64)(false)
+                            in
+                                let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                in
+                                    let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                    in
+                                        let newCount =
+                                            buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                        in
+                                            let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                            in
+                                                let isZero =
+                                                    buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                in
+                                                    let freeBlock = appendBasicBlock(context)(function)("free")
+                                                    in
+                                                        let doneBlock = appendBasicBlock(context)(function)("done")
+                                                        in
+                                                            let _ = buildCondBr(builder)(isZero)(freeBlock)(doneBlock)
+                                                            in
+                                                                let _ =
+                                                                    Unit
+                                                                    |> (given (_) -> positionBuilderAtEnd(builder)(freeBlock))
+                                                                    |> (given (_) -> buildLoad(builder)(ptr)(value)("childPtr"))
+                                                                    |> (given (childPtr) -> buildCall(builder)(rcReleaseType)(rcReleaseFn)([childPtr])(1u32)(""))
+                                                                    |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                    |> (given (_) -> buildRetVoid(builder))
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                    in
+                                                                        let _ = buildRetVoid(builder)
+                                                                        in (function, fnType, builder))
+
+// Proves the cascading release above actually cascades: a leaf `i32` cell (`rcAlloc(4)`, value 7)
+// owned by a node whose one field IS a pointer to that leaf (`rcAlloc(8)`, storing the leaf's
+// pointer at offset 0). Releasing the node once (its only reference) must transitively free the
+// leaf too, not just the node's own header — `rcNodeLifecycle() { leaf = rcAlloc(4); *leaf = 7;
+// node = rcAlloc(8); *node = leaf; v = *leaf; rcReleaseNode(node); ret i32 v }`, reading `v` before
+// the release that frees both cells.
+let buildRcNodeReleaseModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let mallocType = functionType(ptr)([i64])(1u32)(false)
+                            in
+                                let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                in
+                                    let freeType =
+                                        functionType(voidType(context))([ptr])(1u32)(false)
+                                    in
+                                        let freeFn = addFunction(module_)("free")(freeType)
+                                        in
+                                            match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                    match defineRcReleaseFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                        | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                            match defineRcReleaseNodeFunction(module_)(context)(Some(releaseBuilder))(headerType)(i8)(ptr)(freeType)(freeFn)(
+                                                                rcReleaseType
+                                                            )(rcReleaseFunction) with
+                                                                | (rcReleaseNodeFunction, rcReleaseNodeType, releaseNodeBuilder) ->
+                                                                    match beginFunction(module_)(context)(Some(releaseNodeBuilder))("rcNodeLifecycle")(i32)([])(0u32) with
+                                                                        | (_, _, builder) ->
+                                                                            let leaf = buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)("leaf")
+                                                                            in
+                                                                                let _ =
+                                                                                    buildStore(builder)(constInt(i32)(7u64)(false))(leaf)
+                                                                                in
+                                                                                    let node =
+                                                                                        buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(8u64)(false)])(1u32)(
+                                                                                            "node"
+                                                                                        )
+                                                                                    in
+                                                                                        let _ = buildStore(builder)(leaf)(node)
+                                                                                        in
+                                                                                            let leafValue = buildLoad(builder)(i32)(leaf)("leafValue")
+                                                                                            in
+                                                                                                let _ = buildCall(builder)(rcReleaseNodeType)(rcReleaseNodeFunction)([node])(1u32)("")
+                                                                                                in
+                                                                                                    let _ = buildRet(builder)(leafValue)
+                                                                                                    in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -835,6 +943,11 @@ let testEmitAssemblyForRcCellLifecycleModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcCellLifecycle")
 
+let testEmitAssemblyForRcNodeReleaseModule unit =
+    match emitModule(buildRcNodeReleaseModule)("selfhost-backend-rc-node-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcNodeLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -851,6 +964,7 @@ let run unit =
     |> testEmitAssemblyForClosureCallModule
     |> testEmitAssemblyForHeapClosureModule
     |> testEmitAssemblyForRcCellLifecycleModule
+    |> testEmitAssemblyForRcNodeReleaseModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
