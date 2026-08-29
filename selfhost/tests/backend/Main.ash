@@ -108,6 +108,51 @@ let buildMaxModule name context =
                                                                                                 let _ = buildRet(builder)(result)
                                                                                                 in (module_, builder))
 
+// A two-function module (`i32 addOne(i32 x) { ret i32 (x + 1) }` and
+// `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }`), proving `buildCall`'s `FfiBuffer` argument
+// list and calling one module-local function from another both work. `addOne` and `addTwo` must
+// live in the same module: an LLVM call target is a value obtained from `addFunction` in that
+// module, not something that can reach across modules directly.
+let buildAddTwoModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let addOneType = functionType(i32)([i32])(1u32)(false)
+            in
+                let addOneFunction = addFunction(module_)("addOne")(addOneType)
+                in
+                    let addOneEntry = appendBasicBlock(context)(addOneFunction)("entry")
+                    in
+                        let builder = createBuilder(context)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(addOneEntry)
+                            in
+                                let addOneParam = getParam(addOneFunction)(0u32)
+                                in
+                                    let one = constInt(i32)(1u64)(false)
+                                    in
+                                        let addOneSum = buildAdd(builder)(addOneParam)(one)("sum")
+                                        in
+                                            let _ = buildRet(builder)(addOneSum)
+                                            in
+                                                let addTwoType = functionType(i32)([i32])(1u32)(false)
+                                                in
+                                                    let addTwoFunction = addFunction(module_)("addTwo")(addTwoType)
+                                                    in
+                                                        let addTwoEntry = appendBasicBlock(context)(addTwoFunction)("entry")
+                                                        in
+                                                            let _ = positionBuilderAtEnd(builder)(addTwoEntry)
+                                                            in
+                                                                let addTwoParam = getParam(addTwoFunction)(0u32)
+                                                                in
+                                                                    let firstCall = buildCall(builder)(addOneType)(addOneFunction)([addTwoParam])(1u32)("first")
+                                                                    in
+                                                                        let secondCall = buildCall(builder)(addOneType)(addOneFunction)([firstCall])(1u32)("second")
+                                                                        in
+                                                                            let _ = buildRet(builder)(secondCall)
+                                                                            in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -220,6 +265,11 @@ let testEmitAssemblyForMaxModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("max")
 
+let testEmitAssemblyForAddTwoModule unit =
+    match emitModule(buildAddTwoModule)("selfhost-backend-addtwo-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("addTwo")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -227,6 +277,7 @@ let run unit =
     |> testEmitAssemblyForTrivialModule
     |> testEmitAssemblyForAddOneModule
     |> testEmitAssemblyForMaxModule
+    |> testEmitAssemblyForAddTwoModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

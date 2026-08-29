@@ -85,6 +85,7 @@ export (
     value buildAlloca,
     value buildStore,
     value buildLoad,
+    value buildCall,
 )
 
 external type LLVMContextRef
@@ -138,6 +139,7 @@ external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMB
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
+external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -267,3 +269,8 @@ let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
 let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
 
 let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
+
+// `FfiBuffer` parameters must be called directly, so this wraps rather than aliases the raw
+// external, matching `functionType`. `argCount` is likewise taken from the caller rather than
+// derived from `args`'s length, for the same reason `functionType`'s `paramCount` is.
+let buildCall builder calleeType callee args argCount name = LLVMBuildCall2(builder)(calleeType)(callee)(args)(argCount)(name)
