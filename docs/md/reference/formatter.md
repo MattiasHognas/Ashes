@@ -241,6 +241,11 @@ Comments
   than dropped.
 - Trailing same-line comments (`let x = 1 // note`) are not yet preserved; the
   reinsertion is line-based. Keep comments on their own line.
+- A single `fmt` call is idempotent: formatting internally repeats the
+  parse/format/reinsert pass (capped) until the output stops changing, so a
+  comment's anchor is always resolved against the code's own final, stable
+  shape rather than an intermediate wrapping. Running `fmt` again on already
+  formatted output is always a no-op.
 
 ## Enforcement
 

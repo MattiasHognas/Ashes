@@ -102,12 +102,24 @@ let recursive signatureOfTokens tokens signature =
                         then signatureOfTokens(rest)(piece)
                         else signatureOfTokens(rest)(signature + "|" + piece)
 
+// A closing `in` frequently shares a physical line with the expression it introduces (`in h + g`)
+// in one formatting pass and stands alone on its own line the next (`in` / `h + g`) — a purely
+// stylistic choice the formatter makes based on wrapping, not a semantic difference. Dropping a
+// leading, non-solitary `in` keeps the signature the same either way; without this, the two forms
+// hash completely differently and a comment anchored to the "h + g" line can fail to match at
+// all, falling back to the top of the file instead of landing near its original position.
+let dropLeadingMergedIn tokens =
+    match tokens with
+        | Token { kind = In } :: second :: restTail -> second :: restTail
+        | _ -> tokens
+
 let lineSignature line =
     if Ashes.Text.trim(line) == ""
     then ""
     else
         match tokenize(line) with
-            | LexerResult { tokens = tokens } -> signatureOfTokens(tokens)("")
+            | LexerResult { tokens = tokens } ->
+                signatureOfTokens(dropLeadingMergedIn(tokens))("")
 
 let recursive collectSignificantLinesGo lines index counts acc =
     match lines with
@@ -436,19 +448,42 @@ let prependLines lines body =
             | _ -> "\n"
     in Ashes.Text.join("\n")(lines) + separator + body)
 
+// The anchor signature+occurrence pair is computed independently on the pre-format source and the
+// post-format output; if formatting changes how a comment's neighboring line wraps (or how many
+// other lines elsewhere in the file share its signature), the two computations can disagree and
+// land a comment a line or two off. Re-running the same parse/format/reinsert pass on that
+// slightly-off output almost always converges immediately, since from the second pass on the
+// underlying code is already in its canonical, stable form — only the comment placement was ever
+// unsettled. Bounds `formatBodyToFixedPoint`'s iteration.
+let maxFixedPointPasses = 5
+
+// Repeatedly parses, formats, and reinserts comments into `sourceWithoutImports` until the result
+// stops changing, capped at `maxFixedPointPasses` — so a single `formatSource` call already
+// returns fully idempotent output instead of requiring the caller to re-run formatting manually.
+let recursive formatBodyToFixedPoint sourceWithoutImports passesRemaining =
+    match parseProgram(sourceWithoutImports) with
+        | ProgramParseResult { program = program, diagnostics = [] } ->
+            let formattedBody =
+                reinsertStandaloneCommentLines(sourceWithoutImports)(formatProgram(program))("\n")
+            in
+                if formattedBody == sourceWithoutImports
+                then Ok(formattedBody)
+                else
+                    if passesRemaining <= 1
+                    then Ok(formattedBody)
+                    else formatBodyToFixedPoint(formattedBody)(passesRemaining - 1)
+        | ProgramParseResult { diagnostics = diagnostics } -> Error(SourceParseFailure(diagnostics))
+
 let formatSource source =
     match extractLeadingComments(source) with
         | (leadingComments, sourceWithoutComments) ->
             match extractImports(sourceWithoutComments) with
                 | Error(error) -> Error(error)
                 | Ok((imports, sourceWithoutImports)) ->
-                    match parseProgram(sourceWithoutImports) with
-                        | ProgramParseResult { program = program, diagnostics = [] } ->
-                            let formattedBody =
-                                reinsertStandaloneCommentLines(sourceWithoutImports)(formatProgram(program))("\n")
-                            in
-                                formattedBody
-                                |> prependLines(imports)
-                                |> prependLines(leadingComments)
-                                |> Ok
-                        | ProgramParseResult { diagnostics = diagnostics } -> Error(SourceParseFailure(diagnostics))
+                    match formatBodyToFixedPoint(sourceWithoutImports)(maxFixedPointPasses) with
+                        | Error(error) -> Error(error)
+                        | Ok(formattedBody) ->
+                            formattedBody
+                            |> prependLines(imports)
+                            |> prependLines(leadingComments)
+                            |> Ok

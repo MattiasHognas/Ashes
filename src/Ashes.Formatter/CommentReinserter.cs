@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using Ashes.Frontend;
 
@@ -17,6 +18,50 @@ public static class CommentReinserter
     private readonly record struct LineAnchor(string Signature, int Occurrence);
 
     private readonly record struct SignificantLine(int Index, LineAnchor Anchor);
+
+    /// <summary>
+    /// The anchor signature+occurrence pair is computed independently on the pre-format source and
+    /// the post-format output; if formatting changes how a comment's neighboring line wraps (or how
+    /// many other lines elsewhere in the file share its signature), the two computations can
+    /// disagree and land a comment a line or two off. Re-running the same parse/format/reinsert
+    /// pass on that slightly-off output almost always converges immediately, since from the second
+    /// pass on the underlying code is already in its canonical, stable form — only the comment
+    /// placement was ever unsettled. Bounds <see cref="ToFixedPoint"/>'s iteration.
+    /// </summary>
+    public const int MaxFixedPointPasses = 5;
+
+    /// <summary>
+    /// Repeatedly applies <paramref name="formatOnePass"/> (one parse+format+
+    /// <see cref="ReinsertStandaloneCommentLines"/> pass over its own previous output) to
+    /// <paramref name="source"/> until the result stops changing, capped at
+    /// <see cref="MaxFixedPointPasses"/> — so a single call already returns fully idempotent output
+    /// instead of exposing the anchor-resolution instability documented on
+    /// <see cref="MaxFixedPointPasses"/> to every caller (previously: run the CLI's <c>fmt</c> 2-3
+    /// times by hand until the file stopped changing). <paramref name="formatOnePass"/> returns
+    /// <see langword="null"/> on a syntax error; the two current callers differ only in how they
+    /// surface that (the CLI throws before ever calling this, the LSP returns null to the editor).
+    /// </summary>
+    public static string? ToFixedPoint(string source, Func<string, string?> formatOnePass)
+    {
+        var current = source;
+        for (var pass = 0; pass < MaxFixedPointPasses; pass++)
+        {
+            var formatted = formatOnePass(current);
+            if (formatted is null)
+            {
+                return null;
+            }
+
+            if (string.Equals(formatted, current, StringComparison.Ordinal))
+            {
+                return formatted;
+            }
+
+            current = formatted;
+        }
+
+        return current;
+    }
 
     /// <summary>
     /// Reinserts the standalone <c>//</c> comment lines of <paramref name="originalSource"/> into
@@ -206,7 +251,7 @@ public static class CommentReinserter
 
         var diag = new Diagnostics();
         var lexer = new Lexer(line, diag);
-        var sb = new StringBuilder();
+        var tokens = new List<Token>();
         while (true)
         {
             var token = lexer.Next();
@@ -215,6 +260,24 @@ public static class CommentReinserter
                 break;
             }
 
+            tokens.Add(token);
+        }
+
+        // A closing `in` frequently shares a physical line with the expression it introduces
+        // (`in h + g`) in one formatting pass and stands alone on its own line the next (`in` /
+        // `h + g`) — a purely stylistic choice the formatter makes based on wrapping, not a
+        // semantic difference. Dropping a leading, non-solitary `in` keeps the signature the same
+        // either way; without this, the two forms hash completely differently and a comment
+        // anchored to the "h + g" line can fail to match at all, falling back to the top of the
+        // file instead of landing anywhere near its original position (this is what actually
+        // produced the "comment jumped 250+ lines" case found earlier in this codebase's history).
+        var significantTokens = tokens.Count > 1 && tokens[0].Kind == TokenKind.In
+            ? tokens.Skip(1)
+            : tokens;
+
+        var sb = new StringBuilder();
+        foreach (var token in significantTokens)
+        {
             if (sb.Length > 0)
             {
                 sb.Append('|');

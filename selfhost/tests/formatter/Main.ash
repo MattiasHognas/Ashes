@@ -186,6 +186,17 @@ let expectFormatSourceKeepsHeaderImportsAndComments unit =
 
 let expectFormatSourceWithoutTriviaIsPlainFormatting unit = assertFormattedSource("let a = 1\n\nlet b = 2\n")("let a=1\nlet b=2")
 
+// A closing `in` can merge onto the same physical line as the expression it introduces
+// (`in h + g`) once formatted, even when the original source had it on its own line — a purely
+// stylistic wrapping choice, not a semantic difference. Before `lineSignature` normalized away a
+// leading, non-solitary `in`, the two forms hashed completely differently and this comment fell
+// back to the top of the file instead of staying anchored to the `h + g` line it precedes.
+let expectFormatSourceKeepsCommentNearAMergedInLine unit =
+    assertFormattedSource(
+        "let g = 1\nin let h = 2\n// comment before final\nin h + g\n",
+        "let g = 1\nin\nlet h = 2\nin\n// comment before final\nh + g\n"
+    )
+
 let expectFormatSourceReportsParseFailures unit =
     match formatSource("let a = \n") with
         | Error(SourceParseFailure(_ :: _)) -> Unit
@@ -206,6 +217,7 @@ let runSourceFormattingTests unit =
     |> expectMalformedImportLinesAreRejected
     |> expectFormatSourceKeepsHeaderImportsAndComments
     |> expectFormatSourceWithoutTriviaIsPlainFormatting
+    |> expectFormatSourceKeepsCommentNearAMergedInLine
     |> expectFormatSourceReportsParseFailures
 
 let run unit =

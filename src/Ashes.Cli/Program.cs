@@ -1365,25 +1365,34 @@ static string FormatAshSource(string src, string file)
     var lineEnding = formattingOptions.NewLine;
     var (leadingComments, sourceWithoutComments) = ExtractLeadingComments(src, lineEnding);
     var (imports, sourceWithoutImports) = ExtractImports(sourceWithoutComments, file, lineEnding);
-    var diag = new Diagnostics();
-    var program = new Parser(sourceWithoutImports, diag).ParseProgram();
-    diag.ThrowIfAny();
 
-    var formattedBody = Formatter.Format(
-        program,
-        preferPipelines: sourceWithoutImports.Contains("|>", StringComparison.Ordinal)
-            || sourceWithoutImports.Contains("|?>", StringComparison.Ordinal)
-            || sourceWithoutImports.Contains("|!>", StringComparison.Ordinal),
-        options: formattingOptions);
-    // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
-    // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
-    formattedBody = CommentReinserter.ReinsertStandaloneCommentLines(sourceWithoutImports, formattedBody, lineEnding);
+    var formattedBody = FormatAshSourceBodyToFixedPoint(sourceWithoutImports, formattingOptions, lineEnding);
     var formattedWithoutComments = imports.Count == 0
         ? formattedBody
         : string.Join(lineEnding, imports) + lineEnding + formattedBody;
     return leadingComments.Count == 0
         ? formattedWithoutComments
         : string.Join(lineEnding, leadingComments) + lineEnding + formattedWithoutComments;
+}
+
+static string FormatAshSourceBodyToFixedPoint(string sourceWithoutImports, FormattingOptions formattingOptions, string lineEnding)
+{
+    return CommentReinserter.ToFixedPoint(sourceWithoutImports, current =>
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(current, diag).ParseProgram();
+        diag.ThrowIfAny();
+
+        var formattedBody = Formatter.Format(
+            program,
+            preferPipelines: current.Contains("|>", StringComparison.Ordinal)
+                || current.Contains("|?>", StringComparison.Ordinal)
+                || current.Contains("|!>", StringComparison.Ordinal),
+            options: formattingOptions);
+        // The AST carries no trivia, so the formatter alone would drop every non-leading comment;
+        // reinsert standalone comment lines at their anchored positions (same as LSP formatting).
+        return CommentReinserter.ReinsertStandaloneCommentLines(current, formattedBody, lineEnding);
+    })!; // diag.ThrowIfAny() always throws before returning null, so the CLI path never sees one
 }
 
 static (IReadOnlyList<string> LeadingComments, string SourceWithoutLeadingComments) ExtractLeadingComments(string source, string lineEnding)
