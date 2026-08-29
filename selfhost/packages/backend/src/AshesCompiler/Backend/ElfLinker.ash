@@ -11,7 +11,8 @@
 // - No `R_X86_64_PLT32` relocations: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
 //   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one.
 // - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
-//   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`/`memcmp`): eager
+//   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`/`memcmp`/
+//   `memcpy`): eager
 //   (non-lazy) dynamic linking — a `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD`
 //   data segment, `PT_INTERP`/`PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn`
 //   machinery the dynamic loader needs to resolve them, plus a THIRD, read-only `PT_LOAD` for
@@ -197,11 +198,12 @@ let recursive findSymbolByName bytes symtabOffset symbolCount strtabOffset name 
 
 // The narrow set of libc entry points `AshesCompiler.Backend.IrCodegen` can actually call today
 // (an RC-managed `AllocAdt`'s `malloc` and its eventual `free`; `memcmp` for `CmpStrEq`/`CmpStrNe`'s
-// byte-payload comparison). Grown alongside `IrCodegen`'s own external-call coverage, the same
-// "cover exactly what's verified, panic/error on anything else" discipline every other slice in
-// this arc uses — an unrecognized external symbol is a linker `Error`, never a silently-ignored or
+// byte-payload comparison; `memcpy` for `ConcatStr`/`ConcatStrN`'s payload-copy into a freshly
+// `malloc`'d result). Grown alongside `IrCodegen`'s own external-call coverage, the same "cover
+// exactly what's verified, panic/error on anything else" discipline every other slice in this arc
+// uses — an unrecognized external symbol is a linker `Error`, never a silently-ignored or
 // mis-resolved relocation.
-let linuxDynamicImportLibraries = [("malloc", "libc.so.6"), ("free", "libc.so.6"), ("memcmp", "libc.so.6")]
+let linuxDynamicImportLibraries = [("malloc", "libc.so.6"), ("free", "libc.so.6"), ("memcmp", "libc.so.6"), ("memcpy", "libc.so.6")]
 
 let recursive lookupImportLibrary symbolName knownLibraries =
     match knownLibraries with

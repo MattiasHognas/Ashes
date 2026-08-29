@@ -1872,12 +1872,11 @@ same public behavior.
   Verified end to end: `Ashes.IO.print("hello")` compiles through the complete self-hosted pipeline —
   parse, lower, codegen, LLVM object emission, the new `.rodata`-aware link — to a running Linux
   executable that prints `hello` and exits `0`, the first real string literal this compiler has ever
-  taken from source to output. **Explicitly still open**: strings reached through concatenation
-  (no N-ary string-concatenation builtin lowering/codegen exists yet), and `Ashes.IO.print` dispatch
-  on a call whose own argument type is never independently pinned to a concrete type at the call
-  site (a generic function's own parameter, e.g. `let greet s = Ashes.IO.print(s)` — a real,
-  reproducible `UnsupportedCoreBuiltinLowering("print does not support ?N")`, unrelated to strings
-  specifically and unrelated to anything fixed below).
+  taken from source to output. **Explicitly still open**: `Ashes.IO.print` dispatch on a call whose
+  own argument type is never independently pinned to a concrete type at the call site (a generic
+  function's own parameter, e.g. `let greet s = Ashes.IO.print(s)` — a real, reproducible
+  `UnsupportedCoreBuiltinLowering("print does not support ?N")`, unrelated to strings specifically
+  and unrelated to anything fixed below).
   **The malloc/free-plus-`.rodata` combination named above is now fixed.** Any program that both
   allocates a heap record and prints a string literal (an entirely ordinary combination, not a corner
   case) hit this: `linkLinuxExecutable` refused to link an object needing both the dynamic-import path
@@ -1959,6 +1958,33 @@ same public behavior.
   exercising the equal-via-`memcmp` path, the not-equal-same-length-via-`memcmp` path, and the
   not-equal-different-length fast path all in one program — compiles through the complete
   self-hosted pipeline and prints `1`.
+  **`ConcatStr`/`ConcatStrN` codegen added, closing the concatenation gap named above.** `+` on two
+  `Str` operands (`CoreLowering.ash`'s `emitResolvedCoreAdd` dispatches `SemString`/`SemString` to
+  `emitCoreConcat` -> `ConcatStr`) now works; `IrOptimizer.ash`'s `foldConcatStrChains` runs as the
+  very last optimization pass and folds any safely-foldable chain into one `ConcatStrN` before
+  codegen ever sees it, so real source almost always presents as the N-ary form, not the bare
+  two-operand one — both are implemented, sharing one helper. Allocates a single real `malloc`'d
+  RC-managed `Str` for the sum of every part's length (matching `AllocAdt`'s own header layout and
+  conventions exactly), then copies each part's payload bytes into position via a real libc
+  `memcpy` per part — a third libc symbol (`memcpy`, alongside `malloc`/`free`/`memcmp`) needing only
+  a one-line addition to `ElfLinker.ash`'s `linuxDynamicImportLibraries` table. Ignores
+  `ConcatStr`/`ConcatStrN`'s own `runtimeManaged` flag rather than branching on it, for the same
+  reason `AllocAdt`'s runtime-managed branch already does: `CoreLowering.ash` always constructs it
+  `false` (no ownership-placement pass exists yet to ever set it `true`), and this codegen has no
+  real scoped-arena allocator to fall back to for the `false` case either, so the result is never
+  freed — a leak, not a correctness bug for the short-lived programs this backend currently
+  produces. **Found while implementing, not assumed**: a self-recursive (or even a locally-nested,
+  or standard-library-`map`-mediated) helper that both calls `lookupIndexed` (needs `ConsoleIO`,
+  from its own `Ashes.IO.panic` fallback) and makes an LLVM binding call (needs `UnsafeFfi`) hits a
+  real capability-row inference limitation in this compiler — a spurious `ASH018 Capability ... is
+  not permitted by the closed row`, confirmed unrelated to string concatenation specifically by
+  extensive bisection (reported separately). Every part's `IrTemp` is therefore resolved via
+  `lookupIndexed` directly at `codegenInstructionKind`'s own `ConcatStr`/`ConcatStrN` call site
+  instead — exactly where every other case in that whole match already resolves a temp alongside
+  its own FFI calls — before ever reaching the (`UnsafeFfi`-only, `ConsoleIO`-free) allocation and
+  copy helpers. Verified end to end: `Ashes.IO.print("hel" + "lo " + "world")` — a three-literal
+  chain, folded to one `ConcatStrN` by the optimizer before codegen ever runs — compiles through the
+  complete self-hosted pipeline and prints `hello world`.
 - [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
   the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
   reference-count tracking or scope-local arena exists yet for either to do anything with). This

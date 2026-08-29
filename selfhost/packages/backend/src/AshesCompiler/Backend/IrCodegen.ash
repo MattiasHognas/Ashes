@@ -103,6 +103,8 @@ type CodegenContext =
     | freeType: LLVMTypeRef
     | memcmpFn: LLVMValueRef
     | memcmpType: LLVMTypeRef
+    | memcpyFn: LLVMValueRef
+    | memcpyType: LLVMTypeRef
     | stringLiteralGlobals: List((Str, LLVMValueRef))
 
 let recursive lookupIndexed key env =
@@ -487,6 +489,93 @@ let emitPrintInt context function_ i64 builder value =
 let gepBytes builder i64 i8 ptr offset name =
     buildGEP(builder)(i8)(ptr)([constInt(i64)(Ashes.Number.UInt.fromInt64(offset))(false)])(1u32)(name)
 
+// Sums every part's own `len` field into one `i64` add chain. `partRefs` arrives already resolved
+// to LLVM values, never raw `IrTemp`s needing a `lookupIndexed` lookup in here — see the
+// `ConcatStr`/`ConcatStrN` cases in `codegenInstructionKind` below for why resolution happens at
+// their own call site instead of inside this function. Safe to sum lengths BEFORE any allocation
+// happens (unlike a naive single-pass copy) because `partRefs` is a compile-time-fixed list
+// straight from the IR instruction — no runtime loop or cursor is needed for either this or
+// `emitConcatCopyParts` below, only two separate host-language (Ashes) recursions over that same
+// fixed list, one per LLVM pass.
+let recursive sumPartLengths builder i64 ptrType partRefs =
+    match partRefs with
+        | [] -> constInt(i64)(0u64)(false)
+        | partRef :: rest ->
+            let partLenPtr = buildIntToPtr(builder)(partRef)(ptrType)("str_cat_part_len_ptr")
+            in
+                let partLen = buildLoad(builder)(i64)(partLenPtr)("str_cat_part_len")
+                in
+                    buildAdd(builder)(partLen)(sumPartLengths(builder)(i64)(ptrType)(rest))("str_cat_len_acc")
+
+// Copies each part's own payload bytes into its final position in `destBytesPtr`, back to back,
+// via a real libc `memcpy` per part — `offset` is an already-built `i64` LLVM value (not a
+// compile-time constant), so the GEP into `destBytesPtr` is genuinely dynamic per part, exactly
+// the same "index list accepts a runtime value" shape `storePrintBufferByte`'s own `buildGEP` call
+// already established. One allocation for the sum of every part's length (computed by
+// `sumPartLengths` before this ever runs), each part's bytes copied directly into its final
+// position — O(n) total bytes copied, not the O(n^2) a left-nested chain of pairwise concatenation
+// calls would pay, matching `LlvmCodegenMemory.cs`'s own `EmitStringConcatN` shape.
+let recursive emitConcatCopyParts builder i64 i8 ptrType memcpyFn memcpyType destBytesPtr offset partRefs =
+    match partRefs with
+        | [] -> Unit
+        | partRef :: rest ->
+            let partLenPtr = buildIntToPtr(builder)(partRef)(ptrType)("str_cat_part_len_ptr")
+            in
+                let partLen = buildLoad(builder)(i64)(partLenPtr)("str_cat_part_len")
+                in
+                    let partBytesAddr =
+                        buildAdd(builder)(partRef)(constInt(i64)(8u64)(false))("str_cat_part_bytes_addr")
+                    in
+                        let partBytesPtr = buildIntToPtr(builder)(partBytesAddr)(ptrType)("str_cat_part_bytes_ptr")
+                        in
+                            let destOffsetPtr = buildGEP(builder)(i8)(destBytesPtr)([offset])(1u32)("str_cat_dest_offset_ptr")
+                            in
+                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destOffsetPtr, partBytesPtr, partLen])(3u32)("str_cat_memcpy")
+                                in
+                                    let nextOffset = buildAdd(builder)(offset)(partLen)("str_cat_offset_next")
+                                    in emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(destBytesPtr)(nextOffset)(rest)
+
+// Allocates one real `malloc`'d RC-managed `Str` (`{i64 refcount, i64 unusedAllocSize, i64 len,
+// bytes...}`, the SAME layout `AllocAdt`'s own runtime-managed branch and every string literal
+// global already use — `unusedAllocSize` mirrors `AllocAdt`'s own convention of recording the byte
+// size of everything after the 16-byte header, `len + bytes` for a string) for the sum of every
+// part's length, then copies each part's bytes into position. Ignores `ConcatStr`/`ConcatStrN`'s
+// own `runtimeManaged` flag rather than branching on it: `CoreLowering.ash` always constructs it
+// `false` (no ownership-placement pass exists yet to ever set it `true`), and this codegen has no
+// real scoped-arena allocator to fall back to for the `false` case either — exactly the same
+// pragmatic "always take the one path this backend can actually execute" call `AllocAdt`'s own
+// runtime-managed branch already makes, documented there for the same reason. The result is
+// therefore never freed (no drop-insertion pass targets a concatenation result yet), a leak, not a
+// correctness bug for the short-lived programs this backend currently produces. Takes already-
+// resolved `partRefs`, never `tempEnv`/raw `IrTemp`s — see `sumPartLengths` above for why.
+let emitStringConcatN i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType partRefs =
+    (let totalLen = sumPartLengths(builder)(i64)(ptrType)(partRefs)
+    in
+        let totalSize =
+            buildAdd(builder)(totalLen)(constInt(i64)(24u64)(false))("str_cat_total_size")
+        in
+            let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("str_cat_header")
+            in
+                let _ =
+                    buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                in
+                    let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("str_cat_size_ptr")
+                    in
+                        let sizeValue =
+                            buildAdd(builder)(totalLen)(constInt(i64)(8u64)(false))("str_cat_size_value")
+                        in
+                            let _ = buildStore(builder)(sizeValue)(sizePtr)
+                            in
+                                let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("str_cat_payload_ptr")
+                                in
+                                    let _ = buildStore(builder)(totalLen)(payloadPtr)
+                                    in
+                                        let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("str_cat_dest_bytes_ptr")
+                                        in
+                                            let _ =
+                                                emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(destBytesPtr)(constInt(i64)(0u64)(false))(partRefs)
+                                            in buildPtrToInt(builder)(payloadPtr)(i64)("str_cat_result"))
+
 // `1 << 62`: the same immortal-refcount sentinel `LlvmCodegenMemory.cs`'s own `EmitHeapStringLiteral`
 // writes into a string literal's header instead of a real count of `1`. Decrementing this value by
 // any realistic number of drops never reaches zero, so the existing `RcDrop` codegen (unchanged for
@@ -581,7 +670,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, stringLiteralGlobals = stringLiteralGlobals } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, memcpyFn = memcpyFn, memcpyType = memcpyType, stringLiteralGlobals = stringLiteralGlobals } ->
                     match kind with
                         | LoadConstInt(target, value) ->
                             ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
@@ -634,6 +723,40 @@ let codegenInstructionKind cx builder kind state =
                                 let result =
                                     buildSub(builder)(constInt(i64)(1u64)(false))(equalResult)("t" + Ashes.Text.fromInt(target))
                                 in ((target, result) :: tempEnv, terminated)
+                        // `IrOptimizer.ash`'s `foldConcatStrChains` runs as the very last pass over
+                        // the whole program and rewrites every `ConcatStr` it can safely fold into
+                        // a `ConcatStrN` (declined only when an arena/stack bracket, a label, or a
+                        // branch sits between the chain's parts — `chainRangeIsSafe`), so real
+                        // source reaching this codegen almost always presents as `ConcatStrN`, not
+                        // a bare two-operand `ConcatStr` — this case exists for robustness against
+                        // whatever the fold declines, sharing the exact same N-ary helper with a
+                        // two-element part list rather than a separate pairwise implementation.
+                        // `parts`/`[left, right]` are resolved to LLVM values HERE, at the ordinary
+                        // (non-recursive) `codegenInstructionKind` call site — exactly where every
+                        // other case in this whole match already resolves a temp via `lookupIndexed`
+                        // alongside its own FFI calls — rather than inside `emitStringConcatN` or a
+                        // separate helper: a self-recursive helper (or even a `Ashes.Collection.List.map`
+                        // closure) that itself calls `lookupIndexed` (needs `ConsoleIO`) hits a real
+                        // capability-row inference limitation in this compiler when the surrounding
+                        // scope also needs `UnsafeFfi` — confirmed by extensive bisection, not
+                        // assumed; every fix attempt that kept the resolution inside a nested
+                        // function reproduced the same spurious `ASH018` regardless of whether that
+                        // function was a hand-written recursive helper, a locally-nested one, or the
+                        // standard library's own `map`. Resolving inline here, where `lookupIndexed`
+                        // is already always called directly (never through a wrapper) alongside FFI
+                        // calls in every other case, sidesteps it entirely.
+                        | ConcatStr(target, left, right, _managed) ->
+                            let result =
+                                emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
+                                    [lookupIndexed(left)(tempEnv), lookupIndexed(right)(tempEnv)]
+                                )
+                            in ((target, result) :: tempEnv, terminated)
+                        | ConcatStrN(target, parts, _managed) ->
+                            let result =
+                                emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
+                                    Ashes.Collection.List.map(given (part) -> lookupIndexed(part)(tempEnv))(parts)
+                                )
+                            in ((target, result) :: tempEnv, terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
@@ -910,46 +1033,52 @@ let codegenEntryFunction name context irFunction stringLiterals =
                                             in
                                                 let memcmpFn = addFunction(module_)("memcmp")(memcmpType)
                                                 in
-                                                    let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
+                                                    let memcpyType = functionType(ptrType)([ptrType, ptrType, i64])(3u32)(false)
                                                     in
-                                                        let functionValue =
-                                                            false
-                                                            |> functionType(voidType(context))([])(0u32)
-                                                            |> addFunction(module_)(name)
+                                                        let memcpyFn = addFunction(module_)("memcpy")(memcpyType)
                                                         in
-                                                            let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                                            let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
                                                             in
-                                                                let builder = createBuilder(context)
+                                                                let functionValue =
+                                                                    false
+                                                                    |> functionType(voidType(context))([])(0u32)
+                                                                    |> addFunction(module_)(name)
                                                                 in
-                                                                    let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                                    let entryBlock = appendBasicBlock(context)(functionValue)("entry")
                                                                     in
-                                                                        match irFunction with
-                                                                            | IrFunction { instructions = instructions, localCount = localCount } ->
-                                                                                let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
-                                                                                in
-                                                                                    let labelBlocks =
-                                                                                        instructions
-                                                                                        |> collectLabelNames
-                                                                                        |> createLabelBlocks(context)(functionValue)
-                                                                                    in
-                                                                                        let cx =
-                                                                                            CodegenContext(
-                                                                                                context = context,
-                                                                                                function_ = functionValue,
-                                                                                                i64 = i64,
-                                                                                                i8 = i8,
-                                                                                                i1 = i1,
-                                                                                                ptrType = ptrType,
-                                                                                                localSlots = localSlots,
-                                                                                                labelBlocks = labelBlocks,
-                                                                                                mallocFn = mallocFn,
-                                                                                                mallocType = mallocType,
-                                                                                                freeFn = freeFn,
-                                                                                                freeType = freeType,
-                                                                                                memcmpFn = memcmpFn,
-                                                                                                memcmpType = memcmpType,
-                                                                                                stringLiteralGlobals = stringLiteralGlobals
-                                                                                            )
+                                                                        let builder = createBuilder(context)
+                                                                        in
+                                                                            let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                                            in
+                                                                                match irFunction with
+                                                                                    | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                                                        let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
                                                                                         in
-                                                                                            let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                                                            in (module_, builder))
+                                                                                            let labelBlocks =
+                                                                                                instructions
+                                                                                                |> collectLabelNames
+                                                                                                |> createLabelBlocks(context)(functionValue)
+                                                                                            in
+                                                                                                let cx =
+                                                                                                    CodegenContext(
+                                                                                                        context = context,
+                                                                                                        function_ = functionValue,
+                                                                                                        i64 = i64,
+                                                                                                        i8 = i8,
+                                                                                                        i1 = i1,
+                                                                                                        ptrType = ptrType,
+                                                                                                        localSlots = localSlots,
+                                                                                                        labelBlocks = labelBlocks,
+                                                                                                        mallocFn = mallocFn,
+                                                                                                        mallocType = mallocType,
+                                                                                                        freeFn = freeFn,
+                                                                                                        freeType = freeType,
+                                                                                                        memcmpFn = memcmpFn,
+                                                                                                        memcmpType = memcmpType,
+                                                                                                        memcpyFn = memcpyFn,
+                                                                                                        memcpyType = memcpyType,
+                                                                                                        stringLiteralGlobals = stringLiteralGlobals
+                                                                                                    )
+                                                                                                in
+                                                                                                    let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                                                    in (module_, builder))
