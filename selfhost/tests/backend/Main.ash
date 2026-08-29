@@ -1825,6 +1825,15 @@ let buildRealIrArithmeticModule name context = codegenRealSource("1 + 2 * 3")(na
 // IR) around each of the two `let`s. `10 * (10 + 5) = 150`.
 let buildRealIrLetBindingsModule name context = codegenRealSource("let x = 10\nlet y = x + 5\nx * y")(name)(context)
 
+// A plain `if`/`then`/`else` — not yet one of `ir-program-parity`'s own trusted fixtures (`if`
+// doesn't need the constructor-layout/closure machinery that suite's excluded fixtures do, only
+// real self-hosted lowering to succeed for this shape, confirmed directly). Its lowered IR is
+// exactly the same no-`phi` slot pattern this arc's earlier hand-built tests already used
+// (`buildMaxModule` et al.): `CmpIntGt`, `JumpIfFalse`, a `StoreLocal` into a shared result slot in
+// each arm, `Jump`/`Label` joining them, and a final `LoadLocal`. `1 > 0` is true, so this always
+// evaluates to `42`.
+let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then 42 else 99")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2027,6 +2036,11 @@ let testEmitAssemblyForRealIrLetBindingsModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrLetBindings")
 
+let testEmitAssemblyForRealIrConditionalModule unit =
+    match emitModule(buildRealIrConditionalModule)("selfhostBackendRealIrConditional")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrConditional")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2052,6 +2066,7 @@ let run unit =
     |> testEmitAssemblyForRcTriReleaseModule
     |> testEmitAssemblyForRealIrArithmeticModule
     |> testEmitAssemblyForRealIrLetBindingsModule
+    |> testEmitAssemblyForRealIrConditionalModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
