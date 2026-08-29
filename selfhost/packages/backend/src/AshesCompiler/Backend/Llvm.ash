@@ -41,6 +41,8 @@
 //   (no aggregates), but a real caller building anything with structs, arrays, or ABI-sensitive
 //   types does.
 
+import Ashes.Byte
+import Ashes.Number.UInt
 export (
     value contextCreate,
     value contextDispose,
@@ -89,6 +91,8 @@ export (
     value buildSwitch,
     value addCase,
     value buildBr,
+    value buildUnreachable,
+    value getInlineAsm,
     value buildAlloca,
     value buildStore,
     value buildLoad,
@@ -140,6 +144,7 @@ external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@li
 external LLVMInitializeX86Target() -> void = "LLVMInitializeX86Target@libLLVM.so"
 external LLVMInitializeX86TargetMC() -> void = "LLVMInitializeX86TargetMC@libLLVM.so"
 external LLVMInitializeX86AsmPrinter() -> void = "LLVMInitializeX86AsmPrinter@libLLVM.so"
+external LLVMInitializeX86AsmParser() -> void = "LLVMInitializeX86AsmParser@libLLVM.so"
 external LLVMSetTarget(LLVMModuleRef, Str) -> void = "LLVMSetTarget@libLLVM.so"
 external LLVMGetTargetFromTriple(Str, out LLVMTargetRef, out *u8) -> Bool = "LLVMGetTargetFromTriple@libLLVM.so"
 external LLVMCreateTargetMachine(LLVMTargetRef, Str, Str, Str, u32, u32, u32) -> LLVMTargetMachineRef = "LLVMCreateTargetMachine@libLLVM.so"
@@ -163,6 +168,8 @@ external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBa
 external LLVMBuildSwitch(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, u32) -> LLVMValueRef = "LLVMBuildSwitch@libLLVM.so"
 external LLVMAddCase(LLVMValueRef, LLVMValueRef, LLVMBasicBlockRef) -> void = "LLVMAddCase@libLLVM.so"
 external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildBr@libLLVM.so"
+external LLVMBuildUnreachable(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildUnreachable@libLLVM.so"
+external LLVMGetInlineAsm(LLVMTypeRef, Str, u64, Str, u64, Bool, Bool, u32, Bool) -> LLVMValueRef = "LLVMGetInlineAsm@libLLVM.so"
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
@@ -229,12 +236,20 @@ let initializeX86TargetMC _ = LLVMInitializeX86TargetMC(Unit)
 
 let initializeX86AsmPrinter _ = LLVMInitializeX86AsmPrinter(Unit)
 
+// Needed alongside `initializeX86AsmPrinter` for anything that builds inline assembly
+// (`getInlineAsm`): emitting to TEXTUAL assembly re-validates/re-prints an inline-asm block through
+// the target's own asm PARSER, not just its printer — omitting this produces a real LLVM fatal
+// error at emission time ("Inline asm not supported by this streamer because we don't have an asm
+// parser for this target"), not a compile-time diagnostic.
+let initializeX86AsmParser _ = LLVMInitializeX86AsmParser(Unit)
+
 let initializeX86Target unit =
     Unit
     |> initializeX86TargetInfo
     |> initializeX86TargetOnly
     |> initializeX86TargetMC
     |> initializeX86AsmPrinter
+    |> initializeX86AsmParser
 
 let setTarget module_ triple = LLVMSetTarget(module_)(triple)
 
@@ -320,6 +335,28 @@ let buildSwitch builder value elseBlock numCases = LLVMBuildSwitch(builder)(valu
 let addCase switchInst onValue destBlock = LLVMAddCase(switchInst)(onValue)(destBlock)
 
 let buildBr builder destBlock = LLVMBuildBr(builder)(destBlock)
+
+let buildUnreachable builder = LLVMBuildUnreachable(builder)
+
+// The byte length `LLVMGetInlineAsm` needs alongside each of its two `Str` arguments (the C API
+// takes an explicit length rather than relying on the null terminator `external`'s own `Str`
+// marshalling already appends). `Str` and `Bytes` share an in-memory layout, so
+// `Ashes.Byte.fromText`/`length` reads it in O(1); `Ashes.Number.UInt.fromInt64` bit-reinterprets
+// the resulting `Int` as the `u64` the external parameter needs — the exact conversion that
+// builtin was added for.
+let inlineAsmStringLength text =
+    text
+    |> Ashes.Byte.fromText
+    |> Ashes.Byte.length
+    |> Ashes.Number.UInt.fromInt64
+
+// Wraps `LLVMGetInlineAsm` the same way the real backend's own C# helper does: dialect is always
+// AT&T (`0u32`, LLVM's default) and `canThrow` is always `false` — nothing this package builds
+// needs either to vary, so both are hardcoded here rather than exposed as parameters.
+let getInlineAsm functionType asmString constraints hasSideEffects isAlignStack =
+    LLVMGetInlineAsm(functionType)(asmString)(inlineAsmStringLength(asmString))(constraints)(inlineAsmStringLength(constraints))(hasSideEffects)(
+        isAlignStack
+    )(0u32)(false)
 
 // LLVM has no binding for `phi` on purpose (see this file's own header comment and
 // `LlvmApi.cs`'s): a value that merges across branches goes through a slot allocated with

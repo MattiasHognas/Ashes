@@ -52,9 +52,19 @@
 //   (`context`/`function_`/`i64`/`localSlots`/`labelBlocks`) so they thread through as one value
 //   instead of an ever-growing parameter list; only `tempEnv` actually grows instruction by
 //   instruction.
-// - Builds a single `i64()` function (no parameters, no real process-entry ABI) representing the
-//   entry function's computed value — proving the IR-to-LLVM composition, not yet the real linked
-//   executable's actual entry contract.
+// - `codegenEntryFunction` only ever builds the true program entry (there is no support yet for
+//   `IrProgram.functions`, the list of ordinary helper functions a real program also has), so its
+//   `Return` is unconditionally lowered the way `LlvmCodegenExpressions.cs`'s `EmitReturn` lowers
+//   ONLY the entry function's `Return`, never an ordinary one: normal program completion is not a
+//   `ret` at all — there is no return address on the stack once the OS has jumped straight to this
+//   code as the process's actual entry point — it is a raw Linux `exit` syscall (`60`, matching
+//   real Ashes semantics: the process always exits `0` on normal completion; a different code
+//   needs the separate `Ashes.IO.exit`/`ExitProcess` instruction, not attempted here) followed by
+//   `buildUnreachable`, since a syscall that terminates the process never returns to the caller.
+//   `Return`'s own `source` temp is therefore unused — the computed value it names was real IR
+//   arithmetic and is still genuinely built, just never surfaced as an exit code. This can't yet
+//   be observed by actually running a linked executable (there is no linker yet), only by reading
+//   the disassembly and confirming the tail is `syscall`+`unreachable`, never `ret`.
 
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
@@ -101,6 +111,26 @@ let recursive createLabelBlocks context function_ names =
         | [] -> []
         | name :: rest -> (name, appendBasicBlock(context)(function_)(name)) :: createLabelBlocks(context)(function_)(rest)
 
+// The linux-x64 `exit` syscall (`60`), matching `LlvmCodegenPlatform.cs`'s own `EmitSyscallX86`
+// exactly: `syscall` through inline assembly with the same register-constraint string (`rax` holds
+// the syscall number and doubles as the return-value register `LLVMGetInlineAsm` still declares,
+// even though a real `exit` never returns to use it), `rdi`/`rsi`/`rdx` as the three syscall
+// arguments, `rcx`/`r11` clobbered (the `syscall` instruction itself overwrites them) alongside
+// memory. `exit` (not `exit_group`) terminates only the calling thread — the right choice for a
+// single-threaded program, matching what the real compiler emits here too. A `syscall` that
+// terminates the process never returns, so the block ends with `buildUnreachable`, never a `ret`.
+let emitLinuxProcessExit builder i64 =
+    (let syscallType = functionType(i64)([i64, i64, i64, i64])(4u32)(false)
+    in
+        let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}")(true)(false)
+        in
+            let sixty = constInt(i64)(60u64)(false)
+            in
+                let zero = constInt(i64)(0u64)(false)
+                in
+                    let _ = buildCall(builder)(syscallType)(syscallAsm)([sixty, zero, zero, zero])(4u32)("sys_exit")
+                    in buildUnreachable(builder))
+
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
@@ -140,8 +170,8 @@ let codegenInstructionKind cx builder kind state =
                         | SaveArenaState(_, _, _) -> (tempEnv, terminated)
                         | RestoreArenaState(_, _, _, _) -> (tempEnv, terminated)
                         | ReclaimArenaChunks(_, _, _) -> (tempEnv, terminated)
-                        | Return(source) ->
-                            let _ = buildRet(builder)(lookupIndexed(source)(tempEnv))
+                        | Return(_) ->
+                            let _ = emitLinuxProcessExit(builder)(i64)
                             in (tempEnv, true)
                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
@@ -152,15 +182,17 @@ let recursive codegenInstructions cx builder instructions state =
             match instruction with
                 | IrInstruction { instruction = kind } -> codegenInstructions(cx)(builder)(rest)(codegenInstructionKind(cx)(builder)(kind)(state))
 
-// Builds `i64 <name>()` in a fresh module from `irFunction`'s real instructions and returns
-// `(module_, builder)`, matching every other module builder's shape in `selfhost/tests/backend`
-// so the same `emitModule` verification pipeline applies unchanged.
+// Builds `void <name>()` in a fresh module from `irFunction`'s real instructions and returns
+// `(module_, builder)`, matching every other module builder's shape in `selfhost/tests/backend` so
+// the same `emitModule` verification pipeline applies unchanged. `void`, not `i64`, since the
+// function genuinely never returns a value anymore — every path ends in the exit syscall's
+// `unreachable`, not a `ret`. `i64` (the type internal temps/locals use) is a separate local value.
 let codegenEntryFunction name context irFunction =
     (let module_ = createModule(name)(context)
     in
         let i64 = int64Type(context)
         in
-            let functionValue = addFunction(module_)(name)(functionType(i64)([])(0u32)(false))
+            let functionValue = addFunction(module_)(name)(functionType(voidType(context))([])(0u32)(false))
             in
                 let entryBlock = appendBasicBlock(context)(functionValue)("entry")
                 in
