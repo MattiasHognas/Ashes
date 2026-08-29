@@ -1534,9 +1534,10 @@ same public behavior.
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
   `AshesCompiler.Backend.Llvm` binds a growing subset covering module/type/value/function/global
   creation, scalar/pointer/array/struct types, arithmetic/comparison/control-flow instructions with
-  the no-`phi` alloca/store/load slot pattern, aggregate field and array element addressing
-  (`buildGEP`), calls to both module-local and genuinely external (declaration-only) functions,
-  string/byte array constants, and host-CPU-tuned target machine creation and object/assembly
+  the no-`phi` alloca/store/load slot pattern, a real multi-arm `switch`/`addCase` dispatch (not
+  just chained conditional branches), aggregate field and array element addressing (`buildGEP`),
+  calls to both module-local and genuinely external (declaration-only) functions, string/byte
+  array constants, and host-CPU-tuned target machine creation and object/assembly
   emission — see the file itself for the exact current surface, since restating it here every PR
   has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
   verifying, and emitting a small real function to genuine linux-x64 ELF objects and assembly
@@ -1547,9 +1548,10 @@ same public behavior.
   plus a tagged-union ADT `match`, closures over both a stack and a heap-allocated struct (single
   and multi-capture) calling through a loaded function pointer, and RC fully demonstrated —
   alloc/retain/release matching this doc's own header layout below, cascading and tag-directed
-  child drop (including a multi-field arm), the Perceus reuse token handoff, and a closure whose
-  one capture is itself RC-managed, composing the closure and RC mechanisms together. The bindings
-  resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
+  child drop (including a multi-field arm and a genuine 3-arm `switch`-dispatched ADT), the
+  Perceus reuse token handoff, and a closure whose one capture is itself RC-managed, composing the
+  closure and RC mechanisms together. The bindings resolve a bare `libLLVM.so`/`.dll` via the
+  executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
