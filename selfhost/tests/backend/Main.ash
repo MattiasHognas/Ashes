@@ -1988,6 +1988,15 @@ let buildRealIrPanicModule name context = codegenRealSource("Ashes.IO.panic(\"bo
 // `&&`, so all three code paths must succeed for this to print `1` rather than `0`.
 let buildRealIrStringEqualityModule name context = codegenRealSource("Ashes.IO.print(if \"hello\" == \"hello\" && \"hello\" != \"world\" && \"ab\" != \"abc\" then 1 else 0)")(name)(context)
 
+// `+` on two `Str` operands (`CoreLowering.ash`'s `emitResolvedCoreAdd` dispatches `SemString`/
+// `SemString` to `emitCoreConcat` -> `ConcatStr`) exercises the new real `malloc`+`memcpy`
+// concatenation codegen. Three literals chained left-nested (`("hel" + "lo ") + "world"`) also
+// exercises `IrOptimizer.ash`'s `foldConcatStrChains`, which runs as the very last optimization
+// pass and folds the whole chain into one `ConcatStrN` before codegen ever sees it — so this proves
+// the N-ary path real source actually takes, not just the two-operand `ConcatStr` case. Prints
+// `hello world`.
+let buildRealIrStringConcatModule name context = codegenRealSource("Ashes.IO.print(\"hel\" + \"lo \" + \"world\")")(name)(context)
+
 // `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
 // reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
 // (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
@@ -3007,6 +3016,33 @@ let testRunStaticExecutableForRealIrStringEqualityModule unit =
                                                         let _ = test.assertEqual("1")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrStringConcatModule`'s executable end to end: proves the real `malloc`+`memcpy`
+// `ConcatStrN` codegen produces the correct combined length and byte content, not just that the
+// object links.
+let testRunStaticExecutableForRealIrStringConcatModule unit =
+    match emitModule(buildRealIrStringConcatModule)("selfhostBackendRunStringConcat")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunStringConcat") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_string_concat_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_string_concat_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_string_concat_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("hello world")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3046,6 +3082,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrRecordFieldStringModule
     |> testRunStaticExecutableForRealIrPanicModule
     |> testRunStaticExecutableForRealIrStringEqualityModule
+    |> testRunStaticExecutableForRealIrStringConcatModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
