@@ -34,6 +34,12 @@
 //   is called with empty `cpu`/`features` strings (LLVM falls back to generic settings) rather than
 //   `LLVMGetHostCPUName`/`LLVMGetHostCPUFeatures`, which aren't bound yet either — this is enough to
 //   emit a valid object file, just not one tuned for the host CPU.
+// - `applyDataLayout` mirrors `LlvmTargetSetup.cs`'s own helper: derive the target machine's data
+//   layout string and set it on the module, disposing the intermediate `LLVMTargetDataRef`. Callers
+//   should call it once, right after `setTarget`, before adding any type or value that depends on
+//   struct/pointer layout — this package's own trivial-`i32`-function test doesn't strictly need it
+//   (no aggregates), but a real caller building anything with structs, arrays, or ABI-sensitive
+//   types does.
 
 export (
     value contextCreate,
@@ -67,6 +73,7 @@ export (
     value relocModeStatic,
     value codeModelDefault,
     value codeGenOptLevelNone,
+    value applyDataLayout,
 )
 
 external type LLVMContextRef
@@ -78,6 +85,7 @@ external type LLVMBuilderRef
 external type LLVMTargetRef
 external type LLVMTargetMachineRef
 external type LLVMMemoryBufferRef
+external type LLVMTargetDataRef
 external LLVMContextCreate() -> LLVMContextRef = "LLVMContextCreate@libLLVM.so"
 external LLVMContextDispose(LLVMContextRef) -> void = "LLVMContextDispose@libLLVM.so"
 external LLVMModuleCreateWithNameInContext(Str, LLVMContextRef) -> LLVMModuleRef = "LLVMModuleCreateWithNameInContext@libLLVM.so"
@@ -105,6 +113,10 @@ external LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef, LLVMModuleRef
 external LLVMGetBufferStart(LLVMMemoryBufferRef) -> *u8 = "LLVMGetBufferStart@libLLVM.so"
 external LLVMGetBufferSize(LLVMMemoryBufferRef) -> u64 = "LLVMGetBufferSize@libLLVM.so"
 external LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef) -> void = "LLVMDisposeMemoryBuffer@libLLVM.so"
+external LLVMCreateTargetDataLayout(LLVMTargetMachineRef) -> LLVMTargetDataRef = "LLVMCreateTargetDataLayout@libLLVM.so"
+external LLVMCopyStringRepOfTargetData(LLVMTargetDataRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMCopyStringRepOfTargetData@libLLVM.so"
+external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetData@libLLVM.so"
+external LLVMSetDataLayout(LLVMModuleRef, Str) -> void = "LLVMSetDataLayout@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -192,3 +204,17 @@ let relocModeStatic = 1u32
 let codeModelDefault = 0u32
 
 let codeGenOptLevelNone = 0u32
+
+// `LLVMCopyStringRepOfTargetData` is direct-call-only (an `FfiStr` return), so this wraps rather
+// than aliases the three-call sequence it takes to apply a target machine's data layout to a
+// module. Silently leaves the module's data layout unset on the (unexpected) failure branch rather
+// than panicking, matching `LLVMSetDataLayout`'s own C API contract: an unset data layout is a
+// valid, if suboptimal, module state, not an error condition this binding needs to surface.
+let applyDataLayout module_ machine =
+    (let targetData = LLVMCreateTargetDataLayout(machine)
+    in
+        match LLVMCopyStringRepOfTargetData(targetData) with
+            | Ok(layout) ->
+                let _ = LLVMSetDataLayout(module_)(layout)
+                in LLVMDisposeTargetData(targetData)
+            | Error(_) -> LLVMDisposeTargetData(targetData))
