@@ -3,22 +3,24 @@
 // into a directly-runnable executable's bytes, entirely in pure Ashes byte manipulation
 // (`Ashes.Byte`) — no LLVM API calls, no external linker (`ld`/`lld`) invoked.
 //
-// Two paths, chosen automatically from what the object's `.text` relocations need:
+// Two paths, chosen automatically from what the object's `.text` relocations need. Either can
+// carry a `.rodata` segment (a string literal's own static storage), patched via an absolute
+// (`R_X86_64_32`/`R_X86_64_32S`, `S + A`) or PC-relative (`R_X86_64_PC32`, `S + A - P`) reference
+// depending on what LLVM's instruction selection chose for that particular object — both shapes
+// are observed in practice for the exact same kind of access.
 // - No `R_X86_64_PLT32` relocations: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
-//   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one
-//   (a string literal's own static storage): `.text`'s `R_X86_64_32`/`R_X86_64_32S` absolute
-//   references into it are patched to its final address, `S + A` with no patch-site subtraction.
+//   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one.
 // - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
 //   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`): eager
 //   (non-lazy) dynamic linking — a `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD`
 //   data segment, `PT_INTERP`/`PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn`
-//   machinery the dynamic loader needs to resolve them. An object needing both dynamic imports AND
-//   `.rodata` together is not yet supported (a clean `Error`, not a silent wrong link) — no current
-//   codegen path produces that combination. Any relocation neither path can resolve correctly (an
-//   unrecognized type, or a symbol not in the known-library table) is likewise an `Error`, never a
-//   silently wrong link. The real linker (`LlvmImageLinkerElf.cs`) additionally inserts an
-//   argv-passing trampoline before the object's own code, supports TLS sections, and recognizes a
-//   much larger library table; none of that exists here yet.
+//   machinery the dynamic loader needs to resolve them, plus a THIRD, read-only `PT_LOAD` for
+//   `.rodata` when the object also has one — any program that both allocates a record and prints a
+//   string literal needs both together. Any relocation neither path can resolve correctly (an
+//   unrecognized type, or a symbol not in the known-library table) is an `Error`, never a silently
+//   wrong link. The real linker (`LlvmImageLinkerElf.cs`) additionally inserts an argv-passing
+//   trampoline before the object's own code, supports TLS sections, and recognizes a much larger
+//   library table; none of that exists here yet.
 //
 // ELF field offsets and values below are taken directly from `LlvmImageLinkerElf.cs`'s own
 // `WriteElf64Header`/`WriteElf64ProgramHeader`/`ParseElfObject`/`CollectLinuxDynamicImports`/
@@ -237,16 +239,24 @@ type TextRelocationPatch =
     | patchSymbolName: Str
     | patchAddend: Int
 
-// An absolute (not PC-relative) reference from `.text` into `.rodata` — exactly what taking the
-// address of a string-literal global compiles to at this codegen's non-PIC `relocModeStatic`
-// setting (confirmed via `readelf -r` on a real emitted object: `R_X86_64_32S`/`R_X86_64_32`
-// against the `.rodata` section symbol, never a PC-relative type). Both type codes patch
-// identically — `S + A`, the low 32 bits written directly, no subtraction of the patch site's own
-// address — the only difference between them is the assembler's own range-checking convention
-// (signed vs. unsigned 32-bit overflow), irrelevant once already emitted into an object.
+// A reference from `.text` into `.rodata` — taking the address of a string-literal global, or
+// loading straight through it, compiles to either an absolute `R_X86_64_32`/`R_X86_64_32S`
+// (`S + A`, no patch-site subtraction) or a PC-relative `R_X86_64_PC32` (`S + A - P`, `P` the
+// patch site's own final virtual address) reference, and this codegen emits BOTH shapes for the
+// exact same kind of access (loading the string's `len` field) depending on what else is in the
+// same function — confirmed via `readelf -r`/`objdump -dr` on two real emitted objects: a bare
+// `Ashes.IO.print("hello")` loads `.rodata`'s `len` field through an absolute `R_X86_64_32S`
+// (`mov reg, [disp32]`, no RIP), while the same load in a function that also calls `malloc`/`free`
+// (`let x = Some(42)` before the print) instead compiles to `R_X86_64_PC32`
+// (`mov reg, [rip+disp32]`). The exact LLVM instruction-selection trigger was not pinned down
+// (plausibly register-allocation or code-model pressure from the extra external calls); what's
+// certain is both shapes are legitimate and the linker must patch either correctly, not assume
+// away the one it hadn't seen yet. `dataPatchPcRelative` records which formula a given patch
+// needs.
 type DataRelocationPatch =
     | dataPatchOffset: Int
     | dataPatchAddend: Int
+    | dataPatchPcRelative: Bool
 
 type CollectedTextRelocations =
     | functionPatches: List(TextRelocationPatch)
@@ -254,19 +264,24 @@ type CollectedTextRelocations =
 
 // Validates and collects every `.text` relocation into `CollectedTextRelocations` in one pass: any
 // relocation this narrow linker cannot resolve correctly (a type other than `R_X86_64_PLT32`
-// against a known external symbol, or `R_X86_64_32`/`R_X86_64_32S` against `.rodata`) becomes an
-// `Error` immediately rather than a silently wrong link. `PLT32` resolves identically to `PC32` for
-// the eager (non-lazy) binding style here (`S + A - P`, matching `LlvmImageLinkerElf.cs`'s own
-// `ApplyElfTextRelocationsPatch`) — the same math every PC-relative x86-64 call/jump relocation
-// uses. `rodataSectionIndex` is `None` when the object has no `.rodata` section at all (most
-// programs, which reference no string literal or other embedded constant), in which case neither
-// absolute type can ever legitimately appear and both still fall through to the same `Error`.
-// Ashes has no `||`; `|` is exclusively `BitOr.bitOr`. A relocation type is one of two values
-// here, so this is a plain equality-or, expressed as an explicit helper rather than nested ifs.
+// against a known external symbol, or `R_X86_64_32`/`R_X86_64_32S`/`R_X86_64_PC32` against
+// `.rodata`) becomes an `Error` immediately rather than a silently wrong link. `PLT32` resolves
+// identically to a rodata-targeted `PC32` for the eager (non-lazy) binding style here
+// (`S + A - P`, matching `LlvmImageLinkerElf.cs`'s own `ApplyElfTextRelocationsPatch`) — the same
+// math every PC-relative x86-64 call/jump/load relocation uses; only the symbol each resolves
+// against differs (an import's stub VA vs. `.rodata`'s own final VA). `rodataSectionIndex` is
+// `None` when the object has no `.rodata` section at all (most programs, which reference no
+// string literal or other embedded constant), in which case none of the three rodata-relocation
+// types can ever legitimately appear and all still fall through to the same `Error`.
 let isRodataRelocationType relocationType =
-    if relocationType == 10
+    if relocationType == 2
     then true
-    else relocationType == 11
+    else
+        if relocationType == 10
+        then true
+        else relocationType == 11
+
+let isPcRelativeRodataRelocationType relocationType = relocationType == 2
 
 let readRelaEntryFields bytes entryOffset =
     (let relocOffset = getU64(bytes)(entryOffset)
@@ -309,7 +324,11 @@ let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset ro
                                         if symbol.symSectionIndex == index
                                         then
                                             collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(entryIndex + 1)(entryCount)(functionAcc)(
-                                                DataRelocationPatch(dataPatchOffset = relocOffset, dataPatchAddend = addend) :: dataAcc
+                                                DataRelocationPatch(
+                                                    dataPatchOffset = relocOffset,
+                                                    dataPatchAddend = addend,
+                                                    dataPatchPcRelative = isPcRelativeRodataRelocationType(relocationType)
+                                                ) :: dataAcc
                                             )
                                         else Error("dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(relocationType) + " (only R_X86_64_PLT32 to a known external symbol, or R_X86_64_32/R_X86_64_32S to .rodata, is supported)")
                                     | None -> Error("dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(relocationType) + " (only R_X86_64_PLT32 to a known external symbol, or R_X86_64_32/R_X86_64_32S to .rodata, is supported)")
@@ -360,16 +379,23 @@ let recursive applyTextPatches patches stubVas textVa codeBytes =
                     |> putU32FromInt(patchOffset)(value)
                     |> applyTextPatches(rest)(stubVas)(textVa)
 
-// Absolute patch — `S + A`, no patch-site subtraction — for a `.text` reference into `.rodata`.
-// `rodataVa` is the section's own final base address once laid out; every collected patch targets
-// that same section, so unlike `applyTextPatches` there is no per-symbol lookup at all.
-let recursive applyDataPatches patches rodataVa codeBytes =
+// A `.text` reference into `.rodata`, either absolute (`S + A`, no patch-site subtraction) or
+// PC-relative (`S + A - P`, `P` the patch site's own final virtual address, `textVa + patchOffset`
+// — the same formula `applyTextPatches` uses for a call/jump stub). `rodataVa` is the section's
+// own final base address once laid out; every collected patch targets that same section, so
+// unlike `applyTextPatches` there is no per-symbol lookup at all.
+let recursive applyDataPatches patches rodataVa textVa codeBytes =
     match patches with
         | [] -> codeBytes
-        | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend } :: rest ->
-            codeBytes
-            |> putU32FromInt(patchOffset)(rodataVa + patchAddend)
-            |> applyDataPatches(rest)(rodataVa)
+        | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend, dataPatchPcRelative = pcRelative } :: rest ->
+            let value =
+                if pcRelative
+                then rodataVa + patchAddend - (textVa + patchOffset)
+                else rodataVa + patchAddend
+            in
+                codeBytes
+                |> putU32FromInt(patchOffset)(value)
+                |> applyDataPatches(rest)(rodataVa)(textVa)
 
 let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
 
@@ -808,7 +834,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
                         in
                             let dataVa = elfBaseVa + dataFileOffset
                             in
-                                let patchedTextBytes = applyDataPatches(dataPatches)(dataVa)(textBytes)
+                                let patchedTextBytes = applyDataPatches(dataPatches)(dataVa)(textVa)(textBytes)
                                 in
                                     let textPlan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
                                     in
@@ -831,7 +857,13 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
 // data segment holding the whole dynamic-linking blob (`PT_INTERP` + `PT_DYNAMIC` point INTO that
 // segment, they do not need `PT_LOAD` entries of their own). Text relocations against the known
 // external symbols are patched to point at each symbol's own stub.
-let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches imports =
+// `dataPatches`/`rodataBytes` are the same pair `linkWithoutDynamicImports` takes: `rodataBytes =
+// None` reproduces the original dynamic-imports-only layout exactly (no third segment, no
+// behavior change for any object without a `.rodata` section). `Some(rodata)` adds a THIRD,
+// page-aligned, read-only `PT_LOAD` right after the dynamic-linking data blob's own page — never
+// `R+W` and never executable — and patches every collected `.text` reference into it via the same
+// `applyDataPatches` the static-only path uses, absolute or PC-relative as each patch records.
+let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPatches imports rodataBytes =
     (let textVa = elfBaseVa + pageSize
     in
         let codeLength = Ashes.Byte.length(textBytes) + listLength(imports) * linuxImportStubLength
@@ -844,63 +876,97 @@ let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches imports
                     in
                         let gotVa = dataVa + layout.gotDataOffset
                         in
-                            match buildImportStubs(imports)(textVa + Ashes.Byte.length(textBytes))(gotVa) with
-                                | (stubBytes, stubVas) ->
-                                    let patchedTextBytes = applyTextPatches(textPatches)(stubVas)(textVa)(textBytes)
-                                    in
-                                        let codeBytes = Ashes.Byte.append(patchedTextBytes)(stubBytes)
-                                        in
-                                            let totalLoadSize = pageSize + Ashes.Byte.length(codeBytes)
+                            let rodataFileOffset = alignUp(dataFileOffset + Ashes.Byte.length(layout.bytes))(pageSize)
+                            in
+                                let rodataVa = elfBaseVa + rodataFileOffset
+                                in
+                                    match buildImportStubs(imports)(textVa + Ashes.Byte.length(textBytes))(gotVa) with
+                                        | (stubBytes, stubVas) ->
+                                            let patchedTextBytes =
+                                                textBytes
+                                                |> applyTextPatches(textPatches)(stubVas)(textVa)
+                                                |> applyDataPatches(dataPatches)(rodataVa)(textVa)
                                             in
-                                                let entryPoint = textVa + entrySymbol.symValue
+                                                let codeBytes = Ashes.Byte.append(patchedTextBytes)(stubBytes)
                                                 in
-                                                    let plans =
-                                                        [
-                                                            ProgramHeaderPlan(
-                                                                phType = 1,
-                                                                phFlags = 5,
-                                                                phFileOffset = 0,
-                                                                phVirtualAddress = elfBaseVa,
-                                                                phSize = totalLoadSize,
-                                                                phAlignment = pageSize
-                                                            ),
-                                                            ProgramHeaderPlan(
-                                                                phType = 1,
-                                                                phFlags = 6,
-                                                                phFileOffset = dataFileOffset,
-                                                                phVirtualAddress = dataVa,
-                                                                phSize = Ashes.Byte.length(layout.bytes),
-                                                                phAlignment = pageSize
-                                                            ),
-                                                            ProgramHeaderPlan(
-                                                                phType = 3,
-                                                                phFlags = 4,
-                                                                phFileOffset = dataFileOffset + layout.interpDataOffset,
-                                                                phVirtualAddress = dataVa + layout.interpDataOffset,
-                                                                phSize = layout.interpByteCount,
-                                                                phAlignment = 1
-                                                            ),
-                                                            ProgramHeaderPlan(
-                                                                phType = 2,
-                                                                phFlags = 6,
-                                                                phFileOffset = dataFileOffset + layout.dynamicDataOffset,
-                                                                phVirtualAddress = dataVa + layout.dynamicDataOffset,
-                                                                phSize = layout.dynamicByteCount,
-                                                                phAlignment = 8
-                                                            )
-                                                        ]
+                                                    let totalLoadSize = pageSize + Ashes.Byte.length(codeBytes)
                                                     in
-                                                        let headerAndCode =
-                                                            Ashes.Byte.append(buildHeaderPage(entryPoint)(plans))(codeBytes)
+                                                        let entryPoint = textVa + entrySymbol.symValue
                                                         in
-                                                            let padded =
-                                                                Ashes.Byte.append(headerAndCode)(
-                                                                    Ashes.Byte.allocate(dataFileOffset - Ashes.Byte.length(headerAndCode))
-                                                                )
+                                                            let dynamicPlans =
+                                                                [
+                                                                    ProgramHeaderPlan(
+                                                                        phType = 1,
+                                                                        phFlags = 5,
+                                                                        phFileOffset = 0,
+                                                                        phVirtualAddress = elfBaseVa,
+                                                                        phSize = totalLoadSize,
+                                                                        phAlignment = pageSize
+                                                                    ),
+                                                                    ProgramHeaderPlan(
+                                                                        phType = 1,
+                                                                        phFlags = 6,
+                                                                        phFileOffset = dataFileOffset,
+                                                                        phVirtualAddress = dataVa,
+                                                                        phSize = Ashes.Byte.length(layout.bytes),
+                                                                        phAlignment = pageSize
+                                                                    ),
+                                                                    ProgramHeaderPlan(
+                                                                        phType = 3,
+                                                                        phFlags = 4,
+                                                                        phFileOffset = dataFileOffset + layout.interpDataOffset,
+                                                                        phVirtualAddress = dataVa + layout.interpDataOffset,
+                                                                        phSize = layout.interpByteCount,
+                                                                        phAlignment = 1
+                                                                    ),
+                                                                    ProgramHeaderPlan(
+                                                                        phType = 2,
+                                                                        phFlags = 6,
+                                                                        phFileOffset = dataFileOffset + layout.dynamicDataOffset,
+                                                                        phVirtualAddress = dataVa + layout.dynamicDataOffset,
+                                                                        phSize = layout.dynamicByteCount,
+                                                                        phAlignment = 8
+                                                                    )
+                                                                ]
                                                             in
-                                                                layout.bytes
-                                                                |> Ashes.Byte.append(padded)
-                                                                |> Ok)
+                                                                let plans =
+                                                                    match rodataBytes with
+                                                                        | None -> dynamicPlans
+                                                                        | Some(rodata) ->
+                                                                            appendList(dynamicPlans)(
+                                                                                [
+                                                                                    ProgramHeaderPlan(
+                                                                                        phType = 1,
+                                                                                        phFlags = 4,
+                                                                                        phFileOffset = rodataFileOffset,
+                                                                                        phVirtualAddress = rodataVa,
+                                                                                        phSize = Ashes.Byte.length(rodata),
+                                                                                        phAlignment = pageSize
+                                                                                    )
+                                                                                ]
+                                                                            )
+                                                                in
+                                                                    let headerAndCode =
+                                                                        Ashes.Byte.append(buildHeaderPage(entryPoint)(plans))(codeBytes)
+                                                                    in
+                                                                        let paddedToDynamicData =
+                                                                            Ashes.Byte.append(headerAndCode)(
+                                                                                Ashes.Byte.allocate(dataFileOffset - Ashes.Byte.length(headerAndCode))
+                                                                            )
+                                                                        in
+                                                                            let headerCodeAndDynamicData = Ashes.Byte.append(paddedToDynamicData)(layout.bytes)
+                                                                            in
+                                                                                match rodataBytes with
+                                                                                    | None -> Ok(headerCodeAndDynamicData)
+                                                                                    | Some(rodata) ->
+                                                                                        let paddedToRodata =
+                                                                                            Ashes.Byte.append(headerCodeAndDynamicData)(
+                                                                                                Ashes.Byte.allocate(rodataFileOffset - Ashes.Byte.length(headerCodeAndDynamicData))
+                                                                                            )
+                                                                                        in
+                                                                                            rodata
+                                                                                            |> Ashes.Byte.append(paddedToRodata)
+                                                                                            |> Ok)
 
 // Links a relocatable object (produced by `targetMachineEmitToMemoryBuffer(...)(objectFileType)`)
 // into a runnable ELF64 executable for linux-x64. `entrySymbolName` must name a function defined
@@ -976,11 +1042,8 @@ let linkLinuxExecutable objectBytes entrySymbolName =
                                                                                         match functionPatches with
                                                                                             | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataBytes)
                                                                                             | _ ->
-                                                                                                match dataPatches with
-                                                                                                    | _ :: _ -> Error("linker: an object with both external-symbol calls (malloc/free) and .rodata references (a string literal) is not yet supported together")
-                                                                                                    | [] ->
-                                                                                                        let imports =
-                                                                                                            collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
-                                                                                                                strtabSection.sectionOffset
-                                                                                                            )
-                                                                                                        in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(imports))
+                                                                                                let imports =
+                                                                                                    collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
+                                                                                                        strtabSection.sectionOffset
+                                                                                                    )
+                                                                                                in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(dataPatches)(imports)(rodataBytes))
