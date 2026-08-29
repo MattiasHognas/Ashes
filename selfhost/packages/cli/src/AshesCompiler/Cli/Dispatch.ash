@@ -23,6 +23,7 @@ import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
 import AshesCompiler.Cli.Remove
+import AshesCompiler.Cli.Restore
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 export (
@@ -66,7 +67,7 @@ let recursive lowerAscii (text: Str) =
         | None -> ""
         | Some((head, tail)) -> lowerAsciiChar(head) + lowerAscii(tail)
 
-let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
+let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  restore  [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
 
 let printUsage exitCode =
     (let _ = Ashes.IO.print(usageText)
@@ -79,6 +80,7 @@ let dispatchCommand command rest =
         | "fmt" -> runFmt(rest)
         | "init" -> runInit(rest)
         | "remove" -> runRemove(rest)
+        | "restore" -> runRestore(rest)
         | "tree" -> runTree(rest)
         | "why" -> runWhy(rest)
         | _ -> printUsage(2)

@@ -7,6 +7,7 @@ import AshesCompiler.Cli.Dispatch
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
 import AshesCompiler.Cli.Remove
+import AshesCompiler.Cli.Restore
 import AshesCompiler.Cli.Tree
 import AshesCompiler.Cli.Why
 let testParseFmtArgumentsHelp unit =
@@ -422,6 +423,128 @@ let testRunWhyInProjectFailsWhenManifestMissing unit =
         in
             let _ = removeWhyScratch(Unit)
             in result)
+
+let testParseRestoreArgumentsHelp unit =
+    match parseRestoreArguments(["--help"]) with
+        | RestoreHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseRestoreArgumentsShortHelp unit =
+    match parseRestoreArguments(["-h"]) with
+        | RestoreHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected -h to request help")
+
+let testParseRestoreArgumentsAcceptsProjectOption unit =
+    match parseRestoreArguments(["--project", "other/ashes.json"]) with
+        | RestoreParsedArguments(RestoreArguments { projectOption = projectOption }) -> test.assertEqual(Some("other/ashes.json"))(projectOption)
+        | _ -> test.fail("expected --project to be captured")
+
+let testParseRestoreArgumentsIgnoresUnknownFlags unit =
+    match parseRestoreArguments(["--frozen", "--offline"]) with
+        | RestoreParsedArguments(RestoreArguments { projectOption = projectOption }) -> test.assertEqual(None)(projectOption)
+        | _ -> test.fail("expected unrecognized flags to be ignored rather than rejected")
+
+// Reuses `prepareWhyFixture`'s own project: `app/ashes.json` declares `Mid`/`Testing` as REGISTRY
+// dependencies overridden to local paths — the exact shape every selfhost package's own
+// `ashes.json` uses. `manifestNeedsRegistryRestore` must see through the override, matching stage
+// 0's own `PackageRestorePolicy.NeedsRestore`, so this resolves via path rather than refusing.
+let testRunRestoreInProjectResolvesOverriddenRegistryDependenciesViaPath unit =
+    (let _ = prepareWhyFixture(Unit)
+    in
+        let result =
+            match runRestoreInProject(Unix)(whyAppManifestPath) with
+                | RestoreCompleted(dependencies) ->
+                    dependencies
+                    |> length
+                    |> test.assertEqual(2)
+                | RestoreNothingToDo -> test.fail("expected two overridden dependencies to resolve, not zero")
+                | RestoreRegistryUnsupported -> test.fail("expected an overridden registry dependency to resolve via its path")
+                | RestoreFailed(message) -> test.fail("expected restore to succeed: " + message)
+        in
+            let _ = removeWhyScratch(Unit)
+            in result)
+
+let restoreScratchRoot = "cli-restore-scratch"
+
+let removeRestoreScratch unit =
+    match Ashes.IO.Directory.removeTree(restoreScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up scratch directory: " + message)
+
+let requireRestoreUnit name result =
+    match result with
+        | Ok(_) -> Unit
+        | Error(error) -> test.fail(name + " failed: " + error)
+
+let writeRestoreFile relativePath contents =
+    contents
+    |> Ashes.IO.File.writeText(restoreScratchRoot + "/" + relativePath)
+    |> requireRestoreUnit("write " + relativePath)
+
+let createRestoreDirectory relativePath =
+    restoreScratchRoot + "/" + relativePath
+    |> Ashes.IO.Directory.createAll
+    |> requireRestoreUnit("create " + relativePath)
+
+let restoreNoDependenciesManifestPath = restoreScratchRoot + "/no-deps/ashes.json"
+
+let prepareRestoreNoDependenciesFixture unit =
+    Unit
+    |> removeRestoreScratch
+    |> (given (_) -> createRestoreDirectory("no-deps/src"))
+    |> (given (_) -> writeRestoreFile("no-deps/src/Main.ash")("0"))
+    |> (given (_) -> writeRestoreFile("no-deps/ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"]}"))
+
+let testRunRestoreInProjectReportsNothingToDoForNoDependencies unit =
+    (let _ = prepareRestoreNoDependenciesFixture(Unit)
+    in
+        let result =
+            match runRestoreInProject(Unix)(restoreNoDependenciesManifestPath) with
+                | RestoreNothingToDo -> test.assertEqual(true)(true)
+                | RestoreCompleted(_dependencies) -> test.fail("expected zero declared dependencies to need no restore")
+                | RestoreRegistryUnsupported -> test.fail("expected a dependency-free project not to need registry restore")
+                | RestoreFailed(message) -> test.fail("expected restore to succeed: " + message)
+        in
+            let _ = removeRestoreScratch(Unit)
+            in result)
+
+let restoreUnresolvedRegistryManifestPath = restoreScratchRoot + "/unresolved/ashes.json"
+
+let prepareRestoreUnresolvedRegistryFixture unit =
+    Unit
+    |> removeRestoreScratch
+    |> (given (_) -> createRestoreDirectory("unresolved/src"))
+    |> (given (_) -> writeRestoreFile("unresolved/src/Main.ash")("0"))
+    |> (given (_) -> writeRestoreFile("unresolved/ashes.json")("{\"entry\":\"src/Main.ash\",\"sourceRoots\":[\"src\"],\"dependencies\":{\"Foo\":\"=1.0.0\"}}"))
+
+let testRunRestoreInProjectRefusesUnoverriddenRegistryDependency unit =
+    (let _ = prepareRestoreUnresolvedRegistryFixture(Unit)
+    in
+        let result =
+            match runRestoreInProject(Unix)(restoreUnresolvedRegistryManifestPath) with
+                | RestoreRegistryUnsupported -> test.assertEqual(true)(true)
+                | RestoreCompleted(_dependencies) -> test.fail("expected an un-overridden registry dependency to be refused, not resolved")
+                | RestoreNothingToDo -> test.fail("expected the declared registry dependency to be seen")
+                | RestoreFailed(message) -> test.fail("expected a clean refusal, not a failure: " + message)
+        in
+            let _ = removeRestoreScratch(Unit)
+            in result)
+
+let testRunRestoreInProjectFailsWhenManifestMissing unit =
+    (let _ = removeRestoreScratch(Unit)
+    in
+        let result =
+            match runRestoreInProject(Unix)(restoreNoDependenciesManifestPath) with
+                | RestoreFailed(_message) -> test.assertEqual(true)(true)
+                | _ -> test.fail("expected a missing manifest to fail")
+        in
+            let _ = removeRestoreScratch(Unit)
+            in result)
+
+let testRunCliDispatchesToRestoreWithRemainingArguments unit =
+    ["restore", "--help"]
+    |> runCli
+    |> test.assertEqual(0)
 
 let testParseTreeArgumentsHelp unit =
     match parseTreeArguments(["--help"]) with
@@ -1074,6 +1197,15 @@ let run unit =
     |> testRunCliDispatchesToFmtCaseInsensitively
     |> testRunCliDispatchesToRemove
     |> testRunCliDispatchesToWhy
+    |> testParseRestoreArgumentsHelp
+    |> testParseRestoreArgumentsShortHelp
+    |> testParseRestoreArgumentsAcceptsProjectOption
+    |> testParseRestoreArgumentsIgnoresUnknownFlags
+    |> testRunRestoreInProjectResolvesOverriddenRegistryDependenciesViaPath
+    |> testRunRestoreInProjectReportsNothingToDoForNoDependencies
+    |> testRunRestoreInProjectRefusesUnoverriddenRegistryDependency
+    |> testRunRestoreInProjectFailsWhenManifestMissing
+    |> testRunCliDispatchesToRestoreWithRemainingArguments
     |> testRunCliDispatchesToTreeWithRemainingArguments
     |> testRunCliDispatchesToInitWithRemainingArguments
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
