@@ -81,6 +81,7 @@ export (
     value getParam,
     value buildAdd,
     value buildSub,
+    value buildMul,
     value buildICmp,
     value intPredicateEq,
     value intPredicateSgt,
@@ -156,6 +157,7 @@ external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGet
 external LLVMGetParam(LLVMValueRef, u32) -> LLVMValueRef = "LLVMGetParam@libLLVM.so"
 external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAdd@libLLVM.so"
 external LLVMBuildSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSub@libLLVM.so"
+external LLVMBuildMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildMul@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
 external LLVMBuildSwitch(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, u32) -> LLVMValueRef = "LLVMBuildSwitch@libLLVM.so"
@@ -295,6 +297,8 @@ let getParam function index = LLVMGetParam(function)(index)
 let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)
 
 let buildSub builder lhs rhs name = LLVMBuildSub(builder)(lhs)(rhs)(name)
+
+let buildMul builder lhs rhs name = LLVMBuildMul(builder)(lhs)(rhs)(name)
 
 // `LLVMIntPredicate` (llvm-c/Core.h). Only the two values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.
