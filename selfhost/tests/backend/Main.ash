@@ -153,6 +153,39 @@ let buildAddTwoModule name context =
                                                                             let _ = buildRet(builder)(secondCall)
                                                                             in (module_, builder))
 
+// A global constant (`i32 counter = 99`) read back by a function
+// (`i32 getCounter() { ret i32 counter }`), proving `addGlobal`, `setInitializer`,
+// `setGlobalConstant`, and `setLinkage` all work.
+let buildGlobalCounterModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let global = addGlobal(module_)(i32)("counter")
+            in
+                let initialValue = constInt(i32)(99u64)(false)
+                in
+                    let _ =
+                        Unit
+                        |> (given (_) -> setInitializer(global)(initialValue))
+                        |> (given (_) -> setGlobalConstant(global)(true))
+                        |> (given (_) -> setLinkage(global)(linkageInternal))
+                    in
+                        let fnType = functionType(i32)([])(0u32)(false)
+                        in
+                            let function = addFunction(module_)("getCounter")(fnType)
+                            in
+                                let entryBlock = appendBasicBlock(context)(function)("entry")
+                                in
+                                    let builder = createBuilder(context)
+                                    in
+                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                        in
+                                            let value = buildLoad(builder)(i32)(global)("value")
+                                            in
+                                                let _ = buildRet(builder)(value)
+                                                in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -270,6 +303,11 @@ let testEmitAssemblyForAddTwoModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("addTwo")
 
+let testEmitAssemblyForGlobalCounterModule unit =
+    match emitModule(buildGlobalCounterModule)("selfhost-backend-global-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("counter")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -278,6 +316,7 @@ let run unit =
     |> testEmitAssemblyForAddOneModule
     |> testEmitAssemblyForMaxModule
     |> testEmitAssemblyForAddTwoModule
+    |> testEmitAssemblyForGlobalCounterModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

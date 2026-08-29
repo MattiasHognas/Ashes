@@ -86,6 +86,12 @@ export (
     value buildStore,
     value buildLoad,
     value buildCall,
+    value addGlobal,
+    value setInitializer,
+    value setGlobalConstant,
+    value setLinkage,
+    value linkageExternal,
+    value linkageInternal,
 )
 
 external type LLVMContextRef
@@ -140,6 +146,10 @@ external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LL
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
+external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMAddGlobal@libLLVM.so"
+external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitializer@libLLVM.so"
+external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
+external LLVMSetLinkage(LLVMValueRef, u32) -> void = "LLVMSetLinkage@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -274,3 +284,17 @@ let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
 // external, matching `functionType`. `argCount` is likewise taken from the caller rather than
 // derived from `args`'s length, for the same reason `functionType`'s `paramCount` is.
 let buildCall builder calleeType callee args argCount name = LLVMBuildCall2(builder)(calleeType)(callee)(args)(argCount)(name)
+
+let addGlobal module_ type_ name = LLVMAddGlobal(module_)(type_)(name)
+
+let setInitializer global constant = LLVMSetInitializer(global)(constant)
+
+let setGlobalConstant global isConstant = LLVMSetGlobalConstant(global)(isConstant)
+
+let setLinkage global linkage = LLVMSetLinkage(global)(linkage)
+
+// `LLVMLinkage` (llvm-c/Core.h). Only the two values currently in use are named, matching the
+// existing pattern for the target-machine enum constants above.
+let linkageExternal = 0u32
+
+let linkageInternal = 8u32
