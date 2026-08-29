@@ -2007,6 +2007,24 @@ let buildRealIrGenericTypeModule name context = codegenRealSource("type Box(a) =
 // type parameter's field lands at its own correctly-ordered offset rather than aliasing the first.
 let buildRealIrMultiParamGenericTypeModule name context = codegenRealSource("type Pair(a, b) =\n    | first: a\n    | second: b\n\nlet p = Pair(first = 5, second = 7)\nAshes.IO.print(p.second)")(name)(context)
 
+// The first REAL `match` this compiler has ever taken from source to a running executable —
+// reading a positional constructor's field back through pattern matching, which
+// `buildRealIrMultiConstructorModule` above explicitly could not do yet (it only proved both
+// constructors allocate correctly, never reading either back). Needed no new lowering: the
+// self-hosted `CoreLowering.ash` already emits a complete `match` compilation (arena-bracketed
+// arms, a null-pointer guard before each `GetAdtTag`, per-arm `RcDrop`, `Borrow`/`CopyOutArena`
+// bookkeeping) for any constructor already in `standardConstructorLayouts`, `Maybe` included — only
+// `IrCodegen.ash` was missing the instruction cases that shape of IR actually uses (`CmpIntEq`/
+// `CmpIntNe` and the `Borrow`/`CopyOutArena` aliases below). Prints `42`, the payload read back out
+// of `Some(42)` through its own arm.
+let buildRealIrMatchSomeModule name context = codegenRealSource("let x = Some(42)\n\nmatch x with\n    | Some(v) -> Ashes.IO.print(v)\n    | None -> Ashes.IO.print(0)")(name)(context)
+
+// The same `match` compilation exercised on a user-defined, non-null-representable multi-
+// constructor type rather than the intrinsic `Maybe` — confirming the null-guard/tag-dispatch
+// pattern above is a uniform part of `match`'s lowering strategy, not special-cased for `Maybe`.
+// Prints `7`, `Circle`'s own field read back through its own arm (`Square`'s arm is never taken).
+let buildRealIrMatchMultiConstructorModule name context = codegenRealSource("type Shape =\n    | Circle(Int)\n    | Square(Int)\n\nlet x = Circle(7)\n\nmatch x with\n    | Circle(r) -> Ashes.IO.print(r)\n    | Square(s) -> Ashes.IO.print(s)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2519,6 +2537,54 @@ let testRunStaticExecutableForRealIrMultiParamGenericTypeModule unit =
                                                         let _ = test.assertEqual("7")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+let testRunStaticExecutableForRealIrMatchSomeModule unit =
+    match emitModule(buildRealIrMatchSomeModule)("selfhostBackendRunMatchSome")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunMatchSome") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_match_some_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_match_some_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_match_some_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("42")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
+let testRunStaticExecutableForRealIrMatchMultiConstructorModule unit =
+    match emitModule(buildRealIrMatchMultiConstructorModule)("selfhostBackendRunMatchMultiCtor")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunMatchMultiCtor") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_match_multi_ctor_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_match_multi_ctor_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_match_multi_ctor_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("7")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2599,6 +2665,8 @@ let run unit =
     |> testRunStaticExecutableForRealIrMultiConstructorModule
     |> testRunStaticExecutableForRealIrGenericTypeModule
     |> testRunStaticExecutableForRealIrMultiParamGenericTypeModule
+    |> testRunStaticExecutableForRealIrMatchSomeModule
+    |> testRunStaticExecutableForRealIrMatchMultiConstructorModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

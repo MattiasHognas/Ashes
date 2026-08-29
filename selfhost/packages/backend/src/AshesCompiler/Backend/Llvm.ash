@@ -92,6 +92,7 @@ export (
     value buildIntToPtr,
     value buildICmp,
     value intPredicateEq,
+    value intPredicateNe,
     value intPredicateSgt,
     value intPredicateSlt,
     value buildCondBr,
@@ -345,6 +346,8 @@ let buildIntToPtr builder value destType name = LLVMBuildIntToPtr(builder)(value
 // `LLVMIntPredicate` (llvm-c/Core.h). Only the values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.
 let intPredicateEq = 32u32
+
+let intPredicateNe = 33u32
 
 let intPredicateSgt = 38u32
 

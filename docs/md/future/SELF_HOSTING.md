@@ -1877,6 +1877,30 @@ same public behavior.
   taken from source to output. **Explicitly still open**: multi-string-literal objects, strings
   reached through anything other than a direct `Ashes.IO.print` argument (stored in a field, compared,
   concatenated), and the malloc/free-plus-`.rodata` combination named above.
+- [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
+  the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
+  reference-count tracking or scope-local arena exists yet for either to do anything with). This
+  turned out to be the ENTIRE gap: `AshesCompiler.Semantics.CoreLowering.ash` already emits a
+  complete, working `match` compilation for any constructor in `standardConstructorLayouts` or a
+  user's own registered type — a null-pointer guard before each arm's `GetAdtTag` (`CmpIntNe`
+  against `0`, confirmed via `--emit-ir` to be a uniform part of `match`'s lowering strategy, not
+  specific to a null-representable type — even `None`, itself a real non-null zero-field
+  `AllocAdt`, gets one), a `CmpIntEq` tag comparison per arm, `GetAdtField` to bind the arm's
+  pattern variables, a per-arm `RcDrop` of the scrutinee, and arena-bracketing/`Borrow`/
+  `CopyOutArena` bookkeeping around the whole expression — confirmed identical in shape whether
+  matching the intrinsic `Maybe` or a user-defined multi-constructor type. Verified end to end:
+  `match x with | Some(v) -> print(v) | None -> print(0)` on `x = Some(42)` compiles through the
+  complete self-hosted pipeline and prints `42`; the same on a user-defined `type Shape = Circle(Int)
+  | Square(Int)` matching `Circle(7)` prints `7` — pattern field extraction working for the first
+  time, closing the exact gap `buildRealIrMultiConstructorModule`'s own entry named ("cannot be read
+  back without `match`"). **Explicitly still open**: guard clauses, nested/or-patterns, matching a
+  scrutinee whose type is never otherwise pinned to a concrete type by the surrounding program (hit
+  incidentally while testing the `None` arm alone — `Ashes.IO.print`'s builtin dispatch needs a
+  concrete argument type and this minimal pipeline's `None` literal has nothing to unify it with
+  absent another concrete use of the same value, an inference-completeness gap unrelated to `match`
+  itself), and any arm whose bound field is itself RC-managed (this item's own scrutinee drop is a
+  leaf `RcDrop`, not a cascading one — see the still-open cascading-`RcDrop` item elsewhere in this
+  checklist).
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
