@@ -1,28 +1,32 @@
-// A minimal, STATIC-ONLY ELF64 executable linker for linux-x64: turns the relocatable object
+// An ELF64 executable linker for linux-x64: turns the relocatable object
 // `AshesCompiler.Backend.Llvm`'s own `targetMachineEmitToMemoryBuffer(...)(objectFileType)` emits
 // into a directly-runnable executable's bytes, entirely in pure Ashes byte manipulation
 // (`Ashes.Byte`) — no LLVM API calls, no external linker (`ld`/`lld`) invoked.
 //
-// Deliberately narrow first slice, matching this arc's target-narrowing precedent: covers exactly
-// what `AshesCompiler.Backend.IrCodegen` can produce today, a SINGLE self-contained function with
-// no external symbol references and no data relocations (arithmetic/locals/control-flow/entry-
-// exit-syscall; no malloc/libc calls, no closures, no RC yet). The real linker
-// (`LlvmImageLinkerElf.cs`) inserts an argv-passing trampoline before the object's own code and
-// supports dynamic linking (PLT/GOT, imported libraries, the `.dynamic` section), TLS sections,
-// and relocation application; none of that exists here. `linkStaticLinuxExecutable` refuses
-// (`Error`, never a silent mislink) any object whose `.text` carries relocations — the next slice,
-// once `IrCodegen` needs to call another function or reference global data.
+// Two paths, chosen automatically from what the object's `.text` relocations need:
+// - No relocations: a fully static, non-PIE executable (one `R+X` `PT_LOAD` segment).
+// - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
+//   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`): eager
+//   (non-lazy) dynamic linking — a `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD`
+//   data segment, `PT_INTERP`/`PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn`
+//   machinery the dynamic loader needs to resolve them. Any relocation neither path can resolve
+//   correctly (an unrecognized type, or a symbol not in the known-library table) is an `Error`,
+//   never a silently wrong link. The real linker (`LlvmImageLinkerElf.cs`) additionally inserts an
+//   argv-passing trampoline before the object's own code, supports TLS sections, and recognizes a
+//   much larger library table; none of that exists here yet.
 //
 // ELF field offsets and values below are taken directly from `LlvmImageLinkerElf.cs`'s own
-// `WriteElf64Header`/`WriteElf64ProgramHeader`/`ParseElfObject`, not invented independently: the
-// same base virtual address (`0x400000`, one page below where `.text` is placed), and the same
-// symbol-table-driven entry-offset lookup (an entry function need not start at byte 0 of `.text`,
-// though every module `IrCodegen` builds today is exactly one function, so it always does).
+// `WriteElf64Header`/`WriteElf64ProgramHeader`/`ParseElfObject`/`CollectLinuxDynamicImports`/
+// `BuildLinuxDynamicImportLayout`/`BuildLinuxElfHash`, not invented independently: the same base
+// virtual address (`0x400000`, one page below where `.text` is placed), the same
+// symbol-table-driven entry-offset lookup, and the same eager-binding GOT/PLT-stub design.
 
 import Ashes.Byte
 import Ashes.Number.UInt
+import Ashes.Collection.List.append as appendList
+import Ashes.Collection.List.reverse as reverseList
 export (
-    value linkStaticLinuxExecutable,
+    value linkLinuxExecutable,
 )
 
 type ElfSectionHeader =
@@ -38,6 +42,28 @@ type ElfSymbol =
     | symType: Int
     | symSectionIndex: Int
     | symValue: Int
+
+// A `.text` reference to a symbol not defined anywhere in this object (`symSectionIndex == 0`)
+// whose name is a known libc entry point — the narrow set `AshesCompiler.Backend.IrCodegen` can
+// actually call today. `symbolIndex` is 1-based (dynsym/hash-table index 0 is always the reserved
+// null entry) and assigned in symbol-table scan order — deterministic for a fixed input object,
+// and there's no requirement it match any particular order beyond internal self-consistency.
+type LinuxDynamicImport =
+    | symbolName: Str
+    | libraryName: Str
+    | symbolIndex: Int
+
+// Everything `linkLinuxExecutable` needs to place the whole dynamic-linking data blob (interpreter
+// path, hash table, `.dynstr`, `.dynsym`, GOT, `.rela.dyn`, `.dynamic`) and wire up its two extra
+// program headers (`PT_INTERP`, `PT_DYNAMIC`). Offsets are relative to the start of `bytes` itself
+// (the caller adds the data segment's own file offset/VA once, when writing program headers).
+type LinuxDynamicImportLayout =
+    | bytes: Bytes
+    | gotDataOffset: Int
+    | interpDataOffset: Int
+    | interpByteCount: Int
+    | dynamicDataOffset: Int
+    | dynamicByteCount: Int
 
 let elfHeaderSize = 64
 
@@ -55,6 +81,28 @@ let putU16 offset value bytes = Ashes.Byte.setU16Le(bytes)(offset)(value)
 let putU32 offset value bytes = Ashes.Byte.setU32Le(bytes)(offset)(value)
 
 let putU64 offset value bytes = Ashes.Byte.setU64Le(bytes)(offset)(value)
+
+// `Ashes.Number.UInt` only converts `Int -> u8` (`fromInt`, masking) and `Int -> u64`
+// (`fromInt64`, a same-width bit-reinterpret) — there is no `Int -> u32` conversion, so a
+// genuinely computed (not compile-time-literal) 32-bit field can't go through `putU32` at all.
+// Every dynamic-linking field that needs one (string-table offsets, ELF hash table words) is
+// written a byte at a time instead: `fromInt`'s own mod-256 truncation applied to each
+// successively-shifted byte reproduces the exact little-endian 4-byte encoding regardless of the
+// value's sign (only the low 32 bits of `value` are ever significant here, matching what a
+// `checked((int)...)` cast would also enforce in the real C# linker).
+let putU32FromInt offset value bytes =
+    bytes
+    |> putU8(offset)(Ashes.Number.UInt.fromInt(value))
+    |> putU8(offset + 1)(Ashes.Number.UInt.fromInt(value >> 8))
+    |> putU8(offset + 2)(Ashes.Number.UInt.fromInt(value >> 16))
+    |> putU8(offset + 3)(Ashes.Number.UInt.fromInt(value >> 24))
+
+let recursive listLength items =
+    match items with
+        | [] -> 0
+        | _ :: rest -> 1 + listLength(rest)
+
+let alignUp value alignment = (value + alignment - 1) / alignment * alignment
 
 let getU32 bytes offset =
     offset
@@ -140,26 +188,475 @@ let recursive findSymbolByName bytes symtabOffset symbolCount strtabOffset name 
                     then Some(symbol)
                     else findSymbolByName(bytes)(symtabOffset)(symbolCount)(strtabOffset)(name)(index + 1)
 
-// True if any `SHT_RELA`(4)/`SHT_REL`(9) section targets `.text` (via `sh_info`) with at least one
-// entry. A relocation here means the function calls something outside itself or reads global
-// data — both out of scope for this slice; the caller turns this into an `Error` rather than
-// linking a binary with unresolved/ignored relocations.
-let recursive hasTextRelocations bytes shoff shentsize shnum textSectionIndex index =
+// The narrow set of libc entry points `AshesCompiler.Backend.IrCodegen` can actually call today
+// (an RC-managed `AllocAdt`'s `malloc`, and its eventual `free`). Grown alongside `IrCodegen`'s own
+// external-call coverage, the same "cover exactly what's verified, panic/error on anything else"
+// discipline every other slice in this arc uses — an unrecognized external symbol is a linker
+// `Error`, never a silently-ignored or mis-resolved relocation.
+let linuxDynamicImportLibraries = [("malloc", "libc.so.6"), ("free", "libc.so.6")]
+
+let recursive lookupImportLibrary symbolName knownLibraries =
+    match knownLibraries with
+        | [] -> None
+        | (name, library) :: rest ->
+            if name == symbolName
+            then Some(library)
+            else lookupImportLibrary(symbolName)(rest)
+
+// Scans every symbol once (not the relocations that reference them): an object's symbol table
+// lists `malloc` exactly once no matter how many call sites reference it, so this is naturally the
+// right place to deduplicate. `symbolIndex` is 1-based — dynsym/hash-table slot `0` is always the
+// reserved null entry.
+let recursive collectLinuxDynamicImportsGo bytes symtabOffset symbolCount strtabOffset index nextIndex acc =
+    if index >= symbolCount
+    then reverseList(acc)
+    else
+        let symbol = readSymbol(bytes)(symtabOffset)(index)
+        in
+            if symbol.symSectionIndex != 0
+            then collectLinuxDynamicImportsGo(bytes)(symtabOffset)(symbolCount)(strtabOffset)(index + 1)(nextIndex)(acc)
+            else
+                let name = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
+                in
+                    match lookupImportLibrary(name)(linuxDynamicImportLibraries) with
+                        | None -> collectLinuxDynamicImportsGo(bytes)(symtabOffset)(symbolCount)(strtabOffset)(index + 1)(nextIndex)(acc)
+                        | Some(library) ->
+                            collectLinuxDynamicImportsGo(bytes)(symtabOffset)(symbolCount)(strtabOffset)(index + 1)(nextIndex + 1)(
+                                LinuxDynamicImport(symbolName = name, libraryName = library, symbolIndex = nextIndex) :: acc
+                            )
+
+let collectLinuxDynamicImports bytes symtabOffset symbolCount strtabOffset = collectLinuxDynamicImportsGo(bytes)(symtabOffset)(symbolCount)(strtabOffset)(0)(1)([])
+
+type TextRelocationPatch =
+    | patchOffset: Int
+    | patchSymbolName: Str
+    | patchAddend: Int
+
+// Validates and collects every `.text` relocation as a `TextRelocationPatch` in one pass: any
+// relocation this narrow linker cannot resolve correctly (a type other than `R_X86_64_PLT32`, or a
+// symbol not in `linuxDynamicImportLibraries`) becomes an `Error` immediately rather than a
+// silently wrong link. `PLT32` resolves identically to `PC32` for the eager (non-lazy) binding
+// style here (`S + A - P`, matching `LlvmImageLinkerElf.cs`'s own `ApplyElfTextRelocationsPatch`)
+// — the same math every PC-relative x86-64 call/jump relocation uses.
+let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset entryIndex entryCount acc =
+    if entryIndex >= entryCount
+    then Ok(acc)
+    else
+        let entryOffset = section.sectionOffset + entryIndex * 24
+        in
+            let relocOffset = getU64(bytes)(entryOffset)
+            in
+                let info = getU64(bytes)(entryOffset + 8)
+                in
+                    let addend = getU64(bytes)(entryOffset + 16)
+                    in
+                        let symbolIndex = info >> 32
+                        in
+                            let relocationType = info & 4294967295
+                            in
+                                if relocationType != 4
+                                then
+                                    Error(
+                                        "dynamic linker: unsupported .text relocation type " + Ashes.Text.fromInt(
+                                            relocationType
+                                        ) + " (only R_X86_64_PLT32 to a known external symbol is supported)"
+                                    )
+                                else
+                                    let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
+                                    in
+                                        if symbol.symSectionIndex != 0
+                                        then Error("dynamic linker: PLT32 relocation targets a locally-defined symbol, which is not yet supported")
+                                        else
+                                            let symbolName = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
+                                            in
+                                                match lookupImportLibrary(symbolName)(linuxDynamicImportLibraries) with
+                                                    | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
+                                                    | Some(_) ->
+                                                        collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(entryIndex + 1)(entryCount)(
+                                                            TextRelocationPatch(patchOffset = relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: acc
+                                                        )
+
+let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset index acc =
     if index >= shnum
-    then false
+    then
+        acc
+        |> reverseList
+        |> Ok
     else
         let section = readSectionHeader(bytes)(shoff)(shentsize)(index)
         in
             if section.sectionSize == 0
-            then hasTextRelocations(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(index + 1)
+            then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
             else
                 if section.sectionInfo != textSectionIndex
-                then hasTextRelocations(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(index + 1)
+                then collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
                 else
                     match section.sectionType with
-                        | 4 -> true
-                        | 9 -> true
-                        | _ -> hasTextRelocations(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(index + 1)
+                        | 4 ->
+                            match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(0)(section.sectionSize / 24)(acc) with
+                                | Error(message) -> Error(message)
+                                | Ok(nextAcc) -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(nextAcc)
+                        | 9 -> Error("dynamic linker: SHT_REL (implicit-addend) .text relocations are not supported")
+                        | _ -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(index + 1)(acc)
+
+let recursive lookupStubVa symbolName stubVas =
+    match stubVas with
+        | [] -> Ashes.IO.panic("dynamic linker: missing stub VA for " + symbolName)
+        | (name, va) :: rest ->
+            if name == symbolName
+            then va
+            else lookupStubVa(symbolName)(rest)
+
+let recursive applyTextPatches patches stubVas textVa codeBytes =
+    match patches with
+        | [] -> codeBytes
+        | TextRelocationPatch { patchOffset = patchOffset, patchSymbolName = patchSymbolName, patchAddend = patchAddend } :: rest ->
+            let placeVa = textVa + patchOffset
+            in
+                let value = lookupStubVa(patchSymbolName)(stubVas) + patchAddend - placeVa
+                in
+                    codeBytes
+                    |> putU32FromInt(patchOffset)(value)
+                    |> applyTextPatches(rest)(stubVas)(textVa)
+
+let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
+
+// Every dynamically-linked Ashes executable searches its own directory first — a `$ORIGIN`
+// `DT_RUNPATH` — so a program can resolve a library placed next to it without depending on the
+// host's install state, matching `LlvmImageLinkerElf.cs`'s own `LinuxDynamicRunPath`.
+let linuxDynamicRunPath = "$ORIGIN"
+
+let linuxImportStubLength = 6
+
+let elfRelocX86_64GlobDat = 6
+
+// Appends `chunk` to `bytes`, then zero-pads up to the next 8-byte boundary — every piece of the
+// dynamic-linking data blob (hash table, `.dynstr`, `.dynsym`, GOT, `.rela.dyn`, `.dynamic`) is
+// 8-byte aligned, matching `LlvmImageLinkerElf.cs`'s own `AlignImportStream`. Returns the new bytes
+// together with `chunk`'s own (unpadded) start offset.
+let appendAligned bytes chunk =
+    (let offset = Ashes.Byte.length(bytes)
+    in
+        let withChunk = Ashes.Byte.append(bytes)(chunk)
+        in
+            let paddedLength =
+                alignUp(Ashes.Byte.length(withChunk))(8)
+            in
+                (paddedLength - Ashes.Byte.length(withChunk)
+                |> Ashes.Byte.allocate
+                |> Ashes.Byte.append(withChunk), offset))
+
+let recursive importSymbolNames imports =
+    match imports with
+        | [] -> []
+        | LinuxDynamicImport { symbolName = symbolName } :: rest -> symbolName :: importSymbolNames(rest)
+
+let recursive containsStr value items =
+    match items with
+        | [] -> false
+        | head :: rest ->
+            if head == value
+            then true
+            else containsStr(value)(rest)
+
+let recursive distinctLibrariesGo imports acc =
+    match imports with
+        | [] -> reverseList(acc)
+        | LinuxDynamicImport { libraryName = libraryName } :: rest ->
+            if containsStr(libraryName)(acc)
+            then distinctLibrariesGo(rest)(acc)
+            else distinctLibrariesGo(rest)(libraryName :: acc)
+
+let distinctLibraries imports = distinctLibrariesGo(imports)([])
+
+let appendNulString bytes text =
+    (let offset = Ashes.Byte.length(bytes)
+    in
+        (Ashes.Byte.appendByte(text
+        |> Ashes.Byte.fromText
+        |> Ashes.Byte.append(bytes))(0u8), offset))
+
+let recursive appendNulStrings names bytes offsetsAcc =
+    match names with
+        | [] -> (bytes, offsetsAcc)
+        | name :: rest ->
+            match appendNulString(bytes)(name) with
+                | (nextBytes, offset) -> appendNulStrings(rest)(nextBytes)((name, offset) :: offsetsAcc)
+
+let recursive lookupStrtabOffset name offsets =
+    match offsets with
+        | [] -> Ashes.IO.panic("dynamic linker: missing .dynstr offset for " + name)
+        | (candidateName, offset) :: rest ->
+            if candidateName == name
+            then offset
+            else lookupStrtabOffset(name)(rest)
+
+// `.dynstr` layout: byte `0` reserved as the empty string (matching every other ELF string table
+// in this file), then `$ORIGIN` (the `DT_RUNPATH` value), then each distinct library name (for
+// `DT_NEEDED`), then each import's own symbol name (for `.dynsym`).
+let buildDynstrTable imports =
+    (let libraries = distinctLibraries(imports)
+    in
+        match appendNulString(Ashes.Byte.singleton(0u8))(linuxDynamicRunPath) with
+            | (afterRunPath, runPathOffset) ->
+                match appendNulStrings(libraries)(afterRunPath)([(linuxDynamicRunPath, runPathOffset)]) with
+                    | (afterLibraries, offsetsAfterLibraries) ->
+                        match appendNulStrings(importSymbolNames(imports))(afterLibraries)(offsetsAfterLibraries) with
+                            | (dynstrBytes, allOffsets) -> (libraries, dynstrBytes, allOffsets))
+
+// `STT_FUNC` (`2`) + `STB_GLOBAL` (`1`, high nibble) — `st_info = (1 << 4) | 2 = 18`. Every import
+// is genuinely undefined (`st_shndx = SHN_UNDEF = 0`) with no size/value of its own; the dynamic
+// loader fills in where it actually lives at load time.
+let recursive buildDynamicSymbolTableGo imports dynstrOffsets index bytes =
+    match imports with
+        | [] -> bytes
+        | LinuxDynamicImport { symbolName = symbolName } :: rest ->
+            let entryOffset = index * 24
+            in
+                bytes
+                |> putU32FromInt(entryOffset)(lookupStrtabOffset(symbolName)(dynstrOffsets))
+                |> putU8(entryOffset + 4)(18u8)
+                |> putU8(entryOffset + 5)(0u8)
+                |> putU16(entryOffset + 6)(0u16)
+                |> putU64(entryOffset + 8)(0u64)
+                |> putU64(entryOffset + 16)(0u64)
+                |> buildDynamicSymbolTableGo(rest)(dynstrOffsets)(index + 1)
+
+let buildDynamicSymbolTable imports dynstrOffsets =
+    (listLength(imports) + 1) * 24
+    |> Ashes.Byte.allocate
+    |> buildDynamicSymbolTableGo(imports)(dynstrOffsets)(1)
+
+// One `R_X86_64_GLOB_DAT` relocation per GOT entry: the dynamic loader writes the resolved symbol
+// address directly into `gotVa + i*8` at load time, no lazy PLT0/resolver trampoline involved
+// (the eager-binding style `LlvmImageLinkerElf.cs` itself uses).
+let recursive buildGlobalDataRelocationsGo imports gotVa index bytes =
+    match imports with
+        | [] -> bytes
+        | LinuxDynamicImport { symbolIndex = symbolIndex } :: rest ->
+            (let entryOffset = index * 24
+            in
+                bytes
+                |> putU64(entryOffset)(Ashes.Number.UInt.fromInt64(gotVa + index * 8))
+                |> putU64(entryOffset + 8)(Ashes.Number.UInt.fromInt64(symbolIndex << 32 | elfRelocX86_64GlobDat))
+                |> putU64(entryOffset + 16)(0u64)
+                |> buildGlobalDataRelocationsGo(rest)(gotVa)(index + 1))
+
+let buildGlobalDataRelocations imports gotVa =
+    listLength(imports) * 24
+    |> Ashes.Byte.allocate
+    |> buildGlobalDataRelocationsGo(imports)(gotVa)(0)
+
+// The classic SysV ELF hash function (`elf_hash` in the gABI): a simple rolling hash over the
+// symbol name's bytes, folding any bits that would overflow 32 bits back in via XOR rather than
+// discarding them. Matches `LlvmImageLinkerElf.cs`'s own `ElfHash` exactly.
+let recursive elfHashGo bytes index count hash =
+    if index >= count
+    then hash
+    else
+        let shifted = (hash << 4) + getU8(bytes)(index)
+        in
+            let masked = shifted & 4294967295
+            in
+                let x = masked & 4026531840
+                in
+                    let hash2 =
+                        if x != 0
+                        then masked ^ x >> 24
+                        else masked
+                    in elfHashGo(bytes)(index + 1)(count)(hash2 & ~x)
+
+let elfHash text =
+    (let bytes = Ashes.Byte.fromText(text)
+    in
+        elfHashGo(bytes)(0)(Ashes.Byte.length(bytes))(0))
+
+let recursive symbolsInBucket imports nbucket bucketIndex =
+    match imports with
+        | [] -> []
+        | LinuxDynamicImport { symbolName = symbolName, symbolIndex = symbolIndex } :: rest ->
+            if elfHash(symbolName) % nbucket == bucketIndex
+            then symbolIndex :: symbolsInBucket(rest)(nbucket)(bucketIndex)
+            else symbolsInBucket(rest)(nbucket)(bucketIndex)
+
+// Consecutive same-bucket symbols chain together (`chain[a] = b`); the last one in a bucket keeps
+// the default `0` chain-slot value as its terminator, matching the SysV hash table format exactly.
+let recursive chainPairsFor symbolIndices =
+    match symbolIndices with
+        | [] -> []
+        | _ :: [] -> []
+        | a :: (b :: _ as rest) -> (a, b) :: chainPairsFor(rest)
+
+let recursive buildBucketsAndChainPairs imports nbucket bucketIndex bucketsAcc chainPairsAcc =
+    if bucketIndex >= nbucket
+    then (reverseList(bucketsAcc), chainPairsAcc)
+    else
+        let symbolIndices = symbolsInBucket(imports)(nbucket)(bucketIndex)
+        in
+            let bucketHead =
+                match symbolIndices with
+                    | [] -> 0
+                    | first :: _ -> first
+            in
+                buildBucketsAndChainPairs(imports)(nbucket)(bucketIndex + 1)(bucketHead :: bucketsAcc)(
+                    appendList(chainPairsFor(symbolIndices))(chainPairsAcc)
+                )
+
+let recursive chainValueAt chainPairs index =
+    match chainPairs with
+        | [] -> 0
+        | (from, to_) :: rest ->
+            if from == index
+            then to_
+            else chainValueAt(rest)(index)
+
+let recursive writeWords values index bytes =
+    match values with
+        | [] -> bytes
+        | value :: rest ->
+            bytes
+            |> putU32FromInt(index * 4)(value)
+            |> writeWords(rest)(index + 1)
+
+let recursive buildChainValues chainPairs nchain index acc =
+    if index >= nchain
+    then reverseList(acc)
+    else buildChainValues(chainPairs)(nchain)(index + 1)(chainValueAt(chainPairs)(index) :: acc)
+
+// SysV `.hash` layout: `nbucket`, `nchain`, then `nbucket` bucket words, then `nchain` chain
+// words. `nbucket == max(1, importCount)`, `nchain == importCount + 1` (slot `0` reserved),
+// matching `LlvmImageLinkerElf.cs`'s own `BuildLinuxElfHash`.
+let buildLinuxElfHash imports =
+    (let importCount = listLength(imports)
+    in
+        let nbucket =
+            if importCount > 1
+            then importCount
+            else 1
+        in
+            let nchain = importCount + 1
+            in
+                match buildBucketsAndChainPairs(imports)(nbucket)(0)([])([]) with
+                    | (buckets, chainPairs) ->
+                        (2 + nbucket + nchain) * 4
+                        |> Ashes.Byte.allocate
+                        |> putU32FromInt(0)(nbucket)
+                        |> putU32FromInt(4)(nchain)
+                        |> writeWords(buckets)(2)
+                        |> writeWords(buildChainValues(chainPairs)(nchain)(0)([]))(2 + nbucket))
+
+let recursive buildDynamicEntries entries index bytes =
+    match entries with
+        | [] -> bytes
+        | (tag, value) :: rest ->
+            let entryOffset = index * 16
+            in
+                bytes
+                |> putU64(entryOffset)(Ashes.Number.UInt.fromInt64(tag))
+                |> putU64(entryOffset + 8)(Ashes.Number.UInt.fromInt64(value))
+                |> buildDynamicEntries(rest)(index + 1)
+
+let recursive neededEntries libraries dynstrOffsets =
+    match libraries with
+        | [] -> []
+        | library :: rest -> (1, lookupStrtabOffset(library)(dynstrOffsets)) :: neededEntries(rest)(dynstrOffsets)
+
+// `DT_NEEDED` per distinct library, `DT_RUNPATH`, then the hash/string/symbol/relocation table
+// descriptors every dynamic loader needs to resolve this executable's imports, terminated by
+// `DT_NULL` — matching `LlvmImageLinkerElf.cs`'s own `BuildLinuxDynamicTable` tag-for-tag.
+let buildDynamicTable libraries dynstrOffsets hashVa dynstrVa dynstrSize dynsymVa relaVa relaSize =
+    (let entries =
+        appendList(neededEntries(libraries)(dynstrOffsets))(
+            [
+                (29, lookupStrtabOffset(linuxDynamicRunPath)(dynstrOffsets)),
+                (4, hashVa),
+                (5, dynstrVa),
+                (6, dynsymVa),
+                (10, dynstrSize),
+                (11, 24),
+                (7, relaVa),
+                (8, relaSize),
+                (9, 24),
+                (0, 0)
+            ]
+        )
+    in
+        listLength(entries) * 16
+        |> Ashes.Byte.allocate
+        |> buildDynamicEntries(entries)(0))
+
+// Lays out the whole dynamic-linking data blob (offsets relative to its own start — the caller
+// adds the data segment's file offset/VA once): interpreter path, hash table, `.dynstr`,
+// `.dynsym`, GOT (zero-filled; the loader populates it via `.rela.dyn` at load time), `.rela.dyn`,
+// `.dynamic` — in that exact order, matching `LlvmImageLinkerElf.cs`'s own
+// `BuildLinuxDynamicImportLayout`.
+let buildDynamicImportLayout imports dataVa =
+    (let interpBytes =
+        Ashes.Byte.appendByte(Ashes.Byte.fromText(linuxDynamicLoaderPath))(0u8)
+    in
+        match appendAligned(Ashes.Byte.allocate(0))(interpBytes) with
+            | (afterInterp, interpDataOffset) ->
+                match buildDynstrTable(imports) with
+                    | (libraries, dynstrBytes, dynstrOffsets) ->
+                        match imports
+                        |> buildLinuxElfHash
+                        |> appendAligned(afterInterp) with
+                            | (afterHash, hashDataOffset) ->
+                                match appendAligned(afterHash)(dynstrBytes) with
+                                    | (afterDynstr, dynstrDataOffset) ->
+                                        match dynstrOffsets
+                                        |> buildDynamicSymbolTable(imports)
+                                        |> appendAligned(afterDynstr) with
+                                            | (afterDynsym, dynsymDataOffset) ->
+                                                match listLength(imports) * 8
+                                                |> Ashes.Byte.allocate
+                                                |> appendAligned(afterDynsym) with
+                                                    | (afterGot, gotDataOffset) ->
+                                                        let relaBytes = buildGlobalDataRelocations(imports)(dataVa + gotDataOffset)
+                                                        in
+                                                            match appendAligned(afterGot)(relaBytes) with
+                                                                | (afterRela, relaDataOffset) ->
+                                                                    let dynamicBytes =
+                                                                        buildDynamicTable(libraries)(dynstrOffsets)(dataVa + hashDataOffset)(
+                                                                            dataVa + dynstrDataOffset
+                                                                        )(Ashes.Byte.length(dynstrBytes))(dataVa + dynsymDataOffset)(dataVa + relaDataOffset)(
+                                                                            Ashes.Byte.length(relaBytes)
+                                                                        )
+                                                                    in
+                                                                        match appendAligned(afterRela)(dynamicBytes) with
+                                                                            | (finalBytes, dynamicDataOffset) ->
+                                                                                LinuxDynamicImportLayout(
+                                                                                    bytes = finalBytes,
+                                                                                    gotDataOffset = gotDataOffset,
+                                                                                    interpDataOffset = interpDataOffset,
+                                                                                    interpByteCount = Ashes.Byte.length(interpBytes),
+                                                                                    dynamicDataOffset = dynamicDataOffset,
+                                                                                    dynamicByteCount = Ashes.Byte.length(dynamicBytes)
+                                                                                ))
+
+// `FF 25 <disp32>` (`jmp *disp32(%rip)`): the stub reads the resolved function address straight
+// out of its GOT slot and jumps to it. No lazy PLT0/resolver stub — the GOT is already fully
+// populated by the dynamic loader before this executable's entry point ever runs (eager binding),
+// matching `LlvmImageLinkerElf.cs`'s own `BuildLinuxDynamicImportLayoutStubs`.
+let recursive buildImportStubsGo imports stubBaseVa gotVa index bytes stubVasAcc =
+    match imports with
+        | [] -> (bytes, stubVasAcc)
+        | LinuxDynamicImport { symbolName = symbolName } :: rest ->
+            let stubOffset = index * linuxImportStubLength
+            in
+                let stubVa = stubBaseVa + stubOffset
+                in
+                    let disp32 = gotVa + index * 8 - (stubVa + linuxImportStubLength)
+                    in
+                        buildImportStubsGo(rest)(stubBaseVa)(gotVa)(index + 1)(
+                            bytes
+                            |> putU8(stubOffset)(255u8)
+                            |> putU8(stubOffset + 1)(37u8)
+                            |> putU32FromInt(stubOffset + 2)(disp32)
+                        )((symbolName, stubVa) :: stubVasAcc)
+
+let buildImportStubs imports stubBaseVa gotVa =
+    buildImportStubsGo(imports)(stubBaseVa)(gotVa)(0)(Ashes.Byte.allocate(listLength(imports) * linuxImportStubLength))([])
 
 // `e_ident`: magic (`\x7fELF`), 64-bit class, little-endian data, current version, no OS/ABI —
 // bytes 8..15 stay zero (already true of a freshly `allocate`d buffer).
@@ -174,7 +671,12 @@ let writeElfIdent bytes =
     |> putU8(6)(1u8)
     |> putU8(7)(0u8)
 
-let writeElfHeaderFields entryPoint bytes =
+let putU16FromInt offset value bytes =
+    bytes
+    |> putU8(offset)(Ashes.Number.UInt.fromInt(value))
+    |> putU8(offset + 1)(Ashes.Number.UInt.fromInt(value >> 8))
+
+let writeElfHeaderFields entryPoint programHeaderCount bytes =
     bytes
     |> putU16(16)(2u16)
     |> putU16(18)(62u16)
@@ -185,45 +687,154 @@ let writeElfHeaderFields entryPoint bytes =
     |> putU32(48)(0u32)
     |> putU16(52)(64u16)
     |> putU16(54)(56u16)
-    |> putU16(56)(1u16)
+    |> putU16FromInt(56)(programHeaderCount)
     |> putU16(58)(0u16)
     |> putU16(60)(0u16)
     |> putU16(62)(0u16)
 
-// One `PT_LOAD` segment (`p_type = 1`) covering the whole file, `R+X` (`p_flags = 5`), mapped
-// starting at `elfBaseVa` — no separate read-only header region and executable `.text` region,
-// since this slice never emits writable data.
-let writeProgramHeader totalLoadSize bytes =
-    (let base_ = elfHeaderSize
+// `fileSize`/`memorySize` are always equal for every program header this linker writes (no
+// BSS-style zero-fill-only region) — merged into one `size` parameter.
+let writeProgramHeaderAt index type_ flags fileOffset virtualAddress size alignment bytes =
+    (let base_ = elfHeaderSize + index * elfProgramHeaderSize
     in
         bytes
-        |> putU32(base_ + 0)(1u32)
-        |> putU32(base_ + 4)(5u32)
-        |> putU64(base_ + 8)(0u64)
-        |> putU64(base_ + 16)(Ashes.Number.UInt.fromInt64(elfBaseVa))
-        |> putU64(base_ + 24)(Ashes.Number.UInt.fromInt64(elfBaseVa))
-        |> putU64(base_ + 32)(Ashes.Number.UInt.fromInt64(totalLoadSize))
-        |> putU64(base_ + 40)(Ashes.Number.UInt.fromInt64(totalLoadSize))
-        |> putU64(base_ + 48)(Ashes.Number.UInt.fromInt64(pageSize)))
+        |> putU32FromInt(base_ + 0)(type_)
+        |> putU32FromInt(base_ + 4)(flags)
+        |> putU64(base_ + 8)(Ashes.Number.UInt.fromInt64(fileOffset))
+        |> putU64(base_ + 16)(Ashes.Number.UInt.fromInt64(virtualAddress))
+        |> putU64(base_ + 24)(Ashes.Number.UInt.fromInt64(virtualAddress))
+        |> putU64(base_ + 32)(Ashes.Number.UInt.fromInt64(size))
+        |> putU64(base_ + 40)(Ashes.Number.UInt.fromInt64(size))
+        |> putU64(base_ + 48)(Ashes.Number.UInt.fromInt64(alignment)))
 
-let buildHeaderPage entryPoint totalLoadSize =
+type ProgramHeaderPlan =
+    | phType: Int
+    | phFlags: Int
+    | phFileOffset: Int
+    | phVirtualAddress: Int
+    | phSize: Int
+    | phAlignment: Int
+
+let recursive writeProgramHeaderPlans plans index bytes =
+    match plans with
+        | [] -> bytes
+        | ProgramHeaderPlan { phType = phType, phFlags = phFlags, phFileOffset = phFileOffset, phVirtualAddress = phVirtualAddress, phSize = phSize, phAlignment = phAlignment } :: rest ->
+            bytes
+            |> writeProgramHeaderAt(index)(phType)(phFlags)(phFileOffset)(phVirtualAddress)(phSize)(phAlignment)
+            |> writeProgramHeaderPlans(rest)(index + 1)
+
+let buildHeaderPage entryPoint programHeaderPlans =
     pageSize
     |> Ashes.Byte.allocate
     |> writeElfIdent
-    |> writeElfHeaderFields(Ashes.Number.UInt.fromInt64(entryPoint))
-    |> writeProgramHeader(totalLoadSize)
+    |> writeElfHeaderFields(Ashes.Number.UInt.fromInt64(entryPoint))(listLength(programHeaderPlans))
+    |> writeProgramHeaderPlans(programHeaderPlans)(0)
 
-// Links a single-function, relocation-free LLVM object (produced by
-// `targetMachineEmitToMemoryBuffer(...)(objectFileType)`) into a runnable static ELF64 executable.
-// `entrySymbolName` must name a function defined in the object's `.text` section — the file's
-// `e_entry` is set to that symbol's own address, not merely the start of `.text`, so a future
-// multi-function object still links correctly as long as `.text` carries no relocations.
+// No dynamic imports: one `PT_LOAD` segment (`R+X`) covering the whole file, headers and `.text`
+// together in the first page — exactly the original static-only layout.
+let linkWithoutDynamicImports textBytes entrySymbol =
+    (let textVa = elfBaseVa + pageSize
+    in
+        let entryPoint = textVa + entrySymbol.symValue
+        in
+            let totalLoadSize = pageSize + Ashes.Byte.length(textBytes)
+            in
+                let plan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = totalLoadSize, phAlignment = pageSize)
+                in
+                    textBytes
+                    |> Ashes.Byte.append(buildHeaderPage(entryPoint)([plan]))
+                    |> Ok)
+
+// Dynamic imports exist: `.text` gains a `jmp *got(%rip)` stub per import (placed right after the
+// object's own code, same page-aligned text segment), followed by a second, page-aligned `R+W`
+// data segment holding the whole dynamic-linking blob (`PT_INTERP` + `PT_DYNAMIC` point INTO that
+// segment, they do not need `PT_LOAD` entries of their own). Text relocations against the known
+// external symbols are patched to point at each symbol's own stub.
+let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches imports =
+    (let textVa = elfBaseVa + pageSize
+    in
+        let codeLength = Ashes.Byte.length(textBytes) + listLength(imports) * linuxImportStubLength
+        in
+            let dataFileOffset = alignUp(pageSize + codeLength)(pageSize)
+            in
+                let dataVa = elfBaseVa + dataFileOffset
+                in
+                    let layout = buildDynamicImportLayout(imports)(dataVa)
+                    in
+                        let gotVa = dataVa + layout.gotDataOffset
+                        in
+                            match buildImportStubs(imports)(textVa + Ashes.Byte.length(textBytes))(gotVa) with
+                                | (stubBytes, stubVas) ->
+                                    let patchedTextBytes = applyTextPatches(textPatches)(stubVas)(textVa)(textBytes)
+                                    in
+                                        let codeBytes = Ashes.Byte.append(patchedTextBytes)(stubBytes)
+                                        in
+                                            let totalLoadSize = pageSize + Ashes.Byte.length(codeBytes)
+                                            in
+                                                let entryPoint = textVa + entrySymbol.symValue
+                                                in
+                                                    let plans =
+                                                        [
+                                                            ProgramHeaderPlan(
+                                                                phType = 1,
+                                                                phFlags = 5,
+                                                                phFileOffset = 0,
+                                                                phVirtualAddress = elfBaseVa,
+                                                                phSize = totalLoadSize,
+                                                                phAlignment = pageSize
+                                                            ),
+                                                            ProgramHeaderPlan(
+                                                                phType = 1,
+                                                                phFlags = 6,
+                                                                phFileOffset = dataFileOffset,
+                                                                phVirtualAddress = dataVa,
+                                                                phSize = Ashes.Byte.length(layout.bytes),
+                                                                phAlignment = pageSize
+                                                            ),
+                                                            ProgramHeaderPlan(
+                                                                phType = 3,
+                                                                phFlags = 4,
+                                                                phFileOffset = dataFileOffset + layout.interpDataOffset,
+                                                                phVirtualAddress = dataVa + layout.interpDataOffset,
+                                                                phSize = layout.interpByteCount,
+                                                                phAlignment = 1
+                                                            ),
+                                                            ProgramHeaderPlan(
+                                                                phType = 2,
+                                                                phFlags = 6,
+                                                                phFileOffset = dataFileOffset + layout.dynamicDataOffset,
+                                                                phVirtualAddress = dataVa + layout.dynamicDataOffset,
+                                                                phSize = layout.dynamicByteCount,
+                                                                phAlignment = 8
+                                                            )
+                                                        ]
+                                                    in
+                                                        let headerAndCode =
+                                                            Ashes.Byte.append(buildHeaderPage(entryPoint)(plans))(codeBytes)
+                                                        in
+                                                            let padded =
+                                                                Ashes.Byte.append(headerAndCode)(
+                                                                    Ashes.Byte.allocate(dataFileOffset - Ashes.Byte.length(headerAndCode))
+                                                                )
+                                                            in
+                                                                layout.bytes
+                                                                |> Ashes.Byte.append(padded)
+                                                                |> Ok)
+
+// Links a relocatable object (produced by `targetMachineEmitToMemoryBuffer(...)(objectFileType)`)
+// into a runnable ELF64 executable for linux-x64. `entrySymbolName` must name a function defined
+// in the object's `.text` section — the file's `e_entry` is set to that symbol's own address, not
+// merely the start of `.text`.
 //
-// Layout: `.text` is placed verbatim starting at file offset `pageSize` (VA `elfBaseVa +
-// pageSize`), with the ELF + program header occupying the low part of that same first page (the
-// rest zero-padded, harmless since it is never read). No section headers are written — the kernel
-// loader only consults program headers to run a binary.
-let linkStaticLinuxExecutable objectBytes entrySymbolName =
+// If `.text` carries no relocations, this is a fully static, non-PIE executable (a single `R+X`
+// `PT_LOAD` segment covering the whole file). If it carries `R_X86_64_PLT32` relocations against
+// symbols this linker recognizes (`linuxDynamicImportLibraries` — the narrow set
+// `AshesCompiler.Backend.IrCodegen` can actually call today), it gains eager (non-lazy) dynamic
+// linking: a `jmp`-through-GOT stub per import, a `.dynamic` section, and the ELF hash/`.dynstr`/
+// `.dynsym`/`.rela.dyn` machinery the dynamic loader needs to resolve them. Any relocation this
+// linker cannot resolve correctly is an `Error`, never a silently wrong link. No section headers
+// are written either way — the kernel loader only consults program headers to run a binary.
+let linkLinuxExecutable objectBytes entrySymbolName =
     (let shoff = getU64(objectBytes)(40)
     in
         let shentsize = getU16(objectBytes)(58)
@@ -237,40 +848,38 @@ let linkStaticLinuxExecutable objectBytes entrySymbolName =
                         let shstrtabOffset = shstrtabHeader.sectionOffset
                         in
                             match findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".text")(0) with
-                                | None -> Error("static linker: object has no .text section")
+                                | None -> Error("linker: object has no .text section")
                                 | Some((textSectionIndex, textSection)) ->
                                     match findSectionIndexByName(objectBytes)(shoff)(shentsize)(shnum)(shstrtabOffset)(".symtab")(0) with
-                                        | None -> Error("static linker: object has no symbol table")
+                                        | None -> Error("linker: object has no symbol table")
                                         | Some((_, symtabSection)) ->
-                                            if hasTextRelocations(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(0)
-                                            then
-                                                Error(
-                                                    "static linker: .text has relocations (external calls or global data); dynamic linking is not supported yet"
-                                                )
-                                            else
-                                                let strtabSection = readSectionHeader(objectBytes)(shoff)(shentsize)(symtabSection.sectionLink)
+                                            let strtabSection = readSectionHeader(objectBytes)(shoff)(shentsize)(symtabSection.sectionLink)
+                                            in
+                                                let symbolCount = symtabSection.sectionSize / 24
                                                 in
-                                                    let symbolCount = symtabSection.sectionSize / 24
-                                                    in
-                                                        match findSymbolByName(objectBytes)(symtabSection.sectionOffset)(symbolCount)(strtabSection.sectionOffset)(
-                                                            entrySymbolName
-                                                        )(0) with
-                                                            | None -> Error("static linker: object does not define entry symbol '" + entrySymbolName + "'")
-                                                            | Some(entrySymbol) ->
-                                                                if entrySymbol.symSectionIndex != textSectionIndex
-                                                                then Error("static linker: entry symbol '" + entrySymbolName + "' is not defined in .text")
-                                                                else
-                                                                    let textBytes =
-                                                                        Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
-                                                                            textSection.sectionOffset
-                                                                        )(textSection.sectionSize)
-                                                                    in
-                                                                        let textVa = elfBaseVa + pageSize
+                                                    match findSymbolByName(objectBytes)(symtabSection.sectionOffset)(symbolCount)(strtabSection.sectionOffset)(
+                                                        entrySymbolName
+                                                    )(0) with
+                                                        | None -> Error("linker: object does not define entry symbol '" + entrySymbolName + "'")
+                                                        | Some(entrySymbol) ->
+                                                            if entrySymbol.symSectionIndex != textSectionIndex
+                                                            then Error("linker: entry symbol '" + entrySymbolName + "' is not defined in .text")
+                                                            else
+                                                                match collectTextPatches(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(
+                                                                    strtabSection.sectionOffset
+                                                                )(0)([]) with
+                                                                    | Error(message) -> Error(message)
+                                                                    | Ok(textPatches) ->
+                                                                        let textBytes =
+                                                                            Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
+                                                                                textSection.sectionOffset
+                                                                            )(textSection.sectionSize)
                                                                         in
-                                                                            let entryPoint = textVa + entrySymbol.symValue
-                                                                            in
-                                                                                let totalLoadSize = pageSize + textSection.sectionSize
-                                                                                in
-                                                                                    textBytes
-                                                                                    |> Ashes.Byte.append(buildHeaderPage(entryPoint)(totalLoadSize))
-                                                                                    |> Ok)
+                                                                            match textPatches with
+                                                                                | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)
+                                                                                | _ ->
+                                                                                    let imports =
+                                                                                        collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
+                                                                                            strtabSection.sectionOffset
+                                                                                        )
+                                                                                    in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(textPatches)(imports))
