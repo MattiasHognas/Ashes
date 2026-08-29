@@ -76,6 +76,8 @@ export (
     value applyDataLayout,
     value hostCpuName,
     value hostCpuFeatures,
+    value getParam,
+    value buildAdd,
 )
 
 external type LLVMContextRef
@@ -121,6 +123,8 @@ external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetDa
 external LLVMSetDataLayout(LLVMModuleRef, Str) -> void = "LLVMSetDataLayout@libLLVM.so"
 external LLVMGetHostCPUName() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUName@libLLVM.so"
 external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUFeatures@libLLVM.so"
+external LLVMGetParam(LLVMValueRef, u32) -> LLVMValueRef = "LLVMGetParam@libLLVM.so"
+external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAdd@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -226,3 +230,7 @@ let applyDataLayout module_ machine =
 let hostCpuName unit = LLVMGetHostCPUName(Unit)
 
 let hostCpuFeatures unit = LLVMGetHostCPUFeatures(Unit)
+
+let getParam function index = LLVMGetParam(function)(index)
+
+let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)

@@ -28,6 +28,33 @@ let buildTrivialAnswerModule name context =
                                     let _ = buildRet(builder)(answer)
                                     in (module_, builder))
 
+// A one-parameter function (`i32 addOne(i32 x) { ret i32 (x + 1) }`), proving `functionType`'s
+// `FfiBuffer` parameter with a non-empty list, `getParam`, and `buildAdd` all work — everything
+// `buildTrivialAnswerModule` above never exercises.
+let buildAddOneModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let fnType = functionType(i32)([i32])(1u32)(false)
+            in
+                let function = addFunction(module_)("addOne")(fnType)
+                in
+                    let entryBlock = appendBasicBlock(context)(function)("entry")
+                    in
+                        let builder = createBuilder(context)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(entryBlock)
+                            in
+                                let x = getParam(function)(0u32)
+                                in
+                                    let one = constInt(i32)(1u64)(false)
+                                    in
+                                        let sum = buildAdd(builder)(x)(one)("sum")
+                                        in
+                                            let _ = buildRet(builder)(sum)
+                                            in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -42,16 +69,15 @@ let resolveHostTargetMachine triple =
                             |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelNone)(relocModeStatic)
                             |> Ok
 
-// Builds the trivial `answer` module, emits it as `fileType`, copies the emitted bytes into
-// managed memory, and disposes every LLVM handle it created along the way — success or failure.
-// `name` distinguishes the module across test runs; nothing else about the two emission tests
-// differs except `fileType` and what they check the returned bytes for.
-let emitTrivialModule name fileType =
+// Builds a module with `buildModule` (either module builder above), emits it as `fileType`, copies
+// the emitted bytes into managed memory, and disposes every LLVM handle it created along the way —
+// success or failure. `name` distinguishes the module across test runs.
+let emitModule buildModule name fileType =
     (let _ = initializeX86Target(Unit)
     in
         let context = contextCreate(Unit)
         in
-            match buildTrivialAnswerModule(name)(context) with
+            match buildModule(name)(context) with
                 | (module_, builder) ->
                     match resolveHostTargetMachine("x86_64-unknown-linux-gnu") with
                         | Error(message) -> Error(message)
@@ -98,13 +124,13 @@ let assertLooksLikeElf bytes =
         |> Ashes.Byte.get(bytes)
         |> test.assertEqual(70u8))
 
-let assertLooksLikeAssembly bytes =
+let assertLooksLikeAssembly bytes label =
     (let text =
         bytes
         |> Ashes.Byte.length
         |> Ashes.Byte.subText(bytes)(0)
     in
-        "answer"
+        label
         |> Ashes.Text.contains(text)
         |> test.assertEqual(true))
 
@@ -122,20 +148,26 @@ let testBuildAndVerifyTrivialModule unit =
                         |> (given (_) -> test.assertEqual(false)(isBroken)))
 
 let testEmitObjectFileForTrivialModule unit =
-    match emitTrivialModule("selfhost-backend-object-test")(objectFileType) with
+    match emitModule(buildTrivialAnswerModule)("selfhost-backend-object-test")(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeElf(bytes)
 
 let testEmitAssemblyForTrivialModule unit =
-    match emitTrivialModule("selfhost-backend-asm-test")(assemblyFileType) with
+    match emitModule(buildTrivialAnswerModule)("selfhost-backend-asm-test")(assemblyFileType) with
         | Error(message) -> test.fail(message)
-        | Ok(bytes) -> assertLooksLikeAssembly(bytes)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("answer")
+
+let testEmitAssemblyForAddOneModule unit =
+    match emitModule(buildAddOneModule)("selfhost-backend-addone-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("addOne")
 
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
     |> testEmitObjectFileForTrivialModule
     |> testEmitAssemblyForTrivialModule
+    |> testEmitAssemblyForAddOneModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
