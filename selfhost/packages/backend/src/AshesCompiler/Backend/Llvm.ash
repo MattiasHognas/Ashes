@@ -31,9 +31,9 @@
 // - Object emission only initializes the x86 target (linux-x64 first, per
 //   docs/md/future/SELF_HOSTING.md's own porting order — it "unblocks every later phase that only
 //   needs one working target"); AArch64/Windows initializers are future work. `createTargetMachine`
-//   is called with empty `cpu`/`features` strings (LLVM falls back to generic settings) rather than
-//   `LLVMGetHostCPUName`/`LLVMGetHostCPUFeatures`, which aren't bound yet either — this is enough to
-//   emit a valid object file, just not one tuned for the host CPU.
+//   takes `cpu`/`features` as plain arguments rather than always calling `hostCpuName`/
+//   `hostCpuFeatures` itself, so a caller can still pass `""`/`""` for LLVM's generic settings
+//   (e.g. cross-compiling for a target that isn't the host).
 // - `applyDataLayout` mirrors `LlvmTargetSetup.cs`'s own helper: derive the target machine's data
 //   layout string and set it on the module, disposing the intermediate `LLVMTargetDataRef`. Callers
 //   should call it once, right after `setTarget`, before adding any type or value that depends on
@@ -74,6 +74,8 @@ export (
     value codeModelDefault,
     value codeGenOptLevelNone,
     value applyDataLayout,
+    value hostCpuName,
+    value hostCpuFeatures,
 )
 
 external type LLVMContextRef
@@ -117,6 +119,8 @@ external LLVMCreateTargetDataLayout(LLVMTargetMachineRef) -> LLVMTargetDataRef =
 external LLVMCopyStringRepOfTargetData(LLVMTargetDataRef) -> FfiStr(owned LLVMDisposeMessage) = "LLVMCopyStringRepOfTargetData@libLLVM.so"
 external LLVMDisposeTargetData(LLVMTargetDataRef) -> void = "LLVMDisposeTargetData@libLLVM.so"
 external LLVMSetDataLayout(LLVMModuleRef, Str) -> void = "LLVMSetDataLayout@libLLVM.so"
+external LLVMGetHostCPUName() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUName@libLLVM.so"
+external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUFeatures@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -218,3 +222,7 @@ let applyDataLayout module_ machine =
                 let _ = LLVMSetDataLayout(module_)(layout)
                 in LLVMDisposeTargetData(targetData)
             | Error(_) -> LLVMDisposeTargetData(targetData))
+
+let hostCpuName unit = LLVMGetHostCPUName(Unit)
+
+let hostCpuFeatures unit = LLVMGetHostCPUFeatures(Unit)
