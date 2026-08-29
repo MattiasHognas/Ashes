@@ -1534,18 +1534,22 @@ same public behavior.
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
   `AshesCompiler.Backend.Llvm` binds a growing subset — as of this writing: context/module/builder/
   type/value/basic-block/global creation and initialization (`addGlobal`, `setInitializer`,
-  `setGlobalConstant`, `setLinkage`), `functionType`, `addFunction`, `appendBasicBlock`, `getParam`,
-  `constInt`, arithmetic and comparison (`buildAdd`, `buildICmp`), control flow (`buildCondBr`,
-  `buildBr`) and the no-`phi` alloca/store/load slot pattern, calls (`buildCall`), `buildRet`,
-  `verifyModule`, x86 target initialization, `getTargetFromTriple`, host-CPU detection,
-  `createTargetMachine`, `applyDataLayout`, `targetMachineEmitToMemoryBuffer`, and the memory-buffer
-  accessors. `selfhost/tests/backend` proves each addition by building, verifying, and emitting a
-  small real function to genuine linux-x64 ELF objects and assembly listings end to end: a
-  zero-parameter constant-returning function, `i32 addOne(i32 x) { ret i32 (x + 1) }`,
+  `setGlobalConstant`, `setLinkage`), scalar/pointer/void types (including `int64Type`, `voidType`,
+  `pointerType`), `functionType`, `addFunction`, `appendBasicBlock`, `getParam`, `constInt`,
+  arithmetic and comparison (`buildAdd`, `buildICmp`), control flow (`buildCondBr`, `buildBr`) and
+  the no-`phi` alloca/store/load slot pattern, calls to both module-local and genuinely external
+  (declaration-only) functions (`buildCall`), `buildRet`, `verifyModule`, x86 target initialization,
+  `getTargetFromTriple`, host-CPU detection, `createTargetMachine`, `applyDataLayout`,
+  `targetMachineEmitToMemoryBuffer`, and the memory-buffer accessors. `selfhost/tests/backend`
+  proves each addition by building, verifying, and emitting a small real function to genuine
+  linux-x64 ELF objects and assembly listings end to end: a zero-parameter constant-returning
+  function, `i32 addOne(i32 x) { ret i32 (x + 1) }`,
   `i32 max(i32 a, i32 b) { if a > b then a else b }` (branching across four basic blocks),
-  `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }` (one module-local function calling another),
-  and a global constant read back by a function — checked with `readelf` and, independently, exact-
-  instruction assembly dumps for each (not just a byte-length assertion in the test itself). The
+  `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }` (one module-local function calling another), a
+  global constant read back by a function, and a function that calls the genuinely external (never
+  defined in the module) libc functions `malloc`/`free` — checked with `readelf` and,
+  independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
+  test itself). The
   bindings resolve a bare `libLLVM.so`/`.dll`
   via the executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order
   (Windows) rather than a checkout path,
