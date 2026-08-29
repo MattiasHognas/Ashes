@@ -464,6 +464,20 @@ let codegenInstructionKind cx builder kind state =
                             ((target, buildSub(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | CmpIntGt(target, left, right) ->
                             ((target, buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | CmpIntEq(target, left, right) ->
+                            ((target, buildICmp(builder)(intPredicateEq)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | CmpIntNe(target, left, right) ->
+                            ((target, buildICmp(builder)(intPredicateNe)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
+                        // crosses it) — with no real reference-count tracking in this codegen yet,
+                        // it is exactly an alias of the same SSA value under a new temp number.
+                        | Borrow(target, sourceTemp) -> ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                        // `CopyOutArena` moves a value out of a scope-local arena before the arena
+                        // itself is reclaimed. Arena instructions are no-ops in this codegen (no real
+                        // bump-allocated arena exists yet — see `SaveArenaState`/`RestoreArenaState`/
+                        // `ReclaimArenaChunks` below), so there is nothing to copy out of: the source
+                        // SSA value is already valid past the reclaim point, and this is an alias.
+                        | CopyOutArena(destTemp, srcTemp, _staticSizeBytes, _runtimeManaged, _purpose, _semanticType) -> ((destTemp, lookupIndexed(srcTemp)(tempEnv)) :: tempEnv, terminated)
                         | StoreLocal(slot, source) ->
                             let _ =
                                 localSlots
