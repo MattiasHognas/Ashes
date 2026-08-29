@@ -1904,19 +1904,14 @@ let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then
 // no `import`, no caller-supplied glue — not just a case this test file happened to wire up.
 let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 - 84)")(name)(context)
 
-// Exercises the RC-managed `AllocAdt`/`SetAdtField` codegen this PR added: `Some(42)` is the first
-// field-carrying constructor call `CoreLowering.ash` lowers as `runtimeManaged = true` (any
-// constructor with at least one field, per its own layout comment), so this is the first real-IR
-// module in this arc that genuinely calls `malloc` from ordinary constructor-application codegen
-// rather than a hand-built module. `x` is never read back (no `match`/field-read codegen exists
-// yet — a separate, later slice), so the only observable behavior is the independent
-// `Ashes.IO.print(1)` afterward; this proves the RC-managed allocation path codegens, links (a real
-// `call malloc@PLT` relocation makes `linkLinuxExecutable` choose its dynamic path automatically,
-// the same mechanism `buildMallocFreeEntryModule` proved by hand in the dynamic-linking PR), and
-// runs without crashing — not yet that the stored field round-trips correctly (unverifiable through
-// real IR until reads exist; verified manually instead, by dumping the module's LLVM IR text and
-// confirming the expected `malloc`/GEP/store sequence appears exactly once, matching the layout
-// documented on `AllocAdt`'s own codegen case).
+// `Some(42)` allocates via a field-carrying constructor, and `x` is never referenced again, so
+// lowering also releases it with a single `RcDrop` immediately. `x` is never read back (no
+// `match`/field-read codegen exists), so `Ashes.IO.print(1)` is the only observable output; the
+// object's real `call malloc@PLT`/`call free@PLT` pair makes `linkLinuxExecutable` choose its
+// dynamic path automatically. Field-store/drop correctness is not observable through real IR until
+// reads exist, so it is verified separately by dumping the module's assembly text and checking the
+// `malloc`/GEP/store/decrement/`free` byte offsets against `AllocAdt`'s and `RcDrop`'s documented
+// layouts.
 let buildRealIrSomeConstructorModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(1)")(name)(context)
 
 let resolveHostTargetMachine triple =
@@ -2244,8 +2239,8 @@ let testRunStaticExecutableForRealIrPrintModule unit =
 
 // Runs `buildRealIrSomeConstructorModule`'s executable end to end, same shape as
 // `testRunStaticExecutableForRealIrPrintModule` above: proves the RC-managed `AllocAdt`/
-// `SetAdtField` codegen this PR added actually links (dynamically, since it calls real `malloc`)
-// and runs without crashing on a genuine Linux process, not just that `emitModule` didn't panic.
+// `SetAdtField`/`RcDrop` codegen links (dynamically, since it calls real `malloc`/`free`) and runs
+// without crashing on a genuine Linux process.
 let testRunStaticExecutableForRealIrSomeConstructorModule unit =
     match emitModule(buildRealIrSomeConstructorModule)("selfhostBackendRunSomeCtor")(objectFileType) with
         | Error(message) -> test.fail(message)
