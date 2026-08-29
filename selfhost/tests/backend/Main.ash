@@ -204,6 +204,50 @@ let buildMallocFreeModule name context =
                                                                         let _ = buildRet(builder)(loaded)
                                                                         in (module_, builder))
 
+// A function using a real two-field struct type (`{i32, i32}`, matching a pair/record layout): it
+// allocates one on the stack, addresses each field with `buildGEP`, stores into both, loads both
+// back, and returns their sum. Proves `structType` and `buildGEP`'s `FfiBuffer` index list both
+// work — `buildMaxModule` above only ever addressed a single scalar slot, never a field within a
+// larger aggregate.
+let buildStructPairModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let pairType = structType(context)([i32, i32])(2u32)(false)
+            in
+                match beginFunction(module_)(context)(None)("pairSum")(i32)([])(0u32) with
+                    | (_, _, builder) ->
+                        let pair = buildAlloca(builder)(pairType)("pair")
+                        in
+                            let zeroIndex = constInt(i32)(0u64)(false)
+                            in
+                                let firstFieldIndex = constInt(i32)(0u64)(false)
+                                in
+                                    let secondFieldIndex = constInt(i32)(1u64)(false)
+                                    in
+                                        let firstFieldPtr = buildGEP(builder)(pairType)(pair)([zeroIndex, firstFieldIndex])(2u32)("first")
+                                        in
+                                            let secondFieldPtr = buildGEP(builder)(pairType)(pair)([zeroIndex, secondFieldIndex])(2u32)("second")
+                                            in
+                                                let three = constInt(i32)(3u64)(false)
+                                                in
+                                                    let four = constInt(i32)(4u64)(false)
+                                                    in
+                                                        let _ =
+                                                            Unit
+                                                            |> (given (_) -> buildStore(builder)(three)(firstFieldPtr))
+                                                            |> (given (_) -> buildStore(builder)(four)(secondFieldPtr))
+                                                        in
+                                                            let firstValue = buildLoad(builder)(i32)(firstFieldPtr)("v0")
+                                                            in
+                                                                let secondValue = buildLoad(builder)(i32)(secondFieldPtr)("v1")
+                                                                in
+                                                                    let sum = buildAdd(builder)(firstValue)(secondValue)("sum")
+                                                                    in
+                                                                        let _ = buildRet(builder)(sum)
+                                                                        in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -331,6 +375,11 @@ let testEmitAssemblyForMallocFreeModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("allocateStoreLoadFree")
 
+let testEmitAssemblyForStructPairModule unit =
+    match emitModule(buildStructPairModule)("selfhost-backend-struct-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("pairSum")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -341,6 +390,7 @@ let run unit =
     |> testEmitAssemblyForAddTwoModule
     |> testEmitAssemblyForGlobalCounterModule
     |> testEmitAssemblyForMallocFreeModule
+    |> testEmitAssemblyForStructPairModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

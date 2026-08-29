@@ -95,6 +95,8 @@ export (
     value int64Type,
     value voidType,
     value pointerType,
+    value structType,
+    value buildGEP,
 )
 
 external type LLVMContextRef
@@ -156,6 +158,8 @@ external LLVMSetLinkage(LLVMValueRef, u32) -> void = "LLVMSetLinkage@libLLVM.so"
 external LLVMInt64TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt64TypeInContext@libLLVM.so"
 external LLVMVoidTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMVoidTypeInContext@libLLVM.so"
 external LLVMPointerTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMPointerTypeInContext@libLLVM.so"
+external LLVMStructTypeInContext(LLVMContextRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMStructTypeInContext@libLLVM.so"
+external LLVMBuildGEP2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildGEP2@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -310,3 +314,10 @@ let int64Type context = LLVMInt64TypeInContext(context)
 let voidType context = LLVMVoidTypeInContext(context)
 
 let pointerType context addressSpace = LLVMPointerTypeInContext(context)(addressSpace)
+
+let structType context elementTypes elementCount packed = LLVMStructTypeInContext(context)(elementTypes)(elementCount)(packed)
+
+// The first index of `indices` steps through `ptr` itself (almost always the constant `0`, since
+// `ptr` already points at one `type_`, not an array of them); later indices step into `type_`'s
+// own structure — a struct field index or an array element index, in nesting order.
+let buildGEP builder type_ ptr indices indexCount name = LLVMBuildGEP2(builder)(type_)(ptr)(indices)(indexCount)(name)
