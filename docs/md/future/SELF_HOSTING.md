@@ -1586,12 +1586,17 @@ same public behavior.
   slice: it walks a REAL `IrFunction` (produced by running actual source through
   `AshesCompiler.Frontend.Parser.parseProgram` + `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource`
   — the same pipeline `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR
-  text for `1 + 2 * 3`) and drives `AshesCompiler.Backend.Llvm` from its actual instructions, not a
-  human hand-simulating what codegen should produce (every earlier `selfhost/tests/backend` proof
-  point did exactly that). Deliberately covers only `LoadConstInt`/`MulInt`/`AddInt`/`Return` —
-  panics on anything else — since that is the complete instruction set a no-`let`, no-arena scalar
-  arithmetic entry function needs; locals, arena bookkeeping, and every other instruction kind are
-  unstarted follow-up slices. Uncovered a genuine, separate compiler gap along the way: Ashes had no
+  text for its `simple_arith`/`let_bindings` fixtures) and drives `AshesCompiler.Backend.Llvm` from
+  its actual instructions, not a human hand-simulating what codegen should produce (every earlier
+  `selfhost/tests/backend` proof point did exactly that). Covers `LoadConstInt`/`MulInt`/`AddInt`/
+  `StoreLocal`/`LoadLocal`/`Return` — panics on anything else — matching `simple_arith` (no locals,
+  no arena bracketing) and `let_bindings` (locals plus arena bracketing, since even a
+  provably-scalar top-level `let` scope gets one). Locals get one `buildAlloca`d `i64` slot each
+  from `IrFunction`'s own `localCount`; `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`
+  are genuine no-ops — real scoped-arena codegen is a separate, much bigger slice not attempted
+  here, so these are explicitly ignored rather than silently producing wrong code for a case they
+  can't yet handle. Closures, ADTs, strings, RC, and every other instruction kind remain unstarted
+  follow-up slices. Uncovered a genuine, separate compiler gap along the way: Ashes had no
   `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s only narrows to `u8`), needed
   to turn an IR constant's `Int` payload into `constInt`'s `u64` parameter — fixed as
   `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
