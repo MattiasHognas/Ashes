@@ -1913,6 +1913,25 @@ let assertLooksLikeAssembly bytes label =
         |> Ashes.Text.contains(text)
         |> test.assertEqual(true))
 
+// Proves the entry-function-can't-just-`ret` fix in `AshesCompiler.Backend.IrCodegen` beyond just
+// "the label is present": the compiled entry function must genuinely end in the `exit` syscall,
+// not a bare `ret` — a real, separate claim from `assertLooksLikeAssembly`'s label-only check.
+let assertEndsInSyscallExit bytes =
+    (let text =
+        bytes
+        |> Ashes.Byte.length
+        |> Ashes.Byte.subText(bytes)(0)
+    in
+        Unit
+        |> (given (_) ->
+            "syscall"
+            |> Ashes.Text.contains(text)
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            "retq"
+            |> Ashes.Text.contains(text)
+            |> test.assertEqual(false)))
+
 let testBuildAndVerifyTrivialModule unit =
     (let context = contextCreate(Unit)
     in
@@ -2029,7 +2048,9 @@ let testEmitAssemblyForRcTriReleaseModule unit =
 let testEmitAssemblyForRealIrArithmeticModule unit =
     match emitModule(buildRealIrArithmeticModule)("selfhostBackendRealIrArith")(assemblyFileType) with
         | Error(message) -> test.fail(message)
-        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrArith")
+        | Ok(bytes) ->
+            let _ = assertLooksLikeAssembly(bytes)("selfhostBackendRealIrArith")
+            in assertEndsInSyscallExit(bytes)
 
 let testEmitAssemblyForRealIrLetBindingsModule unit =
     match emitModule(buildRealIrLetBindingsModule)("selfhostBackendRealIrLetBindings")(assemblyFileType) with

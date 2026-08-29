@@ -1606,6 +1606,22 @@ same public behavior.
   along the way: Ashes had no `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s
   only narrows to `u8`), needed to turn an IR constant's `Int` payload into `constInt`'s `u64`
   parameter — fixed as `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
+  `codegenEntryFunction`'s `Return` now matches `LlvmCodegenExpressions.cs`'s `EmitReturn` entry-path
+  exactly instead of a plain `buildRet`: the real linker (`LlvmImageLinkerElf.cs`'s
+  `WriteElf64Header`) sets `e_entry` to the raw virtual address of the START of `.text`, not a symbol
+  lookup — the entry function's machine code IS the OS process entry point, with no return address on
+  the stack, so it can never `ret`. `Return`'s source value is computed but discarded (normal
+  completion always exits `0`; a different code needs the separate, unported `Ashes.IO.exit` IR
+  instruction) and the function is built `void` end to end, lowering unconditionally to the Linux
+  `exit` syscall (`60`, not `exit_group`) via inline assembly matching `EmitSyscallX86`'s exact
+  register-constraint string, followed by `buildUnreachable`. `AshesCompiler.Backend.Llvm` gained
+  `getInlineAsm`/`buildUnreachable` bindings for this (plus `LLVMInitializeX86AsmParser`, needed
+  alongside the already-bound `AsmPrinter` — emitting a module containing inline assembly to textual
+  form re-validates it through the target's asm *parser*, not just its printer, and silently omitting
+  this produces a fatal, non-diagnostic LLVM error at emission time rather than a compile failure).
+  Verified past the automated test (which only checks for `"syscall"` and the absence of `"retq"` in
+  the disassembly) by hand-disassembling a real `1 + 2 * 3` program compiled through this path and
+  confirming zero `ret` occurrences anywhere in the output.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
