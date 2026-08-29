@@ -92,6 +92,9 @@ export (
     value setLinkage,
     value linkageExternal,
     value linkageInternal,
+    value int64Type,
+    value voidType,
+    value pointerType,
 )
 
 external type LLVMContextRef
@@ -150,6 +153,9 @@ external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMA
 external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitializer@libLLVM.so"
 external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
 external LLVMSetLinkage(LLVMValueRef, u32) -> void = "LLVMSetLinkage@libLLVM.so"
+external LLVMInt64TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt64TypeInContext@libLLVM.so"
+external LLVMVoidTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMVoidTypeInContext@libLLVM.so"
+external LLVMPointerTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMPointerTypeInContext@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -298,3 +304,9 @@ let setLinkage global linkage = LLVMSetLinkage(global)(linkage)
 let linkageExternal = 0u32
 
 let linkageInternal = 8u32
+
+let int64Type context = LLVMInt64TypeInContext(context)
+
+let voidType context = LLVMVoidTypeInContext(context)
+
+let pointerType context addressSpace = LLVMPointerTypeInContext(context)(addressSpace)
