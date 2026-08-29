@@ -97,6 +97,9 @@ export (
     value pointerType,
     value structType,
     value buildGEP,
+    value int8Type,
+    value arrayType,
+    value constArray,
 )
 
 external type LLVMContextRef
@@ -160,6 +163,9 @@ external LLVMVoidTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMVoidTypeInC
 external LLVMPointerTypeInContext(LLVMContextRef, u32) -> LLVMTypeRef = "LLVMPointerTypeInContext@libLLVM.so"
 external LLVMStructTypeInContext(LLVMContextRef, FfiBuffer(LLVMTypeRef), u32, Bool) -> LLVMTypeRef = "LLVMStructTypeInContext@libLLVM.so"
 external LLVMBuildGEP2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildGEP2@libLLVM.so"
+external LLVMInt8TypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMInt8TypeInContext@libLLVM.so"
+external LLVMArrayType2(LLVMTypeRef, u64) -> LLVMTypeRef = "LLVMArrayType2@libLLVM.so"
+external LLVMConstArray2(LLVMTypeRef, FfiBuffer(LLVMValueRef), u64) -> LLVMValueRef = "LLVMConstArray2@libLLVM.so"
 
 let contextCreate unit = LLVMContextCreate(Unit)
 
@@ -321,3 +327,9 @@ let structType context elementTypes elementCount packed = LLVMStructTypeInContex
 // `ptr` already points at one `type_`, not an array of them); later indices step into `type_`'s
 // own structure — a struct field index or an array element index, in nesting order.
 let buildGEP builder type_ ptr indices indexCount name = LLVMBuildGEP2(builder)(type_)(ptr)(indices)(indexCount)(name)
+
+let int8Type context = LLVMInt8TypeInContext(context)
+
+let arrayType elementType elementCount = LLVMArrayType2(elementType)(elementCount)
+
+let constArray elementType constantValues length = LLVMConstArray2(elementType)(constantValues)(length)

@@ -1532,29 +1532,19 @@ same public behavior.
   entry points the backend needs (no more are exposed on purpose; there is no `phi` binding, values
   that merge across branches go through a slot allocated before the branch), and
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
-  `AshesCompiler.Backend.Llvm` binds a growing subset — as of this writing: context/module/builder/
-  type/value/basic-block/global/struct creation and initialization (`addGlobal`, `setInitializer`,
-  `setGlobalConstant`, `setLinkage`, `structType`), scalar/pointer/void types (including
-  `int64Type`, `voidType`, `pointerType`), `functionType`, `addFunction`, `appendBasicBlock`,
-  `getParam`, `constInt`, arithmetic and comparison (`buildAdd`, `buildICmp`), control flow
-  (`buildCondBr`, `buildBr`) and the no-`phi` alloca/store/load slot pattern, aggregate field
-  addressing (`buildGEP`), calls to both module-local and genuinely external (declaration-only)
-  functions (`buildCall`), `buildRet`, `verifyModule`, x86 target initialization,
-  `getTargetFromTriple`, host-CPU detection, `createTargetMachine`, `applyDataLayout`,
-  `targetMachineEmitToMemoryBuffer`, and the memory-buffer accessors. `selfhost/tests/backend`
-  proves each addition by building, verifying, and emitting a small real function to genuine
-  linux-x64 ELF objects and assembly listings end to end: a zero-parameter constant-returning
-  function, `i32 addOne(i32 x) { ret i32 (x + 1) }`,
-  `i32 max(i32 a, i32 b) { if a > b then a else b }` (branching across four basic blocks),
-  `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }` (one module-local function calling another), a
-  global constant read back by a function, a function that calls the genuinely external (never
-  defined in the module) libc functions `malloc`/`free`, and a function that addresses fields of a
-  real two-field struct value with `buildGEP` — checked with `readelf` and,
+  `AshesCompiler.Backend.Llvm` binds a growing subset covering module/type/value/function/global
+  creation, scalar/pointer/array/struct types, arithmetic/comparison/control-flow instructions with
+  the no-`phi` alloca/store/load slot pattern, aggregate field and array element addressing
+  (`buildGEP`), calls to both module-local and genuinely external (declaration-only) functions,
+  string/byte array constants, and host-CPU-tuned target machine creation and object/assembly
+  emission — see the file itself for the exact current surface, since restating it here every PR
+  has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
+  verifying, and emitting a small real function (constants, arithmetic, branching, recursion-free
+  calls, globals, external libc calls, structs, and a C-string-shaped byte array, as of this
+  writing) to genuine linux-x64 ELF objects and assembly listings, checked with `readelf` and,
   independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
-  test itself). The
-  bindings resolve a bare `libLLVM.so`/`.dll`
-  via the executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order
-  (Windows) rather than a checkout path,
+  test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
+  RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
 - [ ] Locate the installed layout from the compiler binary itself: the shipped standard-library copies
