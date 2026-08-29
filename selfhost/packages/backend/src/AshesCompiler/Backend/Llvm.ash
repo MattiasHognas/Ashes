@@ -85,6 +85,8 @@ export (
     value intPredicateEq,
     value intPredicateSgt,
     value buildCondBr,
+    value buildSwitch,
+    value addCase,
     value buildBr,
     value buildAlloca,
     value buildStore,
@@ -156,6 +158,8 @@ external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMVa
 external LLVMBuildSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSub@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
+external LLVMBuildSwitch(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, u32) -> LLVMValueRef = "LLVMBuildSwitch@libLLVM.so"
+external LLVMAddCase(LLVMValueRef, LLVMValueRef, LLVMBasicBlockRef) -> void = "LLVMAddCase@libLLVM.so"
 external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildBr@libLLVM.so"
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
@@ -301,6 +305,15 @@ let intPredicateSgt = 38u32
 let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
 
 let buildCondBr builder cond thenBlock elseBlock = LLVMBuildCondBr(builder)(cond)(thenBlock)(elseBlock)
+
+// A real dispatch instruction for 3+ tag values, matching architecture.md's "known-tag switch
+// folding... one tag switch per match": one `elseBlock` (LLVM's own name for the default arm,
+// reached by any value with no matching case) plus `numCases` explicit values added afterward via
+// `addCase`. Chaining more `buildICmp`/`buildCondBr` pairs would work too but wouldn't exercise
+// this distinct instruction that real multi-arm ADT dispatch actually uses.
+let buildSwitch builder value elseBlock numCases = LLVMBuildSwitch(builder)(value)(elseBlock)(numCases)
+
+let addCase switchInst onValue destBlock = LLVMAddCase(switchInst)(onValue)(destBlock)
 
 let buildBr builder destBlock = LLVMBuildBr(builder)(destBlock)
 

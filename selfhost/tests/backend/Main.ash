@@ -1583,6 +1583,214 @@ let buildRcClosureModule name context =
                                                                                                                                                                 )
                                                                                                                                                             in (module_, builder))
 
+// A genuine 3-arm ADT dispatched through a real LLVM `switch`, not chained `buildICmp`/
+// `buildCondBr` pairs — architecture.md's "one tag switch per match" for real, not simulated.
+// `triType` is `{i32 tag, ptr fieldA, ptr fieldB}`: tag `0` (`Leaf`) owns neither field, tag `1`
+// (`OneChild`) owns only `fieldA`, tag `2` (`TwoChildren`, the default/unrecognized-tag arm too,
+// matching a real switch's fallthrough default) owns both — three genuinely different drop
+// behaviors selected by one dispatch instruction, composing every RC drop shape in this arc
+// (zero fields, one field, two fields) into a single ADT.
+let defineRcReleaseTriFunction module_ context existingBuilder headerType i8 ptr triType freeType freeFn rcReleaseType rcReleaseFn =
+    (let i64 = int64Type(context)
+    in
+        let i32 = int32Type(context)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("rcReleaseTri")(voidType(context))([ptr])(1u32) with
+                | (function, fnType, builder) ->
+                    let value = getParam(function)(0u32)
+                    in
+                        let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                        in
+                            let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                            in
+                                let zeroIndex = constInt(i32)(0u64)(false)
+                                in
+                                    let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                    in
+                                        let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                        in
+                                            let newCount =
+                                                buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                            in
+                                                let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                                in
+                                                    let isZero =
+                                                        buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                    in
+                                                        let dropBlock = appendBasicBlock(context)(function)("drop")
+                                                        in
+                                                            let doneBlock = appendBasicBlock(context)(function)("done")
+                                                            in
+                                                                let _ = buildCondBr(builder)(isZero)(dropBlock)(doneBlock)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(dropBlock)
+                                                                    in
+                                                                        let tagPtr = buildGEP(builder)(triType)(value)([zeroIndex, zeroIndex])(2u32)("tagPtr")
+                                                                        in
+                                                                            let tag = buildLoad(builder)(i32)(tagPtr)("tag")
+                                                                            in
+                                                                                let leafBlock = appendBasicBlock(context)(function)("leaf")
+                                                                                in
+                                                                                    let oneChildBlock = appendBasicBlock(context)(function)("oneChild")
+                                                                                    in
+                                                                                        let twoChildrenBlock = appendBasicBlock(context)(function)("twoChildren")
+                                                                                        in
+                                                                                            let switchInst = buildSwitch(builder)(tag)(twoChildrenBlock)(2u32)
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    addCase(switchInst)(constInt(i32)(0u64)(false))(leafBlock)
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        addCase(switchInst)(constInt(i32)(1u64)(false))(oneChildBlock)
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            Unit
+                                                                                                            |> (given (_) -> positionBuilderAtEnd(builder)(leafBlock))
+                                                                                                            |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                                                            |> (given (_) -> buildRetVoid(builder))
+                                                                                                        in
+                                                                                                            let _ =
+                                                                                                                Unit
+                                                                                                                |> (given (_) -> positionBuilderAtEnd(builder)(oneChildBlock))
+                                                                                                                |> (given (_) ->
+                                                                                                                    buildGEP(builder)(triType)(value)([zeroIndex, constInt(i32)(1u64)(false)])(
+                                                                                                                        2u32
+                                                                                                                    )("fieldAFieldPtr"))
+                                                                                                                |> (given (fieldAFieldPtr) -> buildLoad(builder)(ptr)(fieldAFieldPtr)("fieldA"))
+                                                                                                                |> (given (fieldA) -> buildCall(builder)(rcReleaseType)(rcReleaseFn)([fieldA])(1u32)(""))
+                                                                                                                |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                                                                |> (given (_) -> buildRetVoid(builder))
+                                                                                                            in
+                                                                                                                let _ = positionBuilderAtEnd(builder)(twoChildrenBlock)
+                                                                                                                in
+                                                                                                                    let fieldAFieldPtr =
+                                                                                                                        buildGEP(builder)(triType)(value)([zeroIndex, constInt(i32)(1u64)(false)])(
+                                                                                                                            2u32
+                                                                                                                        )("fieldAFieldPtr")
+                                                                                                                    in
+                                                                                                                        let fieldBFieldPtr =
+                                                                                                                            buildGEP(builder)(triType)(value)([zeroIndex, constInt(i32)(2u64)(false)])(
+                                                                                                                                2u32
+                                                                                                                            )("fieldBFieldPtr")
+                                                                                                                        in
+                                                                                                                            let fieldA = buildLoad(builder)(ptr)(fieldAFieldPtr)("fieldA")
+                                                                                                                            in
+                                                                                                                                let fieldB = buildLoad(builder)(ptr)(fieldBFieldPtr)("fieldB")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        Unit
+                                                                                                                                        |> (given (_) ->
+                                                                                                                                            buildCall(builder)(rcReleaseType)(rcReleaseFn)([fieldA])(
+                                                                                                                                                1u32
+                                                                                                                                            )(""))
+                                                                                                                                        |> (given (_) ->
+                                                                                                                                            buildCall(builder)(rcReleaseType)(rcReleaseFn)([fieldB])(
+                                                                                                                                                1u32
+                                                                                                                                            )(""))
+                                                                                                                                        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                                                                                        |> (given (_) -> buildRetVoid(builder))
+                                                                                                                                    in
+                                                                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ = buildRetVoid(builder)
+                                                                                                                                            in (function, fnType, builder))
+
+// Proves the `TwoChildren` arm (tag `2`) is reached by the real `switch` above (as the DEFAULT
+// case, matching a genuine switch's fallthrough behavior for any tag with no explicit case) and
+// drops both owned fields: two leaf `i32` cells (10 and 20) owned by one tri value. Releasing it
+// once must cascade into `rcRelease` twice — the `Leaf` (tag `0`) and `OneChild` (tag `1`) arms
+// are proven at the function level, per this arc's established discipline, not exercised again at
+// a second call site here.
+let buildRcTriReleaseModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let triType = structType(context)([i32, ptr, ptr])(3u32)(false)
+                            in
+                                let mallocType = functionType(ptr)([i64])(1u32)(false)
+                                in
+                                    let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                    in
+                                        let freeType =
+                                            functionType(voidType(context))([ptr])(1u32)(false)
+                                        in
+                                            let freeFn = addFunction(module_)("free")(freeType)
+                                            in
+                                                match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                    | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                        match defineRcReleaseFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                            | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                                match defineRcReleaseTriFunction(module_)(context)(Some(releaseBuilder))(headerType)(i8)(ptr)(triType)(freeType)(
+                                                                    freeFn
+                                                                )(rcReleaseType)(rcReleaseFunction) with
+                                                                    | (rcReleaseTriFunction, rcReleaseTriType, releaseTriBuilder) ->
+                                                                        match beginFunction(module_)(context)(Some(releaseTriBuilder))("rcTriLifecycle")(i32)([])(0u32) with
+                                                                            | (_, _, builder) ->
+                                                                                let leftLeaf =
+                                                                                    buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)(
+                                                                                        "leftLeaf"
+                                                                                    )
+                                                                                in
+                                                                                    let _ =
+                                                                                        buildStore(builder)(constInt(i32)(10u64)(false))(leftLeaf)
+                                                                                    in
+                                                                                        let rightLeaf =
+                                                                                            buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)(
+                                                                                                "rightLeaf"
+                                                                                            )
+                                                                                        in
+                                                                                            let _ =
+                                                                                                buildStore(builder)(constInt(i32)(20u64)(false))(rightLeaf)
+                                                                                            in
+                                                                                                let tri =
+                                                                                                    buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(24u64)(false)])(
+                                                                                                        1u32
+                                                                                                    )("tri")
+                                                                                                in
+                                                                                                    let zeroIndex = constInt(i32)(0u64)(false)
+                                                                                                    in
+                                                                                                        let tagPtr = buildGEP(builder)(triType)(tri)([zeroIndex, zeroIndex])(2u32)("tagPtr")
+                                                                                                        in
+                                                                                                            let fieldAFieldPtr =
+                                                                                                                buildGEP(builder)(triType)(tri)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)(
+                                                                                                                    "fieldAFieldPtr"
+                                                                                                                )
+                                                                                                            in
+                                                                                                                let fieldBFieldPtr =
+                                                                                                                    buildGEP(builder)(triType)(tri)([zeroIndex, constInt(i32)(2u64)(false)])(2u32)(
+                                                                                                                        "fieldBFieldPtr"
+                                                                                                                    )
+                                                                                                                in
+                                                                                                                    let _ =
+                                                                                                                        Unit
+                                                                                                                        |> (given (_) ->
+                                                                                                                            buildStore(builder)(constInt(i32)(2u64)(false))(tagPtr))
+                                                                                                                        |> (given (_) -> buildStore(builder)(leftLeaf)(fieldAFieldPtr))
+                                                                                                                        |> (given (_) -> buildStore(builder)(rightLeaf)(fieldBFieldPtr))
+                                                                                                                    in
+                                                                                                                        let leftValue = buildLoad(builder)(i32)(leftLeaf)("leftValue")
+                                                                                                                        in
+                                                                                                                            let rightValue = buildLoad(builder)(i32)(rightLeaf)("rightValue")
+                                                                                                                            in
+                                                                                                                                let sum = buildAdd(builder)(leftValue)(rightValue)("sum")
+                                                                                                                                in
+                                                                                                                                    let _ =
+                                                                                                                                        buildCall(builder)(rcReleaseTriType)(
+                                                                                                                                            rcReleaseTriFunction
+                                                                                                                                        )([tri])(1u32)("")
+                                                                                                                                    in
+                                                                                                                                        let _ = buildRet(builder)(sum)
+                                                                                                                                        in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -1770,6 +1978,11 @@ let testEmitAssemblyForRcClosureModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcClosureLifecycle")
 
+let testEmitAssemblyForRcTriReleaseModule unit =
+    match emitModule(buildRcTriReleaseModule)("selfhost-backend-rc-tri-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcTriLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -1792,6 +2005,7 @@ let run unit =
     |> testEmitAssemblyForRcTreeReleaseModule
     |> testEmitAssemblyForRcReuseModule
     |> testEmitAssemblyForRcClosureModule
+    |> testEmitAssemblyForRcTriReleaseModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
