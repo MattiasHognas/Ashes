@@ -84,9 +84,15 @@ export (
     value buildAdd,
     value buildSub,
     value buildMul,
+    value buildSDiv,
+    value buildSRem,
+    value buildSelect,
+    value buildTrunc,
+    value buildPtrToInt,
     value buildICmp,
     value intPredicateEq,
     value intPredicateSgt,
+    value intPredicateSlt,
     value buildCondBr,
     value buildSwitch,
     value addCase,
@@ -164,6 +170,11 @@ external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMVa
 external LLVMBuildSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSub@libLLVM.so"
 external LLVMBuildMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildMul@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
+external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
+external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSRem@libLLVM.so"
+external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
+external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
+external LLVMBuildPtrToInt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildPtrToInt@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
 external LLVMBuildSwitch(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, u32) -> LLVMValueRef = "LLVMBuildSwitch@libLLVM.so"
 external LLVMAddCase(LLVMValueRef, LLVMValueRef, LLVMBasicBlockRef) -> void = "LLVMAddCase@libLLVM.so"
@@ -315,11 +326,23 @@ let buildSub builder lhs rhs name = LLVMBuildSub(builder)(lhs)(rhs)(name)
 
 let buildMul builder lhs rhs name = LLVMBuildMul(builder)(lhs)(rhs)(name)
 
-// `LLVMIntPredicate` (llvm-c/Core.h). Only the two values currently in use are named, matching the
+let buildSDiv builder lhs rhs name = LLVMBuildSDiv(builder)(lhs)(rhs)(name)
+
+let buildSRem builder lhs rhs name = LLVMBuildSRem(builder)(lhs)(rhs)(name)
+
+let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)(cond)(thenValue)(elseValue)(name)
+
+let buildTrunc builder value destType name = LLVMBuildTrunc(builder)(value)(destType)(name)
+
+let buildPtrToInt builder value destType name = LLVMBuildPtrToInt(builder)(value)(destType)(name)
+
+// `LLVMIntPredicate` (llvm-c/Core.h). Only the values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.
 let intPredicateEq = 32u32
 
 let intPredicateSgt = 38u32
+
+let intPredicateSlt = 40u32
 
 let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
 

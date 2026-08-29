@@ -45,6 +45,7 @@ export (
     value pruneDeadCaptures,
     value lowerCoreProgram,
     value lowerCoreProgramWithSource,
+    value lowerCoreProgramWithSourceAndContext,
     value lowerCoreProgramWithEnvironment,
 )
 
@@ -4983,9 +4984,18 @@ let lowerCoreProgram (program: ProgramSyntax) =
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
-// As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
-// non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.
-let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSyntax) =
+// As lowerCoreProgramWithSource, but with caller-supplied `CoreConstructorLayout`/`CoreBuiltinLayout`
+// lists — the same context `lowerCoreExpressionWithContext` already threads explicitly for a bare
+// expression, parameterizing what `lowerCoreProgramWithSource` hardcodes to `[]`/`[]` via
+// `initialState`. `ProgramSyntax` (this package's `parseProgram` output) carries no import
+// information at all — imports are a project/multi-file-stitching concept handled entirely outside
+// this single-file pipeline — so there is nothing here to derive a builtin's availability FROM; the
+// caller (a project-mode driver, or a test exercising one specific builtin) must already know which
+// `Ashes.*` builtins the program is entitled to call and construct their layouts directly.
+// `constructorLayouts` needs a real entry for `"Unit"` too whenever any supplied builtin can
+// return it (`finishBuiltinUnit` allocates a builtin's `Unit` result through an ordinary
+// constructor layout, not a hardcoded shape — the same path a user's own zero-field ADT uses).
+let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program: ProgramSyntax) (constructorLayouts: List(CoreConstructorLayout)) (builtinLayouts: List(CoreBuiltinLayout)) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
             let trailingBody =
@@ -4994,11 +5004,15 @@ let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSy
                     | None -> ExprVar("Unit")
             in
                 Unit
-                |> initialState
+                |> initialStateWithContext(constructorLayouts)(builtinLayouts)
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
+
+// As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
+// non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.
+let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSyntax) = lowerCoreProgramWithSourceAndContext(filePath)(source)(program)([])([])
 
 // As lowerCoreProgram, but with a real inference TypeEnvironment supplied: a plain (non-recursive)
 // top-level binding whose own generalized TypeScheme carries trait constraints has its value

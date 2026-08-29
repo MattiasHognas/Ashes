@@ -1646,6 +1646,29 @@ same public behavior.
   emission, link — for the first time in this arc; timing the self-hosted pipeline's own stages
   (excluding the stage-0 compile of the pipeline's own Ashes source, a separate and much larger
   number) on a trivial `let`/`if` program: all five stages combined in ~2ms.
+- [~] `PrintInt` is `AshesCompiler.Backend.IrCodegen`'s first genuinely user-observable instruction:
+  ports `LlvmCodegenPlatform.cs`'s own `EmitPrintInt` (decimal-ASCII conversion into a 32-byte stack
+  buffer, sign handled last) and writes it via the raw, unbuffered Linux `write` syscall (`1`) —
+  `emitLinuxSyscallCall` generalizes the entry function's own inline-assembly `syscall` mechanism
+  (previously `exit`-only) to any 3-argument syscall. Entirely stack-local, so it needed nothing new
+  from `AshesCompiler.Backend.ElfLinker`'s relocation-free scope. `AllocAdt` is now supported for
+  the zero-field, non-RC-managed case (a plain stack `alloca` standing in for a real arena bump
+  allocation — correct only because today's program shapes never loop around a top-level
+  `AllocAdt`; real scoped-arena codegen remains a separate, bigger slice). Driving this through a
+  real `.ash` file surfaced a genuinely separate, deeper gap: nothing in self-hosted
+  `AshesCompiler.Semantics.CoreLowering` ever populated `CoreLoweringState.builtinLayouts` from a
+  program's imports — every qualified builtin call (not just `print`) failed with
+  `UnknownLoweringBinding`, and `ProgramSyntax` itself carries no import information at all (imports
+  are a project/multi-file-stitching concept, handled entirely outside this single-file pipeline).
+  Fixed by adding `lowerCoreProgramWithSourceAndContext`, threading caller-supplied
+  `constructorLayouts`/`builtinLayouts` the way `lowerCoreExpressionWithContext` already does for a
+  bare expression — the caller (a project-mode driver, or a test) constructs the layouts for
+  exactly the builtins its source needs, including a `"Unit"` `CoreConstructorLayout` (a builtin's
+  `Unit` result allocates through the same constructor path a user's own zero-field ADT would).
+  Verified end to end: a real `.ash` file (`Ashes.IO.print(42 - 84)`) compiled through the complete
+  self-hosted pipeline, linked by `ElfLinker`, written to disk, `chmod +x`'d, and spawned — real
+  stdout `-42` (exercising the sign-handling path) and exit code `0`, checked by the automated test
+  suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
