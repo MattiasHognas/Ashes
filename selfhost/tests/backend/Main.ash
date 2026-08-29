@@ -1933,6 +1933,15 @@ let buildRealIrStringLiteralModule name context = codegenRealSource("Ashes.IO.pr
 // layouts.
 let buildRealIrSomeConstructorModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(1)")(name)(context)
 
+// Combines `buildRealIrSomeConstructorModule`'s heap allocation (`Some(42)`'s `AllocAdt`/
+// `SetAdtField`/`RcDrop`, calling real `malloc`/`free`) with `buildRealIrStringLiteralModule`'s
+// string literal (`LoadConstStr`/`PrintStr`, a `.rodata` reference) in one object — the exact
+// combination `AshesCompiler.Backend.ElfLinker.linkLinuxExecutable` used to reject outright
+// (`"an object with both external-symbol calls (malloc/free) and .rodata references (a string
+// literal) is not yet supported together"`). Any program that both allocates a record and prints a
+// string literal hits this shape, so it is not a corner case. Prints `hello`.
+let buildRealIrAllocAndStringLiteralModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(\"hello\")")(name)(context)
+
 // `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
 // reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
 // (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
@@ -2514,6 +2523,34 @@ let testRunStaticExecutableForRealIrSomeConstructorModule unit =
                                                         let _ = test.assertEqual("1")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrAllocAndStringLiteralModule`'s executable end to end: proves
+// `linkLinuxExecutable` can produce a single working executable for an object that needs BOTH the
+// dynamic-import path (real `malloc`/`free` calls) AND a `.rodata` segment (the string literal) —
+// the combination that previously failed to link at all.
+let testRunStaticExecutableForRealIrAllocAndStringLiteralModule unit =
+    match emitModule(buildRealIrAllocAndStringLiteralModule)("selfhostBackendRunAllocAndStringLit")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunAllocAndStringLit") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_alloc_and_string_lit_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_alloc_and_string_lit_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_alloc_and_string_lit_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("hello")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // Runs `buildAdtFieldTagReadModule`'s executable end to end: allocates a 2-field RC cell (tag 0,
 // fields 3 and 4), reads field 0 and the tag back through `GetAdtField`/`GetAdtTag`, and prints
 // their sum. `3 + 0 = 3` confirms both reads land on the exact words `AllocAdt`/`SetAdtField`
@@ -2820,6 +2857,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrLogicalOperatorsModule
     |> testRunStaticExecutableForRealIrStringLiteralModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
+    |> testRunStaticExecutableForRealIrAllocAndStringLiteralModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule

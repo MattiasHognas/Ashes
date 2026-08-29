@@ -1868,15 +1868,37 @@ same public behavior.
   called external functions (`R_X86_64_PLT32`). Fixed by teaching `linkLinuxExecutable` to find an
   object's own `.rodata` section (if any) and, when present, add a second read-only `PT_LOAD` segment
   page-aligned after `.text`, patching each absolute reference to the section's final address;
-  `rodataBytes = None` reproduces the prior single-segment output byte-for-byte. An object needing
-  both dynamic imports (`malloc`/`free`) and `.rodata` together is a clean `Error`, not silently
-  wrong — no current codegen path produces that combination.
+  `rodataBytes = None` reproduces the prior single-segment output byte-for-byte.
   Verified end to end: `Ashes.IO.print("hello")` compiles through the complete self-hosted pipeline —
   parse, lower, codegen, LLVM object emission, the new `.rodata`-aware link — to a running Linux
   executable that prints `hello` and exits `0`, the first real string literal this compiler has ever
-  taken from source to output. **Explicitly still open**: multi-string-literal objects, strings
+  taken from source to output. **Explicitly still open**: multi-string-literal objects, and strings
   reached through anything other than a direct `Ashes.IO.print` argument (stored in a field, compared,
-  concatenated), and the malloc/free-plus-`.rodata` combination named above.
+  concatenated).
+  **The malloc/free-plus-`.rodata` combination named above is now fixed.** Any program that both
+  allocates a heap record and prints a string literal (an entirely ordinary combination, not a corner
+  case) hit this: `linkLinuxExecutable` refused to link an object needing both the dynamic-import path
+  and a `.rodata` segment together at all. Fixing it surfaced a second, genuinely new gap along the
+  way, found only by building and disassembling a real combined object rather than reasoning about it
+  in the abstract: `Ashes.IO.print("hello")` alone loads the string's `len` field through an absolute
+  `R_X86_64_32S` reference (`mov reg, [disp32]`, no RIP — confirmed via `objdump -dr`), but the exact
+  same load, in a function that also calls `malloc`/`free` (`let x = Some(42)` before the print),
+  compiles instead to a PC-relative `R_X86_64_PC32` (`mov reg, [rip+disp32]`) — the same kind of
+  access, two different relocation shapes, depending on what else is in the function. The precise
+  LLVM instruction-selection trigger was not pinned down (plausibly register-allocation pressure from
+  the extra external calls); what matters is both shapes are legitimate output and the linker must
+  patch either correctly rather than assume away the one it hadn't seen yet. Fixed in three parts:
+  `DataRelocationPatch` now carries a `dataPatchPcRelative : Bool` (`isRodataRelocationType` accepts
+  type `2`/`R_X86_64_PC32` alongside `10`/`11`), `applyDataPatches` computes `S + A - P` for a
+  PC-relative patch and `S + A` otherwise (`P` the patch site's own final virtual address, matching
+  the formula `applyTextPatches` already used for call/jump stubs), and `linkWithDynamicImports` gained
+  a third, page-aligned, read-only `PT_LOAD` segment placed right after the dynamic-linking data blob,
+  patching `.text`'s rodata references into it exactly like the static-only path already did.
+  `rodataBytes = None` reproduces the prior dynamic-imports-only layout byte-for-byte. Verified end to
+  end: `let x = Some(42)\nAshes.IO.print("hello")` — a real `AllocAdt`/`SetAdtField`/`RcDrop` calling
+  genuine `malloc`/`free`, together with a real `LoadConstStr`/`PrintStr` string literal in the same
+  object — compiles through the complete self-hosted pipeline and runs on a real Linux process,
+  printing `hello`.
 - [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
   the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
   reference-count tracking or scope-local arena exists yet for either to do anything with). This
