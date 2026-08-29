@@ -9,6 +9,7 @@ import Ashes.Test as test
 import Ashes.Text
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen
+import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
@@ -2062,6 +2063,58 @@ let testEmitAssemblyForRealIrConditionalModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrConditional")
 
+// Proves `AshesCompiler.Backend.ElfLinker`'s static-only linker end to end: emit the real IR
+// arithmetic module as an OBJECT (not assembly), link it into a static executable, and check the
+// result is a genuine ET_EXEC ELF64 file (magic, 64-bit class, `e_type`/`e_machine`, one `PT_LOAD`
+// program header) — not just "some bytes came back". Actually running the produced executable
+// (confirming it exits 0, the entry-exit-syscall contract from
+// `testEmitAssemblyForRealIrArithmeticModule`) is verified independently outside this test suite,
+// the same way every earlier codegen slice in this arc was checked past what an automated
+// assertion alone can prove.
+let assertLooksLikeStaticExecutable bytes =
+    Unit
+    |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(bytes) > 4096))
+    |> (given (_) ->
+        0
+        |> Ashes.Byte.get(bytes)
+        |> test.assertEqual(127u8))
+    |> (given (_) ->
+        1
+        |> Ashes.Byte.get(bytes)
+        |> test.assertEqual(69u8))
+    |> (given (_) ->
+        2
+        |> Ashes.Byte.get(bytes)
+        |> test.assertEqual(76u8))
+    |> (given (_) ->
+        3
+        |> Ashes.Byte.get(bytes)
+        |> test.assertEqual(70u8))
+    |> (given (_) ->
+        4
+        |> Ashes.Byte.get(bytes)
+        |> test.assertEqual(2u8))
+    |> (given (_) ->
+        16
+        |> Ashes.Byte.getU16Le(bytes)
+        |> test.assertEqual(2u16))
+    |> (given (_) ->
+        18
+        |> Ashes.Byte.getU16Le(bytes)
+        |> test.assertEqual(62u16))
+    |> (given (_) ->
+        56
+        |> Ashes.Byte.getU16Le(bytes)
+        |> test.assertEqual(1u16))
+
+let testLinkStaticExecutableForRealIrArithmeticModule unit =
+    match emitModule(buildRealIrArithmeticModule)("selfhostBackendLinkArith")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendLinkArith") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) -> assertLooksLikeStaticExecutable(executableBytes)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2088,6 +2141,7 @@ let run unit =
     |> testEmitAssemblyForRealIrArithmeticModule
     |> testEmitAssemblyForRealIrLetBindingsModule
     |> testEmitAssemblyForRealIrConditionalModule
+    |> testLinkStaticExecutableForRealIrArithmeticModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
