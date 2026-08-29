@@ -1533,12 +1533,13 @@ same public behavior.
   that merge across branches go through a slot allocated before the branch), and
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
   `AshesCompiler.Backend.Llvm` binds a growing subset — as of this writing: context/module/builder/
-  type/value/basic-block/global creation and initialization (`addGlobal`, `setInitializer`,
-  `setGlobalConstant`, `setLinkage`), scalar/pointer/void types (including `int64Type`, `voidType`,
-  `pointerType`), `functionType`, `addFunction`, `appendBasicBlock`, `getParam`, `constInt`,
-  arithmetic and comparison (`buildAdd`, `buildICmp`), control flow (`buildCondBr`, `buildBr`) and
-  the no-`phi` alloca/store/load slot pattern, calls to both module-local and genuinely external
-  (declaration-only) functions (`buildCall`), `buildRet`, `verifyModule`, x86 target initialization,
+  type/value/basic-block/global/struct creation and initialization (`addGlobal`, `setInitializer`,
+  `setGlobalConstant`, `setLinkage`, `structType`), scalar/pointer/void types (including
+  `int64Type`, `voidType`, `pointerType`), `functionType`, `addFunction`, `appendBasicBlock`,
+  `getParam`, `constInt`, arithmetic and comparison (`buildAdd`, `buildICmp`), control flow
+  (`buildCondBr`, `buildBr`) and the no-`phi` alloca/store/load slot pattern, aggregate field
+  addressing (`buildGEP`), calls to both module-local and genuinely external (declaration-only)
+  functions (`buildCall`), `buildRet`, `verifyModule`, x86 target initialization,
   `getTargetFromTriple`, host-CPU detection, `createTargetMachine`, `applyDataLayout`,
   `targetMachineEmitToMemoryBuffer`, and the memory-buffer accessors. `selfhost/tests/backend`
   proves each addition by building, verifying, and emitting a small real function to genuine
@@ -1546,8 +1547,9 @@ same public behavior.
   function, `i32 addOne(i32 x) { ret i32 (x + 1) }`,
   `i32 max(i32 a, i32 b) { if a > b then a else b }` (branching across four basic blocks),
   `i32 addTwo(i32 x) { ret i32 addOne(addOne(x)) }` (one module-local function calling another), a
-  global constant read back by a function, and a function that calls the genuinely external (never
-  defined in the module) libc functions `malloc`/`free` — checked with `readelf` and,
+  global constant read back by a function, a function that calls the genuinely external (never
+  defined in the module) libc functions `malloc`/`free`, and a function that addresses fields of a
+  real two-field struct value with `buildGEP` — checked with `readelf` and,
   independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
   test itself). The
   bindings resolve a bare `libLLVM.so`/`.dll`
