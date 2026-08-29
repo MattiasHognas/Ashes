@@ -397,7 +397,7 @@ let buildCallClosureFunction module_ context existingBuilder envFnType closureTy
         let ptr = pointerType(context)(0u32)
         in
             match beginFunction(module_)(context)(existingBuilder)("callClosure")(i32)([ptr, i32])(2u32) with
-                | (function, _, builder) ->
+                | (function, fnType, builder) ->
                     let closurePtr = getParam(function)(0u32)
                     in
                         let xArg = getParam(function)(1u32)
@@ -417,7 +417,7 @@ let buildCallClosureFunction module_ context existingBuilder envFnType closureTy
                                                     let result = buildCall(builder)(envFnType)(codePtr)([envValue, xArg])(2u32)("result")
                                                     in
                                                         let _ = buildRet(builder)(result)
-                                                        in (function, builder))
+                                                        in (function, fnType, builder))
 
 // A deliberately minimal slice of "closures", scoped narrower than a real capture-carrying
 // closure: proves the indirect-call mechanism above composes with a real `{ptr, i32}` struct
@@ -435,7 +435,76 @@ let buildClosureCallModule name context =
                 match defineAddEnvFunction(module_)(context) with
                     | (_, envFnType, addEnvBuilder) ->
                         match buildCallClosureFunction(module_)(context)(Some(addEnvBuilder))(envFnType)(closureType) with
-                            | (_, builder) -> (module_, builder))
+                            | (_, _, builder) -> (module_, builder))
+
+// The next slice past `buildClosureCallModule`: the closure struct itself now lives on the heap
+// (`malloc`d, matching `buildMallocFreeModule`'s declare-and-call pattern), not a stack `alloca` —
+// a necessary property before RC can mean anything, since RC only applies to heap objects.
+// `makeAndCallClosure(i32 env, i32 x)` mallocs a `{ptr, i32}`, stores `addEnv`'s own function
+// value into the code-pointer field (a function value used as a plain `ptr`, no cast needed) and
+// `env` into the env field, calls it back through `callClosure`, frees it, and returns the result.
+// Multiple captures, variable arity, and reference counting remain deliberately out of scope.
+let buildHeapClosureModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let ptr = pointerType(context)(0u32)
+                in
+                    let closureType = structType(context)([ptr, i32])(2u32)(false)
+                    in
+                        let mallocType = functionType(ptr)([i64])(1u32)(false)
+                        in
+                            let mallocFn = addFunction(module_)("malloc")(mallocType)
+                            in
+                                let freeType =
+                                    functionType(voidType(context))([ptr])(1u32)(false)
+                                in
+                                    let freeFn = addFunction(module_)("free")(freeType)
+                                    in
+                                        match defineAddEnvFunction(module_)(context) with
+                                            | (addEnvFunction, envFnType, addEnvBuilder) ->
+                                                match buildCallClosureFunction(module_)(context)(Some(addEnvBuilder))(envFnType)(closureType) with
+                                                    | (callClosureFunction, callClosureType, builder) ->
+                                                        match beginFunction(module_)(context)(Some(builder))("makeAndCallClosure")(i32)([i32, i32])(2u32) with
+                                                            | (function, _, callerBuilder) ->
+                                                                let envArg = getParam(function)(0u32)
+                                                                in
+                                                                    let xArg = getParam(function)(1u32)
+                                                                    in
+                                                                        let sizeArg = constInt(i64)(16u64)(false)
+                                                                        in
+                                                                            let closurePtr = buildCall(callerBuilder)(mallocType)(mallocFn)([sizeArg])(1u32)("closurePtr")
+                                                                            in
+                                                                                let zeroIndex = constInt(i32)(0u64)(false)
+                                                                                in
+                                                                                    let oneIndex = constInt(i32)(1u64)(false)
+                                                                                    in
+                                                                                        let codePtrFieldPtr =
+                                                                                            buildGEP(callerBuilder)(closureType)(closurePtr)([zeroIndex, zeroIndex])(2u32)(
+                                                                                                "codePtrFieldPtr"
+                                                                                            )
+                                                                                        in
+                                                                                            let envFieldPtr =
+                                                                                                buildGEP(callerBuilder)(closureType)(closurePtr)([zeroIndex, oneIndex])(2u32)(
+                                                                                                    "envFieldPtr"
+                                                                                                )
+                                                                                            in
+                                                                                                let _ = buildStore(callerBuilder)(addEnvFunction)(codePtrFieldPtr)
+                                                                                                in
+                                                                                                    let _ = buildStore(callerBuilder)(envArg)(envFieldPtr)
+                                                                                                    in
+                                                                                                        let result =
+                                                                                                            buildCall(callerBuilder)(callClosureType)(callClosureFunction)(
+                                                                                                                [closurePtr, xArg]
+                                                                                                            )(2u32)("result")
+                                                                                                        in
+                                                                                                            let _ = buildCall(callerBuilder)(freeType)(freeFn)([closurePtr])(1u32)("")
+                                                                                                            in
+                                                                                                                let _ = buildRet(callerBuilder)(result)
+                                                                                                                in (module_, callerBuilder))
 
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
@@ -584,6 +653,11 @@ let testEmitAssemblyForClosureCallModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("callClosure")
 
+let testEmitAssemblyForHeapClosureModule unit =
+    match emitModule(buildHeapClosureModule)("selfhost-backend-heap-closure-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("makeAndCallClosure")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -598,6 +672,7 @@ let run unit =
     |> testEmitAssemblyForGreetingModule
     |> testEmitAssemblyForOptionUnwrapModule
     |> testEmitAssemblyForClosureCallModule
+    |> testEmitAssemblyForHeapClosureModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
