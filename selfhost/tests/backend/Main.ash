@@ -1980,6 +1980,14 @@ let buildRealIrRecordFieldStringModule name context = codegenRealSource("type Bo
 // `EmitPanic` (message via the same helper `print` uses, then `exit(1)` rather than `exit(0)`).
 let buildRealIrPanicModule name context = codegenRealSource("Ashes.IO.panic(\"boom\")")(name)(context)
 
+// `==`/`!=` on `Str` (`CoreLowering.ash`'s `emitResolvedCoreEquality` desugars both to
+// `CmpStrEq`/`CmpStrNe`) exercises the linker's new `memcmp` dynamic import alongside the
+// length-mismatch fast path `emitStringEquals` takes without ever calling it: `"hello" == "hello"`
+// (equal, calls `memcmp`), `"hello" != "world"` (same length, `memcmp` returns nonzero), and
+// `"ab" != "abc"` (different length, short-circuits before any `memcmp` call) all combined through
+// `&&`, so all three code paths must succeed for this to print `1` rather than `0`.
+let buildRealIrStringEqualityModule name context = codegenRealSource("Ashes.IO.print(if \"hello\" == \"hello\" && \"hello\" != \"world\" && \"ab\" != \"abc\" then 1 else 0)")(name)(context)
+
 // `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
 // reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
 // (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
@@ -2972,6 +2980,33 @@ let testRunStaticExecutableForRealIrPanicModule unit =
                                                         let _ = test.assertEqual("boom")(line)
                                                         in test.assertEqual(1)(exitCode)
 
+// Runs `buildRealIrStringEqualityModule`'s executable end to end: proves `CmpStrEq`/`CmpStrNe`'s
+// length-mismatch fast path AND its real `memcmp` dynamic-import call both produce the correct
+// result, not just that the object links.
+let testRunStaticExecutableForRealIrStringEqualityModule unit =
+    match emitModule(buildRealIrStringEqualityModule)("selfhostBackendRunStringEquality")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunStringEquality") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_string_equality_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_string_equality_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_string_equality_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("1")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3010,6 +3045,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrLetBoundStringModule
     |> testRunStaticExecutableForRealIrRecordFieldStringModule
     |> testRunStaticExecutableForRealIrPanicModule
+    |> testRunStaticExecutableForRealIrStringEqualityModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule

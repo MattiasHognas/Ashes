@@ -1940,6 +1940,25 @@ same public behavior.
   an explicit code argument, so `PanicStr` can supply `1`. `Ashes.IO.panic("boom")` now compiles
   through the complete self-hosted pipeline and runs on a real Linux process, printing `boom` and
   exiting `1`.
+  **`CmpStrEq`/`CmpStrNe` codegen added** (`==`/`!=` on `Str` — `CoreLowering.ash`'s
+  `emitResolvedCoreEquality` was already lowering both to these instructions; the SAME instructions
+  also drive string-literal pattern comparison inside `match`, via `finishPatternComparison`, so
+  this closes the "compared" half of the still-open string-generality gap above and also unblocks
+  matching against a string literal pattern). Matches `LlvmCodegenMemory.cs`'s own
+  `EmitStringComparison`: a length check first (two `Str` values of different length can never be
+  equal, so the byte comparison is skipped entirely when lengths differ), then a real libc `memcmp`
+  call over the raw payload bytes once lengths match — the exact same declare-and-call pattern
+  `malloc`/`free` already established for an external symbol this codegen needs, so
+  `AshesCompiler.Backend.ElfLinker` needed only a one-line addition to its own
+  `linuxDynamicImportLibraries` table (`memcmp`, `libc.so.6`) and no new linker mechanism at all —
+  every other part of the dynamic-import machinery (hash table, `.dynstr`/`.dynsym`, GOT, import
+  stubs) already generalizes to any number of recognized symbols. `CmpStrNe` reuses the same
+  `emitStringEquals` helper and inverts its always-`0`-or-`1` result arithmetically (`1 - result`)
+  rather than re-deriving the comparison. Verified end to end:
+  `Ashes.IO.print(if "hello" == "hello" && "hello" != "world" && "ab" != "abc" then 1 else 0)` —
+  exercising the equal-via-`memcmp` path, the not-equal-same-length-via-`memcmp` path, and the
+  not-equal-different-length fast path all in one program — compiles through the complete
+  self-hosted pipeline and prints `1`.
 - [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
   the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
   reference-count tracking or scope-local arena exists yet for either to do anything with). This
