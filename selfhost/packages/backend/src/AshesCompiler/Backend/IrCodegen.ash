@@ -439,6 +439,32 @@ let recursive buildStringLiteralGlobalsFromIndex module_ context i64 i8 index li
         | [] -> []
         | literal :: rest -> buildStringLiteralGlobal(module_)(context)(i64)(i8)(index)(literal) :: buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(index + 1)(rest)
 
+// `LLVMBuildSwitch`'s case count is a capacity hint, not a hard limit (LLVM grows the case table as
+// needed) — a fixed reservation avoids needing an Int-to-`u32` conversion that doesn't exist yet
+// (`Ashes.Number.UInt` only narrows to `u8`/widens to `u64`) for a value this codegen already knows
+// at LLVM-IR-build time, not one it would need to compute from a runtime IR value.
+let switchTagCaseCapacity = 8u32
+
+// Resolves every case's label to its `LLVMBasicBlockRef` FIRST (pure reads out of `labelBlocks`,
+// no FFI calls at all), returning `(tag, block)` pairs — deliberately NOT interleaved with the
+// `LLVMAddCase` FFI calls that consume this list. Interleaving a `labelBlocks` lookup after an
+// `addCase` FFI call was confirmed (by direct experiment) to corrupt later lookups into the same
+// list — a real, reproducible miscompilation not yet root-caused to a specific line, most likely
+// in how this self-hosted backend's own arena/scope machinery treats an FFI call boundary. Doing
+// every read before any FFI call sidesteps it entirely; do not reorder this back into one pass.
+let recursive resolveSwitchCases cases labelBlocks =
+    match cases with
+        | [] -> []
+        | IrSwitchCase { tag = tag, label = label } :: rest -> (tag, lookupIndexed(label)(labelBlocks)) :: resolveSwitchCases(rest)(labelBlocks)
+
+let recursive addResolvedSwitchCases switchInst i64 resolved =
+    match resolved with
+        | [] -> Unit
+        | (tag, block) :: rest ->
+            let _ =
+                addCase(switchInst)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(true))(block)
+            in addResolvedSwitchCases(switchInst)(i64)(rest)
+
 let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
@@ -514,6 +540,14 @@ let codegenInstructionKind cx builder kind state =
                                 in
                                     let _ = positionBuilderAtEnd(builder)(fallthroughBlock)
                                     in (tempEnv, false)
+                        | SwitchTag(tagTemp, cases, defaultLabel) ->
+                            let resolved = resolveSwitchCases(cases)(labelBlocks)
+                            in
+                                let switchInst =
+                                    buildSwitch(builder)(lookupIndexed(tagTemp)(tempEnv))(lookupIndexed(defaultLabel)(labelBlocks))(switchTagCaseCapacity)
+                                in
+                                    let _ = addResolvedSwitchCases(switchInst)(i64)(resolved)
+                                    in (tempEnv, true)
                         | SaveArenaState(_, _, _) -> (tempEnv, terminated)
                         | RestoreArenaState(_, _, _, _) -> (tempEnv, terminated)
                         | ReclaimArenaChunks(_, _, _) -> (tempEnv, terminated)

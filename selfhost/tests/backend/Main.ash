@@ -1964,6 +1964,71 @@ let buildAdtFieldTagReadModule name context =
             )
         in codegenEntryFunction(name)(context)(irFunction)([]))
 
+// Proves `SwitchTag`/`IrSwitchCase` codegen directly, via a hand-built `IrFunction` — the same
+// "prove the primitive first" precedent `AllocAdt`/`GetAdtField`/`GetAdtTag` used before any real
+// source could drive them. A real `match` compiles down to `SwitchTag` once tag-group dispatch
+// actually groups arms together (a plain sequential match never needs it — already proven end to
+// end by `buildRealIrMatchSomeModule` below).
+//
+// A first attempt at this instruction crashed/corrupted memory: `IrCodegen.ash`'s own
+// `addSwitchCases` interleaved a `labelBlocks` lookup (`lookupIndexed`) with the `LLVMAddCase` FFI
+// call for each case, in a single recursive pass. Direct experiment confirmed a `labelBlocks`
+// lookup performed AFTER an `addCase` FFI call reads back wrong data for later entries in the
+// same list — reproduced with static string literals, no real lowering involved. The actual fix
+// (`resolveSwitchCases`/`addResolvedSwitchCases` in `IrCodegen.ash`) resolves every case's block
+// FIRST, in a pass with no FFI calls at all, THEN calls `addCase` for each already-resolved pair —
+// no lookup ever follows an FFI call. Dispatches a tag value of `1` against three explicit cases
+// plus a default; only the `1` arm's `PrintInt` should run.
+let buildSwitchTagModule name context =
+    (let instructions =
+        [
+            IrInstruction(instruction = LoadConstInt(0)(1), location = None),
+            IrInstruction(
+                instruction = SwitchTag(0)(
+                    [
+                        IrSwitchCase(tag = 0, label = "case_zero"),
+                        IrSwitchCase(tag = 1, label = "case_one"),
+                        IrSwitchCase(tag = 2, label = "case_two")
+                    ]
+                )("case_default"),
+                location = None
+            ),
+            IrInstruction(instruction = Label("case_zero"), location = None),
+            IrInstruction(instruction = LoadConstInt(1)(100), location = None),
+            IrInstruction(instruction = PrintInt(1), location = None),
+            IrInstruction(instruction = Jump("case_end"), location = None),
+            IrInstruction(instruction = Label("case_one"), location = None),
+            IrInstruction(instruction = LoadConstInt(2)(200), location = None),
+            IrInstruction(instruction = PrintInt(2), location = None),
+            IrInstruction(instruction = Jump("case_end"), location = None),
+            IrInstruction(instruction = Label("case_two"), location = None),
+            IrInstruction(instruction = LoadConstInt(3)(300), location = None),
+            IrInstruction(instruction = PrintInt(3), location = None),
+            IrInstruction(instruction = Jump("case_end"), location = None),
+            IrInstruction(instruction = Label("case_default"), location = None),
+            IrInstruction(instruction = LoadConstInt(4)(-1), location = None),
+            IrInstruction(instruction = PrintInt(4), location = None),
+            IrInstruction(instruction = Jump("case_end"), location = None),
+            IrInstruction(instruction = Label("case_end"), location = None),
+            IrInstruction(instruction = LoadConstInt(5)(0), location = None),
+            IrInstruction(instruction = Return(5), location = None)
+        ]
+    in
+        let irFunction =
+            IrFunction(
+                label = name,
+                instructions = instructions,
+                localCount = 0,
+                tempCount = 6,
+                hasEnvAndArgParams = false,
+                coroutine = None,
+                localNames = [],
+                localTypes = [],
+                origin = None,
+                lifetimesPlaced = false
+            )
+        in codegenEntryFunction(name)(context)(irFunction)([]))
+
 // The first real-IR module driven by a USER-DEFINED type declaration, not one of the intrinsic
 // `Unit`/`Maybe`/`Result` constructors: `CoreLowering.ash`'s `registerTopLevelTypeDeclaration`
 // resolves `Point`'s two `Int` fields and registers a constructor layout for it, after which
@@ -2024,6 +2089,16 @@ let buildRealIrMatchSomeModule name context = codegenRealSource("let x = Some(42
 // pattern above is a uniform part of `match`'s lowering strategy, not special-cased for `Maybe`.
 // Prints `7`, `Circle`'s own field read back through its own arm (`Square`'s arm is never taken).
 let buildRealIrMatchMultiConstructorModule name context = codegenRealSource("type Shape =\n    | Circle(Int)\n    | Square(Int)\n\nlet x = Circle(7)\n\nmatch x with\n    | Circle(r) -> Ashes.IO.print(r)\n    | Square(s) -> Ashes.IO.print(s)")(name)(context)
+
+// A NESTED pattern — two arms (`Some(Some(v))`/`Some(None)`) sharing the outer `Some` tag — is the
+// real trigger for `CoreLowering.ash`'s `lowerMatchArmsViaTagGroups`, which compiles down to a
+// `SwitchTag` instruction (confirmed via `--emit-ir`) rather than the sequential if-chain the
+// two-arm cases above use. This is the exact shape that surfaced the `IrCodegen.ash` `SwitchTag`
+// bug documented on `buildSwitchTagModule` above; this test exercises it through real lowering,
+// not just a hand-built `IrFunction`. Prints `7`, `Some(Some(7))`'s payload read back through the
+// `Some(Some(v))` arm specifically (proving the grouped dispatch reached the right nested arm, not
+// just the right outer tag).
+let buildRealIrMatchNestedModule name context = codegenRealSource("let x = Some(Some(7))\n\nmatch x with\n    | Some(Some(v)) -> Ashes.IO.print(v)\n    | Some(None) -> Ashes.IO.print(-1)\n    | None -> Ashes.IO.print(0)")(name)(context)
 
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
@@ -2431,6 +2506,30 @@ let testRunStaticExecutableForAdtFieldTagReadModule unit =
                                                         let _ = test.assertEqual("3")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+let testRunStaticExecutableForSwitchTagModule unit =
+    match emitModule(buildSwitchTagModule)("selfhostBackendRunSwitchTag")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunSwitchTag") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_switch_tag_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_switch_tag_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_switch_tag_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("200")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // Runs `buildRealIrRecordFieldModule`'s executable end to end: a user-defined `type Point`
 // declaration, constructed with named fields and read back through `.x`, compiled through the
 // complete self-hosted pipeline and executed on a real Linux process.
@@ -2585,6 +2684,30 @@ let testRunStaticExecutableForRealIrMatchMultiConstructorModule unit =
                                                         let _ = test.assertEqual("7")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+let testRunStaticExecutableForRealIrMatchNestedModule unit =
+    match emitModule(buildRealIrMatchNestedModule)("selfhostBackendRunMatchNested")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunMatchNested") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_match_nested_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_match_nested_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_match_nested_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("7")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2661,12 +2784,14 @@ let run unit =
     |> testRunStaticExecutableForRealIrStringLiteralModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
+    |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testRunStaticExecutableForRealIrMultiConstructorModule
     |> testRunStaticExecutableForRealIrGenericTypeModule
     |> testRunStaticExecutableForRealIrMultiParamGenericTypeModule
     |> testRunStaticExecutableForRealIrMatchSomeModule
     |> testRunStaticExecutableForRealIrMatchMultiConstructorModule
+    |> testRunStaticExecutableForRealIrMatchNestedModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
