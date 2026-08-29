@@ -506,6 +506,74 @@ let buildHeapClosureModule name context =
                                                                                                                 let _ = buildRet(callerBuilder)(result)
                                                                                                                 in (module_, callerBuilder))
 
+// Closures capturing MORE THAN ONE value: `{ptr code, i32 c1, i32 c2}`, extending the
+// single-capture closure struct above the same way `defineRcReleaseTreeFunction` (below) extends
+// single-child release to multiple owned fields — a deliberately narrow next slice, not the real
+// feature. `addTwoCaptures(i32 c1, i32 c2, i32 x) { ret c1 + c2 + x }` stands in for a compiled
+// closure body over two captures; `callMultiCaptureClosure` loads all three fields and calls the
+// loaded function pointer with both captures plus the argument — still one flat call, not curried,
+// and still scalar-only captures (an RC-owned capture's own drop, and a general N-capture/N-arity
+// calling convention, are separate, later slices). No new LLVM C API surface.
+let defineAddTwoCapturesFunction module_ context =
+    (let i32 = int32Type(context)
+    in
+        match beginFunction(module_)(context)(None)("addTwoCaptures")(i32)([i32, i32, i32])(3u32) with
+            | (function, fnType, builder) ->
+                let c1 = getParam(function)(0u32)
+                in
+                    let c2 = getParam(function)(1u32)
+                    in
+                        let x = getParam(function)(2u32)
+                        in
+                            let sum1 = buildAdd(builder)(c1)(c2)("sum1")
+                            in
+                                let sum2 = buildAdd(builder)(sum1)(x)("sum2")
+                                in
+                                    let _ = buildRet(builder)(sum2)
+                                    in (function, fnType, builder))
+
+let buildCallMultiCaptureClosureFunction module_ context existingBuilder closureFnType closureType =
+    (let i32 = int32Type(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("callMultiCaptureClosure")(i32)([ptr, i32])(2u32) with
+                | (function, fnType, builder) ->
+                    let closurePtr = getParam(function)(0u32)
+                    in
+                        let xArg = getParam(function)(1u32)
+                        in
+                            let zeroIndex = constInt(i32)(0u64)(false)
+                            in
+                                let codePtrFieldPtr = buildGEP(builder)(closureType)(closurePtr)([zeroIndex, zeroIndex])(2u32)("codePtrFieldPtr")
+                                in
+                                    let c1FieldPtr = buildGEP(builder)(closureType)(closurePtr)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)("c1FieldPtr")
+                                    in
+                                        let c2FieldPtr = buildGEP(builder)(closureType)(closurePtr)([zeroIndex, constInt(i32)(2u64)(false)])(2u32)("c2FieldPtr")
+                                        in
+                                            let codePtr = buildLoad(builder)(ptr)(codePtrFieldPtr)("codePtr")
+                                            in
+                                                let c1 = buildLoad(builder)(i32)(c1FieldPtr)("c1")
+                                                in
+                                                    let c2 = buildLoad(builder)(i32)(c2FieldPtr)("c2")
+                                                    in
+                                                        let result = buildCall(builder)(closureFnType)(codePtr)([c1, c2, xArg])(3u32)("result")
+                                                        in
+                                                            let _ = buildRet(builder)(result)
+                                                            in (function, fnType, builder))
+
+let buildMultiCaptureClosureModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            let closureType = structType(context)([ptr, int32Type(context), int32Type(context)])(3u32)(false)
+            in
+                match defineAddTwoCapturesFunction(module_)(context) with
+                    | (_, closureFnType, addTwoCapturesBuilder) ->
+                        match buildCallMultiCaptureClosureFunction(module_)(context)(Some(addTwoCapturesBuilder))(closureFnType)(closureType) with
+                            | (_, _, builder) -> (module_, builder))
+
 // The real Ashes RC header, per architecture.md's "RC allocation and layout": a 16-byte
 // `{i64 reference_count, i64 allocation_size}` header immediately before the payload, with the
 // public value pointer addressing the payload rather than the header. Defines
@@ -1446,6 +1514,11 @@ let testEmitAssemblyForHeapClosureModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("makeAndCallClosure")
 
+let testEmitAssemblyForMultiCaptureClosureModule unit =
+    match emitModule(buildMultiCaptureClosureModule)("selfhost-backend-multi-capture-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("callMultiCaptureClosure")
+
 let testEmitAssemblyForRcCellLifecycleModule unit =
     match emitModule(buildRcCellLifecycleModule)("selfhost-backend-rc-cell-test")(assemblyFileType) with
         | Error(message) -> test.fail(message)
@@ -1486,6 +1559,7 @@ let run unit =
     |> testEmitAssemblyForOptionUnwrapModule
     |> testEmitAssemblyForClosureCallModule
     |> testEmitAssemblyForHeapClosureModule
+    |> testEmitAssemblyForMultiCaptureClosureModule
     |> testEmitAssemblyForRcCellLifecycleModule
     |> testEmitAssemblyForRcNodeReleaseModule
     |> testEmitAssemblyForRcOptionReleaseModule

@@ -1545,7 +1545,8 @@ same public behavior.
   every PR has proven just as unmaintainable as the binding list above; see the test file itself
   for the current set (as of this writing: primitives/arithmetic/branching, module-local and
   external calls, globals, structs, arrays/byte strings, a tagged-union ADT `match`, a closure call
-  through a function-pointer value on both a stack and a heap-allocated struct, and RC end to end —
+  through a function-pointer value on a stack struct, a heap-allocated struct, and a struct
+  capturing more than one scalar value, and RC end to end —
   a cell matching this doc's own header layout, cascading release to an owned child, and
   tag-directed dispatch over which fields actually get dropped, including a `Node` arm that drops
   more than one owned field in sequence, and the Perceus reuse contract's token handoff — a drop
