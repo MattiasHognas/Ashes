@@ -1872,9 +1872,12 @@ same public behavior.
   Verified end to end: `Ashes.IO.print("hello")` compiles through the complete self-hosted pipeline —
   parse, lower, codegen, LLVM object emission, the new `.rodata`-aware link — to a running Linux
   executable that prints `hello` and exits `0`, the first real string literal this compiler has ever
-  taken from source to output. **Explicitly still open**: multi-string-literal objects, and strings
-  reached through anything other than a direct `Ashes.IO.print` argument (stored in a field, compared,
-  concatenated).
+  taken from source to output. **Explicitly still open**: strings reached through concatenation
+  (no N-ary string-concatenation builtin lowering/codegen exists yet), and `Ashes.IO.print` dispatch
+  on a call whose own argument type is never independently pinned to a concrete type at the call
+  site (a generic function's own parameter, e.g. `let greet s = Ashes.IO.print(s)` — a real,
+  reproducible `UnsupportedCoreBuiltinLowering("print does not support ?N")`, unrelated to strings
+  specifically and unrelated to anything fixed below).
   **The malloc/free-plus-`.rodata` combination named above is now fixed.** Any program that both
   allocates a heap record and prints a string literal (an entirely ordinary combination, not a corner
   case) hit this: `linkLinuxExecutable` refused to link an object needing both the dynamic-import path
@@ -1899,6 +1902,32 @@ same public behavior.
   genuine `malloc`/`free`, together with a real `LoadConstStr`/`PrintStr` string literal in the same
   object — compiles through the complete self-hosted pipeline and runs on a real Linux process,
   printing `hello`.
+  **Multi-string-literal objects and non-print-argument string usage, probed directly rather than
+  assumed.** Two distinct string literals in one object, each printed by its own `Ashes.IO.print`
+  call, already worked with no further change: `buildStringLiteralGlobalsFromIndex` already builds
+  one `.rodata` global per entry in the whole `stringLiterals` list, `LoadConstStr` already looks
+  its own global up by `label`, and the collected relocations already carry a distinct byte-offset
+  addend per literal against the shared `.rodata` SECTION symbol — copying the whole section and
+  patching every offset independently already generalized past one literal. A string stored in a
+  user-defined record field, read back through `match` (`type Box = | value: Str`), also already
+  worked: a `Str` value shares the exact same 16-byte-RC-header layout as any other runtime-managed
+  value, so the `SetAdtField`/`GetAdtField`/`match` codegen already proven for `Int` fields needed
+  nothing string-specific. A string reached through a plain `let` binding (`let s = "hello"\n
+  Ashes.IO.print(s)`), by contrast, did NOT already work: `objdump -dr` showed a THIRD relocation
+  shape neither prior fix produced — an 8-byte absolute `R_X86_64_64` (`movabs $imm64, reg`, addend
+  `0`, the header's own address, with `+16` to the payload computed by a separate runtime `add`
+  rather than folded into the addend the way an immediately-used literal's load does). Fixed the
+  same way as the PC32 gap: `DataRelocationPatch` gained `dataPatchWidth : Int` (`isRodataRelocationType`
+  now accepts type `1`/`R_X86_64_64` alongside `2`/`10`/`11`), and `applyDataPatches` writes the full
+  64-bit virtual address (`putU64`) for an 8-byte patch rather than truncating to 32 bits
+  (`putU32FromInt`) the way every other type does. Verified end to end for all three shapes (two
+  literals printing `hello`/`world`; the let-bound literal printing `hello`; the record-field
+  literal printing `hello`), full `selfhost/tests/backend` suite green with and without
+  `--debug-disable-reuse`. Passing a string as an ordinary generic function's own parameter
+  (`let greet s = Ashes.IO.print(s)`) hits the SEPARATE, unrelated builtin-dispatch gap now called
+  out above, not a linker or `Str`-representation issue — probed and intentionally left there rather
+  than folded into this fix, since it needs call-site-aware builtin dispatch or monomorphization,
+  not another relocation shape.
 - [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
   the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
   reference-count tracking or scope-local arena exists yet for either to do anything with). This
