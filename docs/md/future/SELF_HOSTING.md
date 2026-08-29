@@ -1534,8 +1534,11 @@ same public behavior.
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
   `AshesCompiler.Backend.Llvm` binds a small subset (context/module/builder/type/value/basic-block
   creation, `functionType`, `addFunction`, `appendBasicBlock`, `constInt`, `buildRet`,
-  `verifyModule`) and `selfhost/tests/backend` proves it builds and verifies a trivial function in a
-  real LLVM module end to end. The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's
+  `verifyModule`, x86 target initialization, `getTargetFromTriple`, `createTargetMachine`,
+  `targetMachineEmitToMemoryBuffer`, and the memory-buffer accessors) and `selfhost/tests/backend`
+  proves it builds and verifies a trivial function in a real LLVM module and emits it to a genuine
+  linux-x64 ELF relocatable object end to end (checked with `readelf`, not just a byte-length
+  assertion in the test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's
   own `$ORIGIN` RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
@@ -1546,12 +1549,16 @@ same public behavior.
   next to the executable — resolved relative to the running binary, never to a checkout or a working
   directory, so a stage-1 compiler works from the release bundle layout the .NET one ships in (see
   [Local CI/CD](../guide/local-ci.md) for the bundle shapes).
-- [ ] Select target triples, data layouts, CPUs, optimization levels, verification, object emission,
+- [~] Select target triples, data layouts, CPUs, optimization levels, verification, object emission,
   and host/target-independent compile options. Source of truth: `LlvmTargetSetup.cs`,
   `LlvmCodegenPlatform.cs`, and the `Backends/` classes; contract in
   [How to Add a New Target](../internals/architecture.md#how-to-add-a-new-target). `--target-cpu`, `--parallel-workers`,
   and `--parallel-stack-size` reach codegen as compile options and must keep their documented
-  defaults ([CLI reference](../reference/cli.md)).
+  defaults ([CLI reference](../reference/cli.md)). `selfhost/packages/backend` selects the
+  `x86_64-unknown-linux-gnu` triple, creates a target machine with empty `cpu`/`features` strings
+  (no host-CPU detection bound yet), and emits an object file to a memory buffer — but never sets a
+  data layout on the module, has no optimization-level selection beyond a hardcoded `None`, and
+  binds none of the other three target RIDs.
 - [ ] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
   allocations, RC/drop/reuse, globals, and calls. Source of truth: `LlvmCodegen.cs`,
   `LlvmCodegenExpressions.cs`, and `LlvmCodegenMemory.cs` (allocation, RC headers and free-list bins,
