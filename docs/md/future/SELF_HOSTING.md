@@ -1905,20 +1905,23 @@ same public behavior.
   inference-completeness gap unrelated to `match` itself), and any arm whose bound field is itself
   RC-managed (this item's own scrutinee drop is a leaf `RcDrop`, not a cascading one — see the
   still-open cascading-`RcDrop` item elsewhere in this checklist).
-  **A tag-GROUPED match (3+ arms where multiple share a constructor tag, or any arm the optimizer
-  merges via `lowerMatchArmsViaTagGroups`/`CoreTagGroup`) needs the `SwitchTag`/`IrSwitchCase`
-  instruction, which `IrCodegen.ash` does not yet implement.** A same-session attempt to add it hit
-  a real, reproducible, but NOT YET ROOT-CAUSED memory-corruption bug: see
-  `project_selfhost_backend_llvm_bindings_package.md`'s dated entry for the full investigation
-  (gdb hardware inspection, `--explain rc`/`--explain memory`/`--emit-ir final` traces, multiple
-  isolated reproductions). Key finding for whoever picks this up: the corruption reproduces in a
-  MINIMAL hand-built `IrFunction` using only static string literals for case labels — no
-  `CoreLowering.ash` tag-group lowering involved at all — so the bug is in
-  `AshesCompiler.Backend.IrCodegen.ash`'s own `SwitchTag`/`addSwitchCases`/`createLabelBlocks`
-  interaction (or, less likely, in stage-0's compilation of that exact code shape), not in the
-  semantics package. The `SwitchTag` codegen implementation attempted here was reverted rather than
-  landed, since it could not be verified safe even in the isolated case.
-  checklist).
+  A tag-GROUPED match (3+ arms where multiple share a constructor tag, compiled via
+  `lowerMatchArmsViaTagGroups`/`CoreTagGroup` into a `SwitchTag`/`IrSwitchCase` instruction) now
+  also works: `IrCodegen.ash` gained `SwitchTag` support (`resolveSwitchCases`/
+  `addResolvedSwitchCases`, plus `buildSwitch`/`addCase`, both already-bound LLVM bindings from
+  PR #706's hand-built RC work). A first attempt corrupted memory — real, reproducible, and
+  root-caused by direct experiment rather than guessing: `addSwitchCases`'s original single-pass
+  implementation interleaved a `labelBlocks` lookup with the `LLVMAddCase` FFI call for each case;
+  a `labelBlocks` lookup performed AFTER an `addCase` FFI call reliably read back wrong data for
+  later entries in the same list (reproduced in a minimal hand-built `IrFunction` with static
+  string literals, no `CoreLowering.ash` lowering involved at all — ruling out the semantics
+  package entirely). The fix resolves every case's block to a real `LLVMBasicBlockRef` FIRST, in a
+  pass with no FFI calls at all, then calls `addCase` for each already-resolved pair in a second
+  pass — no lookup ever follows an FFI call. Verified end to end, both via the isolated hand-built
+  test (all four branches — three explicit cases plus the default — dispatch correctly), and
+  through real lowering: `match x with | Some(Some(v)) -> print(v) | Some(None) -> print(-1) |
+  None -> print(0)` on `x = Some(Some(7))` compiles through the complete self-hosted pipeline and
+  prints `7`, confirmed stable across repeated runs of both the isolated and real-lowering tests.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
