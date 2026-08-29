@@ -1804,16 +1804,21 @@ same public behavior.
   add them, print the sum) run end to end on a real Linux process — the one exception to this
   package's real-lowering-only testing rule, matching the same "prove the primitive first" precedent
   `AshesCompiler.Backend.ElfLinker`'s dynamic-linking mechanism used before real IR could reach it.
-- [~] `CoreLowering.ash` lowers a top-level, non-generic `type` declaration into one
+- [~] `CoreLowering.ash` lowers a top-level `type` declaration, including a generic one, into one
   `CoreConstructorLayout` per constructor (`registerTopLevelTypeDeclaration`), appended to
   `state.constructorLayouts` — the same live list `standardConstructorLayouts` seeds intrinsically —
   so a later `TopLevelLet` referencing the type's constructors resolves normally with no further
   wiring: `lowerRecord`, `lowerConstructor`, and `emitRecordFieldLoad` already handle any registered
-  layout uniformly, whether intrinsic or user-defined. Each constructor field's `TypeExpr` resolves
-  against a small hand-written primitive map (`Int`/`Str`/`Bool`/`Float`/`BigInt`/`Rune`/`Bytes`/
-  `Unit`) rather than `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full
-  `TypeEnvironment` this single-file pipeline does not build; a type with its own type parameters,
-  or a constructor field outside that primitive set, refuses cleanly with a new
+  layout uniformly, whether intrinsic, user-defined, or genuinely polymorphic. Each of a type's own
+  type parameters gets a fresh id minted from the LIVE, per-lowering `typeSupply` (no permanent
+  reservation needed, unlike the intrinsic schemes — this layout is built fresh during lowering with
+  direct access to the supply, not statically embedded ahead of it) and is quantified in every one of
+  its constructors' schemes, the exact same `TypeScheme`/`instantiate` mechanism `print`'s
+  `forall a. a -> Unit` and `Some`'s `forall a. a -> Maybe(a)` already prove works at every call
+  site. A constructor field's `TypeExpr` resolves against a small hand-written primitive map
+  (`Int`/`Str`/`Bool`/`Float`/`BigInt`/`Rune`/`Bytes`/`Unit`) plus the type's own parameter names —
+  not `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment` this
+  single-file pipeline does not build; a field type outside that set refuses cleanly with a new
   `UnsupportedTypeDeclaration` error rather than registering an incorrect layout. `isZeroCost` is
   always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
   to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
@@ -1824,9 +1829,13 @@ same public behavior.
   `Result` use) with no constructor-specific code, and each dead binding drops independently — a
   program constructing both compiles and runs without crashing. Positional constructor fields (as
   opposed to a record's named fields) cannot be read back without `match`, which this item does not
-  cover, so that case is verified structurally rather than by observing a printed value. **Explicitly
-  still open**: type parameters (generics), `deriving`, and non-primitive (nested-ADT, function,
-  tuple) field types. **Known, currently harmless inaccuracy**: `lowerDeadRcTopLevelLet`'s `RcDrop`
+  cover, so that case is verified structurally rather than by observing a printed value. Generics are
+  verified too: `type Box(a) = | value: a` instantiates `a` as `Int` (`Box(value = 5)`, printing `5`
+  read back through `GetAdtField`) and, in a separate probe, as `Str` in the same program — genuine
+  polymorphism, not an accidentally-monomorphic scheme. **Explicitly still open**: `deriving`,
+  non-primitive (nested-ADT, function, tuple) field types, and multi-parameter type declarations
+  (`type Pair(a, b) = ...`, which should already work via the same mechanism but is untested).
+  **Known, currently harmless inaccuracy**: `lowerDeadRcTopLevelLet`'s `RcDrop`
   carries the CONSTRUCTOR's own name in its `typeName` field (e.g. `Circle`/`Square`) rather than the
   DECLARING TYPE's name (`Shape`) stage-0's real semantics use — confirmed via `--emit-ir` that
   stage-0 reports `TypeName=Maybe` for a `Some` drop, not `TypeName=Some`. `IrCodegen`'s `RcDrop`

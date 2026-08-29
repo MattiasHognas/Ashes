@@ -1977,6 +1977,16 @@ let buildRealIrRecordFieldModule name context = codegenRealSource("type Point =\
 // `buildRealIrSomeConstructorModule`.
 let buildRealIrMultiConstructorModule name context = codegenRealSource("type Shape =\n    | Circle(Int)\n    | Square(Int)\n\nlet a = Circle(7)\nlet b = Square(9)\nAshes.IO.print(1)")(name)(context)
 
+// A generic user-defined type: `registerTopLevelTypeDeclaration` assigns `Box`'s own type
+// parameter `a` a fresh id drawn from the live `typeSupply` and quantifies it in the constructor's
+// scheme — the exact same `TypeScheme`/`instantiate` mechanism `print`'s `forall a. a -> Unit` and
+// `Some`'s `forall a. a -> Maybe(a)` already prove works at every call site, just built from a
+// user's own declaration instead of a static intrinsic one. `Box(value = 5)` instantiates the
+// scheme's `a` as `Int`; a second real probe (not part of this test) instantiated the same
+// constructor as `Str` in the same program, confirming genuine polymorphism rather than an
+// accidentally-monomorphic scheme. Prints `5`, the field read back through `GetAdtField`.
+let buildRealIrGenericTypeModule name context = codegenRealSource("type Box(a) =\n    | value: a\n\nlet b = Box(value = 5)\nAshes.IO.print(b.value)")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2410,6 +2420,32 @@ let testRunStaticExecutableForRealIrMultiConstructorModule unit =
                                                         let _ = test.assertEqual("1")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrGenericTypeModule`'s executable end to end: a generic user-defined type
+// constructed and read back through the same real self-hosted pipeline, printing `5`.
+let testRunStaticExecutableForRealIrGenericTypeModule unit =
+    match emitModule(buildRealIrGenericTypeModule)("selfhostBackendRunGenericType")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunGenericType") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_generic_type_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_generic_type_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_generic_type_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("5")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2487,6 +2523,7 @@ let run unit =
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
     |> testRunStaticExecutableForRealIrMultiConstructorModule
+    |> testRunStaticExecutableForRealIrGenericTypeModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

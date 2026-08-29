@@ -17,6 +17,7 @@ import AshesCompiler.Frontend.Syntax.TopLevelItem
 import AshesCompiler.Frontend.Syntax.ProgramSyntax
 import AshesCompiler.Frontend.Syntax.TypeDecl
 import AshesCompiler.Frontend.Syntax.TypeConstructor
+import AshesCompiler.Frontend.Syntax.TypeParameter
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
@@ -5154,12 +5155,21 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
                             |> continuation(topLevelContinuationBody)
 
 // A user-defined top-level `type` declaration's field types are resolved against exactly the
-// scalar primitives listed here — not through `TypeResolution.ash`'s real `resolveTypeExpression`,
-// which needs a full `TypeEnvironment` this single-file pipeline does not build. A field type
-// outside this list (a generic parameter, a function, a tuple, another named type) answers `None`.
-let recursive typeExprToPrimitiveSemanticType (typeExpr: TypeExpr) =
+// scalar primitives listed here, plus (via `parameterTypes`) the type's own type parameters — not
+// through `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment`
+// this single-file pipeline does not build. A field type outside this list (a function, a tuple,
+// another named type) answers `None`.
+let recursive lookupTypeParameter (name: Str) (parameterTypes: List((Str, SemanticType))) =
+    match parameterTypes with
+        | [] -> None
+        | (candidateName, semanticType) :: rest ->
+            if candidateName == name
+            then Some(semanticType)
+            else lookupTypeParameter(name)(rest)
+
+let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List((Str, SemanticType))) =
     match typeExpr with
-        | TypeAt(_span, inner) -> typeExprToPrimitiveSemanticType(inner)
+        | TypeAt(_span, inner) -> typeExprToSemanticType(inner)(parameterTypes)
         | TypeNamed("Int") -> Some(SemInt)
         | TypeNamed("Str") -> Some(SemString)
         | TypeNamed("Bool") -> Some(SemBool)
@@ -5171,16 +5181,17 @@ let recursive typeExprToPrimitiveSemanticType (typeExpr: TypeExpr) =
             []
             |> SemNamed(0)("Unit")
             |> Some
+        | TypeNamed(name) -> lookupTypeParameter(name)(parameterTypes)
         | _other -> None
 
-let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) =
+let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
     match parameters with
         | [] -> Some([])
         | parameter :: rest ->
-            match typeExprToPrimitiveSemanticType(parameter) with
+            match typeExprToSemanticType(parameter)(parameterTypes) with
                 | None -> None
                 | Some(fieldType) ->
-                    match constructorFieldSemanticTypes(rest) with
+                    match constructorFieldSemanticTypes(rest)(parameterTypes) with
                         | None -> None
                         | Some(restTypes) -> Some(fieldType :: restTypes)
 
@@ -5193,50 +5204,95 @@ let recursive buildConstructorSchemeBody (fieldTypes: List(SemanticType)) (resul
         | fieldType :: rest ->
             SemFunction(fieldType)(buildConstructorSchemeBody(rest)(resultType))(None)
 
-let buildUserConstructorLayout (resultType: SemanticType) (tag: Int) (constructor: TypeConstructor) =
+let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (tag: Int) (constructor: TypeConstructor) =
     match constructor with
         | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } ->
-            match constructorFieldSemanticTypes(parameters) with
-                | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit)"))
+            match constructorFieldSemanticTypes(parameters)(parameterTypes) with
+                | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, or one of the type's own type parameters)"))
                 | Some(fieldTypes) ->
                     Ok(CoreConstructorLayout(
                         name = name,
                         tag = tag,
-                        scheme = TypeScheme(quantified = [], body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
+                        scheme = TypeScheme(quantified = quantified, body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
                         fieldNames = fieldNames,
                         isZeroCost = false
                     ))
 
-let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (index: Int) (constructors: List(TypeConstructor)) =
+let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (constructors: List(TypeConstructor)) =
     match constructors with
         | [] -> Ok([])
         | constructor :: rest ->
-            match buildUserConstructorLayout(resultType)(index)(constructor) with
+            match buildUserConstructorLayout(resultType)(quantified)(parameterTypes)(index)(constructor) with
                 | Error(error) -> Error(error)
                 | Ok(layout) ->
-                    match buildUserConstructorLayoutsFromIndex(resultType)(index + 1)(rest) with
+                    match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(index + 1)(rest) with
                         | Error(error) -> Error(error)
                         | Ok(restLayouts) -> Ok(layout :: restLayouts)
+
+// Assigns each of a type's own declared type parameters a fresh id drawn from the LIVE, per-
+// lowering `typeSupply` — unlike `standardConstructorLayouts`' intrinsic schemes (statically
+// embedded before the supply starts, needing permanently reserved ids to avoid a self-referential
+// substitution, see `reservedBuiltinTypeVariableCount`'s own comment), a user type's layout is
+// built fresh during lowering with direct access to the state's own supply, so no reservation is
+// needed at all: each id is minted once, here, and never reused.
+let freshTypeVariableId (semanticType: SemanticType) =
+    match semanticType with
+        | SemVariable(id) -> id
+        | _other -> Ashes.IO.panic("freshTypeVariable did not return a SemVariable")
+
+let recursive assignTypeParameterIds (parameters: List(TypeParameter)) (supply: TypeVariableSupply) =
+    match parameters with
+        | [] -> ([], supply)
+        | TypeParameter { name = name } :: rest ->
+            match freshTypeVariable(supply) with
+                | (freshVariable, nextSupply) ->
+                    match assignTypeParameterIds(rest)(nextSupply) with
+                        | (restPairs, finalSupply) -> ((name, freshTypeVariableId(freshVariable)) :: restPairs, finalSupply)
+
+let recursive typeParameterSemVars (namedIds: List((Str, Int))) =
+    match namedIds with
+        | [] -> []
+        | (_name, id) :: rest -> SemVariable(id) :: typeParameterSemVars(rest)
+
+let recursive typeParameterResolutionTable (namedIds: List((Str, Int))) =
+    match namedIds with
+        | [] -> []
+        | (name, id) :: rest -> (name, SemVariable(id)) :: typeParameterResolutionTable(rest)
+
+let recursive typeParameterQuantified (namedIds: List((Str, Int))) =
+    match namedIds with
+        | [] -> []
+        | (name, id) :: rest -> (id, name) :: typeParameterQuantified(rest)
 
 // Registers one `CoreConstructorLayout` per constructor of a top-level `type` declaration into
 // `state.constructorLayouts` — the same list `standardConstructorLayouts` seeds intrinsically, read
 // live at lookup time by `findConstructorLayout`/`constructorLayout`, so a later `TopLevelLet`
 // referencing this type's constructors resolves correctly without any further wiring:
 // `lowerRecord`/`lowerConstructor`/`emitRecordFieldLoad` already handle any registered layout the
-// same way regardless of where it came from. Refuses a type with its own type parameters (no
-// substitution machinery here to instantiate a generic constructor's fields against concrete type
-// arguments) with a clear error rather than registering an incorrect, unsubstituted layout.
+// same way regardless of where it came from — including a genuinely polymorphic one, the exact same
+// mechanism `print`'s own `forall a. a -> Unit` scheme and `Some`'s `forall a. a -> Maybe(a)` scheme
+// already prove works at every call site. A type parameter's own id is quantified in the scheme,
+// so `instantiate` mints a fresh variable per use, never confusing two different call sites'
+// instantiations with each other.
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
-        | TypeDecl { name = name, typeParameters = [], constructors = constructors } ->
-            let resultType = SemNamed(0)(name)([])
-            in
-                match buildUserConstructorLayoutsFromIndex(resultType)(0)(constructors) with
-                    | Error(error) -> Error(error)
-                    | Ok(newLayouts) ->
-                        match state with
-                            | CoreLoweringState { constructorLayouts = existingLayouts } -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts)))
-        | TypeDecl { name = name } -> Error(UnsupportedTypeDeclaration("type '" + name + "' declares type parameters, which top-level type-declaration lowering does not support yet"))
+        | TypeDecl { name = name, typeParameters = typeParameters, constructors = constructors } ->
+            match state with
+                | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts } ->
+                    match assignTypeParameterIds(typeParameters)(supply) with
+                        | (namedIds, nextSupply) ->
+                            let resultType =
+                                namedIds
+                                |> typeParameterSemVars
+                                |> SemNamed(0)(name)
+                            in
+                                let quantified = typeParameterQuantified(namedIds)
+                                in
+                                    let parameterTypes = typeParameterResolutionTable(namedIds)
+                                    in
+                                        match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(constructors) with
+                                            | Error(error) -> Error(error)
+                                            | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
