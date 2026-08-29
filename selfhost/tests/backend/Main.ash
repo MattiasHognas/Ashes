@@ -1942,6 +1942,38 @@ let buildRealIrSomeConstructorModule name context = codegenRealSource("let x = S
 // string literal hits this shape, so it is not a corner case. Prints `hello`.
 let buildRealIrAllocAndStringLiteralModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(\"hello\")")(name)(context)
 
+// Two DISTINCT string literals in one object, printed by two separate calls — the
+// "multi-string-literal objects" gap the `LoadConstStr`/`PrintStr` item once flagged as still
+// open. Already worked with no further codegen or linker change needed:
+// `buildStringLiteralGlobalsFromIndex` already builds one `.rodata`-shaped global per entry in the
+// whole `stringLiterals` list (not just the first), `LoadConstStr` already looks its own global up
+// by `label` rather than assuming a single fixed one, and the collected relocations against
+// `.rodata`'s SECTION symbol already carry a distinct byte-offset addend per literal, so copying
+// the whole section and patching every collected offset independently already generalizes.
+// Verified only when actually run: this was checked by direct probe, not inferred from reading the
+// code. Prints `hello` then `world`.
+let buildRealIrTwoStringLiteralsModule name context = codegenRealSource("let _ = Ashes.IO.print(\"hello\")\nAshes.IO.print(\"world\")")(name)(context)
+
+// A string literal reached through a `let` binding rather than passed directly as `print`'s own
+// argument — the other half of the "strings reached through anything other than a direct
+// `Ashes.IO.print` argument" gap. This one did NOT already work: `objdump -dr` on the emitted
+// object showed a THIRD relocation shape neither prior fix (absolute `R_X86_64_32`/`32S`,
+// PC-relative `R_X86_64_PC32`) had ever produced — an 8-byte absolute `R_X86_64_64`
+// (`movabs $imm64, reg`, addend `0`, the header's own address with `+16` to the payload computed
+// by a separate runtime `add` instead of folded into the addend the way an immediately-used
+// literal's load does). Fixed in `AshesCompiler.Backend.ElfLinker`: `DataRelocationPatch` gained
+// `dataPatchWidth`, `isRodataRelocationType` accepts type `1` alongside `2`/`10`/`11`, and
+// `applyDataPatches` writes the full 64-bit virtual address (`putU64`) rather than truncating to 32
+// bits for this one type. Prints `hello`.
+let buildRealIrLetBoundStringModule name context = codegenRealSource("let s = \"hello\"\nAshes.IO.print(s)")(name)(context)
+
+// A string literal stored in a user-defined record field and read back through `match` — the
+// "stored in a field" half of the same still-open gap. Already worked with no further change:
+// a `Str` value shares the exact same 16-byte-RC-header layout as any other runtime-managed value,
+// so the `SetAdtField`/`GetAdtField`/`match` codegen already proven for `Int` fields needed nothing
+// string-specific. Verified only when actually run. Prints `hello`.
+let buildRealIrRecordFieldStringModule name context = codegenRealSource("type Box = | value: Str\nlet b = Box(value = \"hello\")\nmatch b with | Box(value) -> Ashes.IO.print(value)")(name)(context)
+
 // `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
 // reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
 // (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
@@ -2824,6 +2856,90 @@ let testLinkAndRunDynamicMallocFreeModule unit =
                                                 |> Ashes.IO.Process.waitForExit
                                                 |> test.assertEqual(0)
 
+// Runs `buildRealIrTwoStringLiteralsModule`'s executable end to end: proves two distinct string
+// literals in one object are both laid out and printed correctly.
+let testRunStaticExecutableForRealIrTwoStringLiteralsModule unit =
+    match emitModule(buildRealIrTwoStringLiteralsModule)("selfhostBackendRunTwoStringLits")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunTwoStringLits") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_two_string_lits_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_two_string_lits_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_two_string_lits_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected two lines of stdout from the linked executable, got none")
+                                                | Some(firstLine) ->
+                                                    match Ashes.IO.Process.readStdoutLine(process) with
+                                                        | None -> test.fail("expected a second line of stdout from the linked executable, got only one")
+                                                        | Some(secondLine) ->
+                                                            let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                            in
+                                                                let _ = test.assertEqual("hello")(firstLine)
+                                                                in
+                                                                    let _ = test.assertEqual("world")(secondLine)
+                                                                    in test.assertEqual(0)(exitCode)
+
+// Runs `buildRealIrLetBoundStringModule`'s executable end to end: proves the linker's new 8-byte
+// absolute `R_X86_64_64` support (`DataRelocationPatch.dataPatchWidth`) is correct, not just that
+// it compiles — a string reached through a `let` binding, not `print`'s own direct argument.
+let testRunStaticExecutableForRealIrLetBoundStringModule unit =
+    match emitModule(buildRealIrLetBoundStringModule)("selfhostBackendRunLetBoundString")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunLetBoundString") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_let_bound_string_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_let_bound_string_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_let_bound_string_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("hello")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
+// Runs `buildRealIrRecordFieldStringModule`'s executable end to end: proves a `Str`-typed record
+// field round-trips through `SetAdtField`/`GetAdtField`/`match` exactly like any other field type.
+let testRunStaticExecutableForRealIrRecordFieldStringModule unit =
+    match emitModule(buildRealIrRecordFieldStringModule)("selfhostBackendRunRecordFieldString")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunRecordFieldString") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_record_field_string_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_record_field_string_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_record_field_string_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("hello")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2858,6 +2974,9 @@ let run unit =
     |> testRunStaticExecutableForRealIrStringLiteralModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testRunStaticExecutableForRealIrAllocAndStringLiteralModule
+    |> testRunStaticExecutableForRealIrTwoStringLiteralsModule
+    |> testRunStaticExecutableForRealIrLetBoundStringModule
+    |> testRunStaticExecutableForRealIrRecordFieldStringModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
