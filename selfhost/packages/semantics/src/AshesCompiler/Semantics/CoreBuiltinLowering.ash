@@ -404,18 +404,21 @@ let standardBuiltinLayout moduleName memberName scheme =
 
 let unitType = SemNamed(0)("Unit")([])
 
-// The number of distinct quantified-variable ids `standardBuiltinLayouts`' schemes use below
-// (currently just `print`'s single `(0, "a")`). `CoreLowering.ash`'s `initialState` starts its
-// per-lowering `TypeVariableSupply` at THIS value rather than `0`, permanently reserving
-// `[0, reservedBuiltinTypeVariableCount)` for these statically-embedded schemes so the supply's
-// own fresh variables can never collide with them. Getting this wrong is not a type error — it is
-// a genuine infinite loop: `TypeSchemes.ash`'s `instantiate` mints a substitution
-// `(quantifiedId, freshVariable)`, and if the fresh supply ever reissues `quantifiedId` itself, the
-// substitution becomes `(0, SemVariable(0))` — a self-mapping `Types.ash`'s `applySubstitution`
-// recurses on forever (confirmed via gdb: 2000+ identical stack frames, same argument, before the
-// native stack overflowed as a segfault). Bump this whenever a new entry below introduces another
-// distinct id.
-let reservedBuiltinTypeVariableCount = 1
+// The number of distinct quantified-variable ids used by EITHER `standardBuiltinLayouts`' schemes
+// below OR `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`'s `(0, "a")`;
+// `Maybe`'s `None`/`Some` sharing `(1, "a")`; `Result`'s `Ok`/`Error` sharing `(2, "e")` and
+// `(3, "a")`). `CoreLowering.ash`'s `initialState` starts its per-lowering `TypeVariableSupply` at
+// THIS value rather than `0`, permanently reserving `[0, reservedBuiltinTypeVariableCount)` for
+// these statically-embedded schemes so the supply's own fresh variables can never collide with
+// them. Getting this wrong is not a type error — it is a genuine infinite loop: `TypeSchemes.ash`'s
+// `instantiate` mints a substitution `(quantifiedId, freshVariable)`, and if the fresh supply ever
+// reissues `quantifiedId` itself, the substitution becomes `(0, SemVariable(0))` — a self-mapping
+// `Types.ash`'s `applySubstitution` recurses on forever (confirmed via gdb: 2000+ identical stack
+// frames, same argument, before the native stack overflowed as a segfault). Reusing one of these
+// reserved ids across two different static schemes (as `None`/`Some` do) is safe — each
+// `instantiate` call mints its own independent substitution — only a *live* supply value colliding
+// with a *reserved* id is the hazard. Bump this whenever a new entry introduces another distinct id.
+let reservedBuiltinTypeVariableCount = 4
 
 let standardBuiltinLayouts =
     [
