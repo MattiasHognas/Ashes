@@ -740,21 +740,29 @@ public static partial class DocumentService
                 ? global::Ashes.Formatter.EditorConfigFormattingOptionsResolver.ResolveForPath(filePath)
                 : new global::Ashes.Formatter.FormattingOptions { NewLine = "\n" });
 
-        var diag = new Diagnostics();
-        var program = new Parser(strippedSource, diag).ParseProgram();
-        if (diag.Errors.Count > 0)
+        var formattedBody = global::Ashes.Formatter.CommentReinserter.ToFixedPoint(strippedSource, current =>
+        {
+            var diag = new Diagnostics();
+            var program = new Parser(current, diag).ParseProgram();
+            if (diag.Errors.Count > 0)
+            {
+                return null;
+            }
+
+            var formatted = global::Ashes.Formatter.Formatter.Format(
+                program,
+                preferPipelines: current.Contains("|>", StringComparison.Ordinal)
+                    || current.Contains("|?>", StringComparison.Ordinal)
+                    || current.Contains("|!>", StringComparison.Ordinal),
+                options: formattingOptions);
+
+            return global::Ashes.Formatter.CommentReinserter.ReinsertStandaloneCommentLines(current, formatted, formattingOptions.NewLine);
+        });
+
+        if (formattedBody is null)
         {
             return null;
         }
-
-        var formattedBody = global::Ashes.Formatter.Formatter.Format(
-            program,
-            preferPipelines: strippedSource.Contains("|>", StringComparison.Ordinal)
-                || strippedSource.Contains("|?>", StringComparison.Ordinal)
-                || strippedSource.Contains("|!>", StringComparison.Ordinal),
-            options: formattingOptions);
-
-        formattedBody = global::Ashes.Formatter.CommentReinserter.ReinsertStandaloneCommentLines(strippedSource, formattedBody, formattingOptions.NewLine);
 
         if (header.HeaderLines.Count == 0)
         {
