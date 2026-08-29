@@ -506,6 +506,178 @@ let buildHeapClosureModule name context =
                                                                                                                 let _ = buildRet(callerBuilder)(result)
                                                                                                                 in (module_, callerBuilder))
 
+// The real Ashes RC header, per architecture.md's "RC allocation and layout": a 16-byte
+// `{i64 reference_count, i64 allocation_size}` header immediately before the payload, with the
+// public value pointer addressing the payload rather than the header. Defines
+// `ptr rcAlloc(i64 payloadSize)`: `malloc`s `16 + payloadSize` bytes, writes `count = 1` and the
+// requested size into the header, and returns a pointer past it (`buildGEP` over `i8` with a
+// scalar index doing plain byte-pointer arithmetic — no new LLVM C API surface for that, just a
+// different element type than every earlier struct/array `buildGEP` use).
+let defineRcAllocFunction module_ context headerType i8 mallocType mallocFn =
+    (let i64 = int64Type(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            match beginFunction(module_)(context)(None)("rcAlloc")(ptr)([i64])(1u32) with
+                | (function, fnType, builder) ->
+                    let payloadSize = getParam(function)(0u32)
+                    in
+                        let sixteen = constInt(i64)(16u64)(false)
+                        in
+                            let totalSize = buildAdd(builder)(sixteen)(payloadSize)("totalSize")
+                            in
+                                let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("headerPtr")
+                                in
+                                    let zeroIndex =
+                                        constInt(int32Type(context))(0u64)(false)
+                                    in
+                                        let oneIndex =
+                                            constInt(int32Type(context))(1u64)(false)
+                                        in
+                                            let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                            in
+                                                let sizeFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, oneIndex])(2u32)("sizeFieldPtr")
+                                                in
+                                                    let one = constInt(i64)(1u64)(false)
+                                                    in
+                                                        let _ =
+                                                            Unit
+                                                            |> (given (_) -> buildStore(builder)(one)(countFieldPtr))
+                                                            |> (given (_) -> buildStore(builder)(payloadSize)(sizeFieldPtr))
+                                                        in
+                                                            let payloadPtr = buildGEP(builder)(i8)(headerPtr)([sixteen])(1u32)("payloadPtr")
+                                                            in
+                                                                let _ = buildRet(builder)(payloadPtr)
+                                                                in (function, fnType, builder))
+
+// Walks a value pointer back to its RC header with a NEGATIVE byte offset (the mirror image of
+// `defineRcAllocFunction`'s forward one, and the same pointer arithmetic real `RcDup` needs, since
+// the public value pointer never carries the header with it) and increments the reference count.
+let defineRcRetainFunction module_ context existingBuilder headerType i8 ptr =
+    (let i64 = int64Type(context)
+    in
+        match beginFunction(module_)(context)(existingBuilder)("rcRetain")(ptr)([ptr])(1u32) with
+            | (function, fnType, builder) ->
+                let value = getParam(function)(0u32)
+                in
+                    let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                    in
+                        let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                        in
+                            let zeroIndex =
+                                constInt(int32Type(context))(0u64)(false)
+                            in
+                                let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                in
+                                    let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                    in
+                                        let newCount =
+                                            buildAdd(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                        in
+                                            let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                            in
+                                                let _ = buildRet(builder)(value)
+                                                in (function, fnType, builder))
+
+// The `RcDrop` mirror of `defineRcRetainFunction`: decrements the count and, on the last
+// reference, frees the ORIGINAL header pointer `malloc` returned — never the value pointer the
+// caller passed in — matching architecture.md's "on the last reference it ... releases the cell."
+// A leaf payload with no owned children is deliberately the only case handled: the type-directed
+// child-drop path a real ADT needs is a separate, bigger slice.
+let defineRcReleaseFunction module_ context existingBuilder headerType i8 ptr freeType freeFn =
+    (let i64 = int64Type(context)
+    in
+        match beginFunction(module_)(context)(existingBuilder)("rcRelease")(voidType(context))([ptr])(1u32) with
+            | (function, fnType, builder) ->
+                let value = getParam(function)(0u32)
+                in
+                    let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                    in
+                        let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                        in
+                            let zeroIndex =
+                                constInt(int32Type(context))(0u64)(false)
+                            in
+                                let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                in
+                                    let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                    in
+                                        let newCount =
+                                            buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                        in
+                                            let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                            in
+                                                let isZero =
+                                                    buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                in
+                                                    let freeBlock = appendBasicBlock(context)(function)("free")
+                                                    in
+                                                        let doneBlock = appendBasicBlock(context)(function)("done")
+                                                        in
+                                                            let _ = buildCondBr(builder)(isZero)(freeBlock)(doneBlock)
+                                                            in
+                                                                let _ =
+                                                                    Unit
+                                                                    |> (given (_) -> positionBuilderAtEnd(builder)(freeBlock))
+                                                                    |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                    |> (given (_) -> buildRetVoid(builder))
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                    in
+                                                                        let _ = buildRetVoid(builder)
+                                                                        in (function, fnType, builder))
+
+// The mechanism every earlier slice in this arc has been building toward: a real RC cell,
+// allocated, retained, released once (not yet zero), read back while still alive, then released
+// again (now zero, actually freed) — `rcCellLifecycle() { p = rcAlloc(4); *p = 42; rcRetain(p);
+// rcRelease(p); v = *p; rcRelease(p); ret i32 v }`. Multi-field/ADT payloads, owned-child release,
+// and atomicity are all deliberately out of scope; this proves the count itself is correct.
+let buildRcCellLifecycleModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let mallocType = functionType(ptr)([i64])(1u32)(false)
+                            in
+                                let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                in
+                                    let freeType =
+                                        functionType(voidType(context))([ptr])(1u32)(false)
+                                    in
+                                        let freeFn = addFunction(module_)("free")(freeType)
+                                        in
+                                            match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                    match defineRcRetainFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr) with
+                                                        | (rcRetainFunction, rcRetainType, retainBuilder) ->
+                                                            match defineRcReleaseFunction(module_)(context)(Some(retainBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                                | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                                    match beginFunction(module_)(context)(Some(releaseBuilder))("rcCellLifecycle")(i32)([])(0u32) with
+                                                                        | (_, _, builder) ->
+                                                                            let cell = buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)("cell")
+                                                                            in
+                                                                                let _ =
+                                                                                    buildStore(builder)(constInt(i32)(42u64)(false))(cell)
+                                                                                in
+                                                                                    let _ = buildCall(builder)(rcRetainType)(rcRetainFunction)([cell])(1u32)("retained")
+                                                                                    in
+                                                                                        let _ = buildCall(builder)(rcReleaseType)(rcReleaseFunction)([cell])(1u32)("")
+                                                                                        in
+                                                                                            let loaded = buildLoad(builder)(i32)(cell)("loaded")
+                                                                                            in
+                                                                                                let _ = buildCall(builder)(rcReleaseType)(rcReleaseFunction)([cell])(1u32)("")
+                                                                                                in
+                                                                                                    let _ = buildRet(builder)(loaded)
+                                                                                                    in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -658,6 +830,11 @@ let testEmitAssemblyForHeapClosureModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("makeAndCallClosure")
 
+let testEmitAssemblyForRcCellLifecycleModule unit =
+    match emitModule(buildRcCellLifecycleModule)("selfhost-backend-rc-cell-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcCellLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -673,6 +850,7 @@ let run unit =
     |> testEmitAssemblyForOptionUnwrapModule
     |> testEmitAssemblyForClosureCallModule
     |> testEmitAssemblyForHeapClosureModule
+    |> testEmitAssemblyForRcCellLifecycleModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

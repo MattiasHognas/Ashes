@@ -55,6 +55,7 @@ export (
     value appendBasicBlock,
     value constInt,
     value buildRet,
+    value buildRetVoid,
     value verifyModule,
     value verifierAbortProcessAction,
     value verifierPrintMessageAction,
@@ -78,6 +79,7 @@ export (
     value hostCpuFeatures,
     value getParam,
     value buildAdd,
+    value buildSub,
     value buildICmp,
     value intPredicateEq,
     value intPredicateSgt,
@@ -126,6 +128,7 @@ external LLVMAddFunction(LLVMModuleRef, Str, LLVMTypeRef) -> LLVMValueRef = "LLV
 external LLVMAppendBasicBlockInContext(LLVMContextRef, LLVMValueRef, Str) -> LLVMBasicBlockRef = "LLVMAppendBasicBlockInContext@libLLVM.so"
 external LLVMConstInt(LLVMTypeRef, u64, Bool) -> LLVMValueRef = "LLVMConstInt@libLLVM.so"
 external LLVMBuildRet(LLVMBuilderRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildRet@libLLVM.so"
+external LLVMBuildRetVoid(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildRetVoid@libLLVM.so"
 external LLVMDisposeMessage(*u8) -> void = "LLVMDisposeMessage@libLLVM.so"
 external LLVMVerifyModule(LLVMModuleRef, u32, out FfiStr(owned LLVMDisposeMessage)) -> Bool = "LLVMVerifyModule@libLLVM.so"
 external LLVMInitializeX86TargetInfo() -> void = "LLVMInitializeX86TargetInfo@libLLVM.so"
@@ -148,6 +151,7 @@ external LLVMGetHostCPUName() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHost
 external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGetHostCPUFeatures@libLLVM.so"
 external LLVMGetParam(LLVMValueRef, u32) -> LLVMValueRef = "LLVMGetParam@libLLVM.so"
 external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAdd@libLLVM.so"
+external LLVMBuildSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSub@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
 external LLVMBuildCondBr(LLVMBuilderRef, LLVMValueRef, LLVMBasicBlockRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildCondBr@libLLVM.so"
 external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMBuildBr@libLLVM.so"
@@ -191,6 +195,8 @@ let appendBasicBlock context function name = LLVMAppendBasicBlockInContext(conte
 let constInt type_ value signExtend = LLVMConstInt(type_)(value)(signExtend)
 
 let buildRet builder value = LLVMBuildRet(builder)(value)
+
+let buildRetVoid builder = LLVMBuildRetVoid(builder)
 
 let verifierAbortProcessAction = 0u32
 
@@ -276,6 +282,8 @@ let hostCpuFeatures unit = LLVMGetHostCPUFeatures(Unit)
 let getParam function index = LLVMGetParam(function)(index)
 
 let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)
+
+let buildSub builder lhs rhs name = LLVMBuildSub(builder)(lhs)(rhs)(name)
 
 // `LLVMIntPredicate` (llvm-c/Core.h). Only the two values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.

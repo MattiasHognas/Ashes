@@ -1542,9 +1542,11 @@ same public behavior.
   verifying, and emitting a small real function (constants, arithmetic, branching, recursion-free
   calls, globals, external libc calls, structs, a C-string-shaped byte array, a tagged-union ADT
   `match` built from those same struct/GEP/branch primitives, a minimal closure-shaped indirect
-  call through a function-pointer value loaded out of a struct field, and that same closure struct
-  heap-allocated via `malloc`/`free` rather than a stack `alloca`, as of this writing) to genuine
-  linux-x64 ELF objects and assembly listings, checked with `readelf` and,
+  call through a function-pointer value loaded out of a struct field, that same closure struct
+  heap-allocated via `malloc`/`free` rather than a stack `alloca`, and a real RC cell matching this
+  doc's own header layout below — allocate/retain/release/read-while-alive/release-to-zero-and-free
+  — as of this writing) to genuine linux-x64 ELF objects and assembly listings, checked with
+  `readelf` and,
   independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
   test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
