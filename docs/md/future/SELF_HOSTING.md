@@ -1548,8 +1548,10 @@ same public behavior.
   through a function-pointer value on both a stack and a heap-allocated struct, and RC end to end —
   a cell matching this doc's own header layout, cascading release to an owned child, and
   tag-directed dispatch over which fields actually get dropped, including a `Node` arm that drops
-  more than one owned field in sequence). The bindings resolve a bare `libLLVM.so`/`.dll` via the
-  executable's own `$ORIGIN`
+  more than one owned field in sequence, and the Perceus reuse contract's token handoff — a drop
+  that reaches zero hands its freed memory back as a token instead of calling `free`, and a
+  subsequent alloc consumes that token instead of calling `malloc`). The bindings resolve a bare
+  `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
