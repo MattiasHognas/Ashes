@@ -1893,13 +1893,31 @@ same public behavior.
   complete self-hosted pipeline and prints `42`; the same on a user-defined `type Shape = Circle(Int)
   | Square(Int)` matching `Circle(7)` prints `7` — pattern field extraction working for the first
   time, closing the exact gap `buildRealIrMultiConstructorModule`'s own entry named ("cannot be read
-  back without `match`"). **Explicitly still open**: guard clauses, nested/or-patterns, matching a
-  scrutinee whose type is never otherwise pinned to a concrete type by the surrounding program (hit
-  incidentally while testing the `None` arm alone — `Ashes.IO.print`'s builtin dispatch needs a
-  concrete argument type and this minimal pipeline's `None` literal has nothing to unify it with
-  absent another concrete use of the same value, an inference-completeness gap unrelated to `match`
-  itself), and any arm whose bound field is itself RC-managed (this item's own scrutinee drop is a
-  leaf `RcDrop`, not a cascading one — see the still-open cascading-`RcDrop` item elsewhere in this
+  back without `match`"). Guard clauses (`| Some(v) when v > 0 -> ...`, both the guard-true and
+  guard-fails-falls-through-to-next-arm paths) and or-patterns (`| Circle(n) | Square(n) -> ...`)
+  were verified separately and ALSO need zero further codegen — they compile to the exact same
+  `CmpIntGt`/`JumpIfFalse`/`GetAdtField` instructions already covered, confirming the "the lowering
+  was already done, only codegen was missing" pattern holds more broadly than just the two-arm case.
+  **Explicitly still open**: matching a scrutinee whose type is never otherwise pinned to a concrete
+  type by the surrounding program (hit incidentally while testing the `None` arm alone —
+  `Ashes.IO.print`'s builtin dispatch needs a concrete argument type and this minimal pipeline's
+  `None` literal has nothing to unify it with absent another concrete use of the same value, an
+  inference-completeness gap unrelated to `match` itself), and any arm whose bound field is itself
+  RC-managed (this item's own scrutinee drop is a leaf `RcDrop`, not a cascading one — see the
+  still-open cascading-`RcDrop` item elsewhere in this checklist).
+  **A tag-GROUPED match (3+ arms where multiple share a constructor tag, or any arm the optimizer
+  merges via `lowerMatchArmsViaTagGroups`/`CoreTagGroup`) needs the `SwitchTag`/`IrSwitchCase`
+  instruction, which `IrCodegen.ash` does not yet implement.** A same-session attempt to add it hit
+  a real, reproducible, but NOT YET ROOT-CAUSED memory-corruption bug: see
+  `project_selfhost_backend_llvm_bindings_package.md`'s dated entry for the full investigation
+  (gdb hardware inspection, `--explain rc`/`--explain memory`/`--emit-ir final` traces, multiple
+  isolated reproductions). Key finding for whoever picks this up: the corruption reproduces in a
+  MINIMAL hand-built `IrFunction` using only static string literals for case labels — no
+  `CoreLowering.ash` tag-group lowering involved at all — so the bug is in
+  `AshesCompiler.Backend.IrCodegen.ash`'s own `SwitchTag`/`addSwitchCases`/`createLabelBlocks`
+  interaction (or, less likely, in stage-0's compilation of that exact code shape), not in the
+  semantics package. The `SwitchTag` codegen implementation attempted here was reverted rather than
+  landed, since it could not be verified safe even in the isolated case.
   checklist).
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
