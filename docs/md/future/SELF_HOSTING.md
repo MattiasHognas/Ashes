@@ -1534,14 +1534,18 @@ same public behavior.
   `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
   `AshesCompiler.Backend.Llvm` binds a small subset (context/module/builder/type/value/basic-block
   creation, `functionType`, `addFunction`, `appendBasicBlock`, `getParam`, `constInt`, `buildAdd`,
-  `buildRet`, `verifyModule`, x86 target initialization, `getTargetFromTriple`, host-CPU detection,
+  `buildICmp`, `buildCondBr`, `buildBr`, `buildAlloca`, `buildStore`, `buildLoad`, `buildRet`,
+  `verifyModule`, x86 target initialization, `getTargetFromTriple`, host-CPU detection,
   `createTargetMachine`, `applyDataLayout`, `targetMachineEmitToMemoryBuffer`, and the memory-buffer
-  accessors) and `selfhost/tests/backend` proves it builds, verifies, and emits both a zero-parameter
-  function and a one-parameter function using real arithmetic (`i32 addOne(i32 x) { ret i32 (x + 1) }`)
-  to genuine linux-x64 ELF objects and assembly listings end to end (checked with `readelf` and,
-  independently, exact-instruction assembly dumps — `movl %edi, %eax; addl $1, %eax; retq` for
-  `addOne` — not just a byte-length assertion in the test itself). The bindings resolve a bare
-  `libLLVM.so`/`.dll` via the executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order
+  accessors) and `selfhost/tests/backend` proves it builds, verifies, and emits a zero-parameter
+  function, a one-parameter function using real arithmetic
+  (`i32 addOne(i32 x) { ret i32 (x + 1) }`), and a two-parameter branching function across four
+  basic blocks using the no-`phi` alloca/store/load slot pattern
+  (`i32 max(i32 a, i32 b) { if a > b then a else b }`) to genuine linux-x64 ELF objects and assembly
+  listings end to end (checked with `readelf` and, independently, exact-instruction assembly dumps
+  — `movl %edi, %eax; addl $1, %eax; retq` for `addOne`, `cmpl %esi, %edi; jle ...` for `max` — not
+  just a byte-length assertion in the test itself). The bindings resolve a bare `libLLVM.so`/`.dll`
+  via the executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order
   (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.

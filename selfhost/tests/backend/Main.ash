@@ -55,6 +55,59 @@ let buildAddOneModule name context =
                                             let _ = buildRet(builder)(sum)
                                             in (module_, builder))
 
+// A two-parameter, branching function (`i32 max(i32 a, i32 b) { if a > b then a else b }`),
+// proving `buildICmp`/`buildCondBr`/`buildBr` and the no-`phi` alloca/store/load slot pattern all
+// work together across four basic blocks.
+let buildMaxModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let fnType = functionType(i32)([i32, i32])(2u32)(false)
+            in
+                let function = addFunction(module_)("max")(fnType)
+                in
+                    let entryBlock = appendBasicBlock(context)(function)("entry")
+                    in
+                        let thenBlock = appendBasicBlock(context)(function)("then")
+                        in
+                            let elseBlock = appendBasicBlock(context)(function)("else")
+                            in
+                                let mergeBlock = appendBasicBlock(context)(function)("merge")
+                                in
+                                    let builder = createBuilder(context)
+                                    in
+                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                        in
+                                            let a = getParam(function)(0u32)
+                                            in
+                                                let b = getParam(function)(1u32)
+                                                in
+                                                    let slot = buildAlloca(builder)(i32)("result")
+                                                    in
+                                                        let cond = buildICmp(builder)(intPredicateSgt)(a)(b)("cmp")
+                                                        in
+                                                            let _ = buildCondBr(builder)(cond)(thenBlock)(elseBlock)
+                                                            in
+                                                                let _ = positionBuilderAtEnd(builder)(thenBlock)
+                                                                in
+                                                                    let _ = buildStore(builder)(a)(slot)
+                                                                    in
+                                                                        let _ = buildBr(builder)(mergeBlock)
+                                                                        in
+                                                                            let _ = positionBuilderAtEnd(builder)(elseBlock)
+                                                                            in
+                                                                                let _ = buildStore(builder)(b)(slot)
+                                                                                in
+                                                                                    let _ = buildBr(builder)(mergeBlock)
+                                                                                    in
+                                                                                        let _ = positionBuilderAtEnd(builder)(mergeBlock)
+                                                                                        in
+                                                                                            let result = buildLoad(builder)(i32)(slot)("result_value")
+                                                                                            in
+                                                                                                let _ = buildRet(builder)(result)
+                                                                                                in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -162,12 +215,18 @@ let testEmitAssemblyForAddOneModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("addOne")
 
+let testEmitAssemblyForMaxModule unit =
+    match emitModule(buildMaxModule)("selfhost-backend-max-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("max")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
     |> testEmitObjectFileForTrivialModule
     |> testEmitAssemblyForTrivialModule
     |> testEmitAssemblyForAddOneModule
+    |> testEmitAssemblyForMaxModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
