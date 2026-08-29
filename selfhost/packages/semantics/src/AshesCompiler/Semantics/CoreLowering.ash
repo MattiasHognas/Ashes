@@ -340,12 +340,65 @@ let initialStateWithLayouts layouts unit = initialStateWithContext(layouts)([])(
 // zero-field ADT would, so it has to be intrinsic like `standardBuiltinLayouts`, not something
 // every caller re-supplies. `tag = 0`, no fields, matching `AllocAdt Tag=0 FieldCount=0` in
 // stage-0's own `--emit-ir` dump for any `Unit`-returning call.
+//
+// `Maybe` and `Result` get the same intrinsic treatment for the same reason: language.md states
+// both "`Maybe` is always available; no import is required" and "`Result` is always available; no
+// import is required". Tags/field counts match stage-0's own `--emit-ir` dump exactly (probed via
+// `let x = Some(42)`/`None`/`Ok(1)`/`Error("e")`, each `x` on its own trailing line): `None` is
+// `AllocAdt Tag=0 FieldCount=0`, `Some` is `AllocAdt Tag=1 FieldCount=1` (+ one `SetAdtField`), `Ok`
+// is `AllocAdt Tag=0 FieldCount=1`, `Error` is `AllocAdt Tag=1 FieldCount=1` — `Maybe` and `Result`
+// each number their own tags from 0, not a single tag space shared across every ADT. `fieldNames`
+// stays `[]` for all four the same way it does for `Unit`: these are plain positional constructors,
+// never constructed with record syntax, and `fieldNames` only matters for the record-construction
+// path (see `findRecordLayout`). Quantified ids `1`-`3` are fresh past `print`'s own `0` (see
+// `reservedBuiltinTypeVariableCount`'s comment for why an unused id would be unsafe); `Some` and
+// `None` both reuse id `1` for their own `a`, which is fine because `instantiate` mints an
+// independent substitution per call — only a *live* supply value colliding with a *reserved* id is
+// the actual hazard, not two static schemes sharing one.
+let maybeElementType = SemVariable(1)
+
+let maybeType = SemNamed(0)("Maybe")([maybeElementType])
+
+let resultErrorType = SemVariable(2)
+
+let resultValueType = SemVariable(3)
+
+let resultType = SemNamed(0)("Result")([resultErrorType, resultValueType])
+
 let standardConstructorLayouts =
     [
         CoreConstructorLayout(
             name = "Unit",
             tag = 0,
             scheme = TypeScheme(quantified = [], body = SemNamed(0)("Unit")([]), constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "None",
+            tag = 0,
+            scheme = TypeScheme(quantified = [(1, "a")], body = maybeType, constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "Some",
+            tag = 1,
+            scheme = TypeScheme(quantified = [(1, "a")], body = SemFunction(maybeElementType)(maybeType)(None), constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "Ok",
+            tag = 0,
+            scheme = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(resultValueType)(resultType)(None), constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        ),
+        CoreConstructorLayout(
+            name = "Error",
+            tag = 1,
+            scheme = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(resultErrorType)(resultType)(None), constraints = []),
             fieldNames = [],
             isZeroCost = false
         )

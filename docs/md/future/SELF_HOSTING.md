@@ -1689,6 +1689,23 @@ same public behavior.
   suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it. Also
   confirmed `panic`/`exit`/`writeLine` all type-check and lower cleanly in the same process,
   proving the mechanism generalizes past a single hand-wired builtin.
+- [x] `CoreLowering.ash`'s `standardConstructorLayouts` grew past `Unit` to cover `Maybe`'s
+  `None`/`Some` and `Result`'s `Ok`/`Error`: language.md states both "`Maybe` is always available;
+  no import is required" and "`Result` is always available; no import is required", so — same
+  reasoning as `standardBuiltinLayouts` above — these have to be intrinsic constructors, not
+  something a caller supplies. Tags/field counts were pulled from stage-0's own `--emit-ir` dump
+  (`let x = Some(42)` / `None` / `Ok(1)` / `Error("e")`, `x` trailing): `None` is `AllocAdt Tag=0
+  FieldCount=0`, `Some` is `AllocAdt Tag=1 FieldCount=1` (+ `SetAdtField`), `Ok` is `AllocAdt Tag=0
+  FieldCount=1`, `Error` is `AllocAdt Tag=1 FieldCount=1` — each type numbers its own tags from `0`.
+  `reservedBuiltinTypeVariableCount` grew from `1` to `4` for the new quantified ids this
+  introduces (`Maybe`'s shared `a`, `Result`'s `e`/`a`); reusing one reserved id across two
+  different static schemes (`None` and `Some` both use the same `a`) is safe, since `instantiate`
+  mints an independent substitution per call — only a *live* supply value colliding with a
+  *reserved* id was ever the hazard (see the `print` bullet above). This was surfaced while probing
+  what self-hosted's own `CoreLowering` produces for a genuinely RC-managed value (`Some(42)`) in
+  preparation for wiring `IrCodegen`'s RC-managed `AllocAdt`/`SetAdtField`/`Borrow`/`RcDrop` support
+  — that probe failed outright with `UnknownLoweringBinding("Some")` before this fix, since
+  `Maybe`'s constructors weren't resolvable at all.
 - [~] `AshesCompiler.Backend.ElfLinker` gained dynamic linking: `.text` relocations against a
   known external symbol (`malloc`/`free`, matching `LlvmImageLinkerElf.cs`'s own
   `CollectLinuxDynamicImports`/`BuildLinuxDynamicImportLayout`/`BuildLinuxElfHash` port-for-port)
