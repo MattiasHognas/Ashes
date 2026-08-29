@@ -70,43 +70,45 @@ let testEmitObjectFileForTrivialModule unit =
                                                                     in
                                                                         let _ = setTarget(module_)("x86_64-unknown-linux-gnu")
                                                                         in
-                                                                            match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                                                                                | (emitIsBroken, _, bufferOpt) ->
-                                                                                    let _ = test.assertEqual(false)(emitIsBroken)
-                                                                                    in
-                                                                                        match bufferOpt with
-                                                                                            | None -> test.fail("expected an emitted object buffer")
-                                                                                            | Some(buffer) ->
-                                                                                                let size = getBufferSize(buffer)
-                                                                                                in
-                                                                                                    let start = getBufferStart(buffer)
+                                                                            let _ = applyDataLayout(module_)(machine)
+                                                                            in
+                                                                                match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
+                                                                                    | (emitIsBroken, _, bufferOpt) ->
+                                                                                        let _ = test.assertEqual(false)(emitIsBroken)
+                                                                                        in
+                                                                                            match bufferOpt with
+                                                                                                | None -> test.fail("expected an emitted object buffer")
+                                                                                                | Some(buffer) ->
+                                                                                                    let size = getBufferSize(buffer)
                                                                                                     in
-                                                                                                        match Ashes.Ffi.copyBytes(start)(size) with
-                                                                                                            | Error(message) -> test.fail("copyBytes failed: " + message)
-                                                                                                            | Ok(bytes) ->
-                                                                                                                Unit
-                                                                                                                |> (given (_) -> disposeMemoryBuffer(buffer))
-                                                                                                                |> (given (_) -> disposeTargetMachine(machine))
-                                                                                                                |> (given (_) -> disposeBuilder(builder))
-                                                                                                                |> (given (_) -> disposeModule(module_))
-                                                                                                                |> (given (_) -> contextDispose(context))
-                                                                                                                |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(bytes) > 0))
-                                                                                                                |> (given (_) ->
-                                                                                                                    0
-                                                                                                                    |> Ashes.Byte.get(bytes)
-                                                                                                                    |> test.assertEqual(127u8))
-                                                                                                                |> (given (_) ->
-                                                                                                                    1
-                                                                                                                    |> Ashes.Byte.get(bytes)
-                                                                                                                    |> test.assertEqual(69u8))
-                                                                                                                |> (given (_) ->
-                                                                                                                    2
-                                                                                                                    |> Ashes.Byte.get(bytes)
-                                                                                                                    |> test.assertEqual(76u8))
-                                                                                                                |> (given (_) ->
-                                                                                                                    3
-                                                                                                                    |> Ashes.Byte.get(bytes)
-                                                                                                                    |> test.assertEqual(70u8)))
+                                                                                                        let start = getBufferStart(buffer)
+                                                                                                        in
+                                                                                                            match Ashes.Ffi.copyBytes(start)(size) with
+                                                                                                                | Error(message) -> test.fail("copyBytes failed: " + message)
+                                                                                                                | Ok(bytes) ->
+                                                                                                                    Unit
+                                                                                                                    |> (given (_) -> disposeMemoryBuffer(buffer))
+                                                                                                                    |> (given (_) -> disposeTargetMachine(machine))
+                                                                                                                    |> (given (_) -> disposeBuilder(builder))
+                                                                                                                    |> (given (_) -> disposeModule(module_))
+                                                                                                                    |> (given (_) -> contextDispose(context))
+                                                                                                                    |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(bytes) > 0))
+                                                                                                                    |> (given (_) ->
+                                                                                                                        0
+                                                                                                                        |> Ashes.Byte.get(bytes)
+                                                                                                                        |> test.assertEqual(127u8))
+                                                                                                                    |> (given (_) ->
+                                                                                                                        1
+                                                                                                                        |> Ashes.Byte.get(bytes)
+                                                                                                                        |> test.assertEqual(69u8))
+                                                                                                                    |> (given (_) ->
+                                                                                                                        2
+                                                                                                                        |> Ashes.Byte.get(bytes)
+                                                                                                                        |> test.assertEqual(76u8))
+                                                                                                                    |> (given (_) ->
+                                                                                                                        3
+                                                                                                                        |> Ashes.Byte.get(bytes)
+                                                                                                                        |> test.assertEqual(70u8)))
 
 let run unit =
     Unit

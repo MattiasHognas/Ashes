@@ -1556,9 +1556,10 @@ same public behavior.
   and `--parallel-stack-size` reach codegen as compile options and must keep their documented
   defaults ([CLI reference](../reference/cli.md)). `selfhost/packages/backend` selects the
   `x86_64-unknown-linux-gnu` triple, creates a target machine with empty `cpu`/`features` strings
-  (no host-CPU detection bound yet), and emits an object file to a memory buffer — but never sets a
-  data layout on the module, has no optimization-level selection beyond a hardcoded `None`, and
-  binds none of the other three target RIDs.
+  (no host-CPU detection bound yet), applies the target machine's data layout to the module
+  (`applyDataLayout`, mirroring `LlvmTargetSetup.cs`'s own helper), and emits an object file to a
+  memory buffer — but has no optimization-level selection beyond a hardcoded `None` and binds none
+  of the other three target RIDs.
 - [ ] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
   allocations, RC/drop/reuse, globals, and calls. Source of truth: `LlvmCodegen.cs`,
   `LlvmCodegenExpressions.cs`, and `LlvmCodegenMemory.cs` (allocation, RC headers and free-list bins,
