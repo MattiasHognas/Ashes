@@ -1872,7 +1872,7 @@ let codegenRealSource source name context =
             match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
                 | CoreLoweringResult { program = Some(lowered), error = None } ->
                     match lowered with
-                        | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
+                        | IrProgram { entryFunction = entryFunction, stringLiterals = stringLiterals } -> codegenEntryFunction(name)(context)(entryFunction)(stringLiterals)
                 | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
                 | _ -> test.fail("lowering produced no program")
         | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
@@ -1904,6 +1904,15 @@ let buildRealIrConditionalModule name context = codegenRealSource("if 1 > 0 then
 // language.md's "qualified access (no import required)"), proving the real language semantics —
 // no `import`, no caller-supplied glue — not just a case this test file happened to wire up.
 let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 - 84)")(name)(context)
+
+// The first real string literal this compiler has taken from source to a running executable.
+// `CoreBuiltinLowering.ash`'s `printValue` already dispatches `Ashes.IO.print` to `PrintStr` for a
+// `SemString`-typed argument (confirmed by reading it — this was not new lowering work, only its
+// codegen was missing), so a plain string literal print needed nothing beyond `LoadConstStr` (a
+// `.rodata`-shaped global per literal, matching `EmitHeapStringLiteral`'s exact layout) and
+// `PrintStr` (write the value's own `[len][bytes]` payload via the raw `write` syscall, then a
+// newline) in `IrCodegen`. Prints `hello`.
+let buildRealIrStringLiteralModule name context = codegenRealSource("Ashes.IO.print(\"hello\")")(name)(context)
 
 // `Some(42)` allocates via a field-carrying constructor, and `x` is never referenced again, so
 // lowering also releases it with a single `RcDrop` immediately. `x` is never read back (no
@@ -1953,7 +1962,7 @@ let buildAdtFieldTagReadModule name context =
                 origin = None,
                 lifetimesPlaced = false
             )
-        in codegenEntryFunction(name)(context)(irFunction))
+        in codegenEntryFunction(name)(context)(irFunction)([]))
 
 // The first real-IR module driven by a USER-DEFINED type declaration, not one of the intrinsic
 // `Unit`/`Maybe`/`Result` constructors: `CoreLowering.ash`'s `registerTopLevelTypeDeclaration`
@@ -2321,6 +2330,33 @@ let testRunStaticExecutableForRealIrPrintModule unit =
                                                         let _ = test.assertEqual("-42")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrStringLiteralModule`'s executable end to end: `LoadConstStr`'s global and
+// `PrintStr`'s syscall-based write, proven on a real Linux process, not just a hand-inspected IR
+// shape.
+let testRunStaticExecutableForRealIrStringLiteralModule unit =
+    match emitModule(buildRealIrStringLiteralModule)("selfhostBackendRunStringLit")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunStringLit") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_string_lit_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_string_lit_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_string_lit_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("hello")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // Runs `buildRealIrSomeConstructorModule`'s executable end to end, same shape as
 // `testRunStaticExecutableForRealIrPrintModule` above: proves the RC-managed `AllocAdt`/
 // `SetAdtField`/`RcDrop` codegen links (dynamically, since it calls real `malloc`/`free`) and runs
@@ -2556,6 +2592,7 @@ let run unit =
     |> testLinkStaticExecutableForRealIrArithmeticModule
     |> testLinkStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrPrintModule
+    |> testRunStaticExecutableForRealIrStringLiteralModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForRealIrRecordFieldModule
