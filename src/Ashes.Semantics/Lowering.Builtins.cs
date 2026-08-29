@@ -2442,6 +2442,8 @@ public sealed partial class Lowering
             case Expr.Cons x: return ContainsAsyncSpawn(x.Head) || ContainsAsyncSpawn(x.Tail);
             case Expr.BitwiseNot x: return ContainsAsyncSpawn(x.Operand);
             case Expr.LogicalNot x: return ContainsAsyncSpawn(x.Operand);
+            case Expr.LogicalAnd x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
+            case Expr.LogicalOr x: return ContainsAsyncSpawn(x.Left) || ContainsAsyncSpawn(x.Right);
             case Expr.Await x: return ContainsAsyncSpawn(x.Task);
             case Expr.Call x: return ContainsAsyncSpawn(x.Func) || ContainsAsyncSpawn(x.Arg);
             case Expr.If x: return ContainsAsyncSpawn(x.Cond) || ContainsAsyncSpawn(x.Then) || ContainsAsyncSpawn(x.Else);
@@ -2660,8 +2662,6 @@ public sealed partial class Lowering
             case Expr.LessOrEqual x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.Equal x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.NotEqual x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
-            case Expr.ResultPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
-            case Expr.ResultMapErrorPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             case Expr.Cons x: return ExprContainsAwait(x.Head) || ExprContainsAwait(x.Tail);
             case Expr.BitwiseNot x: return ExprContainsAwait(x.Operand);
             case Expr.LogicalNot x: return ExprContainsAwait(x.Operand);
@@ -2690,6 +2690,21 @@ public sealed partial class Lowering
                 }
 
                 return false;
+            default:
+                return ExprContainsAwaitRemaining(expr);
+        }
+    }
+
+    // The remaining binary-operator shapes of ExprContainsAwait, split out to stay under the
+    // per-method statement limit.
+    private static bool ExprContainsAwaitRemaining(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.ResultPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.ResultMapErrorPipe x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.LogicalAnd x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
+            case Expr.LogicalOr x: return ExprContainsAwait(x.Left) || ExprContainsAwait(x.Right);
             default:
                 return false;
         }
@@ -2722,8 +2737,6 @@ public sealed partial class Lowering
             case Expr.LessOrEqual x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
             case Expr.Equal x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
             case Expr.NotEqual x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
-            case Expr.ResultPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
-            case Expr.ResultMapErrorPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
             case Expr.Cons x: return ContainsAwaitOutsideNestedLambda(x.Head) || ContainsAwaitOutsideNestedLambda(x.Tail);
             case Expr.BitwiseNot x: return ContainsAwaitOutsideNestedLambda(x.Operand);
             case Expr.LogicalNot x: return ContainsAwaitOutsideNestedLambda(x.Operand);
@@ -2754,6 +2767,21 @@ public sealed partial class Lowering
                 }
 
                 return false;
+            default:
+                return ContainsAwaitOutsideNestedLambdaRemaining(expr);
+        }
+    }
+
+    // The remaining binary-operator shapes of ContainsAwaitOutsideNestedLambda, split out to stay
+    // under the per-method statement limit.
+    private static bool ContainsAwaitOutsideNestedLambdaRemaining(Expr expr)
+    {
+        switch (expr)
+        {
+            case Expr.ResultPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.ResultMapErrorPipe x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.LogicalAnd x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
+            case Expr.LogicalOr x: return ContainsAwaitOutsideNestedLambda(x.Left) || ContainsAwaitOutsideNestedLambda(x.Right);
             default:
                 return false;
         }

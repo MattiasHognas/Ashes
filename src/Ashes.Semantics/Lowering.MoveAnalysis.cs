@@ -635,8 +635,10 @@ public sealed partial class Lowering
         {
             case Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
                 or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
-                or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot:
+                or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot:
                 return EnumerateChildrenArithmetic(e);
+            case Expr.LogicalNot or Expr.LogicalAnd or Expr.LogicalOr:
+                return EnumerateChildrenLogical(e);
             case Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
                 or Expr.Equal or Expr.NotEqual or Expr.ResultPipe or Expr.ResultMapErrorPipe
                 or Expr.Cons or Expr.Await:
@@ -661,7 +663,18 @@ public sealed partial class Lowering
             case Expr.ShiftLeft x: yield return x.Left; yield return x.Right; break;
             case Expr.ShiftRight x: yield return x.Left; yield return x.Right; break;
             case Expr.BitwiseNot x: yield return x.Operand; break;
+            default:
+                break;
+        }
+    }
+
+    private static IEnumerable<Expr> EnumerateChildrenLogical(Expr e)
+    {
+        switch (e)
+        {
             case Expr.LogicalNot x: yield return x.Operand; break;
+            case Expr.LogicalAnd x: yield return x.Left; yield return x.Right; break;
+            case Expr.LogicalOr x: yield return x.Left; yield return x.Right; break;
             default:
                 break;
         }
@@ -3569,6 +3582,7 @@ public sealed partial class Lowering
             or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
             or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor
             or Expr.ShiftLeft or Expr.ShiftRight or Expr.BitwiseNot or Expr.LogicalNot
+            or Expr.LogicalAnd or Expr.LogicalOr
             or Expr.GreaterThan or Expr.LessThan or Expr.GreaterOrEqual or Expr.LessOrEqual
             or Expr.Equal or Expr.NotEqual;
     }
@@ -4377,6 +4391,12 @@ public sealed partial class Lowering
             case Expr.NotEqual x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.ResultPipe x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
             case Expr.ResultMapErrorPipe x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
+            // Unlike `If`'s then/else (mutually exclusive alternatives, so max not sum), `&&`/`||`'s
+            // right operand is a possibly-skipped CONTINUATION of the same path, not an alternative
+            // to it: the worst case (right operand not skipped) executes both, so the conservative
+            // per-path bound is the sum, matching every other eager binary operator here.
+            case Expr.LogicalAnd x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
+            case Expr.LogicalOr x: return MaxPathOccurrences(name, x.Left) + MaxPathOccurrences(name, x.Right);
 
             default:
                 return MaxPathOccurrencesAggregates(name, e);
@@ -4950,6 +4970,8 @@ public sealed partial class Lowering
             Expr.NotEqual x => (x.Left, x.Right),
             Expr.ResultPipe x => (x.Left, x.Right),
             Expr.ResultMapErrorPipe x => (x.Left, x.Right),
+            Expr.LogicalAnd x => (x.Left, x.Right),
+            Expr.LogicalOr x => (x.Left, x.Right),
             _ => null,
         };
 
@@ -5022,6 +5044,8 @@ public sealed partial class Lowering
         {
             case Expr.ResultPipe x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
             case Expr.ResultMapErrorPipe x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.LogicalAnd x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
+            case Expr.LogicalOr x: CollectBinary(x.Left, x.Right, enclosing, scope); return;
 
             case Expr.Cons cons:
                 CollectBinary(cons.Head, cons.Tail, enclosing, scope);

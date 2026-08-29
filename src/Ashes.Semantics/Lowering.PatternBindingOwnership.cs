@@ -121,6 +121,18 @@ public sealed partial class Lowering
                 WalkPatternBindingOwnership(conditional.Then, lineages, functionScope, state, context);
                 WalkPatternBindingOwnership(conditional.Else, lineages, functionScope, state, context);
                 return;
+            // `&&`/`||` are short-circuit — like `If`, not like an eager binary operator below: the
+            // left operand is always evaluated (a real condition, `StructuralInspection`) but the
+            // right operand only runs conditionally, in the position an `If`'s taken branch would
+            // (so it propagates the caller's own `context` rather than getting a fixed one).
+            case Expr.LogicalAnd and:
+                WalkPatternBindingOwnership(and.Left, lineages, functionScope, state, PatternBindingUseContext.StructuralInspection);
+                WalkPatternBindingOwnership(and.Right, lineages, functionScope, state, context);
+                return;
+            case Expr.LogicalOr or:
+                WalkPatternBindingOwnership(or.Left, lineages, functionScope, state, PatternBindingUseContext.StructuralInspection);
+                WalkPatternBindingOwnership(or.Right, lineages, functionScope, state, context);
+                return;
             case Expr.Let let:
                 WalkPatternBindingOwnershipLet(let, lineages, functionScope, state, context);
                 return;

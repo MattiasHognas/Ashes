@@ -1822,14 +1822,14 @@ public sealed class Parser
 
     private Expr ParsePipe()
     {
-        var left = ParseComparison();
+        var left = ParseLogicalOr();
 
         while (_current.Kind == TokenKind.PipeGreater || _current.Kind == TokenKind.PipeQuestionGreater || _current.Kind == TokenKind.PipeBangGreater)
         {
             var start = AstSpans.GetOrDefault(left).Start;
             var op = _current.Kind;
             Consume(op);
-            var right = ParseComparison();
+            var right = ParseLogicalOr();
             left = op switch
             {
                 TokenKind.PipeGreater => RegisterExpr(new Expr.Call(right, left), start, AstSpans.GetOrDefault(right).End),
@@ -1837,6 +1837,36 @@ public sealed class Parser
                 TokenKind.PipeBangGreater => RegisterExpr(new Expr.ResultMapErrorPipe(left, right), start, AstSpans.GetOrDefault(right).End),
                 _ => throw new InvalidOperationException()
             };
+        }
+
+        return left;
+    }
+
+    private Expr ParseLogicalOr()
+    {
+        var left = ParseLogicalAnd();
+
+        while (_current.Kind == TokenKind.PipePipe)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            Consume(TokenKind.PipePipe);
+            var right = ParseLogicalAnd();
+            left = RegisterExpr(new Expr.LogicalOr(left, right), start, AstSpans.GetOrDefault(right).End);
+        }
+
+        return left;
+    }
+
+    private Expr ParseLogicalAnd()
+    {
+        var left = ParseComparison();
+
+        while (_current.Kind == TokenKind.AmpersandAmpersand)
+        {
+            var start = AstSpans.GetOrDefault(left).Start;
+            Consume(TokenKind.AmpersandAmpersand);
+            var right = ParseComparison();
+            left = RegisterExpr(new Expr.LogicalAnd(left, right), start, AstSpans.GetOrDefault(right).End);
         }
 
         return left;

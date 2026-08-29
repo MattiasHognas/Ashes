@@ -571,6 +571,39 @@ public sealed partial class Lowering
         return (target, new TypeRef.TBool());
     }
 
+    /// <summary>
+    /// Lowers short-circuit <c>Left &amp;&amp; Right</c> by desugaring to <c>if Left then Right else
+    /// false</c> and delegating to <see cref="LowerIf"/>. Unlike <c>+</c>/<c>==</c>, this can't be a
+    /// plain trait-dispatched binary op: the right operand must not be evaluated unless the left
+    /// operand is true, which no trait method call (always eager) can express. Reusing <see
+    /// cref="LowerIf"/> gets its ownership/TCO/reuse-token handling for free instead of duplicating
+    /// it for what is, semantically, exactly a two-armed conditional.
+    /// </summary>
+    private (int, TypeRef) LowerLogicalAnd(Expr.LogicalAnd and, LoweredValueRequest request)
+    {
+        var span = GetSpan(and);
+        var falseLit = new Expr.BoolLit(false);
+        AstSpans.Set(falseLit, span);
+        var desugared = new Expr.If(and.Left, and.Right, falseLit);
+        AstSpans.Set(desugared, span);
+        return LowerIf(desugared, request);
+    }
+
+    /// <summary>
+    /// Lowers short-circuit <c>Left || Right</c> by desugaring to <c>if Left then true else Right</c>
+    /// and delegating to <see cref="LowerIf"/>. See <see cref="LowerLogicalAnd"/> for why this can't
+    /// be a plain trait-dispatched binary op.
+    /// </summary>
+    private (int, TypeRef) LowerLogicalOr(Expr.LogicalOr or, LoweredValueRequest request)
+    {
+        var span = GetSpan(or);
+        var trueLit = new Expr.BoolLit(true);
+        AstSpans.Set(trueLit, span);
+        var desugared = new Expr.If(or.Left, trueLit, or.Right);
+        AstSpans.Set(desugared, span);
+        return LowerIf(desugared, request);
+    }
+
     private (int, TypeRef) LowerGreaterThan(Expr.GreaterThan gt)
     {
         using var diagnosticSpan = PushDiagnosticSpan(gt);

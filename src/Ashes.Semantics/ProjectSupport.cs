@@ -4793,6 +4793,14 @@ public static class ProjectSupport
                 VisitReferencedNames(pipe.Left, names, qualifiedReferences);
                 VisitReferencedNames(pipe.Right, names, qualifiedReferences);
                 break;
+            case Expr.LogicalAnd logicalAnd:
+                VisitReferencedNames(logicalAnd.Left, names, qualifiedReferences);
+                VisitReferencedNames(logicalAnd.Right, names, qualifiedReferences);
+                break;
+            case Expr.LogicalOr logicalOr:
+                VisitReferencedNames(logicalOr.Left, names, qualifiedReferences);
+                VisitReferencedNames(logicalOr.Right, names, qualifiedReferences);
+                break;
             default:
                 VisitReferencedNamesBindings(expr, names, qualifiedReferences);
                 break;

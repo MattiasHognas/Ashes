@@ -104,6 +104,16 @@ public abstract record Expr
     /// <summary>Boolean logical negation, <c>!Operand</c>.</summary>
     /// <param name="Operand">The boolean value to negate.</param>
     public sealed record LogicalNot(Expr Operand) : Expr;
+    /// <summary>Short-circuit logical and, <c>Left &amp;&amp; Right</c>: <c>Right</c> is evaluated only
+    /// when <c>Left</c> is <c>true</c>.</summary>
+    /// <param name="Left">The left operand, always evaluated.</param>
+    /// <param name="Right">The right operand, evaluated only when <paramref name="Left"/> is true.</param>
+    public sealed record LogicalAnd(Expr Left, Expr Right) : Expr;
+    /// <summary>Short-circuit logical or, <c>Left || Right</c>: <c>Right</c> is evaluated only when
+    /// <c>Left</c> is <c>false</c>.</summary>
+    /// <param name="Left">The left operand, always evaluated.</param>
+    /// <param name="Right">The right operand, evaluated only when <paramref name="Left"/> is false.</param>
+    public sealed record LogicalOr(Expr Left, Expr Right) : Expr;
     /// <summary>Greater-than comparison, <c>Left &gt; Right</c>.</summary>
     /// <param name="Left">The left operand.</param>
     /// <param name="Right">The right operand.</param>

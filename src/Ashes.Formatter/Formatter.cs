@@ -15,16 +15,18 @@ public static class Formatter
     private const int PrecLetIfLambda = 1;
     private const int PrecWith = 2;  // record update `e with f = e` (looser than pipe)
     private const int PrecPipe = 3;
-    private const int PrecCmp = 4;   // ==, !=, >=, <=  (lower than bitwise, + and ::)
-    private const int PrecBitOr = 5;
-    private const int PrecBitXor = 6;
-    private const int PrecBitAnd = 7;
-    private const int PrecCons = 8;
-    private const int PrecShift = 9;
-    private const int PrecAdd = 10;
-    private const int PrecMul = 11;
-    private const int PrecUnary = 12;
-    private const int PrecCall = 13;
+    private const int PrecLogicalOr = 4;   // ||
+    private const int PrecLogicalAnd = 5;  // &&
+    private const int PrecCmp = 6;   // ==, !=, >=, <=  (lower than bitwise, + and ::)
+    private const int PrecBitOr = 7;
+    private const int PrecBitXor = 8;
+    private const int PrecBitAnd = 9;
+    private const int PrecCons = 10;
+    private const int PrecShift = 11;
+    private const int PrecAdd = 12;
+    private const int PrecMul = 13;
+    private const int PrecUnary = 14;
+    private const int PrecCall = 15;
 
     /// <summary>Formats a whole <paramref name="program"/> with default options and no pipeline
     /// rewriting.</summary>
@@ -931,6 +933,8 @@ public static class Formatter
             Expr.Perform perform => IsSingleLine(perform.Operation, preferPipelines),
             Expr.RecordLit rl => !rl.IsMultiline && rl.Fields.All(f => IsSingleLine(f.Value, preferPipelines)),
             Expr.RecordUpdate ru => IsSingleLine(ru.Target, preferPipelines) && ru.Updates.All(f => IsSingleLine(f.Value, preferPipelines)),
+            Expr.LogicalAnd and => IsSingleLine(and.Left, preferPipelines) && IsSingleLine(and.Right, preferPipelines),
+            Expr.LogicalOr or => IsSingleLine(or.Left, preferPipelines) && IsSingleLine(or.Right, preferPipelines),
             _ => false
         };
     }
@@ -1304,6 +1308,8 @@ public static class Formatter
         Expr.NotEqual binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.ResultPipe binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.ResultMapErrorPipe binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.LogicalAnd binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
+        Expr.LogicalOr binary => ContainsExpression(binary.Left, predicate) || ContainsExpression(binary.Right, predicate),
         Expr.Let let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
         Expr.LetRecursive let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
         Expr.LetResult let => ContainsExpression(let.Value, predicate) || ContainsExpression(let.Body, predicate),
@@ -1724,6 +1730,14 @@ public static class Formatter
                 WritePipeOperatorInline(sb, pipe, pipe.Left, " |!> ", pipe.Right, indent, parentPrec, preferPipelines, options);
                 return true;
 
+            case Expr.LogicalAnd and:
+                WriteBinaryInline(sb, and.Left, " && ", and.Right, PrecLogicalAnd, PrecLogicalAnd, PrecLogicalAnd, indent, parentPrec, preferPipelines, options);
+                return true;
+
+            case Expr.LogicalOr or:
+                WriteBinaryInline(sb, or.Left, " || ", or.Right, PrecLogicalOr, PrecLogicalOr, PrecLogicalOr, indent, parentPrec, preferPipelines, options);
+                return true;
+
             default:
                 return false;
         }
@@ -1885,7 +1899,8 @@ public static class Formatter
         bool needsParens = function is Expr.Lambda or Expr.Let or Expr.LetResult or Expr.LetRecursive or Expr.If
             or Expr.Add or Expr.Subtract or Expr.Multiply or Expr.Divide or Expr.Modulo
             or Expr.BitwiseAnd or Expr.BitwiseOr or Expr.BitwiseXor or Expr.ShiftLeft or Expr.ShiftRight
-            or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual or Expr.Await or Expr.Perform or Expr.Handle;
+            or Expr.GreaterThan or Expr.GreaterOrEqual or Expr.LessThan or Expr.LessOrEqual or Expr.Equal or Expr.NotEqual
+            or Expr.LogicalAnd or Expr.LogicalOr or Expr.Await or Expr.Perform or Expr.Handle;
         if (needsParens)
         {
             sb.Append('(');
