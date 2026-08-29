@@ -1,11 +1,12 @@
 // Proves the LLVM C API bindings in `AshesCompiler.Backend.Llvm` work end to end: build a trivial
-// `i32 answer() { ret i32 42 }` function in a fresh module, verify it and emit it to a real
-// linux-x64 object file with real LLVM, not just exercise the bindings in isolation. Running this
-// binary requires a `libLLVM` build (and its own dependencies, on Linux) placed next to it — see
-// AshesCompiler.Backend.Llvm's own header comment.
+// `i32 answer() { ret i32 42 }` function in a fresh module, verify it, and emit it to both a real
+// linux-x64 object file and its assembly listing with real LLVM, not just exercise the bindings in
+// isolation. Running this binary requires a `libLLVM` build (and its own dependencies, on Linux)
+// placed next to it — see AshesCompiler.Backend.Llvm's own header comment.
 import Ashes.Byte
 import Ashes.Ffi
 import Ashes.Test as test
+import Ashes.Text
 import AshesCompiler.Backend.Llvm
 let buildTrivialAnswerModule name context =
     (let module_ = createModule(name)(context)
@@ -41,6 +42,42 @@ let resolveHostTargetMachine triple =
                             |> createTargetMachine(target)(triple)(cpu)(features)(codeGenOptLevelNone)(relocModeStatic)
                             |> Ok
 
+// Builds the trivial `answer` module, emits it as `fileType`, copies the emitted bytes into
+// managed memory, and disposes every LLVM handle it created along the way — success or failure.
+// `name` distinguishes the module across test runs; nothing else about the two emission tests
+// differs except `fileType` and what they check the returned bytes for.
+let emitTrivialModule name fileType =
+    (let _ = initializeX86Target(Unit)
+    in
+        let context = contextCreate(Unit)
+        in
+            match buildTrivialAnswerModule(name)(context) with
+                | (module_, builder) ->
+                    match resolveHostTargetMachine("x86_64-unknown-linux-gnu") with
+                        | Error(message) -> Error(message)
+                        | Ok(machine) ->
+                            let _ = setTarget(module_)("x86_64-unknown-linux-gnu")
+                            in
+                                let _ = applyDataLayout(module_)(machine)
+                                in
+                                    match targetMachineEmitToMemoryBuffer(machine)(module_)(fileType) with
+                                        | (true, _, _) -> Error("LLVM reported the module as broken during emission")
+                                        | (false, _, None) -> Error("expected an emitted buffer")
+                                        | (false, _, Some(buffer)) ->
+                                            let size = getBufferSize(buffer)
+                                            in
+                                                let start = getBufferStart(buffer)
+                                                in
+                                                    let bytesResult = Ashes.Ffi.copyBytes(start)(size)
+                                                    in
+                                                        Unit
+                                                        |> (given (_) -> disposeMemoryBuffer(buffer))
+                                                        |> (given (_) -> disposeTargetMachine(machine))
+                                                        |> (given (_) -> disposeBuilder(builder))
+                                                        |> (given (_) -> disposeModule(module_))
+                                                        |> (given (_) -> contextDispose(context))
+                                                        |> (given (_) -> bytesResult))
+
 let assertLooksLikeElf bytes =
     Unit
     |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(bytes) > 0))
@@ -61,6 +98,16 @@ let assertLooksLikeElf bytes =
         |> Ashes.Byte.get(bytes)
         |> test.assertEqual(70u8))
 
+let assertLooksLikeAssembly bytes =
+    (let text =
+        bytes
+        |> Ashes.Byte.length
+        |> Ashes.Byte.subText(bytes)(0)
+    in
+        "answer"
+        |> Ashes.Text.contains(text)
+        |> test.assertEqual(true))
+
 let testBuildAndVerifyTrivialModule unit =
     (let context = contextCreate(Unit)
     in
@@ -75,45 +122,20 @@ let testBuildAndVerifyTrivialModule unit =
                         |> (given (_) -> test.assertEqual(false)(isBroken)))
 
 let testEmitObjectFileForTrivialModule unit =
-    (let _ = initializeX86Target(Unit)
-    in
-        let context = contextCreate(Unit)
-        in
-            match buildTrivialAnswerModule("selfhost-backend-emit-test")(context) with
-                | (module_, builder) ->
-                    match resolveHostTargetMachine("x86_64-unknown-linux-gnu") with
-                        | Error(message) -> test.fail(message)
-                        | Ok(machine) ->
-                            let _ = setTarget(module_)("x86_64-unknown-linux-gnu")
-                            in
-                                let _ = applyDataLayout(module_)(machine)
-                                in
-                                    match targetMachineEmitToMemoryBuffer(machine)(module_)(objectFileType) with
-                                        | (emitIsBroken, _, bufferOpt) ->
-                                            let _ = test.assertEqual(false)(emitIsBroken)
-                                            in
-                                                match bufferOpt with
-                                                    | None -> test.fail("expected an emitted object buffer")
-                                                    | Some(buffer) ->
-                                                        let size = getBufferSize(buffer)
-                                                        in
-                                                            let start = getBufferStart(buffer)
-                                                            in
-                                                                match Ashes.Ffi.copyBytes(start)(size) with
-                                                                    | Error(message) -> test.fail("copyBytes failed: " + message)
-                                                                    | Ok(bytes) ->
-                                                                        Unit
-                                                                        |> (given (_) -> disposeMemoryBuffer(buffer))
-                                                                        |> (given (_) -> disposeTargetMachine(machine))
-                                                                        |> (given (_) -> disposeBuilder(builder))
-                                                                        |> (given (_) -> disposeModule(module_))
-                                                                        |> (given (_) -> contextDispose(context))
-                                                                        |> (given (_) -> assertLooksLikeElf(bytes)))
+    match emitTrivialModule("selfhost-backend-object-test")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeElf(bytes)
+
+let testEmitAssemblyForTrivialModule unit =
+    match emitTrivialModule("selfhost-backend-asm-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)
 
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
     |> testEmitObjectFileForTrivialModule
+    |> testEmitAssemblyForTrivialModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
