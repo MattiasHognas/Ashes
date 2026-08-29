@@ -14,6 +14,8 @@ export (
     type CoreBuiltinEmissionResult(..),
     type CoreBuiltinEmission(..),
     value coreBuiltinKind,
+    value standardBuiltinLayouts,
+    value reservedBuiltinTypeVariableCount,
     value emitCoreBuiltin,
 )
 
@@ -383,6 +385,53 @@ let coreBuiltinKind moduleName memberName =
         | "Ashes.IO.Process" -> processBuiltinKind(memberName)
         | "Ashes.IO.Console" -> consoleBuiltinKind(memberName)
         | _ -> None
+
+// Backs "qualified access (no import required)" (language.md's own section title): a real Ashes
+// program never needs to `import Ashes.IO` before calling `Ashes.IO.print`, so builtin
+// availability cannot be something a caller hand-supplies per program — it has to be intrinsic,
+// the same way `coreBuiltinKind`'s own dispatch already is. Grown incrementally alongside
+// `AshesCompiler.Backend.IrCodegen`'s own instruction coverage, not meant to reach full parity in
+// one pass: every kind listed here already has a complete `emitCoreBuiltin` case (so it type-checks
+// and lowers to real IR), but whether that IR then codegens successfully is a separate, backend-side
+// question this table makes no claim about — a still-unimplemented instruction panics cleanly at
+// codegen, the same "cover exactly what's verified" discipline every other slice in this arc uses.
+// Schemes match `Lowering.Builtins.cs`'s own stage-0 registrations exactly (`print`'s is genuinely
+// polymorphic, `forall a. a -> Unit`; the rest are monomorphic).
+let standardBuiltinLayout moduleName memberName scheme =
+    match coreBuiltinKind(moduleName)(memberName) with
+        | None -> Ashes.IO.panic("standardBuiltinLayout: coreBuiltinKind does not recognize " + moduleName + "." + memberName)
+        | Some(kind) -> CoreBuiltinLayout(moduleName = moduleName, memberName = memberName, scheme = scheme, kind = kind)
+
+let unitType = SemNamed(0)("Unit")([])
+
+// The number of distinct quantified-variable ids `standardBuiltinLayouts`' schemes use below
+// (currently just `print`'s single `(0, "a")`). `CoreLowering.ash`'s `initialState` starts its
+// per-lowering `TypeVariableSupply` at THIS value rather than `0`, permanently reserving
+// `[0, reservedBuiltinTypeVariableCount)` for these statically-embedded schemes so the supply's
+// own fresh variables can never collide with them. Getting this wrong is not a type error — it is
+// a genuine infinite loop: `TypeSchemes.ash`'s `instantiate` mints a substitution
+// `(quantifiedId, freshVariable)`, and if the fresh supply ever reissues `quantifiedId` itself, the
+// substitution becomes `(0, SemVariable(0))` — a self-mapping `Types.ash`'s `applySubstitution`
+// recurses on forever (confirmed via gdb: 2000+ identical stack frames, same argument, before the
+// native stack overflowed as a segfault). Bump this whenever a new entry below introduces another
+// distinct id.
+let reservedBuiltinTypeVariableCount = 1
+
+let standardBuiltinLayouts =
+    [
+        standardBuiltinLayout("Ashes.IO")("print")(
+            TypeScheme(quantified = [(0, "a")], body = SemFunction(SemVariable(0))(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("panic")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemNever)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("exit")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemNever)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("writeLine")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
+        )
+    ]
 
 let emitted instructions nextTemp result =
     CoreBuiltinEmission(

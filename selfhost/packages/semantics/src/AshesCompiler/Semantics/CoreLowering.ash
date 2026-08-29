@@ -315,7 +315,12 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         nextLabelId = 0,
         nextStringId = 0,
         stringLiterals = [],
-        typeSupply = initialTypeVariableSupply(Unit),
+        // Starts past `standardBuiltinLayouts`' own reserved ids (see
+        // `reservedBuiltinTypeVariableCount`'s own comment) rather than `0` — even a caller
+        // passing empty `constructorLayouts`/`builtinLayouts` gets this, harmlessly: it just means
+        // this compilation's fresh-variable numbering never mints those specific low ids, not that
+        // anything is missing.
+        typeSupply = TypeVariableSupply(nextId = reservedBuiltinTypeVariableCount),
         substitution = [],
         sourceContext = None,
         currentSpan = None,
@@ -330,7 +335,29 @@ let initialStateWithContext constructorLayouts builtinLayouts unit = initialStat
 
 let initialStateWithLayouts layouts unit = initialStateWithContext(layouts)([])(unit)
 
-let initialState unit = initialStateWithContext([])([])(unit)
+// "`Unit` is always available; no import is required" (language.md) — a builtin's `Unit` result
+// (`finishBuiltinUnit`) allocates through this constructor layout the same way a user's own
+// zero-field ADT would, so it has to be intrinsic like `standardBuiltinLayouts`, not something
+// every caller re-supplies. `tag = 0`, no fields, matching `AllocAdt Tag=0 FieldCount=0` in
+// stage-0's own `--emit-ir` dump for any `Unit`-returning call.
+let standardConstructorLayouts =
+    [
+        CoreConstructorLayout(
+            name = "Unit",
+            tag = 0,
+            scheme = TypeScheme(quantified = [], body = SemNamed(0)("Unit")([]), constraints = []),
+            fieldNames = [],
+            isZeroCost = false
+        )
+    ]
+
+// The real language never requires an `import` for a qualified `Ashes.*` builtin call ("qualified
+// access (no import required)", language.md) — availability has to be intrinsic to the lowering
+// pipeline, not something every caller re-supplies through `initialStateWithContext`. `initialState`
+// is the "just give me sensible defaults" entry point (`lowerCoreProgram`/`lowerCoreProgramWithSource`
+// both go through it); `initialStateWithContext` and friends remain fully caller-controlled for
+// whoever genuinely needs a different (or additional) set.
+let initialState unit = initialStateWithContext(standardConstructorLayouts)(standardBuiltinLayouts)(unit)
 
 let withNextTemp nextTemp (state: CoreLoweringState) = state with nextTemp = nextTemp
 
@@ -5012,7 +5039,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
 
 // As lowerCoreProgram, but tags every emitted instruction with its source location — a plain,
 // non-stitched single-file context, unlike lowerCoreExpressionLocated's stitched-project one.
-let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSyntax) = lowerCoreProgramWithSourceAndContext(filePath)(source)(program)([])([])
+let lowerCoreProgramWithSource (filePath: Str) (source: Str) (program: ProgramSyntax) = lowerCoreProgramWithSourceAndContext(filePath)(source)(program)(standardConstructorLayouts)(standardBuiltinLayouts)
 
 // As lowerCoreProgram, but with a real inference TypeEnvironment supplied: a plain (non-recursive)
 // top-level binding whose own generalized TypeScheme carries trait constraints has its value

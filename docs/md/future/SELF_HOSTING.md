@@ -1660,15 +1660,30 @@ same public behavior.
   program's imports — every qualified builtin call (not just `print`) failed with
   `UnknownLoweringBinding`, and `ProgramSyntax` itself carries no import information at all (imports
   are a project/multi-file-stitching concept, handled entirely outside this single-file pipeline).
-  Fixed by adding `lowerCoreProgramWithSourceAndContext`, threading caller-supplied
+  First fixed by adding `lowerCoreProgramWithSourceAndContext`, threading caller-supplied
   `constructorLayouts`/`builtinLayouts` the way `lowerCoreExpressionWithContext` already does for a
-  bare expression — the caller (a project-mode driver, or a test) constructs the layouts for
-  exactly the builtins its source needs, including a `"Unit"` `CoreConstructorLayout` (a builtin's
-  `Unit` result allocates through the same constructor path a user's own zero-field ADT would).
+  bare expression — but per language.md's own "qualified access (no import required)" section, a
+  real Ashes program never needs an `import` before calling `Ashes.IO.print`, so gating builtin
+  resolution on caller-supplied (or import-derived) context would have been a regression from real
+  semantics, not a fix. Replaced with `CoreBuiltinLowering.ash`'s `standardBuiltinLayouts` and
+  `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`/`panic`/`exit`/`writeLine`,
+  plus `"Unit"` — grown incrementally, matching real stage-0 schemes from `Lowering.Builtins.cs`
+  exactly): `initialState` (and therefore `lowerCoreProgram`/`lowerCoreProgramWithSource`) seeds
+  these automatically, so a qualified builtin call resolves with zero caller-supplied glue, exactly
+  like the real compiler. **Found a genuine infinite-recursion crash via gdb while wiring
+  `print`'s real polymorphic scheme** (`forall a. a -> Unit`): its quantified variable used id `0`,
+  the SAME id `TypeVariableSupply`'s own fresh-variable counter always mints first, so instantiating
+  the scheme built the self-referential substitution `(0, SemVariable(0))` —
+  `TypeSchemes.ash`'s `applySubstitution` recurses on that forever (2000+ identical stack frames
+  confirmed via `gdb bt` before the native stack overflowed as a segfault). Fixed by reserving
+  `[0, reservedBuiltinTypeVariableCount)` permanently for these statically-embedded schemes:
+  `initialState`'s `TypeVariableSupply` now starts past that range instead of at `0`.
   Verified end to end: a real `.ash` file (`Ashes.IO.print(42 - 84)`) compiled through the complete
   self-hosted pipeline, linked by `ElfLinker`, written to disk, `chmod +x`'d, and spawned — real
   stdout `-42` (exercising the sign-handling path) and exit code `0`, checked by the automated test
-  suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it.
+  suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it. Also
+  confirmed `panic`/`exit`/`writeLine` all type-check and lower cleanly in the same process,
+  proving the mechanism generalizes past a single hand-wired builtin.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
