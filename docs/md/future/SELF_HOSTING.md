@@ -1722,6 +1722,51 @@ same public behavior.
   `AllocAdt` remains the follow-up slice this unblocks) — this proves the linker mechanism alone,
   via a hand-built module, matching every earlier `ElfLinker`/`Llvm.ash` capability's own
   verification precedent in this arc.
+- [~] `AshesCompiler.Backend.IrCodegen`'s `AllocAdt` gained real `malloc`-backed codegen for the
+  RC-managed (field-carrying) case, closing the gap the previous item left open. Investigating what
+  self-hosted's own lowering produces for a genuinely RC-managed value found the actual blocker was
+  upstream of codegen: `CoreLowering.ash`'s one `AllocAdt` construction site hardcoded
+  `runtimeManaged = false` unconditionally, so nothing self-hosted lowers was EVER marked RC-managed
+  regardless of what real ownership/escape analysis would decide — a bigger, more foundational gap
+  than the malloc-wiring task itself. Scoped down (via AskUserQuestion, "smallest safe RC slice"
+  over pivoting away or starting the full Perceus arc unscoped) to a conservative, always-safe
+  classification: `runtimeManaged = fieldCount > 0` (a zero-field constructor like `Unit`/`None`
+  carries no payload to leak or double-free, so it stays arena-shaped as before; architecture.md
+  calls RC "the general lifetime substrate ... region[s] remain for compiler-proven scoped values",
+  so defaulting any field-carrying allocation to RC is never unsafe — only ever a missed
+  arena-placement optimization a real per-value escape analysis would someday recover). `AllocAdt`
+  now `malloc`s the real 16-byte `{i64 reference_count, i64 allocation_size}` header from
+  architecture.md plus one `i64` word per tag/field, matching its `[tag][field0]...[fieldN-1]`
+  layout row, writes `count = 1` and the payload size, and returns the post-header payload pointer —
+  the same "public pointer never carries the header" contract
+  `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction` established by hand. `SetAdtField`
+  (previously entirely unimplemented in `IrCodegen`) now stores into that same payload region at
+  word `1 + fieldIndex`. New `Llvm.ash` binding: `buildIntToPtr` (`LLVMBuildIntToPtr`), the missing
+  half of the already-bound `buildPtrToInt` — needed to round-trip an ADT pointer back out of this
+  codegen's universal `i64` temp representation before a field-store GEP. Verified two ways: a new
+  real-IR test (`buildRealIrSomeConstructorModule`/`testRunStaticExecutableForRealIrSomeConstructorModule`,
+  `let x = Some(42)` then an independent `Ashes.IO.print(1)`, since no `match`/field-read codegen
+  exists yet to observably read `x` back through real IR) proves the path codegens, links
+  (dynamically — a real `call malloc@PLT` relocation makes `linkLinuxExecutable` choose that path
+  automatically), and runs without crashing; a manual assembly-text dump of the same module
+  confirmed byte-exact correctness independently of that test — `malloc(32)` (`16 + 2*8` for
+  `Some`'s one field), `count=1` at offset `0`, `allocation_size=16` at offset `8`, tag `1` (Some's
+  real tag) at payload offset `0`, field value `42` at payload offset `8`.
+  **Explicitly, deliberately still open**: nothing drops this allocation — `CoreLowering.ash` emits
+  no `RcDrop`/`RcDup` anywhere (confirmed: zero construction sites in the whole file), so every
+  RC-managed value from this path leaks today, an explicit, temporary limitation matching every
+  other stand-in in this arc. Real Perceus lifetime placement (liveness-based `RcDrop`/`RcDup`
+  insertion, owner-alias tracking, borrow-vs-owned rules — stage 0's `Lowering.Ownership.cs` +
+  `PerceusLifetimePlacement.cs` combined are ~4,400 lines; self-hosted's analysis-only partial port,
+  `OwnershipInference.ash`/`OwnershipProvenance.ash`/`OwnershipSummary.ash`, is ~1,600 lines and
+  wires into neither `AllocAdt` nor drop insertion) is a substantially larger, correctness-critical
+  subsystem, not a same-day slice like the rest of this arc — the next task is the smallest safe cut
+  into it: a conservative, exhaustively-matched "is this top-level RC binding provably dead" check
+  (deliberately NOT reusing `OwnershipInference.ash`'s existing `mentionsVar`, which has a confirmed
+  gap — no `ExprHandle` case, falling through its catch-all `false` — unsafe for a drop decision,
+  where a false "dead" verdict is a use-after-free, not just a missed optimization) plus a single
+  non-cascading leaf `RcDrop`, mirroring how the RC-primitives arc itself started leaf-only
+  (`defineRcAllocFunction`'s lifecycle test) before cascading/tag-directed drops.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
