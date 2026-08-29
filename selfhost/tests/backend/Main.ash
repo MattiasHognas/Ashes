@@ -289,6 +289,88 @@ let buildGreetingModule name context =
                                                                 let _ = buildRet(builder)(firstByte)
                                                                 in (module_, builder))
 
+// Writes a `Some(tag, payload)` value into an already-allocated `{i32, i32}` slot and returns
+// the two field pointers, so the caller can both build the value and later read it back.
+let writeOptionSome builder optionType option i32 tag payload =
+    (let zeroIndex = constInt(i32)(0u64)(false)
+    in
+        let tagPtr = buildGEP(builder)(optionType)(option)([zeroIndex, zeroIndex])(2u32)("tagPtr")
+        in
+            let payloadPtr = buildGEP(builder)(optionType)(option)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)("payloadPtr")
+            in
+                let _ =
+                    Unit
+                    |> (given (_) -> buildStore(builder)(tag)(tagPtr))
+                    |> (given (_) -> buildStore(builder)(payload)(payloadPtr))
+                in (tagPtr, payloadPtr))
+
+// Reads the tag back, branches on it exactly the way `buildMaxModule` branched on a plain
+// condition, and stores either the loaded payload or the caller-supplied default into
+// `resultSlot` — the no-`phi` alloca/store/load pattern applied to an ADT discriminant instead
+// of a scalar comparison. Returns the merge block so the caller can read `resultSlot` there.
+let branchOnOptionTag builder context function i32 tagPtr payloadPtr someTag default_ resultSlot =
+    (let loadedTag = buildLoad(builder)(i32)(tagPtr)("loadedTag")
+    in
+        let isSome = buildICmp(builder)(intPredicateEq)(loadedTag)(someTag)("isSome")
+        in
+            let someBlock = appendBasicBlock(context)(function)("some")
+            in
+                let noneBlock = appendBasicBlock(context)(function)("none")
+                in
+                    let mergeBlock = appendBasicBlock(context)(function)("merge")
+                    in
+                        let _ = buildCondBr(builder)(isSome)(someBlock)(noneBlock)
+                        in
+                            let _ =
+                                Unit
+                                |> (given (_) -> positionBuilderAtEnd(builder)(someBlock))
+                                |> (given (_) -> buildLoad(builder)(i32)(payloadPtr)("payload"))
+                                |> (given (payload) -> buildStore(builder)(payload)(resultSlot))
+                                |> (given (_) -> buildBr(builder)(mergeBlock))
+                            in
+                                let _ =
+                                    Unit
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(noneBlock))
+                                    |> (given (_) -> buildStore(builder)(default_)(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(mergeBlock))
+                                in mergeBlock)
+
+// The first genuine ADT-shaped test: a simple `Option(i32)` tagged union, laid out as
+// `{i32 tag, i32 payload}` (tag `1` means `Some`, any other value means `None`), and
+// `i32 unwrapOr(i32 default_) { match Some(99) with | Some(payload) -> payload | None -> default_ }`.
+// No new LLVM C API surface: this is a pure integration of `structType`/`buildGEP`/`buildICmp`/
+// `buildCondBr`/the no-`phi` slot pattern already bound, proving they compose into a real ADT
+// `match`, not just their own isolated tests.
+let buildOptionUnwrapModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let optionType = structType(context)([i32, i32])(2u32)(false)
+            in
+                match beginFunction(module_)(context)(None)("unwrapOr")(i32)([i32])(1u32) with
+                    | (function, _, builder) ->
+                        let default_ = getParam(function)(0u32)
+                        in
+                            let option = buildAlloca(builder)(optionType)("option")
+                            in
+                                let someTag = constInt(i32)(1u64)(false)
+                                in
+                                    match false
+                                    |> constInt(i32)(99u64)
+                                    |> writeOptionSome(builder)(optionType)(option)(i32)(someTag) with
+                                        | (tagPtr, payloadPtr) ->
+                                            let resultSlot = buildAlloca(builder)(i32)("result")
+                                            in
+                                                let mergeBlock = branchOnOptionTag(builder)(context)(function)(i32)(tagPtr)(payloadPtr)(someTag)(default_)(resultSlot)
+                                                in
+                                                    let _ = positionBuilderAtEnd(builder)(mergeBlock)
+                                                    in
+                                                        let result = buildLoad(builder)(i32)(resultSlot)("result")
+                                                        in
+                                                            let _ = buildRet(builder)(result)
+                                                            in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -426,6 +508,11 @@ let testEmitAssemblyForGreetingModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("greeting")
 
+let testEmitAssemblyForOptionUnwrapModule unit =
+    match emitModule(buildOptionUnwrapModule)("selfhost-backend-option-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("unwrapOr")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -438,6 +525,7 @@ let run unit =
     |> testEmitAssemblyForMallocFreeModule
     |> testEmitAssemblyForStructPairModule
     |> testEmitAssemblyForGreetingModule
+    |> testEmitAssemblyForOptionUnwrapModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

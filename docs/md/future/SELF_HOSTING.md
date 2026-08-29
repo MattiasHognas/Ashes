@@ -1540,8 +1540,9 @@ same public behavior.
   emission — see the file itself for the exact current surface, since restating it here every PR
   has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
   verifying, and emitting a small real function (constants, arithmetic, branching, recursion-free
-  calls, globals, external libc calls, structs, and a C-string-shaped byte array, as of this
-  writing) to genuine linux-x64 ELF objects and assembly listings, checked with `readelf` and,
+  calls, globals, external libc calls, structs, a C-string-shaped byte array, and a tagged-union
+  ADT `match` built from those same struct/GEP/branch primitives, as of this writing) to genuine
+  linux-x64 ELF objects and assembly listings, checked with `readelf` and,
   independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
   test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,

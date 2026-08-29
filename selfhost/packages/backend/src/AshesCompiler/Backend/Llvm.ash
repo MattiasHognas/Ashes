@@ -79,6 +79,7 @@ export (
     value getParam,
     value buildAdd,
     value buildICmp,
+    value intPredicateEq,
     value intPredicateSgt,
     value buildCondBr,
     value buildBr,
@@ -276,8 +277,10 @@ let getParam function index = LLVMGetParam(function)(index)
 
 let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)
 
-// `LLVMIntPredicate` (llvm-c/Core.h). Only the one value currently in use is named, matching the
+// `LLVMIntPredicate` (llvm-c/Core.h). Only the two values currently in use are named, matching the
 // existing pattern for the target-machine enum constants above.
+let intPredicateEq = 32u32
+
 let intPredicateSgt = 38u32
 
 let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
