@@ -2004,7 +2004,17 @@ same public behavior.
   (omits an emptied field, keeps a field with remaining entries, checks `devDependencies` too,
   leaves the manifest unchanged when the package isn't found), plus an end-to-end scratch fixture
   covering the last-dependency-removed/field-omitted case, a kept-sibling case, a not-a-dependency
-  case, and a missing manifest. `restore` remains unported.
+  case, and a missing manifest. `restore` is ported (`Restore.ash`) for path dependencies only:
+  resolves and lists a project's dependencies by reusing `resolveProjectDependencyGraph` (the same
+  function `tree`/`why` already call), honoring root-level `overrides` so a registry-named
+  dependency pointed at a local path (the shape every selfhost package's own `ashes.json` uses)
+  resolves normally, matching stage 0's own `PackageRestorePolicy.NeedsRestore` semantics for that
+  case. A root dependency with a registry source and no override refuses cleanly rather than
+  claiming a restore it cannot perform — no network access, lock-file writing, or `ash1:` hash
+  verification exists yet, all covered by the next checklist item. Verified with pure unit tests
+  over argument parsing (help, `--project`, unrecognized flags ignored) and end-to-end scratch
+  fixtures covering an overridden-registry-dependency project (resolves via path), a
+  dependency-free project, an un-overridden registry dependency (refused), and a missing manifest.
 - [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).
