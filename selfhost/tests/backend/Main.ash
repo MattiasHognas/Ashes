@@ -210,6 +210,65 @@ let buildMallocFreeModule name context =
                                                                         let _ = buildRet(builder)(loaded)
                                                                         in (module_, builder))
 
+// A hand-built entry function's own exit-syscall tail, matching
+// `AshesCompiler.Backend.IrCodegen`'s `emitLinuxProcessExit` exactly (that function isn't exported
+// from the package — this file has always hand-built every LLVM sequence it tests independently).
+let emitLinuxProcessExitForTest builder i64 =
+    (let syscallType = functionType(i64)([i64, i64, i64, i64])(4u32)(false)
+    in
+        let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},~{rcx},~{r11},~{memory}")(true)(false)
+        in
+            let sixty = constInt(i64)(60u64)(false)
+            in
+                let zero = constInt(i64)(0u64)(false)
+                in
+                    let _ = buildCall(builder)(syscallType)(syscallAsm)([sixty, zero, zero, zero])(4u32)("sys_exit")
+                    in buildUnreachable(builder))
+
+// An entry-shaped module (`void`, ends in the exit syscall, never `ret`) that also calls
+// `malloc`/`free` — proving `AshesCompiler.Backend.ElfLinker`'s dynamic linking against a
+// genuinely linkable program (matching `AshesCompiler.Backend.IrCodegen`'s own entry-function
+// contract), not just a `ret`-based leaf function like `buildMallocFreeModule` above.
+let buildMallocFreeEntryModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i64 = int64Type(context)
+        in
+            let ptrType = pointerType(context)(0u32)
+            in
+                let mallocType = functionType(ptrType)([i64])(1u32)(false)
+                in
+                    let mallocFn = addFunction(module_)("malloc")(mallocType)
+                    in
+                        let freeType =
+                            functionType(voidType(context))([ptrType])(1u32)(false)
+                        in
+                            let freeFn = addFunction(module_)("free")(freeType)
+                            in
+                                let functionValue =
+                                    false
+                                    |> functionType(voidType(context))([])(0u32)
+                                    |> addFunction(module_)(name)
+                                in
+                                    let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                    in
+                                        let builder = createBuilder(context)
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                            in
+                                                let sizeArg = constInt(i64)(8u64)(false)
+                                                in
+                                                    let ptr = buildCall(builder)(mallocType)(mallocFn)([sizeArg])(1u32)("ptr")
+                                                    in
+                                                        let seven = constInt(i64)(7u64)(false)
+                                                        in
+                                                            let _ = buildStore(builder)(seven)(ptr)
+                                                            in
+                                                                let _ = buildCall(builder)(freeType)(freeFn)([ptr])(1u32)("")
+                                                                in
+                                                                    let _ = emitLinuxProcessExitForTest(builder)(i64)
+                                                                    in (module_, builder))
+
 // A function using a real two-field struct type (`{i32, i32}`, matching a pair/record layout): it
 // allocates one on the stack, addresses each field with `buildGEP`, stores into both, loads both
 // back, and returns their sum. Proves `structType` and `buildGEP`'s `FfiBuffer` index list both
@@ -2126,7 +2185,7 @@ let testLinkStaticExecutableForRealIrArithmeticModule unit =
     match emitModule(buildRealIrArithmeticModule)("selfhostBackendLinkArith")(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
-            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendLinkArith") with
+            match linkLinuxExecutable(objectBytes)("selfhostBackendLinkArith") with
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) -> assertLooksLikeStaticExecutable(executableBytes)
 
@@ -2134,7 +2193,7 @@ let testLinkStaticExecutableForRealIrPrintModule unit =
     match emitModule(buildRealIrPrintModule)("selfhostBackendLinkPrint")(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
-            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendLinkPrint") with
+            match linkLinuxExecutable(objectBytes)("selfhostBackendLinkPrint") with
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) -> assertLooksLikeStaticExecutable(executableBytes)
 
@@ -2148,7 +2207,7 @@ let testRunStaticExecutableForRealIrPrintModule unit =
     match emitModule(buildRealIrPrintModule)("selfhostBackendRunPrint")(objectFileType) with
         | Error(message) -> test.fail(message)
         | Ok(objectBytes) ->
-            match linkStaticLinuxExecutable(objectBytes)("selfhostBackendRunPrint") with
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunPrint") with
                 | Error(message) -> test.fail(message)
                 | Ok(executableBytes) ->
                     match Ashes.IO.File.writeBytes("selfhost_backend_print_e2e")(executableBytes) with
@@ -2167,6 +2226,49 @@ let testRunStaticExecutableForRealIrPrintModule unit =
                                                     in
                                                         let _ = test.assertEqual("-42")(line)
                                                         in test.assertEqual(0)(exitCode)
+
+// THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
+// `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
+// genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
+// `PT_INTERP`, `PT_DYNAMIC` — checked structurally) that the REAL Linux dynamic loader can load
+// and run. Verified independently outside this assertion (via `strace`) that the kernel loads
+// `ld-linux-x86-64.so.2`, which loads real glibc and calls its actual `malloc` (observable as a
+// real `brk` syscall extending the heap) before this program's own `exit(0)` syscall fires.
+let testLinkAndRunDynamicMallocFreeModule unit =
+    match emitModule(buildMallocFreeEntryModule)("selfhostBackendDynamicMallocFree")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendDynamicMallocFree") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    let _ =
+                        Unit
+                        |> (given (_) -> test.assertEqual(true)(Ashes.Byte.length(executableBytes) > 4096))
+                        |> (given (_) ->
+                            0
+                            |> Ashes.Byte.get(executableBytes)
+                            |> test.assertEqual(127u8))
+                        |> (given (_) ->
+                            16
+                            |> Ashes.Byte.getU16Le(executableBytes)
+                            |> test.assertEqual(2u16))
+                        |> (given (_) ->
+                            56
+                            |> Ashes.Byte.getU16Le(executableBytes)
+                            |> test.assertEqual(4u16))
+                    in
+                        match Ashes.IO.File.writeBytes("selfhost_backend_dynamic_mallocfree_e2e")(executableBytes) with
+                            | Error(message) -> test.fail(message)
+                            | Ok(_) ->
+                                match Ashes.IO.File.makeExecutable("selfhost_backend_dynamic_mallocfree_e2e") with
+                                    | Error(message) -> test.fail(message)
+                                    | Ok(_) ->
+                                        match Ashes.IO.Process.spawn("./selfhost_backend_dynamic_mallocfree_e2e")([]) with
+                                            | Error(message) -> test.fail(message)
+                                            | Ok(process) ->
+                                                process
+                                                |> Ashes.IO.Process.waitForExit
+                                                |> test.assertEqual(0)
 
 let run unit =
     Unit
@@ -2198,6 +2300,7 @@ let run unit =
     |> testLinkStaticExecutableForRealIrArithmeticModule
     |> testLinkStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrPrintModule
+    |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

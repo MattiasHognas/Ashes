@@ -1624,20 +1624,25 @@ same public behavior.
   confirming zero `ret` occurrences anywhere in the output.
 - [~] Link the emitted object into a real executable. Source of truth: `LlvmImageLinkerElf.cs`
   (linux-x64; `LlvmImageLinkerElfArm64.cs` and `LlvmImageLinkerPe.cs` cover the other three targets
-  and are unstarted). First slice, `AshesCompiler.Backend.ElfLinker`: a STATIC-ONLY linux-x64 ELF64
-  linker in pure Ashes byte manipulation (`Ashes.Byte`), no LLVM calls and no external `ld`/`lld`
-  invoked. Parses the relocatable object `targetMachineEmitToMemoryBuffer` emits (section headers,
-  `.symtab`/`.strtab`, the named entry symbol — skipping any symbol not `STT_FUNC`, since an
-  object's `FILE` symbol can share the entry function's own name when a test names its LLVM module
-  after its one function), refuses (`Error`) any object whose `.text` carries relocations, and
-  writes a minimal ELF header + one `PT_LOAD` program header + the raw `.text` bytes, with `e_entry`
-  set to the entry symbol's own address (not merely the start of `.text`, matching
-  `ParseElfObject`'s own symbol-table-driven lookup) placed one page after `ElfBaseVa`
-  (`0x400000`), the same base the real linker uses. Deliberately narrow, matching what
-  `AshesCompiler.Backend.IrCodegen` can produce today (a single self-contained function, no
-  external calls, no global data): the real linker's argv-passing trampoline, dynamic linking
-  (PLT/GOT, imported libraries, `.dynamic`), TLS sections, and relocation application are all
-  unimplemented follow-up slices, needed once `IrCodegen` grows closures/RC/external calls.
+  and are unstarted). `AshesCompiler.Backend.ElfLinker`: a linux-x64 ELF64 linker in pure Ashes
+  byte manipulation (`Ashes.Byte`), no LLVM calls and no external `ld`/`lld` invoked. Parses the
+  relocatable object `targetMachineEmitToMemoryBuffer` emits (section headers, `.symtab`/`.strtab`,
+  the named entry symbol — skipping any symbol not `STT_FUNC`, since an object's `FILE` symbol can
+  share the entry function's own name when a test names its LLVM module after its one function),
+  writes a minimal ELF header + the raw `.text` bytes, with `e_entry` set to the entry symbol's own
+  address (not merely the start of `.text`, matching `ParseElfObject`'s own symbol-table-driven
+  lookup) placed one page after `ElfBaseVa` (`0x400000`), the same base the real linker uses. Two
+  paths, chosen automatically from what `.text`'s relocations need: no relocations links a fully
+  static, non-PIE executable (one `R+X` `PT_LOAD` segment); `R_X86_64_PLT32` relocations against a
+  symbol in `linuxDynamicImportLibraries` (the narrow set `AshesCompiler.Backend.IrCodegen` can
+  actually call today — `malloc`/`free`) link eager (non-lazy) dynamic linking instead — a
+  `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD` data segment, `PT_INTERP`/
+  `PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn` machinery the dynamic loader needs
+  to resolve them. Any relocation neither path can resolve correctly (an unrecognized type, or an
+  unrecognized external symbol) is an `Error`, never a silently wrong link. Deliberately narrow,
+  matching what `AshesCompiler.Backend.IrCodegen` can produce today: the real linker's argv-passing
+  trampoline, TLS sections, and a much larger recognized-library table remain unimplemented
+  follow-up slices.
   Verified past the automated test (which only checks the ELF header fields) by writing a linked
   binary to disk, `chmod +x`ing it, and running it directly under `strace`: the kernel loads and
   executes it with no `ld.so` involved (`statically linked, no section header`), and it makes
@@ -1684,6 +1689,22 @@ same public behavior.
   suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it. Also
   confirmed `panic`/`exit`/`writeLine` all type-check and lower cleanly in the same process,
   proving the mechanism generalizes past a single hand-wired builtin.
+- [~] `AshesCompiler.Backend.ElfLinker` gained dynamic linking: `.text` relocations against a
+  known external symbol (`malloc`/`free`, matching `LlvmImageLinkerElf.cs`'s own
+  `CollectLinuxDynamicImports`/`BuildLinuxDynamicImportLayout`/`BuildLinuxElfHash` port-for-port)
+  now produce a real dynamically-linked executable instead of an `Error`. Verified via a hand-built
+  entry-shaped module (`void`, ends in the exit syscall, calling `malloc`/`free` — matching
+  `AshesCompiler.Backend.IrCodegen`'s own entry contract, not a `ret`-based leaf function): the
+  produced binary reports `dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2` under
+  `file`, `readelf -d` shows a well-formed `.dynamic` section (`NEEDED libc.so.6`, `RUNPATH
+  $ORIGIN`, `HASH`/`STRTAB`/`SYMTAB`/`RELA`), and — checked via `strace` — the kernel loads the
+  real dynamic loader, which loads real glibc and calls its actual `malloc` (observable as a
+  genuine `brk` syscall extending the heap) before this program's own `exit(0)` fires. This is the
+  first Linux `ld.so`-loaded, real-libc-calling executable this self-hosted compiler has produced.
+  `AshesCompiler.Backend.IrCodegen` does not call `malloc`/`free` from real IR yet (an RC-managed
+  `AllocAdt` remains the follow-up slice this unblocks) — this proves the linker mechanism alone,
+  via a hand-built module, matching every earlier `ElfLinker`/`Llvm.ash` capability's own
+  verification precedent in this arc.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
