@@ -101,6 +101,8 @@ type CodegenContext =
     | mallocType: LLVMTypeRef
     | freeFn: LLVMValueRef
     | freeType: LLVMTypeRef
+    | memcmpFn: LLVMValueRef
+    | memcmpType: LLVMTypeRef
     | stringLiteralGlobals: List((Str, LLVMValueRef))
 
 let recursive lookupIndexed key env =
@@ -201,6 +203,77 @@ let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
                                 false
                                 |> constInt(i64)(1u64)
                                 |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr))
+
+// Matches `LlvmCodegenMemory.cs`'s own `EmitStringComparison` exactly: a length check first (two
+// `Str` values of different length can never be equal, so `memcmp` is only ever called once
+// lengths already match), then a real libc `memcmp` call over the raw payload bytes — the same
+// declare-and-call pattern `malloc`/`free` already established for an external symbol this codegen
+// needs (`AshesCompiler.Backend.ElfLinker` picks up any new `.text` call to a name in its own
+// `linuxDynamicImportLibraries` table automatically, so `memcmp` needed only a one-line addition
+// there, no new linker mechanism). No `phi` binding exists in this package's LLVM surface, so the
+// three-way branch (lengths differ / lengths match but bytes differ / bytes match) merges through
+// a `resultSlot` alloca exactly like `PrintIntState`'s own slot-based merge below and every other
+// branch-merge in this file. Returns a plain `i64` `0`/`1` — the same representation `CmpIntEq`'s
+// `buildZExt` already establishes for every boolean result in this codegen — so `CmpStrNe` can
+// invert it with a plain `1 - result` rather than re-deriving the comparison.
+let emitStringEquals context function_ i64 ptrType builder memcmpFn memcmpType leftRef rightRef =
+    (let resultSlot = buildAlloca(builder)(i64)("str_cmp_result")
+    in
+        let leftLenPtr = buildIntToPtr(builder)(leftRef)(ptrType)("str_cmp_left_len_ptr")
+        in
+            let leftLen = buildLoad(builder)(i64)(leftLenPtr)("str_cmp_left_len")
+            in
+                let rightLenPtr = buildIntToPtr(builder)(rightRef)(ptrType)("str_cmp_right_len_ptr")
+                in
+                    let rightLen = buildLoad(builder)(i64)(rightLenPtr)("str_cmp_right_len")
+                    in
+                        let lenEqBlock = appendBasicBlock(context)(function_)("str_cmp_len_eq")
+                        in
+                            let notEqBlock = appendBasicBlock(context)(function_)("str_cmp_not_eq")
+                            in
+                                let eqBlock = appendBasicBlock(context)(function_)("str_cmp_eq")
+                                in
+                                    let continueBlock = appendBasicBlock(context)(function_)("str_cmp_continue")
+                                    in
+                                        let lenEqCond = buildICmp(builder)(intPredicateEq)(leftLen)(rightLen)("str_cmp_len_match")
+                                        in
+                                            let _ = buildCondBr(builder)(lenEqCond)(lenEqBlock)(notEqBlock)
+                                            in
+                                                let _ = positionBuilderAtEnd(builder)(notEqBlock)
+                                                in
+                                                    let _ =
+                                                        buildStore(builder)(constInt(i64)(0u64)(false))(resultSlot)
+                                                    in
+                                                        let _ = buildBr(builder)(continueBlock)
+                                                        in
+                                                            let _ = positionBuilderAtEnd(builder)(lenEqBlock)
+                                                            in
+                                                                let leftBytesAddr =
+                                                                    buildAdd(builder)(leftRef)(constInt(i64)(8u64)(false))("str_cmp_left_bytes_addr")
+                                                                in
+                                                                    let rightBytesAddr =
+                                                                        buildAdd(builder)(rightRef)(constInt(i64)(8u64)(false))("str_cmp_right_bytes_addr")
+                                                                    in
+                                                                        let leftBytesPtr = buildIntToPtr(builder)(leftBytesAddr)(ptrType)("str_cmp_left_bytes_ptr")
+                                                                        in
+                                                                            let rightBytesPtr = buildIntToPtr(builder)(rightBytesAddr)(ptrType)("str_cmp_right_bytes_ptr")
+                                                                            in
+                                                                                let cmpResult = buildCall(builder)(memcmpType)(memcmpFn)([leftBytesPtr, rightBytesPtr, leftLen])(3u32)("str_cmp_memcmp")
+                                                                                in
+                                                                                    let isZero =
+                                                                                        buildICmp(builder)(intPredicateEq)(cmpResult)(constInt(int32Type(context))(0u64)(false))("str_cmp_is_eq")
+                                                                                    in
+                                                                                        let _ = buildCondBr(builder)(isZero)(eqBlock)(notEqBlock)
+                                                                                        in
+                                                                                            let _ = positionBuilderAtEnd(builder)(eqBlock)
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    buildStore(builder)(constInt(i64)(1u64)(false))(resultSlot)
+                                                                                                in
+                                                                                                    let _ = buildBr(builder)(continueBlock)
+                                                                                                    in
+                                                                                                        let _ = positionBuilderAtEnd(builder)(continueBlock)
+                                                                                                        in buildLoad(builder)(i64)(resultSlot)("str_cmp_result_value"))
 
 // The five values `PrintInt`'s helper functions all need, computed once by `printIntPrologue` and
 // threaded through unchanged — the same "bundle the fixed values" shape `CodegenContext` uses for
@@ -508,7 +581,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, stringLiteralGlobals = stringLiteralGlobals } ->
+                | CodegenContext { context = context, function_ = function_, i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType, localSlots = localSlots, labelBlocks = labelBlocks, mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, stringLiteralGlobals = stringLiteralGlobals } ->
                     match kind with
                         | LoadConstInt(target, value) ->
                             ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
@@ -543,6 +616,24 @@ let codegenInstructionKind cx builder kind state =
                             ((target, buildZExt(builder)(buildICmp(builder)(intPredicateEq)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         | CmpIntNe(target, left, right) ->
                             ((target, buildZExt(builder)(buildICmp(builder)(intPredicateNe)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        | CmpStrEq(target, left, right) ->
+                            let result =
+                                tempEnv
+                                |> lookupIndexed(right)
+                                |> emitStringEquals(context)(function_)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupIndexed(left)(tempEnv))
+                            in ((target, result) :: tempEnv, terminated)
+                        // `1 - equalResult`, not a second comparison: `emitStringEquals` always
+                        // returns exactly `0` or `1`, so inverting it arithmetically is sound and
+                        // needs no extra branch beyond the one `CmpStrEq` already builds.
+                        | CmpStrNe(target, left, right) ->
+                            let equalResult =
+                                tempEnv
+                                |> lookupIndexed(right)
+                                |> emitStringEquals(context)(function_)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupIndexed(left)(tempEnv))
+                            in
+                                let result =
+                                    buildSub(builder)(constInt(i64)(1u64)(false))(equalResult)("t" + Ashes.Text.fromInt(target))
+                                in ((target, result) :: tempEnv, terminated)
                         // A `Borrow` is a Perceus book-keeping marker (no retain/drop obligation
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
@@ -813,44 +904,52 @@ let codegenEntryFunction name context irFunction stringLiterals =
                                 in
                                     let freeFn = addFunction(module_)("free")(freeType)
                                     in
-                                        let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
+                                        let i32 = int32Type(context)
                                         in
-                                            let functionValue =
-                                                false
-                                                |> functionType(voidType(context))([])(0u32)
-                                                |> addFunction(module_)(name)
+                                            let memcmpType = functionType(i32)([ptrType, ptrType, i64])(3u32)(false)
                                             in
-                                                let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                                let memcmpFn = addFunction(module_)("memcmp")(memcmpType)
                                                 in
-                                                    let builder = createBuilder(context)
+                                                    let stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(i64)(i8)(0)(stringLiterals)
                                                     in
-                                                        let _ = positionBuilderAtEnd(builder)(entryBlock)
+                                                        let functionValue =
+                                                            false
+                                                            |> functionType(voidType(context))([])(0u32)
+                                                            |> addFunction(module_)(name)
                                                         in
-                                                            match irFunction with
-                                                                | IrFunction { instructions = instructions, localCount = localCount } ->
-                                                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
+                                                            let entryBlock = appendBasicBlock(context)(functionValue)("entry")
+                                                            in
+                                                                let builder = createBuilder(context)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(entryBlock)
                                                                     in
-                                                                        let labelBlocks =
-                                                                            instructions
-                                                                            |> collectLabelNames
-                                                                            |> createLabelBlocks(context)(functionValue)
-                                                                        in
-                                                                            let cx =
-                                                                                CodegenContext(
-                                                                                    context = context,
-                                                                                    function_ = functionValue,
-                                                                                    i64 = i64,
-                                                                                    i8 = i8,
-                                                                                    i1 = i1,
-                                                                                    ptrType = ptrType,
-                                                                                    localSlots = localSlots,
-                                                                                    labelBlocks = labelBlocks,
-                                                                                    mallocFn = mallocFn,
-                                                                                    mallocType = mallocType,
-                                                                                    freeFn = freeFn,
-                                                                                    freeType = freeType,
-                                                                                    stringLiteralGlobals = stringLiteralGlobals
-                                                                                )
-                                                                            in
-                                                                                let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                                                                                in (module_, builder))
+                                                                        match irFunction with
+                                                                            | IrFunction { instructions = instructions, localCount = localCount } ->
+                                                                                let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
+                                                                                in
+                                                                                    let labelBlocks =
+                                                                                        instructions
+                                                                                        |> collectLabelNames
+                                                                                        |> createLabelBlocks(context)(functionValue)
+                                                                                    in
+                                                                                        let cx =
+                                                                                            CodegenContext(
+                                                                                                context = context,
+                                                                                                function_ = functionValue,
+                                                                                                i64 = i64,
+                                                                                                i8 = i8,
+                                                                                                i1 = i1,
+                                                                                                ptrType = ptrType,
+                                                                                                localSlots = localSlots,
+                                                                                                labelBlocks = labelBlocks,
+                                                                                                mallocFn = mallocFn,
+                                                                                                mallocType = mallocType,
+                                                                                                freeFn = freeFn,
+                                                                                                freeType = freeType,
+                                                                                                memcmpFn = memcmpFn,
+                                                                                                memcmpType = memcmpType,
+                                                                                                stringLiteralGlobals = stringLiteralGlobals
+                                                                                            )
+                                                                                        in
+                                                                                            let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
+                                                                                            in (module_, builder))
