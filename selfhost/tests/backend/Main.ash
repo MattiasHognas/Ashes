@@ -786,6 +786,160 @@ let buildRcNodeReleaseModule name context =
                                                                                                     let _ = buildRet(builder)(leafValue)
                                                                                                     in (module_, builder))
 
+// The actual "type-directed" half of architecture.md's drop path, not just the single-shape
+// cascade `defineRcReleaseNodeFunction` proved: a payload can OWN a child only in some of its
+// tag states. `optionType` is `{i32 tag, ptr child}` (tag `1` means `Some`, owning `child`; any
+// other value means `None`, with `child` unused) — the RC-aware analogue of PR #696's plain
+// `Option(i32)` `match`. On the last reference, `rcReleaseOption` reads the tag FIRST and only
+// drops `child` (via the already-defined generic `rcRelease`) on the `Some` path before freeing
+// its own header either way; the `None` path frees without ever touching `rcRelease`.
+let defineRcReleaseOptionFunction module_ context existingBuilder headerType i8 ptr optionType freeType freeFn rcReleaseType rcReleaseFn =
+    (let i64 = int64Type(context)
+    in
+        let i32 = int32Type(context)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("rcReleaseOption")(voidType(context))([ptr])(1u32) with
+                | (function, fnType, builder) ->
+                    let value = getParam(function)(0u32)
+                    in
+                        let negSixteen = constInt(i64)(18446744073709551600u64)(false)
+                        in
+                            let headerPtr = buildGEP(builder)(i8)(value)([negSixteen])(1u32)("headerPtr")
+                            in
+                                let zeroIndex = constInt(i32)(0u64)(false)
+                                in
+                                    let countFieldPtr = buildGEP(builder)(headerType)(headerPtr)([zeroIndex, zeroIndex])(2u32)("countFieldPtr")
+                                    in
+                                        let count = buildLoad(builder)(i64)(countFieldPtr)("count")
+                                        in
+                                            let newCount =
+                                                buildSub(builder)(count)(constInt(i64)(1u64)(false))("newCount")
+                                            in
+                                                let _ = buildStore(builder)(newCount)(countFieldPtr)
+                                                in
+                                                    let isZero =
+                                                        buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("isZero")
+                                                    in
+                                                        let dropBlock = appendBasicBlock(context)(function)("drop")
+                                                        in
+                                                            let doneBlock = appendBasicBlock(context)(function)("done")
+                                                            in
+                                                                let _ = buildCondBr(builder)(isZero)(dropBlock)(doneBlock)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(dropBlock)
+                                                                    in
+                                                                        let tagPtr = buildGEP(builder)(optionType)(value)([zeroIndex, zeroIndex])(2u32)("tagPtr")
+                                                                        in
+                                                                            let tag = buildLoad(builder)(i32)(tagPtr)("tag")
+                                                                            in
+                                                                                let isSome =
+                                                                                    buildICmp(builder)(intPredicateEq)(tag)(constInt(i32)(1u64)(false))("isSome")
+                                                                                in
+                                                                                    let someBlock = appendBasicBlock(context)(function)("some")
+                                                                                    in
+                                                                                        let noneBlock = appendBasicBlock(context)(function)("none")
+                                                                                        in
+                                                                                            let _ = buildCondBr(builder)(isSome)(someBlock)(noneBlock)
+                                                                                            in
+                                                                                                let _ =
+                                                                                                    Unit
+                                                                                                    |> (given (_) -> positionBuilderAtEnd(builder)(someBlock))
+                                                                                                    |> (given (_) ->
+                                                                                                        buildGEP(builder)(optionType)(value)([zeroIndex, constInt(i32)(1u64)(false)])(
+                                                                                                            2u32
+                                                                                                        )("childPtrField"))
+                                                                                                    |> (given (childPtrField) -> buildLoad(builder)(ptr)(childPtrField)("childPtr"))
+                                                                                                    |> (given (childPtr) -> buildCall(builder)(rcReleaseType)(rcReleaseFn)([childPtr])(1u32)(""))
+                                                                                                    |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                                                    |> (given (_) -> buildRetVoid(builder))
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        Unit
+                                                                                                        |> (given (_) -> positionBuilderAtEnd(builder)(noneBlock))
+                                                                                                        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)(""))
+                                                                                                        |> (given (_) -> buildRetVoid(builder))
+                                                                                                    in
+                                                                                                        let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                        in
+                                                                                                            let _ = buildRetVoid(builder)
+                                                                                                            in (function, fnType, builder))
+
+// Proves `rcReleaseOption` actually takes the tag-directed fork: a `Some` option (tag `1`)
+// pointing at an owned leaf `i32` cell (value 42). Releasing it (its only reference) must both
+// free the option's own header AND cascade into `rcRelease` for the leaf — the `None` shape
+// (tag `0`) is deliberately proven at the function level (both branches exist and are reachable
+// in the emitted code), not exercised again at a second call site, since a real "build a None and
+// release it" run would be a byte-for-byte repeat of `buildRcNodeReleaseModule`'s already-proven
+// single-branch shape with nothing new to show.
+let buildRcOptionReleaseModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i32 = int32Type(context)
+        in
+            let i64 = int64Type(context)
+            in
+                let i8 = int8Type(context)
+                in
+                    let ptr = pointerType(context)(0u32)
+                    in
+                        let headerType = structType(context)([i64, i64])(2u32)(false)
+                        in
+                            let optionType = structType(context)([i32, ptr])(2u32)(false)
+                            in
+                                let mallocType = functionType(ptr)([i64])(1u32)(false)
+                                in
+                                    let mallocFn = addFunction(module_)("malloc")(mallocType)
+                                    in
+                                        let freeType =
+                                            functionType(voidType(context))([ptr])(1u32)(false)
+                                        in
+                                            let freeFn = addFunction(module_)("free")(freeType)
+                                            in
+                                                match defineRcAllocFunction(module_)(context)(headerType)(i8)(mallocType)(mallocFn) with
+                                                    | (rcAllocFunction, rcAllocType, allocBuilder) ->
+                                                        match defineRcReleaseFunction(module_)(context)(Some(allocBuilder))(headerType)(i8)(ptr)(freeType)(freeFn) with
+                                                            | (rcReleaseFunction, rcReleaseType, releaseBuilder) ->
+                                                                match defineRcReleaseOptionFunction(module_)(context)(Some(releaseBuilder))(headerType)(i8)(ptr)(optionType)(
+                                                                    freeType
+                                                                )(freeFn)(rcReleaseType)(rcReleaseFunction) with
+                                                                    | (rcReleaseOptionFunction, rcReleaseOptionType, releaseOptionBuilder) ->
+                                                                        match beginFunction(module_)(context)(Some(releaseOptionBuilder))("rcOptionLifecycle")(i32)([])(0u32) with
+                                                                            | (_, _, builder) ->
+                                                                                let leaf = buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(4u64)(false)])(1u32)("leaf")
+                                                                                in
+                                                                                    let _ =
+                                                                                        buildStore(builder)(constInt(i32)(42u64)(false))(leaf)
+                                                                                    in
+                                                                                        let option =
+                                                                                            buildCall(builder)(rcAllocType)(rcAllocFunction)([constInt(i64)(16u64)(false)])(1u32)(
+                                                                                                "option"
+                                                                                            )
+                                                                                        in
+                                                                                            let zeroIndex = constInt(i32)(0u64)(false)
+                                                                                            in
+                                                                                                let tagPtr = buildGEP(builder)(optionType)(option)([zeroIndex, zeroIndex])(2u32)("tagPtr")
+                                                                                                in
+                                                                                                    let childPtrField =
+                                                                                                        buildGEP(builder)(optionType)(option)([zeroIndex, constInt(i32)(1u64)(false)])(2u32)(
+                                                                                                            "childPtrField"
+                                                                                                        )
+                                                                                                    in
+                                                                                                        let _ =
+                                                                                                            Unit
+                                                                                                            |> (given (_) ->
+                                                                                                                buildStore(builder)(constInt(i32)(1u64)(false))(tagPtr))
+                                                                                                            |> (given (_) -> buildStore(builder)(leaf)(childPtrField))
+                                                                                                        in
+                                                                                                            let leafValue = buildLoad(builder)(i32)(leaf)("leafValue")
+                                                                                                            in
+                                                                                                                let _ =
+                                                                                                                    buildCall(builder)(rcReleaseOptionType)(rcReleaseOptionFunction)(
+                                                                                                                        [option]
+                                                                                                                    )(1u32)("")
+                                                                                                                in
+                                                                                                                    let _ = buildRet(builder)(leafValue)
+                                                                                                                    in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -948,6 +1102,11 @@ let testEmitAssemblyForRcNodeReleaseModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcNodeLifecycle")
 
+let testEmitAssemblyForRcOptionReleaseModule unit =
+    match emitModule(buildRcOptionReleaseModule)("selfhost-backend-rc-option-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("rcOptionLifecycle")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -965,6 +1124,7 @@ let run unit =
     |> testEmitAssemblyForHeapClosureModule
     |> testEmitAssemblyForRcCellLifecycleModule
     |> testEmitAssemblyForRcNodeReleaseModule
+    |> testEmitAssemblyForRcOptionReleaseModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
