@@ -248,6 +248,47 @@ let buildStructPairModule name context =
                                                                         let _ = buildRet(builder)(sum)
                                                                         in (module_, builder))
 
+// A global null-terminated byte-string constant (`i8[3] greeting = "Hi\0"`, matching a C string
+// literal's layout), read back by a function returning a pointer to its first byte
+// (`i8* getGreeting() { ret i8* &greeting[0] }`). Proves `int8Type`, `arrayType`, and `constArray`
+// all work, and that `buildGEP`'s first (element-stepping) index works on an array, not just the
+// single always-`0` first index every earlier `buildGEP` use exercised on a struct pointer.
+let buildGreetingModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let i8 = int8Type(context)
+        in
+            let greetingType = arrayType(i8)(3u64)
+            in
+                let h = constInt(i8)(72u64)(false)
+                in
+                    let i = constInt(i8)(105u64)(false)
+                    in
+                        let nul = constInt(i8)(0u64)(false)
+                        in
+                            let initialValue = constArray(i8)([h, i, nul])(3u64)
+                            in
+                                let global = addGlobal(module_)(greetingType)("greeting")
+                                in
+                                    let _ =
+                                        Unit
+                                        |> (given (_) -> setInitializer(global)(initialValue))
+                                        |> (given (_) -> setGlobalConstant(global)(true))
+                                        |> (given (_) -> setLinkage(global)(linkageInternal))
+                                    in
+                                        let ptrType = pointerType(context)(0u32)
+                                        in
+                                            match beginFunction(module_)(context)(None)("getGreeting")(ptrType)([])(0u32) with
+                                                | (_, _, builder) ->
+                                                    let i32 = int32Type(context)
+                                                    in
+                                                        let zero = constInt(i32)(0u64)(false)
+                                                        in
+                                                            let firstByte = buildGEP(builder)(greetingType)(global)([zero, zero])(2u32)("firstByte")
+                                                            in
+                                                                let _ = buildRet(builder)(firstByte)
+                                                                in (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -380,6 +421,11 @@ let testEmitAssemblyForStructPairModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("pairSum")
 
+let testEmitAssemblyForGreetingModule unit =
+    match emitModule(buildGreetingModule)("selfhost-backend-greeting-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("greeting")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -391,6 +437,7 @@ let run unit =
     |> testEmitAssemblyForGlobalCounterModule
     |> testEmitAssemblyForMallocFreeModule
     |> testEmitAssemblyForStructPairModule
+    |> testEmitAssemblyForGreetingModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
