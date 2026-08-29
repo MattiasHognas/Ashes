@@ -1928,6 +1928,18 @@ same public behavior.
   out above, not a linker or `Str`-representation issue — probed and intentionally left there rather
   than folded into this fix, since it needs call-site-aware builtin dispatch or monomorphization,
   not another relocation shape.
+  **`PanicStr` codegen added** (`Ashes.IO.panic` was already an intrinsic builtin — `CoreBuiltinLowering.ash`'s
+  `standardBuiltinLayout` already lowers it to the `PanicStr` IR instruction via `CorePanic`; only
+  codegen was missing). Matches `LlvmCodegenExpressions.cs`'s own `EmitPanic` exactly: the message
+  prints through the SAME helper `PrintStr` uses — a panic's message goes to stdout, not a
+  stderr-specific path — then the process exits `1` instead of `0`. `IrCodegen.ash`'s `PrintStr`
+  case was itself extracted into a shared `emitPrintStrBytesWithNewline` helper (write the `[len]
+  [bytes]` payload via the raw `write` syscall, then a trailing newline) so `PanicStr` reuses it
+  rather than duplicating the byte-writing logic; `emitLinuxProcessExit` (previously hardcoded to
+  exit code `0`, the entry function's only prior caller) is now `emitLinuxProcessExitWithCode` with
+  an explicit code argument, so `PanicStr` can supply `1`. `Ashes.IO.panic("boom")` now compiles
+  through the complete self-hosted pipeline and runs on a real Linux process, printing `boom` and
+  exiting `1`.
 - [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
   the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
   reference-count tracking or scope-local arena exists yet for either to do anything with). This

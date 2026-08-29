@@ -1974,6 +1974,12 @@ let buildRealIrLetBoundStringModule name context = codegenRealSource("let s = \"
 // string-specific. Verified only when actually run. Prints `hello`.
 let buildRealIrRecordFieldStringModule name context = codegenRealSource("type Box = | value: Str\nlet b = Box(value = \"hello\")\nmatch b with | Box(value) -> Ashes.IO.print(value)")(name)(context)
 
+// `Ashes.IO.panic` is already an intrinsic builtin (`CoreBuiltinLowering.ash`'s `standardBuiltinLayout`)
+// lowering to the `PanicStr` IR instruction (`CorePanic` -> `never(start)(value)(PanicStr)`) — only
+// its codegen was missing. Prints `boom` then exits `1`, matching `LlvmCodegenExpressions.cs`'s own
+// `EmitPanic` (message via the same helper `print` uses, then `exit(1)` rather than `exit(0)`).
+let buildRealIrPanicModule name context = codegenRealSource("Ashes.IO.panic(\"boom\")")(name)(context)
+
 // `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
 // reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
 // (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
@@ -2940,6 +2946,32 @@ let testRunStaticExecutableForRealIrRecordFieldStringModule unit =
                                                         let _ = test.assertEqual("hello")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildRealIrPanicModule`'s executable end to end: proves `PanicStr` prints its message and
+// exits `1`, not just that it compiles.
+let testRunStaticExecutableForRealIrPanicModule unit =
+    match emitModule(buildRealIrPanicModule)("selfhostBackendRunPanic")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunPanic") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_panic_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_panic_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_panic_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("boom")(line)
+                                                        in test.assertEqual(1)(exitCode)
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2977,6 +3009,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrTwoStringLiteralsModule
     |> testRunStaticExecutableForRealIrLetBoundStringModule
     |> testRunStaticExecutableForRealIrRecordFieldStringModule
+    |> testRunStaticExecutableForRealIrPanicModule
     |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testRunStaticExecutableForSwitchTagModule
     |> testRunStaticExecutableForRealIrRecordFieldModule

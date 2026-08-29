@@ -149,12 +149,19 @@ let emitLinuxSyscallCall builder i64 nr arg1 arg2 arg3 name =
 // `exit` (not `exit_group`) terminates only the calling thread — the right choice for a
 // single-threaded program, matching what the real compiler emits here too. A `syscall` that
 // terminates the process never returns, so the block ends with `buildUnreachable`, never a `ret`.
-let emitLinuxProcessExit builder i64 =
+// `exitCode` is an already-built `i64` value, not a compile-time literal, so both the entry
+// function's own always-`0` `Return` and `PanicStr`'s always-`1` exit share this one helper.
+let emitLinuxProcessExitWithCode builder i64 exitCode =
     (let zero = constInt(i64)(0u64)(false)
     in
         let _ =
-            emitLinuxSyscallCall(builder)(i64)(constInt(i64)(60u64)(false))(zero)(zero)(zero)("sys_exit")
+            emitLinuxSyscallCall(builder)(i64)(constInt(i64)(60u64)(false))(exitCode)(zero)(zero)("sys_exit")
         in buildUnreachable(builder))
+
+let emitLinuxProcessExit builder i64 =
+    false
+    |> constInt(i64)(0u64)
+    |> emitLinuxProcessExitWithCode(builder)(i64)
 
 // `write(fd, ptr, len)` — the raw, unbuffered path `LlvmCodegenPlatform.cs`'s own `EmitWriteBytesRaw`
 // takes when a program never touches `Ashes.IO.writeBuffered`/`flush` (the only path this codegen
@@ -163,6 +170,37 @@ let emitLinuxProcessExit builder i64 =
 // pointer value — every syscall argument here is a plain register-width word.
 let emitLinuxWrite builder i64 fd ptr len =
     emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
+
+// Reads a runtime-managed `Str` value's own `[len:i64][bytes...]` header (word `0` is `len`, byte
+// offset `8` is where the raw bytes start — the SAME layout `LoadConstStr`'s global builds, and
+// the general one every real `Str` value uses, not just a literal) and writes it to stdout via the
+// raw `write` syscall, then a trailing newline byte — matching `LlvmCodegenExpressions.cs`'s own
+// `EmitPrintStringFromTemp(appendNewline: true)` exactly. `stringRef`'s own `i64` value doubles as
+// the byte address once offset by `8`, so writing needs no extra pointer round-trip beyond the one
+// `buildLoad` already needs to read `len`. Shared by `PrintStr` and `PanicStr` — stage 0's own
+// `EmitPanic` prints its message through this exact same helper (`EmitPrintStringFromTemp`) before
+// exiting, not a stderr-specific write.
+let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
+    (let basePtr = buildIntToPtr(builder)(stringRef)(ptrType)("str_len_ptr")
+    in
+        let len = buildLoad(builder)(i64)(basePtr)("str_len")
+        in
+            let byteAddress =
+                buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))("str_bytes_addr")
+            in
+                let _ =
+                    emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
+                in
+                    let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
+                    in
+                        let _ =
+                            buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
+                        in
+                            let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
+                            in
+                                false
+                                |> constInt(i64)(1u64)
+                                |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr))
 
 // The five values `PrintInt`'s helper functions all need, computed once by `printIntPrologue` and
 // threaded through unchanged — the same "bundle the fixed values" shape `CodegenContext` uses for
@@ -575,40 +613,30 @@ let codegenInstructionKind cx builder kind state =
                                 |> lookupIndexed(source)
                                 |> emitPrintInt(context)(function_)(i64)(builder)
                             in (tempEnv, false)
-                        // Reads a runtime-managed `Str` value's own `[len:i64][bytes...]` header
-                        // (word `0` is `len`, byte offset `8` is where the raw bytes start — the
-                        // SAME layout `LoadConstStr`'s global builds, and the general one every real
-                        // `Str` value uses, not just a literal) and writes it via the raw `write`
-                        // syscall, then a trailing newline byte — matching
-                        // `LlvmCodegenExpressions.cs`'s own `EmitPrintStringFromTemp(appendNewline:
-                        // true)` exactly. `stringRef`'s own `i64` value doubles as the byte address
-                        // once offset by `8`, so writing needs no extra pointer round-trip beyond
-                        // the one `buildLoad` already needs to read `len`.
                         | PrintStr(source) ->
-                            let stringRef = lookupIndexed(source)(tempEnv)
+                            let _ =
+                                tempEnv
+                                |> lookupIndexed(source)
+                                |> emitPrintStrBytesWithNewline(builder)(i64)(i8)(ptrType)
+                            in (tempEnv, false)
+                        // Matches `LlvmCodegenExpressions.cs`'s own `EmitPanic` exactly: print the
+                        // message through the SAME helper `PrintStr` uses (stage 0's own
+                        // `EmitPanic` calls `EmitPrintStringFromTemp` — a panic's message goes to
+                        // stdout, not a stderr-specific path), then exit `1` rather than `0`. A
+                        // syscall that terminates the process never returns, so `terminated = true`
+                        // here matches `Return`'s own case below, not the `false` every other
+                        // instruction in this function returns.
+                        | PanicStr(source) ->
+                            let _ =
+                                tempEnv
+                                |> lookupIndexed(source)
+                                |> emitPrintStrBytesWithNewline(builder)(i64)(i8)(ptrType)
                             in
-                                let basePtr = buildIntToPtr(builder)(stringRef)(ptrType)("str_len_ptr")
-                                in
-                                    let len = buildLoad(builder)(i64)(basePtr)("str_len")
-                                    in
-                                        let byteAddress =
-                                            buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))("str_bytes_addr")
-                                        in
-                                            let _ =
-                                                emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
-                                            in
-                                                let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
-                                                in
-                                                    let _ =
-                                                        buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
-                                                    in
-                                                        let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
-                                                        in
-                                                            let _ =
-                                                                false
-                                                                |> constInt(i64)(1u64)
-                                                                |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr)
-                                                            in (tempEnv, false)
+                                let _ =
+                                    false
+                                    |> constInt(i64)(1u64)
+                                    |> emitLinuxProcessExitWithCode(builder)(i64)
+                                in (tempEnv, true)
                         // A zero-field, arena-shaped (`runtimeManaged = false`) `AllocAdt` — exactly what
                         // a `Unit` result (e.g. `PrintInt`'s own return value) lowers to — gets a plain
                         // stack `alloca` standing in for a real arena bump allocation: this program shape
