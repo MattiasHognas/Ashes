@@ -1790,6 +1790,20 @@ same public behavior.
   **Explicitly still open**: cascading drops (a field that is itself RC-managed), multi-argument/
   curried constructors, shadowing-aware liveness, and every other Perceus-placement concern named in
   the previous item remain unimplemented — this covers exactly one narrow, always-safe case.
+- [~] `AshesCompiler.Backend.IrCodegen` gained `GetAdtField`/`GetAdtTag` — the read half of
+  `SetAdtField`/`AllocAdt`'s tag write, at the same word offsets. A cascading `RcDrop` needs these
+  to read a child field out before releasing it, and real `match`/pattern field extraction needs
+  them for any constructor. Neither consumer is wired up yet: a real `match` on `Maybe`/`Result`
+  (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
+  type check and per-arm RC cleanup around each arm's own arena/RC state (confirmed via a stage-0
+  `--emit-ir` dump of a real `match` on `Some`/`None`), and a user-defined record type has no
+  lowering path at all yet (`CoreLowering.ash` never processes a top-level `type` declaration into a
+  constructor layout — confirmed no second `CoreConstructorLayout` construction site exists anywhere
+  in the package). With no real source able to drive either instruction yet, this is verified via a
+  hand-built `IrFunction` (allocate a 2-field cell, set both fields, read field 0 and the tag back,
+  add them, print the sum) run end to end on a real Linux process — the one exception to this
+  package's real-lowering-only testing rule, matching the same "prove the primitive first" precedent
+  `AshesCompiler.Backend.ElfLinker`'s dynamic-linking mechanism used before real IR could reach it.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
