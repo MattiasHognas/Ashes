@@ -1796,27 +1796,34 @@ let buildRcTriReleaseModule name context =
                                                                                                                                         let _ = buildRet(builder)(sum)
                                                                                                                                         in (module_, builder))
 
-// The first genuinely IR-DRIVEN test in this arc: every module builder above hand-encodes the
-// LLVM calls a human decided represent some IR shape. This one instead runs `1 + 2 * 3` through
+// The first genuinely IR-DRIVEN tests in this arc: every module builder above hand-encodes the
+// LLVM calls a human decided represent some IR shape. This one instead runs real source through
 // the REAL self-hosted `AshesCompiler.Frontend.Parser.parseProgram` +
 // `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource` pipeline (the same one
-// `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR text output for this
-// exact source) and hands the resulting REAL `IrFunction` to
+// `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR text output for both
+// fixtures used below) and hands the resulting REAL `IrFunction` to
 // `AshesCompiler.Backend.IrCodegen.codegenEntryFunction`. If the shape `IrProgram`/`IrFunction`
 // actually produce didn't match what a codegen walker expects, this is where it would show up —
 // no earlier test in this arc could ever catch that, since they all supplied the IR shape by hand.
-let buildRealIrArithmeticModule name context =
-    (let source = "1 + 2 * 3"
-    in
-        match parseProgram(source) with
-            | ProgramParseResult { program = program, diagnostics = [] } ->
-                match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
-                    | CoreLoweringResult { program = Some(lowered), error = None } ->
-                        match lowered with
-                            | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
-                    | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
-                    | _ -> test.fail("lowering produced no program")
-            | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics)))
+let codegenRealSource source name context =
+    match parseProgram(source) with
+        | ProgramParseResult { program = program, diagnostics = [] } ->
+            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                | CoreLoweringResult { program = Some(lowered), error = None } ->
+                    match lowered with
+                        | IrProgram { entryFunction = entryFunction } -> codegenEntryFunction(name)(context)(entryFunction)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
+
+// `simple_arith`'s own fixture source: `LoadConstInt` x3, `MulInt`, `AddInt`, `Return` — no
+// top-level `let`, so no arena bracketing at all.
+let buildRealIrArithmeticModule name context = codegenRealSource("1 + 2 * 3")(name)(context)
+
+// `let_bindings`'s own fixture source: adds `StoreLocal`/`LoadLocal` AND arena bracketing (every
+// top-level `let` scope gets one, even this provably-scalar case — see the fixture's own lowered
+// IR) around each of the two `let`s. `10 * (10 + 5) = 150`.
+let buildRealIrLetBindingsModule name context = codegenRealSource("let x = 10\nlet y = x + 5\nx * y")(name)(context)
 
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
@@ -2015,6 +2022,11 @@ let testEmitAssemblyForRealIrArithmeticModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrArith")
 
+let testEmitAssemblyForRealIrLetBindingsModule unit =
+    match emitModule(buildRealIrLetBindingsModule)("selfhostBackendRealIrLetBindings")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("selfhostBackendRealIrLetBindings")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -2039,6 +2051,7 @@ let run unit =
     |> testEmitAssemblyForRcClosureModule
     |> testEmitAssemblyForRcTriReleaseModule
     |> testEmitAssemblyForRealIrArithmeticModule
+    |> testEmitAssemblyForRealIrLetBindingsModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)

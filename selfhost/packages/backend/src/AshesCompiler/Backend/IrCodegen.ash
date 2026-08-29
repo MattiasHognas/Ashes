@@ -6,17 +6,25 @@
 // codegen should produce, which is all every earlier test in this arc ever did.
 //
 // Boundary:
-// - Deliberately covers only the instruction kinds a scalar-arithmetic entry function needs with
-//   no top-level `let` (so no arena bracketing — see `simple_arith`'s own lowered IR, which is
-//   exactly `LoadConstInt` x3, `MulInt`, `AddInt`, `Return`, nothing else): `LoadConstInt`,
-//   `MulInt`, `AddInt`, `Return`. Anything else panics with a clear "unsupported" message rather
-//   than silently miscompiling. Locals (`StoreLocal`/`LoadLocal`), arena bookkeeping
-//   (`SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`), and every other instruction kind
-//   are follow-up slices, not attempted here.
+// - Covers `LoadConstInt`, `MulInt`, `AddInt`, `StoreLocal`, `LoadLocal`, and `Return` — enough
+//   for `simple_arith` and `let_bindings`, `selfhost/tests/ir-program-parity`'s own two trusted
+//   scalar fixtures. `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` (emitted around
+//   every top-level `let` scope, even a provably-scalar one — see `let_bindings`'s own lowered IR)
+//   are treated as genuine no-ops: real scoped-arena codegen is a separate, much bigger slice this
+//   one deliberately does not attempt, so these are explicitly ignored rather than silently
+//   producing wrong code for a case they can't yet handle. Anything else panics with a clear
+//   "unsupported" message. Closures, ADTs, strings, RC, and every other instruction kind remain
+//   unstarted follow-up slices.
 // - Every IR value is a full-width `i64` word (architecture.md: "every value is an i64 word"), so
 //   a temp environment is just `List((IrTemp, LLVMValueRef))` — no type-directed dispatch needed
-//   for this instruction subset. `Ashes.Number.UInt.fromInt64` (added alongside this slice) is
-//   what makes `LoadConstInt`'s dynamic `Int` payload usable with `constInt`'s `u64` parameter.
+//   for this instruction subset. `Ashes.Number.UInt.fromInt64` (added alongside the first version
+//   of this slice) is what makes `LoadConstInt`'s dynamic `Int` payload usable with `constInt`'s
+//   `u64` parameter.
+// - Locals get one `buildAlloca`'d `i64` slot each, allocated up front from `IrFunction`'s own
+//   `localCount` — "every temp and local is an entry-block slot" (architecture.md) — looked up by
+//   index the same way temps are, in a separate, fixed (never-appended-to) environment: unlike the
+//   temp environment, which local index maps to which alloca pointer never changes once the
+//   function's slots are built, only the value stored at that pointer does.
 // - Builds a single `i64()` function (no parameters, no real process-entry ABI) representing the
 //   entry function's computed value — proving the IR-to-LLVM composition, not yet the real linked
 //   executable's actual entry contract.
@@ -29,30 +37,44 @@ export (
     value codegenEntryFunction,
 )
 
-let recursive lookupTemp temp env =
+let recursive lookupIndexed key env =
     match env with
-        | [] -> Ashes.IO.panic("codegen: unknown temp t" + Ashes.Text.fromInt(temp))
-        | (boundTemp, value) :: rest ->
-            if boundTemp == temp
+        | [] -> Ashes.IO.panic("codegen: unknown index " + Ashes.Text.fromInt(key))
+        | (boundKey, value) :: rest ->
+            if boundKey == key
             then value
-            else lookupTemp(temp)(rest)
+            else lookupIndexed(key)(rest)
 
-let codegenInstructionKind builder i64 kind env =
+// Allocates one `i64` slot per local, `0..count-1`, and returns the fixed `IrLocal -> LLVMValueRef`
+// mapping every `StoreLocal`/`LoadLocal` in the function looks up by index.
+let recursive allocateLocalSlots builder i64 count index =
+    if index >= count
+    then []
+    else (index, buildAlloca(builder)(i64)("local" + Ashes.Text.fromInt(index))) :: allocateLocalSlots(builder)(i64)(count)(index + 1)
+
+let codegenInstructionKind builder i64 localSlots kind tempEnv =
     match kind with
-        | LoadConstInt(target, value) -> (target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: env
-        | MulInt(target, left, right) -> (target, buildMul(builder)(lookupTemp(left)(env))(lookupTemp(right)(env))("t" + Ashes.Text.fromInt(target))) :: env
-        | AddInt(target, left, right) -> (target, buildAdd(builder)(lookupTemp(left)(env))(lookupTemp(right)(env))("t" + Ashes.Text.fromInt(target))) :: env
+        | LoadConstInt(target, value) -> (target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv
+        | MulInt(target, left, right) -> (target, buildMul(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv
+        | AddInt(target, left, right) -> (target, buildAdd(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv
+        | StoreLocal(slot, source) ->
+            let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(lookupIndexed(slot)(localSlots))
+            in tempEnv
+        | LoadLocal(target, slot) -> (target, buildLoad(builder)(i64)(lookupIndexed(slot)(localSlots))("t" + Ashes.Text.fromInt(target))) :: tempEnv
+        | SaveArenaState(_, _, _) -> tempEnv
+        | RestoreArenaState(_, _, _, _) -> tempEnv
+        | ReclaimArenaChunks(_, _, _) -> tempEnv
         | Return(source) ->
-            let _ = buildRet(builder)(lookupTemp(source)(env))
-            in env
+            let _ = buildRet(builder)(lookupIndexed(source)(tempEnv))
+            in tempEnv
         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
-let recursive codegenInstructions builder i64 instructions env =
+let recursive codegenInstructions builder i64 localSlots instructions tempEnv =
     match instructions with
-        | [] -> env
+        | [] -> tempEnv
         | instruction :: rest ->
             match instruction with
-                | IrInstruction { instruction = kind } -> codegenInstructions(builder)(i64)(rest)(codegenInstructionKind(builder)(i64)(kind)(env))
+                | IrInstruction { instruction = kind } -> codegenInstructions(builder)(i64)(localSlots)(rest)(codegenInstructionKind(builder)(i64)(localSlots)(kind)(tempEnv))
 
 // Builds `i64 <name>()` in a fresh module from `irFunction`'s real instructions and returns
 // `(module_, builder)`, matching every other module builder's shape in `selfhost/tests/backend`
@@ -71,6 +93,8 @@ let codegenEntryFunction name context irFunction =
                         let _ = positionBuilderAtEnd(builder)(entryBlock)
                         in
                             match irFunction with
-                                | IrFunction { instructions = instructions } ->
-                                    let _ = codegenInstructions(builder)(i64)(instructions)([])
-                                    in (module_, builder))
+                                | IrFunction { instructions = instructions, localCount = localCount } ->
+                                    let localSlots = allocateLocalSlots(builder)(i64)(localCount)(0)
+                                    in
+                                        let _ = codegenInstructions(builder)(i64)(localSlots)(instructions)([])
+                                        in (module_, builder))
