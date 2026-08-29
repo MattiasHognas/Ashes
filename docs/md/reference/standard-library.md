@@ -507,6 +507,11 @@ Ashes.IO.print(Ashes.Text.fromBigInt(squared))
 - `fromInt(value)` returning `u8` — narrow an `Int` to an unsigned byte, wrapping modulo 256 (the low
   8 bits). The inverse of `toInt`; lets a computed byte value be written with `Ashes.Byte.appendByte`
   / `Ashes.Byte.singleton` (e.g. building a percent-decoded string byte by byte).
+- `fromInt64(value)` returning `u64` — bit-reinterpret an `Int` as `u64`, with no masking: `Int` and
+  `u64` are both full-width 64-bit words, so every bit of the input is already a valid `u64` (unlike
+  `fromInt`'s narrowing to `u8`). The widening-direction counterpart to `toInt`'s `u64` case; the
+  bridge for passing an `Int`-typed value (such as an IR constant, a hash, or an arithmetic result)
+  to an API that requires `u64`, e.g. an `external` FFI parameter or `Ashes.Byte.u64Le`.
 
 ## `Ashes.Collection` — containers
 
