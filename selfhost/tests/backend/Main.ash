@@ -14,6 +14,7 @@ import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrInstructions
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
 // `None` for `existingBuilder` for a module's first (or only) function; pass `Some(builder)` for a
@@ -1914,6 +1915,46 @@ let buildRealIrPrintModule name context = codegenRealSource("Ashes.IO.print(42 -
 // layouts.
 let buildRealIrSomeConstructorModule name context = codegenRealSource("let x = Some(42)\nAshes.IO.print(1)")(name)(context)
 
+// `GetAdtField`/`GetAdtTag` read what `AllocAdt`/`SetAdtField` already write, but no real source
+// reaches them yet: extracting an ADT field requires `match`, and a real `match` on `Maybe`/`Result`
+// (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
+// type check and per-arm RC cleanup that are not implemented — a user-defined record type would
+// avoid that, but `CoreLowering.ash` has no lowering path for a top-level `type` declaration at all
+// yet. This builds the `IrFunction` by hand instead of through `codegenRealSource`, the one
+// exception to this file's usual real-lowering-only rule (necessary here, not a step backward):
+// allocate a 2-field RC cell, set both fields, read field 0 and the tag back, add them, and print
+// the sum — proving both instructions against every other one they compose with real-execution
+// output rather than a hand-simulated shape.
+let buildAdtFieldTagReadModule name context =
+    (let instructions =
+        [
+            IrInstruction(instruction = LoadConstInt(0)(3), location = None),
+            IrInstruction(instruction = LoadConstInt(1)(4), location = None),
+            IrInstruction(instruction = AllocAdt(2)(0)(2)(true), location = None),
+            IrInstruction(instruction = SetAdtField(2)(0)(0), location = None),
+            IrInstruction(instruction = SetAdtField(2)(1)(1), location = None),
+            IrInstruction(instruction = GetAdtField(3)(2)(0), location = None),
+            IrInstruction(instruction = GetAdtTag(4)(2), location = None),
+            IrInstruction(instruction = AddInt(5)(3)(4), location = None),
+            IrInstruction(instruction = PrintInt(5), location = None),
+            IrInstruction(instruction = Return(5), location = None)
+        ]
+    in
+        let irFunction =
+            IrFunction(
+                label = name,
+                instructions = instructions,
+                localCount = 0,
+                tempCount = 6,
+                hasEnvAndArgParams = false,
+                coroutine = None,
+                localNames = [],
+                localTypes = [],
+                origin = None,
+                lifetimesPlaced = false
+            )
+        in codegenEntryFunction(name)(context)(irFunction))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -2265,6 +2306,34 @@ let testRunStaticExecutableForRealIrSomeConstructorModule unit =
                                                         let _ = test.assertEqual("1")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Runs `buildAdtFieldTagReadModule`'s executable end to end: allocates a 2-field RC cell (tag 0,
+// fields 3 and 4), reads field 0 and the tag back through `GetAdtField`/`GetAdtTag`, and prints
+// their sum. `3 + 0 = 3` confirms both reads land on the exact words `AllocAdt`/`SetAdtField`
+// wrote, not just that the process didn't crash.
+let testRunStaticExecutableForAdtFieldTagReadModule unit =
+    match emitModule(buildAdtFieldTagReadModule)("selfhostBackendRunAdtFieldTagRead")(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)("selfhostBackendRunAdtFieldTagRead") with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes("selfhost_backend_adt_field_tag_e2e")(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable("selfhost_backend_adt_field_tag_e2e") with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./selfhost_backend_adt_field_tag_e2e")([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual("3")(line)
+                                                        in test.assertEqual(0)(exitCode)
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -2339,6 +2408,7 @@ let run unit =
     |> testLinkStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrPrintModule
     |> testRunStaticExecutableForRealIrSomeConstructorModule
+    |> testRunStaticExecutableForAdtFieldTagReadModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

@@ -464,6 +464,16 @@ let codegenInstructionKind cx builder kind state =
                                 in
                                     let _ = buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
                                     in (tempEnv, terminated)
+                        // The read half of `SetAdtField`: same word offset, a load instead of a store.
+                        | GetAdtField(target, ptr, fieldIndex) ->
+                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
+                            in
+                                let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
+                                in ((target, buildLoad(builder)(i64)(fieldPtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // Reads word `0` (the tag) — the same offset `AllocAdt` writes it to.
+                        | GetAdtTag(target, ptr) ->
+                            let basePtr = buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
+                            in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A single, non-cascading release: walks back to the RC header with the
                         // NEGATIVE byte-offset GEP that mirrors `AllocAdt`'s own forward one (the
                         // public value pointer never carries the header with it — same contract as
