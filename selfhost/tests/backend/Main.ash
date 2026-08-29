@@ -371,6 +371,72 @@ let buildOptionUnwrapModule name context =
                                                             let _ = buildRet(builder)(result)
                                                             in (module_, builder))
 
+// Defines `i32 addEnv(i32 env, i32 x) { ret env + x }`, standing in for a compiled closure body
+// (`env` playing the role of a single captured value). Returns the function's own `functionType`
+// alongside it, since the indirect call site needs that exact type, not the callee's definition.
+let defineAddEnvFunction module_ context =
+    (let i32 = int32Type(context)
+    in
+        match beginFunction(module_)(context)(None)("addEnv")(i32)([i32, i32])(2u32) with
+            | (function, fnType, builder) ->
+                let env = getParam(function)(0u32)
+                in
+                    let x = getParam(function)(1u32)
+                    in
+                        let sum = buildAdd(builder)(env)(x)("sum")
+                        in
+                            let _ = buildRet(builder)(sum)
+                            in (function, fnType, builder))
+
+// Defines `i32 callClosure(ptr closure, i32 x) { call (*closure.code)(closure.env, x) }` against
+// an already-built `{ptr code, i32 env}` closure layout — the mechanism a real closure needs: an
+// indirect call through a function-pointer value loaded out of memory.
+let buildCallClosureFunction module_ context existingBuilder envFnType closureType =
+    (let i32 = int32Type(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            match beginFunction(module_)(context)(existingBuilder)("callClosure")(i32)([ptr, i32])(2u32) with
+                | (function, _, builder) ->
+                    let closurePtr = getParam(function)(0u32)
+                    in
+                        let xArg = getParam(function)(1u32)
+                        in
+                            let zeroIndex = constInt(i32)(0u64)(false)
+                            in
+                                let oneIndex = constInt(i32)(1u64)(false)
+                                in
+                                    let codePtrFieldPtr = buildGEP(builder)(closureType)(closurePtr)([zeroIndex, zeroIndex])(2u32)("codePtrFieldPtr")
+                                    in
+                                        let envFieldPtr = buildGEP(builder)(closureType)(closurePtr)([zeroIndex, oneIndex])(2u32)("envFieldPtr")
+                                        in
+                                            let codePtr = buildLoad(builder)(ptr)(codePtrFieldPtr)("codePtr")
+                                            in
+                                                let envValue = buildLoad(builder)(i32)(envFieldPtr)("envValue")
+                                                in
+                                                    let result = buildCall(builder)(envFnType)(codePtr)([envValue, xArg])(2u32)("result")
+                                                    in
+                                                        let _ = buildRet(builder)(result)
+                                                        in (function, builder))
+
+// A deliberately minimal slice of "closures", scoped narrower than a real capture-carrying
+// closure: proves the indirect-call mechanism above composes with a real `{ptr, i32}` struct
+// layout. No new LLVM C API surface: `buildCall`'s callee was always a plain value, never
+// required to be a direct `addFunction` result. The harder pieces a real closure needs
+// (heap-allocated env, capture packing/arity, RC of captured values) are deliberately out of
+// scope for this slice.
+let buildClosureCallModule name context =
+    (let module_ = createModule(name)(context)
+    in
+        let ptr = pointerType(context)(0u32)
+        in
+            let closureType = structType(context)([ptr, int32Type(context)])(2u32)(false)
+            in
+                match defineAddEnvFunction(module_)(context) with
+                    | (_, envFnType, addEnvBuilder) ->
+                        match buildCallClosureFunction(module_)(context)(Some(addEnvBuilder))(envFnType)(closureType) with
+                            | (_, builder) -> (module_, builder))
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -513,6 +579,11 @@ let testEmitAssemblyForOptionUnwrapModule unit =
         | Error(message) -> test.fail(message)
         | Ok(bytes) -> assertLooksLikeAssembly(bytes)("unwrapOr")
 
+let testEmitAssemblyForClosureCallModule unit =
+    match emitModule(buildClosureCallModule)("selfhost-backend-closure-test")(assemblyFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(bytes) -> assertLooksLikeAssembly(bytes)("callClosure")
+
 let run unit =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -526,6 +597,7 @@ let run unit =
     |> testEmitAssemblyForStructPairModule
     |> testEmitAssemblyForGreetingModule
     |> testEmitAssemblyForOptionUnwrapModule
+    |> testEmitAssemblyForClosureCallModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 run(Unit)
