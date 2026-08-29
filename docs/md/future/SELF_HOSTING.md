@@ -1539,19 +1539,17 @@ same public behavior.
   string/byte array constants, and host-CPU-tuned target machine creation and object/assembly
   emission — see the file itself for the exact current surface, since restating it here every PR
   has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
-  verifying, and emitting a small real function (constants, arithmetic, branching, recursion-free
-  calls, globals, external libc calls, structs, a C-string-shaped byte array, a tagged-union ADT
-  `match` built from those same struct/GEP/branch primitives, a minimal closure-shaped indirect
-  call through a function-pointer value loaded out of a struct field, that same closure struct
-  heap-allocated via `malloc`/`free` rather than a stack `alloca`, a real RC cell matching this
-  doc's own header layout below — allocate/retain/release/read-while-alive/release-to-zero-and-free
-  — a two-cell owner/child graph proving release cascades to a child's own release before the
-  owner frees itself, and a tagged `Some`/`None` payload proving that cascade is TAG-DIRECTED —
-  the `Some` path drops its owned child before freeing, the `None` path never calls the child
-  release at all — as of this writing) to genuine linux-x64 ELF objects and assembly listings,
-  checked with `readelf` and,
-  independently, exact-instruction assembly dumps for each (not just a byte-length assertion in the
-  test itself). The bindings resolve a bare `libLLVM.so`/`.dll` via the executable's own `$ORIGIN`
+  verifying, and emitting a small real function to genuine linux-x64 ELF objects and assembly
+  listings, checked with `readelf` and, independently, exact-instruction assembly dumps for each
+  (not just a byte-length assertion in the test itself) — restating the exact proof-point list here
+  every PR has proven just as unmaintainable as the binding list above; see the test file itself
+  for the current set (as of this writing: primitives/arithmetic/branching, module-local and
+  external calls, globals, structs, arrays/byte strings, a tagged-union ADT `match`, a closure call
+  through a function-pointer value on both a stack and a heap-allocated struct, and RC end to end —
+  a cell matching this doc's own header layout, cascading release to an owned child, and
+  tag-directed dispatch over which fields actually get dropped, including a `Node` arm that drops
+  more than one owned field in sequence). The bindings resolve a bare `libLLVM.so`/`.dll` via the
+  executable's own `$ORIGIN`
   RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
   but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
   installed layout itself) is still unstarted.
