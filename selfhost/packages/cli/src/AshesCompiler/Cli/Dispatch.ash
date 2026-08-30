@@ -10,9 +10,9 @@
 // - The command name is matched case-insensitively (stage 0 lowercases `args[0]` before
 //   dispatch); every other argument is passed through unchanged and unsliced beyond dropping the
 //   command name itself.
-// - Dispatch only covers the six subcommands this package has actually ported so far
-//   (`add`/`fmt`/`init`/`remove`/`tree`/`why`) plus the shared usage/help paths —
-//   `compile`/`run`/`repl`/`test`/`restore`/the registry commands, and `--version`/`-v` (stage 0's
+// - Dispatch only covers the subcommands this package has actually ported so far
+//   (`add`/`compile`/`fmt`/`init`/`remove`/`restore`/`run`/`tree`/`why`) plus the shared
+//   usage/help paths — `repl`/`test`/the registry commands, and `--version`/`-v` (stage 0's
 //   version string comes from assembly metadata this package has no equivalent of yet) all remain
 //   unported and fall through to usage like any other unknown command, rather than reproducing
 //   behavior that doesn't exist here yet. Ashes doesn't preserve backward compatibility for
@@ -20,6 +20,7 @@
 //   unrecognized name.
 
 import AshesCompiler.Cli.Add
+import AshesCompiler.Cli.Compile
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
 import AshesCompiler.Cli.Remove
@@ -67,7 +68,7 @@ let recursive lowerAscii (text: Str) =
         | None -> ""
         | Some((head, tail)) -> lowerAsciiChar(head) + lowerAscii(tail)
 
-let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  restore  [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
+let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  compile  [-o <output>] <input.ash>\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  restore  [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]\n" + "  run      <input.ash> [-- <args...>]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
 
 let printUsage exitCode =
     (let _ = Ashes.IO.print(usageText)
@@ -77,10 +78,12 @@ let printUsage exitCode =
 let dispatchCommand command rest =
     match command with
         | "add" -> runAdd(rest)
+        | "compile" -> runCompile(rest)
         | "fmt" -> runFmt(rest)
         | "init" -> runInit(rest)
         | "remove" -> runRemove(rest)
         | "restore" -> runRestore(rest)
+        | "run" -> runRun(rest)
         | "tree" -> runTree(rest)
         | "why" -> runWhy(rest)
         | _ -> printUsage(2)

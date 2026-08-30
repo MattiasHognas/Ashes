@@ -3,6 +3,7 @@ import Ashes.Collection.List.length
 import Ashes.IO.Path
 import Ashes.Text.Json
 import AshesCompiler.Cli.Add
+import AshesCompiler.Cli.Compile
 import AshesCompiler.Cli.Dispatch
 import AshesCompiler.Cli.Fmt
 import AshesCompiler.Cli.Init
@@ -1106,6 +1107,94 @@ let testRunCliDispatchesToInitWithRemainingArguments unit =
     |> runCli
     |> test.assertEqual(2)
 
+let testParseCompileArgumentsHelp unit =
+    match parseCompileArguments(["--help"]) with
+        | CompileHelpRequested -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected --help to request help")
+
+let testParseCompileArgumentsMissingInput unit =
+    match parseCompileArguments([]) with
+        | CompileInputError(message) -> test.assertEqual("Missing input: provide a .ash file.")(message)
+        | _ -> test.fail("expected zero arguments to be an input error")
+
+let testParseCompileArgumentsRejectsUnknownOption unit =
+    match parseCompileArguments(["--bogus", "a.ash"]) with
+        | CompileUsageError(message) -> test.assertEqual("Unknown option '--bogus'.")(message)
+        | _ -> test.fail("expected an unknown option to be a usage error")
+
+let testParseCompileArgumentsRejectsWrongExtension unit =
+    match parseCompileArguments(["notes.txt"]) with
+        | CompileInputError(message) -> test.assertEqual("Input file must have a .ash extension: notes.txt")(message)
+        | _ -> test.fail("expected a non-.ash input to be an input error")
+
+let testParseCompileArgumentsAmbiguousInputs unit =
+    match parseCompileArguments(["a.ash", "b.ash"]) with
+        | CompileUsageError(message) -> test.assertEqual("Provide exactly one input file.")(message)
+        | _ -> test.fail("expected two inputs to be a usage error")
+
+let testParseCompileArgumentsOutputOption unit =
+    match parseCompileArguments(["-o", "build/hello", "examples/hello.ash"]) with
+        | CompileParsedArguments(CompileArguments { inputPath = inputPath, outputPath = Some(outputPath) }) ->
+            inputPath
+            |> test.assertEqual("examples/hello.ash")
+            |> (given (_) -> test.assertEqual("build/hello")(outputPath))
+        | _ -> test.fail("expected -o to select the output path")
+
+let testParseCompileArgumentsMissingOutputValue unit =
+    match parseCompileArguments(["examples/hello.ash", "--out"]) with
+        | CompileUsageError(message) -> test.assertEqual("Missing value for --out.")(message)
+        | _ -> test.fail("expected a bare --out to be a usage error")
+
+let testDefaultOutputPathDropsExtension unit =
+    "examples/hello.ash"
+    |> defaultOutputPath
+    |> test.assertEqual("examples/hello")
+
+let testInputStemIsBasenameWithoutExtension unit =
+    "examples/hello.ash"
+    |> inputStem
+    |> test.assertEqual("hello")
+
+let testFormatByteSizeBytes unit =
+    512
+    |> formatByteSize
+    |> test.assertEqual("512 B")
+
+let testFormatByteSizeKilobytes unit =
+    4300
+    |> formatByteSize
+    |> test.assertEqual("4.2 KB")
+
+let testFormatByteSizeMegabytes unit =
+    6711000
+    |> formatByteSize
+    |> test.assertEqual("6.4 MB")
+
+let testParseRunArgumentsForwardsProgramArguments unit =
+    match parseRunArguments(["examples/hello.ash", "--", "hello", "world"]) with
+        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = "hello" :: "world" :: [] }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | _ -> test.fail("expected the arguments after -- to be forwarded")
+
+let testParseRunArgumentsWithoutSeparatorHasNoProgramArguments unit =
+    match parseRunArguments(["examples/hello.ash"]) with
+        | RunParsedArguments(RunArguments { programArguments = [] }) -> test.assertEqual(true)(true)
+        | _ -> test.fail("expected a bare input to parse with no program arguments")
+
+let testParseRunArgumentsRejectsOption unit =
+    match parseRunArguments(["--bogus"]) with
+        | RunUsageError(message) -> test.assertEqual("Unknown option '--bogus'.")(message)
+        | _ -> test.fail("expected an option to be a usage error")
+
+let testRunCliDispatchesToCompileHelp unit =
+    ["COMPILE", "--help"]
+    |> runCli
+    |> test.assertEqual(0)
+
+let testRunCliDispatchesToRunWithInputError unit =
+    ["run", "notes.txt"]
+    |> runCli
+    |> test.assertEqual(1)
+
 let run unit =
     Unit
     |> testParseFmtArgumentsHelp
@@ -1208,6 +1297,23 @@ let run unit =
     |> testRunCliDispatchesToRestoreWithRemainingArguments
     |> testRunCliDispatchesToTreeWithRemainingArguments
     |> testRunCliDispatchesToInitWithRemainingArguments
+    |> testParseCompileArgumentsHelp
+    |> testParseCompileArgumentsMissingInput
+    |> testParseCompileArgumentsRejectsUnknownOption
+    |> testParseCompileArgumentsRejectsWrongExtension
+    |> testParseCompileArgumentsAmbiguousInputs
+    |> testParseCompileArgumentsOutputOption
+    |> testParseCompileArgumentsMissingOutputValue
+    |> testDefaultOutputPathDropsExtension
+    |> testInputStemIsBasenameWithoutExtension
+    |> testFormatByteSizeBytes
+    |> testFormatByteSizeKilobytes
+    |> testFormatByteSizeMegabytes
+    |> testParseRunArgumentsForwardsProgramArguments
+    |> testParseRunArgumentsWithoutSeparatorHasNoProgramArguments
+    |> testParseRunArgumentsRejectsOption
+    |> testRunCliDispatchesToCompileHelp
+    |> testRunCliDispatchesToRunWithInputError
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
 run(Unit)
