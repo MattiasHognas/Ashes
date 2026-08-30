@@ -7,8 +7,11 @@
 // carry a `.rodata` segment (a string literal's own static storage), patched via an absolute
 // (`R_X86_64_32`/`R_X86_64_32S`, `S + A`) or PC-relative (`R_X86_64_PC32`, `S + A - P`) reference
 // depending on what LLVM's instruction selection chose for that particular object — both shapes
-// are observed in practice for the exact same kind of access.
-// - No `R_X86_64_PLT32` relocations: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
+// are observed in practice for the exact same kind of access. The same shapes against a symbol
+// defined in `.text` itself (a multi-function object's own helper functions: their `call` sites
+// and their addresses taken for closure code words) resolve against `.text`'s own base on either
+// path, and never count as imports.
+// - No `R_X86_64_PLT32` relocations against an import: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
 //   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one.
 // - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
 //   narrow set `AshesCompiler.Backend.IrCodegen` can actually call today — `malloc`/`free`/`memcmp`/
@@ -259,11 +262,22 @@ type TextRelocationPatch =
 // immediately vs. stored); what's certain is all three are legitimate output and the linker must
 // patch whichever one it sees correctly, not assume away the ones it hadn't seen yet.
 // `dataPatchPcRelative`/`dataPatchWidth` record which formula and byte width a given patch needs.
+// The same four shapes also arise for a `.text` reference into `.text` itself once an object
+// defines more than one function: a `call` to a locally-defined helper (`R_X86_64_PLT32` against a
+// symbol whose section IS `.text`, resolved PC-relative exactly like an import stub call, just
+// against the helper's own final address instead of a stub's), and a closure's code word
+// (`MakeClosure` materializing the helper's address via `movabs`/`mov $imm32` — an absolute
+// `R_X86_64_64`/`R_X86_64_32`/`R_X86_64_32S` against that same locally-defined function symbol).
+// `dataPatchTargetsText` records which section's final base address the patch resolves against;
+// `dataPatchAddend` already folds in the referenced symbol's own `st_value` (its offset within
+// its section — `0` for a section symbol like `.rodata`'s, the function's offset for a named
+// function symbol), so applying a patch never needs the symbol table again.
 type DataRelocationPatch =
     | dataPatchOffset: Int
     | dataPatchAddend: Int
     | dataPatchPcRelative: Bool
     | dataPatchWidth: Int
+    | dataPatchTargetsText: Bool
 
 type CollectedTextRelocations =
     | functionPatches: List(TextRelocationPatch)
@@ -279,7 +293,10 @@ type CollectedTextRelocations =
 // against differs (an import's stub VA vs. `.rodata`'s own final VA). `rodataSectionIndex` is
 // `None` when the object has no `.rodata` section at all (most programs, which reference no
 // string literal or other embedded constant), in which case none of the four rodata-relocation
-// types can ever legitimately appear and all still fall through to the same `Error`.
+// types can ever legitimately appear against `.rodata` and all still fall through to the same
+// `Error`. Any of these five types against a symbol defined in `.text` itself (a locally-defined
+// helper function: its `call` sites, and its address taken for a closure's code word) is resolved
+// against `.text`'s own final base address instead — see `textTargetedPatch`.
 let isRodataRelocationType relocationType =
     if relocationType == 1
     then true
@@ -313,7 +330,30 @@ let readRelaEntryFields bytes entryOffset =
             let addend = getU64(bytes)(entryOffset + 16)
             in (relocOffset, info >> 32, info & 4294967295, addend))
 
-let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset rodataSectionIndex entryIndex entryCount functionAcc dataAcc =
+// A reference whose symbol lives in `.text` itself — a locally-defined helper function, whether
+// reached by a `call` (`PLT32`, always PC-relative) or by materializing its address for a
+// closure's code word (any of the absolute/PC-relative data shapes). The symbol's own `st_value`
+// is its offset within `.text`, folded into the addend so `applyDataPatches` resolves it against
+// `.text`'s final base address alone.
+let textTargetedPatch relocOffset relocationType symbolValue addend =
+    DataRelocationPatch(
+        dataPatchOffset = relocOffset,
+        dataPatchAddend = addend + symbolValue,
+        dataPatchPcRelative = relocationType == 4 || isPcRelativeRodataRelocationType(relocationType),
+        dataPatchWidth = rodataRelocationWidth(relocationType),
+        dataPatchTargetsText = true
+    )
+
+let rodataTargetedPatch relocOffset relocationType symbolValue addend =
+    DataRelocationPatch(
+        dataPatchOffset = relocOffset,
+        dataPatchAddend = addend + symbolValue,
+        dataPatchPcRelative = isPcRelativeRodataRelocationType(relocationType),
+        dataPatchWidth = rodataRelocationWidth(relocationType),
+        dataPatchTargetsText = false
+    )
+
+let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset textSectionIndex rodataSectionIndex entryIndex entryCount functionAcc dataAcc =
     if entryIndex >= entryCount
     then Ok(CollectedTextRelocations(functionPatches = functionAcc, dataPatches = dataAcc))
     else
@@ -321,50 +361,49 @@ let recursive collectRelaEntryPatches bytes section symtabOffset strtabOffset ro
         in
             match readRelaEntryFields(bytes)(entryOffset) with
                 | (relocOffset, symbolIndex, relocationType, addend) ->
-                    if relocationType == 4
-                    then
-                        let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
-                        in
-                            if symbol.symSectionIndex != 0
-                            then Error("dynamic linker: PLT32 relocation targets a locally-defined symbol, which is not yet supported")
-                            else
-                                let symbolName = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
-                                in
-                                    match lookupImportLibrary(symbolName)(linuxDynamicImportLibraries) with
-                                        | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
-                                        | Some(_) ->
-                                            collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(entryIndex + 1)(entryCount)(
-                                                TextRelocationPatch(patchOffset = relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: functionAcc
-                                            )(dataAcc)
-                    else
-                        if isRodataRelocationType(relocationType)
+                    let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
+                    in
+                        if symbol.symSectionIndex == textSectionIndex && (relocationType == 4 || isRodataRelocationType(relocationType))
                         then
-                            let symbol = readSymbol(bytes)(symtabOffset)(symbolIndex)
-                            in
-                                match rodataSectionIndex with
-                                    | Some(index) ->
-                                        if symbol.symSectionIndex == index
-                                        then
-                                            collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(entryIndex + 1)(entryCount)(functionAcc)(
-                                                DataRelocationPatch(
-                                                    dataPatchOffset = relocOffset,
-                                                    dataPatchAddend = addend,
-                                                    dataPatchPcRelative = isPcRelativeRodataRelocationType(relocationType),
-                                                    dataPatchWidth = rodataRelocationWidth(relocationType)
-                                                ) :: dataAcc
-                                            )
-                                        else
+                            collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(rodataSectionIndex)(entryIndex + 1)(entryCount)(functionAcc)(
+                                textTargetedPatch(relocOffset)(relocationType)(symbol.symValue)(addend) :: dataAcc
+                            )
+                        else
+                            if relocationType == 4
+                            then
+                                if symbol.symSectionIndex != 0
+                                then Error("dynamic linker: PLT32 relocation targets a locally-defined symbol outside .text, which is not supported")
+                                else
+                                    let symbolName = readElfString(bytes)(strtabOffset + symbol.symNameOffset)
+                                    in
+                                        match lookupImportLibrary(symbolName)(linuxDynamicImportLibraries) with
+                                            | None -> Error("dynamic linker: unknown external symbol '" + symbolName + "' (not in the recognized-library table)")
+                                            | Some(_) ->
+                                                collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(rodataSectionIndex)(entryIndex + 1)(entryCount)(
+                                                    TextRelocationPatch(patchOffset = relocOffset, patchSymbolName = symbolName, patchAddend = addend) :: functionAcc
+                                                )(dataAcc)
+                            else
+                                if isRodataRelocationType(relocationType)
+                                then
+                                    match rodataSectionIndex with
+                                        | Some(index) ->
+                                            if symbol.symSectionIndex == index
+                                            then
+                                                collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(rodataSectionIndex)(entryIndex + 1)(entryCount)(functionAcc)(
+                                                    rodataTargetedPatch(relocOffset)(relocationType)(symbol.symValue)(addend) :: dataAcc
+                                                )
+                                            else
+                                                relocationType
+                                                |> unsupportedRelocationMessage
+                                                |> Error
+                                        | None ->
                                             relocationType
                                             |> unsupportedRelocationMessage
                                             |> Error
-                                    | None ->
-                                        relocationType
-                                        |> unsupportedRelocationMessage
-                                        |> Error
-                        else
-                            relocationType
-                            |> unsupportedRelocationMessage
-                            |> Error
+                                else
+                                    relocationType
+                                    |> unsupportedRelocationMessage
+                                    |> Error
 
 let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset rodataSectionIndex index functionAcc dataAcc =
     if index >= shnum
@@ -380,7 +419,7 @@ let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex sy
                 else
                     match section.sectionType with
                         | 4 ->
-                            match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(rodataSectionIndex)(0)(section.sectionSize / 24)(functionAcc)(dataAcc) with
+                            match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(rodataSectionIndex)(0)(section.sectionSize / 24)(functionAcc)(dataAcc) with
                                 | Error(message) -> Error(message)
                                 | Ok(CollectedTextRelocations { functionPatches = nextFunctionAcc, dataPatches = nextDataAcc }) -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(nextFunctionAcc)(nextDataAcc)
                         | 9 -> Error("dynamic linker: SHT_REL (implicit-addend) .text relocations are not supported")
@@ -406,28 +445,35 @@ let recursive applyTextPatches patches stubVas textVa codeBytes =
                     |> putU32FromInt(patchOffset)(value)
                     |> applyTextPatches(rest)(stubVas)(textVa)
 
-// A `.text` reference into `.rodata`, either absolute (`S + A`, no patch-site subtraction) or
-// PC-relative (`S + A - P`, `P` the patch site's own final virtual address, `textVa + patchOffset`
-// — the same formula `applyTextPatches` uses for a call/jump stub; only the 4-byte types use this,
-// an 8-byte `R_X86_64_64` is always absolute). `rodataVa` is the section's own final base address
-// once laid out; every collected patch targets that same section, so unlike `applyTextPatches`
-// there is no per-symbol lookup at all. An 8-byte patch writes the full computed virtual address
-// (`putU64`) rather than truncating to 32 bits (`putU32FromInt`) the way every 4-byte type does.
+// A `.text` reference into `.rodata` or into `.text` itself, either absolute (`S + A`, no
+// patch-site subtraction) or PC-relative (`S + A - P`, `P` the patch site's own final virtual
+// address, `textVa + patchOffset` — the same formula `applyTextPatches` uses for a call/jump stub;
+// only the 4-byte types use this, an 8-byte `R_X86_64_64` is always absolute). `rodataVa`/`textVa`
+// are each section's own final base address once laid out; every collected patch resolves against
+// one of those two (`dataPatchTargetsText` says which) with the symbol's own section offset
+// already folded into its addend, so unlike `applyTextPatches` there is no per-symbol lookup at
+// all. An 8-byte patch writes the full computed virtual address (`putU64`) rather than truncating
+// to 32 bits (`putU32FromInt`) the way every 4-byte type does.
 let recursive applyDataPatches patches rodataVa textVa codeBytes =
     match patches with
         | [] -> codeBytes
-        | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend, dataPatchPcRelative = pcRelative, dataPatchWidth = width } :: rest ->
-            let value =
-                if pcRelative
-                then rodataVa + patchAddend - (textVa + patchOffset)
+        | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend, dataPatchPcRelative = pcRelative, dataPatchWidth = width, dataPatchTargetsText = targetsText } :: rest ->
+            let targetVa =
+                if targetsText
+                then textVa + patchAddend
                 else rodataVa + patchAddend
             in
-                let patched =
-                    if width == 8
-                    then
-                        putU64(patchOffset)(Ashes.Number.UInt.fromInt64(value))(codeBytes)
-                    else putU32FromInt(patchOffset)(value)(codeBytes)
-                in applyDataPatches(rest)(rodataVa)(textVa)(patched)
+                let value =
+                    if pcRelative
+                    then targetVa - (textVa + patchOffset)
+                    else targetVa
+                in
+                    let patched =
+                        if width == 8
+                        then
+                            putU64(patchOffset)(Ashes.Number.UInt.fromInt64(value))(codeBytes)
+                        else putU32FromInt(patchOffset)(value)(codeBytes)
+                    in applyDataPatches(rest)(rodataVa)(textVa)(patched)
 
 let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
 
@@ -859,6 +905,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
                         let plan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
                         in
                             textBytes
+                            |> applyDataPatches(dataPatches)(0)(textVa)
                             |> Ashes.Byte.append(buildHeaderPage(entryPoint)([plan]))
                             |> Ok
                     | Some(rodata) ->
