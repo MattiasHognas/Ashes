@@ -753,28 +753,26 @@ public sealed partial class Lowering
             return arrow;
         }
 
-        if (row is TypeRef.TVar tail)
-        {
-            return arrow with
-            {
-                Needs = new NeedsRowSyntax([], GetInferredTypeVariableName(tail.Id, variableNames)),
-            };
-        }
-
-        if (row is not TypeRef.TRow capabilityRow)
+        if (row is not TypeRef.TVar && row is not TypeRef.TRow)
         {
             throw new InvalidOperationException("A function capability row must be a row or row variable.");
         }
 
-        CapabilityRefSyntax[] capabilities = capabilityRow.Capabilities
+        // Flatten before reading: a row that unification extended through its tail is a chain of
+        // nested TRows (`{ConsoleIO | {UnsafeFfi | b}}`), and reading only the outer
+        // Capabilities/Tail would drop the inner capabilities AND, since that tail is not a bare
+        // variable, silently write a closed row — which pass 2 then resolves as a written
+        // restriction and rejects every capability the inner rows carried (a spurious ASH018).
+        var (rowCapabilities, rowTail) = NormalizeRow(row);
+        CapabilityRefSyntax[] capabilities = rowCapabilities
             .OrderBy(capability => capability.Symbol.Name, StringComparer.Ordinal)
             .Select(capability => new CapabilityRefSyntax(
                 capability.Symbol.Name,
                 capability.Args.Select(argument => ConvertInferredTypeToSyntax(argument, variableNames)).ToArray()))
             .ToArray();
-        string? tailName = capabilityRow.Tail is TypeRef.TVar rowTail
-            ? GetInferredTypeVariableName(rowTail.Id, variableNames)
-            : null;
+        string? tailName = rowTail is null
+            ? null
+            : GetInferredTypeVariableName(rowTail.Id, variableNames);
         return arrow with { Needs = new NeedsRowSyntax(capabilities, tailName) };
     }
 
