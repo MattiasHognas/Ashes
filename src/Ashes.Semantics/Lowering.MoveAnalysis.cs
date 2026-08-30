@@ -108,6 +108,11 @@ public sealed partial class Lowering
     // never lose the binding identity.
     private readonly Dictionary<FuncKey, string> _maKeyName = new();
 
+    // The `let acc2 = acc + rhs in ...` bindings the affine self-append analysis vetted per function,
+    // keyed by the original binding node lowering sees (stitched bodies are analyzed as alias-stripped
+    // copies, so each vetted copy is mapped back through _maOriginalBinderByCopy).
+    private readonly Dictionary<FuncKey, HashSet<Expr.Let>> _maAffineAppendAliasLets = new();
+
     // Stable source/report identities are kept separately from FuncKey so later reporting can sort
     // and filter functions without leaking AST reference identity.
     private readonly Dictionary<FuncKey, SourceFunctionOrigin> _maFunctionOrigins = new();
@@ -253,6 +258,7 @@ public sealed partial class Lowering
         _maValueRhs.Clear();
         _maNameIndex.Clear();
         _maKeyName.Clear();
+        _maAffineAppendAliasLets.Clear();
         _maFunctionOrigins.Clear();
         _sourceFunctionOriginsByLambda.Clear();
         ClearHandlerEffectAnalysis();
@@ -1182,6 +1188,12 @@ public sealed partial class Lowering
         // append: `acc2` in the body resolves to `acc`'s ordinal so its use as the affine self-call
         // argument is recognized and any stray use still disqualifies. Scoped to the body walk.
         public Dictionary<string, int> AppendAliases { get; } = new(StringComparer.Ordinal);
+
+        // Every alias `let` whose body continues the loop, keyed by the candidate ordinal it aliases.
+        // Only these bindings may be lowered as in-place appends: a `let path = acc + rhs in ...` on an
+        // exit-only path is never vetted (its uses are unrestricted), so growing the reservation there
+        // would consume an accumulator the loop exit still releases.
+        public Dictionary<Expr.Let, int> AliasLets { get; } = new(ReferenceEqualityComparer.Instance);
     }
 
     // Resolves a name to its affine-self-append candidate ordinal: a TCO parameter directly, or a
@@ -1231,8 +1243,30 @@ public sealed partial class Lowering
             functionScope,
             parameterScope,
             state);
-        return state.SawSelfCall ? state.Candidates : new HashSet<int>();
+        if (!state.SawSelfCall)
+        {
+            return new HashSet<int>();
+        }
+
+        var vettedAliasLets = new HashSet<Expr.Let>(ReferenceEqualityComparer.Instance);
+        foreach ((Expr.Let aliasLet, int ordinal) in state.AliasLets)
+        {
+            if (state.Candidates.Contains(ordinal) && GetCanonicalBinder(aliasLet) is Expr.Let original)
+            {
+                vettedAliasLets.Add(original);
+            }
+        }
+
+        _maAffineAppendAliasLets[function] = vettedAliasLets;
+        return state.Candidates;
     }
+
+    // True when lowering may grow the accumulator's reservation in place at this `let`: the affine
+    // analysis vetted it as a single-use alias feeding an exact self-call of the function being lowered.
+    private bool IsVettedAffineAppendAliasLet(FuncKey? function, Expr.Let let)
+        => function is { } key
+            && _maAffineAppendAliasLets.TryGetValue(key, out HashSet<Expr.Let>? aliasLets)
+            && aliasLets.Contains(let);
 
     // Returns whether the subtree contains an exact tail self-call. Uses on an exit-only path are
     // unrestricted; conditions, scrutinees, guards, and bindings are checked only when a descendant
@@ -1346,6 +1380,11 @@ public sealed partial class Lowering
             else
             {
                 state.AppendAliases.Remove(let.Name);
+            }
+
+            if (aliasBodyContinues)
+            {
+                state.AliasLets[let] = aliasOrdinal;
             }
 
             // The append IS the candidate's affine own-append; do not disqualify it.

@@ -9635,13 +9635,19 @@ public sealed partial class Lowering
 
     // A `let acc2 = acc + rhs in ...` accumulator append is lowered at the let value, before the tail
     // call whose argument is the already-computed `acc2`, so `_affineAppendCtx` is armed here rather
-    // than at the tail-call argument. Move analysis has already proven `acc` AffineSelfAppendOnly
-    // through this single-use alias (ComputeAffineSelfAppendOrdinals's AppendAliases handling), which
-    // also guarantees `acc2` is used exactly once — the property the in-place reservation relies on.
+    // than at the tail-call argument. Only a let the move analysis vetted is armed: it proved `acc`
+    // AffineSelfAppendOnly through this single-use alias (ComputeAffineSelfAppendOrdinals's
+    // AppendAliases handling), which guarantees `acc2` is used exactly once, as the self-call's own
+    // argument — the property the in-place reservation relies on. An unvetted `let path = acc + rhs`
+    // (a multi-use binding, or one on an exit-only path) keeps the copying path, since the append
+    // would otherwise consume an accumulator the loop exit still releases.
     // Returns the arming context to install around the value, or null to leave the copying path.
     private (string Name, int Slot, int ResvStart, int ResvEnd)? TryArmAffineAppendForLetValue(Expr.Let let)
     {
-        if (_tcoCtx is not { } tco || tco.FixedCursorSlot < 0 || let.Value is not Expr.Add)
+        if (_tcoCtx is not { } tco
+            || tco.FixedCursorSlot < 0
+            || let.Value is not Expr.Add
+            || !IsVettedAffineAppendAliasLet(tco.OwnershipFunction, let))
         {
             return null;
         }
