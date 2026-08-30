@@ -1302,6 +1302,15 @@ public abstract record IrInst
     /// <param name="ReadLocalSlots">Conservative set of local slots the resolved block may read.</param>
     public sealed record TcoResetPending(int Id, int[] UsedTemps, int[] ReadLocalSlots) : IrInst;
 
+    /// <summary>Placeholder for a call result's arena copy-out whose kind could not be decided at emission
+    /// time (the result type still held an unresolved inference variable, typically a list element whose
+    /// type a later match arm pins). Replaced in place by <c>ResolveDeferredCallResultCopyOuts</c> at the
+    /// end of lowering; the placeholder never reaches the backend.</summary>
+    /// <param name="Id">Correlates this placeholder with the deferred decision that resolves it.</param>
+    /// <param name="UsedTemps">Temps the resolved block reads (the call result and its ownership flag).</param>
+    /// <param name="ReadLocalSlots">Local slots the resolved block reads (the call's arena watermark).</param>
+    public sealed record CallResultCopyOutPending(int Id, int[] UsedTemps, int[] ReadLocalSlots) : IrInst;
+
     /// <summary>
     /// Saves the current heap allocator state (cursor and end pointers) into two
     /// local slots. Emitted at ownership scope entry so that arena-based

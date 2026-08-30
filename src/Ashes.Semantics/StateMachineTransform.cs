@@ -714,6 +714,7 @@ public static class StateMachineTransform
             IrInst.RestoreArenaState r => [r.CursorLocalSlot, r.EndLocalSlot],
             IrInst.ReclaimArenaChunks r => [r.SavedEndSlot, r.PreRestoreEndSlot],
             IrInst.TcoResetPending p => p.ReadLocalSlots,
+            IrInst.CallResultCopyOutPending c => c.ReadLocalSlots,
             _ => []
         };
     }
@@ -1021,6 +1022,7 @@ public static class StateMachineTransform
             IrInst.ToCString c => [c.StrTemp],
             IrInst.CallExternal c => c.ArgTemps,
             IrInst.TcoResetPending p => p.UsedTemps,
+            IrInst.CallResultCopyOutPending c => c.UsedTemps,
             _ => GetUsedTempsAdtFileText(inst)
         };
     }

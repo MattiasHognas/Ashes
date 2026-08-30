@@ -1196,6 +1196,24 @@ public sealed partial class Lowering
     private readonly Dictionary<int, PendingTcoReset> _pendingTcoResets = new();
     private int _nextTcoResetId;
 
+    // A call result whose copy-out kind could not be decided at emission time because its type still
+    // held an inference variable (a list whose element type a later match arm pins, say). The
+    // placeholder marks where the copy-out block belongs; ResolveDeferredTcoResets replaces it once
+    // the whole body has been lowered and the type is known. (The call's arena watermark slots, the
+    // slot the result travels through, the result temp, its runtime-ownership flag temp or -1, and
+    // the unpruned result type.)
+    private sealed record PendingCallResultCopyOut(
+        int CallWmCursorSlot,
+        int CallWmEndSlot,
+        int CallPreRestoreEndSlot,
+        int ResultSlot,
+        int CurrentTemp,
+        int RuntimeManagedResultFlagTemp,
+        TypeRef ResultType);
+
+    private readonly Dictionary<int, PendingCallResultCopyOut> _pendingCallResultCopyOuts = new();
+    private int _nextCallResultCopyOutId;
+
     // Set while lowering the tail-call argument of an affine string accumulator (its own param
     // position): LowerAdd's Str+Str branch emits the reservation-growing ConcatStrTip for
     // `<param> + rhs` chains instead of a copying ConcatStr. (Name, the param's slot for the
@@ -2455,27 +2473,17 @@ public sealed partial class Lowering
     /// </summary>
     private void ResolveDeferredTcoResets()
     {
-        if (_pendingTcoResets.Count == 0)
+        if (_pendingTcoResets.Count == 0 && _pendingCallResultCopyOuts.Count == 0)
         {
             return;
         }
 
         // The entry instruction list (_inst) is spliced in place with the live counters.
-        if (_inst.Any(x => x is IrInst.TcoResetPending))
+        if (_inst.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
         {
             var entryOriginal = new List<IrInst>(_inst);
             _inst.Clear();
-            foreach (var inst in entryOriginal)
-            {
-                if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
-                {
-                    EmitTcoBackEdgeArenaBlock(info);
-                }
-                else
-                {
-                    _inst.Add(inst);
-                }
-            }
+            SpliceDeferredPlaceholders(entryOriginal, inst => _inst.Add(inst));
         }
 
         // Lifted functions: splice each, with the counters swapped to the function's. Synthesized
@@ -2484,7 +2492,7 @@ public sealed partial class Lowering
         for (int fi = 0; fi < originalCount; fi++)
         {
             var f = _funcs[fi];
-            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending))
+            if (!f.Instructions.Any(x => x is IrInst.TcoResetPending or IrInst.CallResultCopyOutPending))
             {
                 continue;
             }
@@ -2493,6 +2501,7 @@ public sealed partial class Lowering
         }
 
         _pendingTcoResets.Clear();
+        _pendingCallResultCopyOuts.Clear();
     }
 
     // Splices one lifted function's placeholders, with the counters swapped to the function's and
@@ -2512,18 +2521,11 @@ public sealed partial class Lowering
         _activeFunctionOrigin = f.Origin;
         _nextTempSlot = f.TempCount;
         _nextLocalSlot = f.LocalCount;
-        foreach (var inst in f.Instructions)
+        SpliceDeferredPlaceholders(f.Instructions, inst =>
         {
-            if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
-            {
-                EmitTcoBackEdgeArenaBlock(info);
-            }
-            else
-            {
-                RecordEmittedTempOwnership(inst);
-                _inst.Add(inst);
-            }
-        }
+            RecordEmittedTempOwnership(inst);
+            _inst.Add(inst);
+        });
 
         _funcs[fi] = f with { Instructions = new List<IrInst>(_inst), TempCount = _nextTempSlot, LocalCount = _nextLocalSlot };
         _inst.Clear();
@@ -11278,7 +11280,15 @@ public sealed partial class Lowering
             out IrInst.ListHeadCopyKind listHeadCopy);
         if (callCopyOutKind == CopyOutKind.None)
         {
-            return currentTemp;
+            return ContainsUnresolvedLayoutType(callResultType, [])
+                ? DeferCallResultCopyOut(
+                    callWmCursorSlot,
+                    callWmEndSlot,
+                    callPreRestoreEndSlot,
+                    currentTemp,
+                    callResultType,
+                    runtimeManagedResultFlagTemp)
+                : currentTemp;
         }
 
         if (runtimeManagedResultFlagTemp >= 0)
@@ -11415,6 +11425,134 @@ public sealed partial class Lowering
         }
 
         return copyDest;
+    }
+
+    // Routes a call result whose copy-out kind is still undecidable through a local slot and leaves a
+    // placeholder where the copy-out block belongs. The result is read back out of the slot, so the
+    // block resolved later can replace the slot's value with the normalized copy without touching any
+    // instruction emitted after it.
+    private int DeferCallResultCopyOut(
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int callPreRestoreEndSlot,
+        int currentTemp,
+        TypeRef callResultType,
+        int runtimeManagedResultFlagTemp)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        int pendingId = _nextCallResultCopyOutId++;
+        _pendingCallResultCopyOuts[pendingId] = new PendingCallResultCopyOut(
+            callWmCursorSlot,
+            callWmEndSlot,
+            callPreRestoreEndSlot,
+            resultSlot,
+            currentTemp,
+            runtimeManagedResultFlagTemp,
+            callResultType);
+        int[] usedTemps = runtimeManagedResultFlagTemp >= 0
+            ? [currentTemp, runtimeManagedResultFlagTemp]
+            : [currentTemp];
+        Emit(new IrInst.CallResultCopyOutPending(
+            pendingId,
+            usedTemps,
+            [callWmCursorSlot, callWmEndSlot, resultSlot]));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
+    }
+
+    // Splices one instruction stream in place: TCO reset and call-result copy-out placeholders become
+    // their resolved blocks, everything else is re-emitted through `emit`. A copy-out that resolves to
+    // nothing also removes the slot round trip its placeholder came with, renaming the reloaded temp
+    // back to the call result itself, so later passes (lifetime placement keeping a borrowed argument
+    // alive while the result that shares it is used, say) see the call exactly as they would have
+    // without the deferral.
+    private void SpliceDeferredPlaceholders(IReadOnlyList<IrInst> original, Action<IrInst> emit)
+    {
+        var renames = new Dictionary<int, int>();
+        int pendingReloadSlot = -1;
+        int pendingReloadSource = -1;
+        foreach (IrInst raw in original)
+        {
+            IrInst inst = renames.Count > 0 ? IrOptimizer.RemapSourceTemps(raw, renames) : raw;
+            if (pendingReloadSlot >= 0)
+            {
+                bool isReload = inst is IrInst.LoadLocal reload && reload.Slot == pendingReloadSlot;
+                int reloadSlot = pendingReloadSlot;
+                pendingReloadSlot = -1;
+                if (isReload)
+                {
+                    renames[((IrInst.LoadLocal)inst).Target] = pendingReloadSource;
+                    continue;
+                }
+
+                throw new InvalidOperationException(
+                    $"Deferred call-result copy-out expected the reload of slot {reloadSlot} right after its placeholder.");
+            }
+
+            if (inst is IrInst.TcoResetPending p && _pendingTcoResets.TryGetValue(p.Id, out var info))
+            {
+                EmitTcoBackEdgeArenaBlock(info);
+            }
+            else if (inst is IrInst.CallResultCopyOutPending c
+                && _pendingCallResultCopyOuts.TryGetValue(c.Id, out var copyOut))
+            {
+                if (!EmitDeferredCallResultCopyOut(copyOut)
+                    && _inst.Count > 0
+                    && _inst[^1] is IrInst.StoreLocal store
+                    && store.Slot == copyOut.ResultSlot)
+                {
+                    _inst.RemoveAt(_inst.Count - 1);
+                    pendingReloadSlot = copyOut.ResultSlot;
+                    pendingReloadSource = store.Source;
+                }
+            }
+            else
+            {
+                emit(inst);
+            }
+        }
+    }
+
+    // Replaces a deferred copy-out placeholder now that inference has finished: the same copy-out
+    // block the call would have received had its type been known, storing the copy back into the
+    // slot the result travels through. Returns false, emitting nothing, when the resolved type needs
+    // no copy-out.
+    private bool EmitDeferredCallResultCopyOut(PendingCallResultCopyOut info)
+    {
+        TypeRef resultType = Prune(info.ResultType);
+        CopyOutKind kind = GetCallCopyOutKind(
+            resultType,
+            out int copySize,
+            out IrInst.ListHeadCopyKind listHeadCopy);
+        if (kind == CopyOutKind.None)
+        {
+            return false;
+        }
+
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, info.ResultSlot));
+        int copiedTemp = info.RuntimeManagedResultFlagTemp >= 0
+            ? LowerCallConditionalCopyOutResult(
+                info.CallWmCursorSlot,
+                info.CallWmEndSlot,
+                info.CallPreRestoreEndSlot,
+                currentTemp,
+                info.RuntimeManagedResultFlagTemp,
+                kind,
+                listHeadCopy,
+                copySize)
+            : LowerCallCopyOutResult(
+                info.CallWmCursorSlot,
+                info.CallWmEndSlot,
+                info.CallPreRestoreEndSlot,
+                currentTemp,
+                kind,
+                listHeadCopy,
+                copySize);
+        Emit(new IrInst.StoreLocal(info.ResultSlot, copiedTemp));
+        return true;
     }
 
     private (int, TypeRef) LowerExternalCall(
