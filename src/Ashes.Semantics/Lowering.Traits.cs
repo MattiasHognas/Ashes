@@ -487,7 +487,8 @@ public sealed partial class Lowering
         RecordHoverScheme(
             span,
             $"{trait.QualifiedName}.{method.Name}",
-            new TypeScheme([], signature, [hoverConstraint]));
+            new TypeScheme([], signature, [hoverConstraint]),
+            isDefinition: false);
 
         int arity = CountArrows(method.Scheme.Body);
         return arity == 0
