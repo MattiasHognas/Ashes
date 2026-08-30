@@ -70,21 +70,32 @@
 //   the actual block-by-block emission is split into small named phase functions — `emitPrintInt`
 //   and `emitStringEquals` are each a short linear sequence of such phases, not one long `let`
 //   staircase.
-// - `codegenEntryFunction` only ever builds the true program entry (there is no support yet for
-//   `IrProgram.functions`, the list of ordinary helper functions a real program also has), so its
-//   `Return` is unconditionally lowered the way `LlvmCodegenExpressions.cs`'s `EmitReturn` lowers
-//   ONLY the entry function's `Return`, never an ordinary one: normal program completion is not a
-//   `ret` at all — there is no return address on the stack once the OS has jumped straight to this
-//   code as the process's actual entry point — it is a raw Linux `exit` syscall (`60`, matching
-//   real Ashes semantics: the process always exits `0` on normal completion; a different code
-//   needs the separate `Ashes.IO.exit`/`ExitProcess` instruction, not attempted here) followed by
-//   `buildUnreachable`, since a syscall that terminates the process never returns to the caller.
-//   `Return`'s own `source` temp is therefore unused — the computed value it names was real IR
-//   arithmetic and is still genuinely built, just never surfaced as an exit code.
-//   `AshesCompiler.Backend.ElfLinker` (linux-x64, static-only) now links this codegen's output
-//   into a directly-runnable executable, so this is observable by actually running one: `strace`
-//   shows a single `exit(0)` syscall and nothing else, matching the disassembly's `syscall`+
-//   `unreachable` tail.
+// - `codegenProgram` builds the true program entry AND every lifted function in
+//   `IrProgram.functions` (the ordinary helper functions a real program has: every top-level
+//   `let f x = ...`, every lambda, every curried partial application), all as
+//   `i64 label(i64 env, i64 arg, i64 flag)` with the exact calling convention
+//   `LlvmCodegenExpressions.cs`'s `EmitCallClosure`/`EmitCallKnown` use. A lifted function's
+//   `Return` is an ordinary `ret` of its result word. The entry function's `Return` is instead
+//   lowered the way `LlvmCodegenExpressions.cs`'s `EmitReturn` lowers ONLY the entry function's
+//   `Return`: normal program completion is not a `ret` at all — there is no return address on the
+//   stack once the OS has jumped straight to this code as the process's actual entry point — it
+//   is a raw Linux `exit` syscall (`60`, matching real Ashes semantics: the process always exits
+//   `0` on normal completion; a different code needs the separate `Ashes.IO.exit`/`ExitProcess`
+//   instruction, not attempted here) followed by `buildUnreachable`, since a syscall that
+//   terminates the process never returns to the caller. The entry `Return`'s own `source` temp is
+//   therefore unused — the computed value it names was real IR arithmetic and is still genuinely
+//   built, just never surfaced as an exit code. `AshesCompiler.Backend.ElfLinker` (linux-x64)
+//   links this codegen's output into a directly-runnable executable, so this is observable by
+//   actually running one: `strace` shows a single `exit(0)` syscall and nothing else, matching the
+//   disassembly's `syscall`+`unreachable` tail.
+// - Closures are the real 32-byte `{code, env, packedEnvironmentSize, dropper}` objects
+//   `LlvmCodegenExpressions.cs` lays out (`MakeClosure`/`MakeClosureStack`), called indirectly
+//   through their `code` word (`CallClosure`) or directly by label once `IrOptimizer.ash` has
+//   devirtualized the call (`CallKnown`); a captured environment is an `Alloc`'d block written
+//   with `StoreMemOffset` and read back inside the callee with `LoadEnv` through local slot `0`.
+//   Every non-RC-managed allocation this needs (`Alloc`, `MakeClosure`) is a bare `malloc` standing
+//   in for the scoped-arena bump allocation stage 0 would make — never a stack slot, since a
+//   closure and its environment routinely outlive the frame that built them — and is never freed.
 
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
@@ -92,6 +103,7 @@ import AshesCompiler.Backend.Llvm
 import Ashes.Number.UInt
 export (
     value codegenEntryFunction,
+    value codegenProgram,
 )
 
 // The scalar LLVM types every instruction case may need, computed once per module.
@@ -157,6 +169,46 @@ type CodegenContext =
     | localSlots: List((IrLocal, LLVMValueRef))
     | labelBlocks: List((Str, LLVMBasicBlockRef))
     | stringLiteralGlobals: List((Str, LLVMValueRef))
+    | liftedFunctions: List((Str, LLVMValueRef))
+    | closureFunctionType: LLVMTypeRef
+    | isEntry: Bool
+
+// Everything shared by every function in one module — computed once by `codegenFunctions`, then
+// handed to each function body's own `CodegenContext` construction unchanged.
+type ModuleCodegen =
+    | moduleRef: LLVMModuleRef
+    | moduleContext: LLVMContextRef
+    | moduleTypes: CoreLlvmTypes
+    | moduleExternals: ExternalFunctions
+    | moduleStringLiteralGlobals: List((Str, LLVMValueRef))
+    | moduleLiftedFunctions: List((Str, LLVMValueRef))
+    | moduleClosureFunctionType: LLVMTypeRef
+    | moduleBuilder: LLVMBuilderRef
+
+// `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
+// lifted (non-entry) function has, matching `LlvmCodegenExpressions.cs`'s own `EmitCallClosure`/
+// `EmitCallKnown` exactly — a closure call site never knows its callee's source-level arity, so
+// every function takes its environment word and ONE argument word (currying supplies the rest via
+// nested closures) plus the runtime-managed-argument flag `LoadArgumentOwnership` reads back.
+let closureFunctionTypeOf i64 = functionType(i64)([i64, i64, i64])(3u32)(false)
+
+// Every lifted function gets `internal` linkage, as `LlvmCodegen.cs`'s own declaration loop
+// gives it — nothing outside the module ever names one. Not merely tidiness: a modern LLVM no
+// longer treats an external-linkage symbol as `dso_local` under the static relocation model, so
+// taking a default-linkage function's address (`MakeClosure`'s code word) compiles to a
+// GOT-relative load (`R_X86_64_REX_GOTPCRELX`) that no GOT exists to satisfy here, whereas an
+// internal symbol's address is a plain `.text`-relative reference and its `call` sites need no
+// relocation at all.
+let recursive declareLiftedFunctions module_ closureFnType functions =
+    match functions with
+        | [] -> []
+        | function_ :: rest ->
+            match function_ with
+                | IrFunction { label = label } ->
+                    let functionValue = addFunction(module_)(label)(closureFnType)
+                    in
+                        let _ = setLinkage(functionValue)(linkageInternal)
+                        in (label, functionValue) :: declareLiftedFunctions(module_)(closureFnType)(rest)
 
 let recursive lookupIndexed key env =
     match env with
@@ -592,27 +644,114 @@ let gepBytes builder i64 i8 ptr offset name =
 // value), so a runtime-managed value from this path leaks today — an explicit, temporary
 // limitation matching every other stand-in in this arc, closed by the next slice (Perceus drop
 // insertion).
-let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount resultName =
-    (let payloadWords = fieldCount + 1
+// One real `malloc`'d RC-managed block — the 16-byte `{i64 reference_count, i64 allocation_size}`
+// header followed by `payloadSizeBytes` of payload — initialized to `count = 1` and the payload
+// size, returning the PAYLOAD pointer (past the header). Shared by every RC-managed allocation
+// this codegen makes (`AllocAdt`, `Alloc`, `MakeClosure`), so all of them agree with `RcDrop`'s
+// own `-16` walk back to the header.
+let emitRcAllocPayloadPtr builder i64 i8 mallocFn mallocType payloadSizeBytes name =
+    (let totalSize =
+        constInt(i64)(Ashes.Number.UInt.fromInt64(16 + payloadSizeBytes))(false)
     in
-        let totalSize =
-            constInt(i64)(Ashes.Number.UInt.fromInt64(16 + payloadWords * 8))(false)
+        let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)(name + "_header")
         in
-            let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("adt_header")
+            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)(name + "_size_ptr")
             in
-                let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("adt_size_ptr")
+                let _ =
+                    buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
                 in
                     let _ =
-                        buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
-                    in
-                        let _ =
-                            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadWords * 8))(false))(sizePtr)
-                        in
-                            let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("adt_payload_ptr")
-                            in
-                                let _ =
-                                    buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
-                                in buildPtrToInt(builder)(payloadPtr)(i64)(resultName))
+                        buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadSizeBytes))(false))(sizePtr)
+                    in gepBytes(builder)(i64)(i8)(headerPtr)(16)(name + "_payload_ptr"))
+
+let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount resultName =
+    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)((fieldCount + 1) * 8)("adt")
+    in
+        let _ =
+            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
+        in buildPtrToInt(builder)(payloadPtr)(i64)(resultName))
+
+// A plain `malloc` of `sizeBytes` with no header at all: the stand-in for a scoped-arena bump
+// allocation (`Alloc`/`MakeClosure` with `runtimeManaged = false`, which `CoreLowering.ash` emits
+// for every closure environment and closure object today) — this codegen has no real arena, and
+// a stack `alloca` would be wrong here because both a closure object and its environment
+// routinely outlive the function that built them (a curried function RETURNS the closure that
+// captures its first argument). Never freed: the same leak-not-miscompile trade every other
+// arena stand-in in this file makes.
+let emitArenaStandInAlloc builder i64 mallocFn mallocType sizeBytes name =
+    buildCall(builder)(mallocType)(mallocFn)([constInt(i64)(Ashes.Number.UInt.fromInt64(sizeBytes))(false)])(1u32)(name)
+
+// `sizeBytes` of stack storage as `[n x i64]` (`AllocStack`/`MakeClosureStack`: lowering only
+// picks the stack form when it has proven the value never escapes the current frame).
+let emitStackAlloc builder i64 sizeBytes name =
+    buildAlloca(builder)((sizeBytes + 7) / 8
+    |> Ashes.Number.UInt.fromInt64
+    |> arrayType(i64))(name)
+
+// The closure object `LlvmCodegenExpressions.cs`'s `EmitMakeClosure`/`EmitMakeClosureStack` lay
+// out: four `i64` words `{code, env, packedEnvironmentSize, dropper}`. `code` is the lifted
+// function's own address (`CallClosure` loads it back and calls through it), `env` the
+// environment word the function receives as its first parameter, the packed word the environment
+// byte size with the two ownership bits `LlvmCodegenExpressions.cs` defines (`1 << 63` = the
+// result is runtime-managed, `1 << 62` = the argument is), and `dropper` the resource-cleanup
+// hook (always `0` for an ordinary closure).
+let closureSizeBytes = 32
+
+let packClosureEnvironmentSize envSizeBytes returnsRuntimeManaged acceptsRuntimeManagedArgument =
+    envSizeBytes + (if returnsRuntimeManaged
+    then 1 << 63
+    else 0) + (if acceptsRuntimeManagedArgument
+    then 1 << 62
+    else 0)
+
+let emitStoreClosureWords builder i64 i8 closurePtr codeFn envRef packedSize resultName =
+    (let _ =
+        buildStore(builder)(buildPtrToInt(builder)(codeFn)(i64)("closure_code_word"))(closurePtr)
+    in
+        let _ =
+            "closure_env_slot"
+            |> gepBytes(builder)(i64)(i8)(closurePtr)(8)
+            |> buildStore(builder)(envRef)
+        in
+            let _ =
+                "closure_env_size_slot"
+                |> gepBytes(builder)(i64)(i8)(closurePtr)(16)
+                |> buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(packedSize))(false))
+            in
+                let _ =
+                    "closure_dropper_slot"
+                    |> gepBytes(builder)(i64)(i8)(closurePtr)(24)
+                    |> buildStore(builder)(constInt(i64)(0u64)(false))
+                in buildPtrToInt(builder)(closurePtr)(i64)(resultName))
+
+// An indirect call through a closure object: load its `code` and `env` words, then call the code
+// pointer with `(env, arg, flag)` — the same uniform signature `closureFunctionTypeOf` declares
+// for every lifted function, so a direct `CallKnown` and this differ only in how the callee is
+// named. `closureRef`/`argRef`/`flagRef` arrive already resolved to LLVM values (see the
+// `ConcatStr` cases in `codegenInstructionKind` for why resolution stays at the call site).
+let emitCallClosure builder i64 i8 ptrType closureFnType closureRef argRef flagRef resultName =
+    (let closurePtr = buildIntToPtr(builder)(closureRef)(ptrType)("closure_ptr")
+    in
+        let codeWord = buildLoad(builder)(i64)(closurePtr)("closure_code")
+        in
+            let envRef =
+                buildLoad(builder)(i64)(gepBytes(builder)(i64)(i8)(closurePtr)(8)("closure_env_slot"))("closure_env")
+            in
+                let codePtr = buildIntToPtr(builder)(codeWord)(ptrType)("closure_code_ptr")
+                in buildCall(builder)(closureFnType)(codePtr)([envRef, argRef, flagRef])(3u32)(resultName))
+
+// `LoadEnv(index)`: word `index` of the environment block whose address the function received as
+// its first parameter — stored into local slot `0` on entry (see `buildFunctionContext`), exactly
+// where `LlvmCodegen.cs` keeps it too, so `envSlot` is that slot's own alloca.
+let emitLoadEnv builder i64 i8 ptrType envSlot index resultName =
+    (let envRef = buildLoad(builder)(i64)(envSlot)("env_word")
+    in
+        let envPtr = buildIntToPtr(builder)(envRef)(ptrType)("env_ptr")
+        in
+            buildLoad(builder)(i64)(gepBytes(builder)(i64)(i8)(envPtr)(index * 8)("env_field_ptr"))(resultName))
+
+let memOffsetPtr builder i64 i8 ptrType baseRef offsetBytes name =
+    gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(baseRef)(ptrType)(name + "_base"))(offsetBytes)(name)
 
 // The non-RC-managed, zero-field `AllocAdt` branch — exactly what a `Unit` result (e.g. `PrintInt`'s
 // own return value) lowers to: a plain stack `alloca` standing in for a real arena bump allocation,
@@ -842,7 +981,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals } ->
+                | CodegenContext { context = context, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -1087,9 +1226,97 @@ let codegenInstructionKind cx builder kind state =
                                                                 |> lookupIndexed(sourceTemp)
                                                                 |> emitRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)
                                                             in (tempEnv, false)
-                                        | Return(_) ->
-                                            let _ = emitLinuxProcessExit(builder)(i64)
-                                            in (tempEnv, true)
+                        // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
+                        // layout. The RC-managed form gets the same 16-byte header every other
+                        // RC-managed allocation here has (so a future closure drop can walk back to
+                        // it); the ordinary form is an arena stand-in `malloc` — see
+                        // `emitArenaStandInAlloc` for why not a stack slot.
+                                        | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+                                            let closurePtr =
+                                                if runtimeManaged
+                                                then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(closureSizeBytes)("rc_closure")
+                                                else emitArenaStandInAlloc(builder)(i64)(mallocFn)(mallocType)(closureSizeBytes)("closure")
+                                            in
+                                                let result =
+                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)
+                                                    )("t" + Ashes.Text.fromInt(target))
+                                                in ((target, result) :: tempEnv, terminated)
+                                        | MakeClosureStack(target, funcLabel, envPtrTemp, envSizeBytes, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
+                                            let closurePtr = emitStackAlloc(builder)(i64)(closureSizeBytes)("closure_stack")
+                                            in
+                                                let result =
+                                                    emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
+                                                        packClosureEnvironmentSize(envSizeBytes)(returnsRuntimeManaged)(acceptsRuntimeManagedArgument)
+                                                    )("t" + Ashes.Text.fromInt(target))
+                                                in ((target, result) :: tempEnv, terminated)
+                                        | LoadFuncAddr(target, funcLabel) ->
+                                            ((target, buildPtrToInt(builder)(lookupIndexed(funcLabel)(liftedFunctions))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // The runtime-managed-argument flag temp is `-1` when the call site has
+                        // none (`IrText.ash`'s own `optionalIntOperand` convention, and what
+                        // `LlvmCodegen.cs`'s `LoadRuntimeManagedArgumentFlag` checks for), in which
+                        // case the callee receives a literal `0`. Resolved inline here rather than
+                        // in a helper — see the `ConcatStr` cases above.
+                                        | CallClosure(target, closureTemp, argTemp, flagTemp) ->
+                                            let flagRef =
+                                                if flagTemp < 0
+                                                then constInt(i64)(0u64)(false)
+                                                else lookupIndexed(flagTemp)(tempEnv)
+                                            in
+                                                let result =
+                                                    emitCallClosure(builder)(i64)(i8)(ptrType)(closureFunctionType)(lookupIndexed(closureTemp)(tempEnv))(lookupIndexed(argTemp)(tempEnv))(flagRef)(
+                                                        "t" + Ashes.Text.fromInt(target)
+                                                    )
+                                                in ((target, result) :: tempEnv, terminated)
+                        // A direct call of a statically-known lifted function: same `(env, arg,
+                        // flag)` signature as `CallClosure`, just naming the callee outright so
+                        // LLVM can see (and inline) it. Always a plain call, never a native tail
+                        // call: `LlvmCodegen.cs`'s `DetermineTailCallKind` analysis is not ported.
+                                        | CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, _environmentIsStackAllocated) ->
+                                            let flagRef =
+                                                if flagTemp < 0
+                                                then constInt(i64)(0u64)(false)
+                                                else lookupIndexed(flagTemp)(tempEnv)
+                                            in
+                                                let result =
+                                                    buildCall(builder)(closureFunctionType)(lookupIndexed(funcLabel)(liftedFunctions))([lookupIndexed(envTemp)(tempEnv), lookupIndexed(argTemp)(tempEnv), flagRef])(3u32)(
+                                                        "t" + Ashes.Text.fromInt(target)
+                                                    )
+                                                in ((target, result) :: tempEnv, terminated)
+                                        | LoadEnv(target, index) ->
+                                            ((target, emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexed(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | LoadArgumentOwnership(target) -> ((target, getParam(function_)(2u32)) :: tempEnv, terminated)
+                        // See `emitRcAllocPayloadPtr`/`emitArenaStandInAlloc` for the two forms.
+                                        | Alloc(target, sizeBytes, runtimeManaged) ->
+                                            let blockPtr =
+                                                if runtimeManaged
+                                                then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(sizeBytes)("rc_alloc")
+                                                else emitArenaStandInAlloc(builder)(i64)(mallocFn)(mallocType)(sizeBytes)("alloc")
+                                            in ((target, buildPtrToInt(builder)(blockPtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | AllocStack(target, sizeBytes) ->
+                                            ((target, buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | StoreMemOffset(basePtr, offsetBytes, source) ->
+                                            let _ =
+                                                "store_mem"
+                                                |> memOffsetPtr(builder)(i64)(i8)(ptrType)(lookupIndexed(basePtr)(tempEnv))(offsetBytes)
+                                                |> buildStore(builder)(lookupIndexed(source)(tempEnv))
+                                            in (tempEnv, terminated)
+                                        | LoadMemOffset(target, basePtr, offsetBytes) ->
+                                            ((target, buildLoad(builder)(i64)(memOffsetPtr(builder)(i64)(i8)(ptrType)(lookupIndexed(basePtr)(tempEnv))(offsetBytes)("load_mem"))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // Only the entry function's `Return` is the process's own exit (see the
+                        // header comment); a lifted function's is an ordinary `ret` of its `i64`
+                        // result to whichever `CallClosure`/`CallKnown` invoked it.
+                                        | Return(source) ->
+                                            if isEntry
+                                            then
+                                                let _ = emitLinuxProcessExit(builder)(i64)
+                                                in (tempEnv, true)
+                                            else
+                                                let _ =
+                                                    tempEnv
+                                                    |> lookupIndexed(source)
+                                                    |> buildRet(builder)
+                                                in (tempEnv, true)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 let recursive codegenInstructions cx builder instructions state =
@@ -1102,60 +1329,125 @@ let recursive codegenInstructions cx builder instructions state =
                     |> codegenInstructionKind(cx)(builder)(kind)
                     |> codegenInstructions(cx)(builder)(rest)
 
-// Builds the entry function's own value/block scaffolding (module, function, entry block, builder)
-// and the per-function state (local slots, label blocks) that only exists once `irFunction`'s
-// instructions are known — everything module-level and function-independent (`types`, `externals`)
-// is computed once by the caller and threaded straight into the `CodegenContext` this returns.
-let buildEntryFunctionContext module_ context name types externals stringLiterals irFunction =
-    (let functionValue =
-        false
-        |> functionType(voidType(context))([])(0u32)
-        |> addFunction(module_)(name)
-    in
-        let entryBlock = appendBasicBlock(context)(functionValue)("entry")
-        in
-            let builder = createBuilder(context)
+// Builds one function's own scaffolding (entry block, local slots, label blocks) once its
+// `irFunction`'s instructions are known and returns the `CodegenContext` its body is emitted
+// under — everything module-level and function-independent comes from `mc` unchanged. A lifted
+// function with `hasEnvAndArgParams` stores its two incoming words into local slots `0` (the
+// environment — `LoadEnv` reads through it) and `1` (the argument) before anything else, exactly
+// as `LlvmCodegen.cs`'s `EmitFunctionBodyAllocateSlots` does; the entry function takes no
+// parameters at all.
+let buildFunctionContext mc functionValue isEntry irFunction =
+    match mc with
+        | ModuleCodegen { moduleContext = context, moduleTypes = types, moduleExternals = externals, moduleStringLiteralGlobals = stringLiteralGlobals, moduleLiftedFunctions = liftedFunctions, moduleClosureFunctionType = closureFnType, moduleBuilder = builder } ->
+            let entryBlock = appendBasicBlock(context)(functionValue)("entry")
             in
                 let _ = positionBuilderAtEnd(builder)(entryBlock)
                 in
                     match irFunction with
-                        | IrFunction { instructions = instructions, localCount = localCount } ->
+                        | IrFunction { instructions = instructions, localCount = localCount, hasEnvAndArgParams = hasEnvAndArgParams } ->
                             let localSlots = allocateLocalSlots(builder)(types.i64)(localCount)(0)
                             in
-                                let labelBlocks =
-                                    instructions
-                                    |> collectLabelNames
-                                    |> createLabelBlocks(context)(functionValue)
+                                let _ =
+                                    if isEntry == false && hasEnvAndArgParams
+                                    then
+                                        let _ =
+                                            localSlots
+                                            |> lookupIndexed(0)
+                                            |> buildStore(builder)(getParam(functionValue)(0u32))
+                                        in
+                                            let _ =
+                                                localSlots
+                                                |> lookupIndexed(1)
+                                                |> buildStore(builder)(getParam(functionValue)(1u32))
+                                            in Unit
+                                    else Unit
                                 in
-                                    let cx =
-                                        CodegenContext(
-                                            context = context,
-                                            function_ = functionValue,
-                                            types = types,
-                                            externals = externals,
-                                            localSlots = localSlots,
-                                            labelBlocks = labelBlocks,
-                                            stringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals)
-                                        )
-                                    in (cx, builder, instructions))
+                                    let labelBlocks =
+                                        instructions
+                                        |> collectLabelNames
+                                        |> createLabelBlocks(context)(functionValue)
+                                    in
+                                        let cx =
+                                            CodegenContext(
+                                                context = context,
+                                                function_ = functionValue,
+                                                types = types,
+                                                externals = externals,
+                                                localSlots = localSlots,
+                                                labelBlocks = labelBlocks,
+                                                stringLiteralGlobals = stringLiteralGlobals,
+                                                liftedFunctions = liftedFunctions,
+                                                closureFunctionType = closureFnType,
+                                                isEntry = isEntry
+                                            )
+                                        in (cx, instructions)
 
-// Builds `void <name>()` in a fresh module from `irFunction`'s real instructions and returns
-// `(module_, builder)`, matching every other module builder's shape in `selfhost/tests/backend` so
-// the same `emitModule` verification pipeline applies unchanged. `void`, not `i64`, since the
-// function genuinely never returns a value anymore — every path ends in the exit syscall's
-// `unreachable`, not a `ret`. `i64` (the type internal temps/locals use) is a separate local value.
-// `malloc`/`free` are declared once per module (not re-declared per `AllocAdt`/`RcDrop` site) with
-// real pointer return/param types (`ptr malloc(i64)`, `void free(ptr)`), not `i64`; `AllocAdt`/
-// `RcDrop`'s own codegen convert to/from the `i64` word every temp is represented as via
-// `buildPtrToInt`/`buildIntToPtr`, same as the existing arena-`alloca` case already does.
-let codegenEntryFunction name context irFunction stringLiterals =
+let codegenFunctionBody mc functionValue isEntry irFunction =
+    match buildFunctionContext(mc)(functionValue)(isEntry)(irFunction) with
+        | (cx, instructions) ->
+            let _ = codegenInstructions(cx)(mc.moduleBuilder)(instructions)(([], false))
+            in Unit
+
+// Emits every lifted function's body into the `LLVMValueRef` `declareLiftedFunctions` already
+// created for its label — every function is declared before ANY body is emitted, so a body can
+// name a function that appears later in `functions` (or itself, for recursion) via `MakeClosure`/
+// `CallKnown`/`LoadFuncAddr` without any ordering constraint.
+let recursive codegenLiftedFunctions mc functions =
+    match functions with
+        | [] -> Unit
+        | function_ :: rest ->
+            match function_ with
+                | IrFunction { label = label } ->
+                    let _ =
+                        codegenFunctionBody(mc)(lookupIndexed(label)(mc.moduleLiftedFunctions))(false)(function_)
+                    in codegenLiftedFunctions(mc)(rest)
+
+// Builds `void <name>()` for `entryFunction` plus `i64 <label>(i64, i64, i64)` for every function
+// in `functions`, all in one fresh module, and returns `(module_, builder)`, matching every other
+// module builder's shape in `selfhost/tests/backend` so the same `emitModule` verification
+// pipeline applies unchanged. The entry is `void`, not `i64`, since it genuinely never returns a
+// value — every path ends in the exit syscall's `unreachable`, not a `ret`; a lifted function
+// returns its `i64` result word normally. `malloc`/`free`/`memcmp`/`memcpy` are declared once per
+// module (not re-declared per use site) with real pointer return/param types, and the string
+// literal globals are built once per module too — both are shared by every function body. One
+// `IRBuilder` serves every function (it is repositioned at each new entry block), so the caller
+// still disposes exactly one, as before. The entry function is declared first so it stays at
+// `.text` offset `0`; its body is emitted LAST, after every lifted function, purely so the
+// lifted-function lookups it needs (`MakeClosure`/`CallKnown` naming a label) resolve the same
+// way a lifted body's own do.
+let codegenFunctions name context entryFunction functions stringLiterals =
     (let module_ = createModule(name)(context)
     in
         let types = coreLlvmTypes(context)
         in
-            let externals = declareExternalFunctions(module_)(context)(types)
+            let entryValue =
+                false
+                |> functionType(voidType(context))([])(0u32)
+                |> addFunction(module_)(name)
             in
-                match buildEntryFunctionContext(module_)(context)(name)(types)(externals)(stringLiterals)(irFunction) with
-                    | (cx, builder, instructions) ->
-                        let _ = codegenInstructions(cx)(builder)(instructions)(([], false))
-                        in (module_, builder))
+                let closureFnType = closureFunctionTypeOf(types.i64)
+                in
+                    let mc =
+                        ModuleCodegen(
+                            moduleRef = module_,
+                            moduleContext = context,
+                            moduleTypes = types,
+                            moduleExternals = declareExternalFunctions(module_)(context)(types),
+                            moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
+                            moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
+                            moduleClosureFunctionType = closureFnType,
+                            moduleBuilder = createBuilder(context)
+                        )
+                    in
+                        let _ = codegenLiftedFunctions(mc)(functions)
+                        in
+                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                            in (module_, mc.moduleBuilder))
+
+// The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
+let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)
+
+// A whole lowered program: its entry function plus every lifted helper it contains.
+let codegenProgram name context program =
+    match program with
+        | IrProgram { entryFunction = entryFunction, functions = functions, stringLiterals = stringLiterals } -> codegenFunctions(name)(context)(entryFunction)(functions)(stringLiterals)

@@ -15,6 +15,7 @@ import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrOptimizer
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
 // `None` for `existingBuilder` for a module's first (or only) function; pass `Some(builder)` for a
@@ -1866,16 +1867,37 @@ let buildRcTriReleaseModule name context =
 // `AshesCompiler.Backend.IrCodegen.codegenEntryFunction`. If the shape `IrProgram`/`IrFunction`
 // actually produce didn't match what a codegen walker expects, this is where it would show up —
 // no earlier test in this arc could ever catch that, since they all supplied the IR shape by hand.
-let codegenRealSource source name context =
+let lowerRealSource source name =
     match parseProgram(source) with
         | ProgramParseResult { program = program, diagnostics = [] } ->
             match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
-                | CoreLoweringResult { program = Some(lowered), error = None } ->
-                    match lowered with
-                        | IrProgram { entryFunction = entryFunction, stringLiterals = stringLiterals } -> codegenEntryFunction(name)(context)(entryFunction)(stringLiterals)
+                | CoreLoweringResult { program = Some(lowered), error = None } -> lowered
                 | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
                 | _ -> test.fail("lowering produced no program")
         | ProgramParseResult { diagnostics = diagnostics } -> test.fail("should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
+
+let codegenRealSource source name context =
+    name
+    |> lowerRealSource(source)
+    |> codegenProgram(name)(context)
+
+// The same pipeline with `IrOptimizer` run in between, as the real compile pipeline does —
+// compile-time evaluation disabled so a program whose result is a constant is not folded away to
+// a bare `PrintInt` of a literal, leaving the optimizer's structural rewrites (known-closure
+// devirtualization to `CallKnown`, closure-environment scalarization) as the thing under test.
+let optimizerOptionsWithoutCompileTimeEval =
+    IrOptimizerOptions(
+        enableCompileTimeEval = false,
+        enableInlining = true,
+        enableDeadCodeElision = true,
+        enableIdentityReduction = true
+    )
+
+let codegenOptimizedRealSource source name context =
+    name
+    |> lowerRealSource(source)
+    |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+    |> codegenProgram(name)(context)
 
 // `simple_arith`'s own fixture source: `LoadConstInt` x3, `MulInt`, `AddInt`, `Return` — no
 // top-level `let`, so no arena bracketing at all.
@@ -2172,6 +2194,28 @@ let buildRealIrMatchMultiConstructorModule name context = codegenRealSource("typ
 // `Some(Some(v))` arm specifically (proving the grouped dispatch reached the right nested arm, not
 // just the right outer tag).
 let buildRealIrMatchNestedModule name context = codegenRealSource("let x = Some(Some(7))\n\nmatch x with\n    | Some(Some(v)) -> Ashes.IO.print(v)\n    | Some(None) -> Ashes.IO.print(-1)\n    | None -> Ashes.IO.print(0)")(name)(context)
+
+// The first program with a lifted helper function beyond the entry: unoptimized, `inc` is a
+// `MakeClosure` (zero-size environment) stored in a local, and the call is an indirect
+// `CallClosure` through it into `lambda_0`, whose `Return` is a real `ret`.
+let buildRealIrHelperFunctionModule name context = codegenRealSource("let inc x = x + 1\nAshes.IO.print(inc(41))")(name)(context)
+
+// Currying: `add(40)` returns a closure capturing `x` (an `Alloc`'d 8-byte environment written
+// via `StoreMemOffset`, read back in `lambda_1` via `LoadEnv`), and the second `CallClosure`
+// applies it — a closure object genuinely outliving the function that built it.
+let buildRealIrCurriedHelperModule name context = codegenRealSource("let add x y = x + y\nAshes.IO.print(add(40)(2))")(name)(context)
+
+// Self-recursion through the environment word: `fact`'s body rebuilds its own closure from the
+// env it received (`LoadLocal Slot=0` → `MakeClosure`) and calls it.
+let buildRealIrRecursiveHelperModule name context = codegenRealSource("let recursive fact n = if n > 1 then n * fact(n - 1) else 1\nAshes.IO.print(fact(5))")(name)(context)
+
+// The optimized shapes of the same two programs: the curried call devirtualizes to one direct
+// `CallKnown` of a scalarized-environment clone (`lambda_1__scalarenv0`, reading its capture
+// from local slot `0` — the env parameter itself), and the recursive call becomes a direct
+// `CallKnown` of `lambda_0` from within `lambda_0`.
+let buildOptimizedIrCurriedHelperModule name context = codegenOptimizedRealSource("let add x y = x + y\nAshes.IO.print(add(40)(2))")(name)(context)
+
+let buildOptimizedIrRecursiveHelperModule name context = codegenOptimizedRealSource("let recursive fact n = if n > 1 then n * fact(n - 1) else 1\nAshes.IO.print(fact(5))")(name)(context)
 
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
@@ -2836,6 +2880,43 @@ let testRunStaticExecutableForRealIrMatchNestedModule unit =
                                                         let _ = test.assertEqual("7")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Compiles `buildModule`'s program through the complete pipeline (codegen, object emission,
+// linking), writes and runs the executable, and asserts its single line of stdout and a `0` exit —
+// the same steps every run test above performs inline.
+let assertProgramPrints buildModule name executablePath expectedLine =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual(expectedLine)(line)
+                                                        in test.assertEqual(0)(exitCode)
+
+let testRunStaticExecutableForRealIrHelperFunctionModule unit = assertProgramPrints(buildRealIrHelperFunctionModule)("selfhostBackendRunHelperFunction")("selfhost_backend_helper_function_e2e")("42")
+
+let testRunStaticExecutableForRealIrCurriedHelperModule unit = assertProgramPrints(buildRealIrCurriedHelperModule)("selfhostBackendRunCurriedHelper")("selfhost_backend_curried_helper_e2e")("42")
+
+let testRunStaticExecutableForRealIrRecursiveHelperModule unit = assertProgramPrints(buildRealIrRecursiveHelperModule)("selfhostBackendRunRecursiveHelper")("selfhost_backend_recursive_helper_e2e")("120")
+
+let testRunStaticExecutableForOptimizedIrCurriedHelperModule unit = assertProgramPrints(buildOptimizedIrCurriedHelperModule)("selfhostBackendRunOptimizedCurriedHelper")("selfhost_backend_optimized_curried_helper_e2e")("42")
+
+let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -3092,6 +3173,11 @@ let run unit =
     |> testRunStaticExecutableForRealIrMatchSomeModule
     |> testRunStaticExecutableForRealIrMatchMultiConstructorModule
     |> testRunStaticExecutableForRealIrMatchNestedModule
+    |> testRunStaticExecutableForRealIrHelperFunctionModule
+    |> testRunStaticExecutableForRealIrCurriedHelperModule
+    |> testRunStaticExecutableForRealIrRecursiveHelperModule
+    |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
+    |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

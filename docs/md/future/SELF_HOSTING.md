@@ -2030,6 +2030,37 @@ same public behavior.
   through real lowering: `match x with | Some(Some(v)) -> print(v) | Some(None) -> print(-1) |
   None -> print(0)` on `x = Some(Some(7))` compiles through the complete self-hosted pipeline and
   prints `7`, confirmed stable across repeated runs of both the isolated and real-lowering tests.
+- [~] `AshesCompiler.Backend.IrCodegen` now compiles a whole `IrProgram` (`codegenProgram`), not
+  just its entry function: every lifted function in `IrProgram.functions` — every top-level
+  `let f x = ...`, lambda, and curried partial application — becomes a real
+  `i64 label(i64 env, i64 arg, i64 flag)` LLVM function with the exact calling convention
+  `LlvmCodegenExpressions.cs`'s `EmitCallClosure`/`EmitCallKnown` use (`hasEnvAndArgParams`
+  stores the two incoming words into local slots `0`/`1`, a lifted `Return` is an ordinary
+  `ret`), all declared before any body is emitted so forward and self references resolve. The
+  instruction cases this needed: `MakeClosure`/`MakeClosureStack` (the real 32-byte
+  `{code, env, packedEnvironmentSize, dropper}` object, `1 << 63`/`1 << 62` ownership bits
+  included), `CallClosure` (indirect through the `code` word), `CallKnown` (direct by label — what
+  `IrOptimizer.ash`'s known-closure devirtualization and environment scalarization produce),
+  `LoadFuncAddr`, `LoadEnv` (through local slot `0`), `LoadArgumentOwnership`, `Alloc`/
+  `AllocStack`, and `StoreMemOffset`/`LoadMemOffset` (a captured environment's own block).
+  `AshesCompiler.Backend.ElfLinker` gained the relocation shapes a multi-function object has —
+  a `call` to a locally-defined `.text` symbol (`R_X86_64_PLT32` against a symbol whose section
+  is `.text`, previously an explicit `Error`) and the absolute/PC-relative forms taking that
+  symbol's address for a closure's code word — resolved against `.text`'s own final base address
+  with the symbol's section offset folded into the addend (`textTargetedPatch`), on both the
+  static and dynamic-import paths. Verified end to end through the complete self-hosted pipeline
+  on a real Linux process: `let inc x = x + 1` / `print(inc(41))` prints `42` (`MakeClosure` +
+  `CallClosure`), the curried `let add x y = x + y` / `print(add(40)(2))` prints `42` (an
+  `Alloc`'d environment, `StoreMemOffset`, `LoadEnv`, a closure returned out of the function that
+  built it), `let recursive fact n = ...` / `print(fact(5))` prints `120` (self-recursion through
+  the env word), and the optimizer-rewritten shapes of the last two (`CallKnown` of a
+  `__scalarenv0` clone, direct recursive `CallKnown`) print the same. **Explicitly still open**:
+  every non-RC-managed `Alloc`/`MakeClosure` is a bare `malloc` standing in for stage 0's
+  scoped-arena bump allocation and is never freed (a closure and its environment routinely
+  outlive the frame that built them, so a stack slot would be wrong — the leak is the same
+  deliberate trade every other arena stand-in in this codegen makes); native tail calls
+  (`LlvmCodegen.cs`'s `DetermineTailCallKind`) are not ported, so a deep non-TCO'd recursion
+  grows the native stack; and the RC-managed closure form gets its header but no drop path yet.
 - [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
