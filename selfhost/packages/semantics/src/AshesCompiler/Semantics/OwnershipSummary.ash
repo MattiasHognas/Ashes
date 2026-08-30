@@ -29,6 +29,7 @@ export (
     value isResultFresh,
     value isResultPoisoned,
     value resultReachesParameter,
+    value resultReachesParameterWhole,
     value getBorrowedParameters,
     value getConsumedParameters,
 )
@@ -86,10 +87,16 @@ type ParameterReachEntry =
     | reachCount: Int
     deriving {Eq, Show}
 
+// `wholeParameterReach` lists the parameters the result may alias as themselves — embedded whole
+// in a constructor field or returned — as opposed to only through a destructured component (a
+// list's head cell, a record field): a callee that stores its parameter into the value it
+// returns keeps it whole; one that rebuilds a value from the parameter's parts does not. A
+// caller passing a fresh value to such a callee must transfer ownership only in the former case.
 type FunctionResultReachFacts =
     | parameterReach: List(ParameterReachEntry)
     | causes: List(ResultReachCause)
     | isPoisoned: Bool
+    | wholeParameterReach: List(Str)
     deriving {Eq, Show}
 
 type BytesOwnershipProvenance =
@@ -188,6 +195,18 @@ let recursive findParameterReach entries param =
 let resultReachesParameter facts param =
     match facts with
         | FunctionResultReachFacts { parameterReach = reach } -> findParameterReach(reach)(param) > 0
+
+let recursive containsParameterName (names: List(Str)) (param: Str) =
+    match names with
+        | [] -> false
+        | name :: rest ->
+            if name == param
+            then true
+            else containsParameterName(rest)(param)
+
+let resultReachesParameterWhole facts param =
+    match facts with
+        | FunctionResultReachFacts { wholeParameterReach = whole } -> containsParameterName(whole)(param)
 
 let recursive collectByOwnership (target: ParameterOwnership) (pairs: List((Str, ParameterOwnership))) (acc: List(Str)) =
     match pairs with

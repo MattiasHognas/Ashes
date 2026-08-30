@@ -121,9 +121,45 @@ let testParameterReachingResult unit =
                             |> resultReachesParameter(facts)
                             |> test.assertEqual(true)
                         in
-                            facts
-                            |> isResultPoisoned
-                            |> test.assertEqual(false))
+                            let _ =
+                                "x"
+                                |> resultReachesParameterWhole(facts)
+                                |> test.assertEqual(true)
+                            in
+                                facts
+                                |> isResultPoisoned
+                                |> test.assertEqual(false))
+
+// `reverse`'s shape: the result re-conses the matched head onto the accumulator and returns the
+// accumulator on the empty arm. The accumulator is reached whole; the list parameter is reached
+// only through its destructured head and tail, which this walk does not track at all (arm bodies
+// are analyzed under the unchanged environment), so it is neither reached nor reached whole.
+let testDestructuredParameterIsNotReachedWhole unit =
+    (let consArm = (PatternCons(PatternVar("head"))(PatternVar("tail")), ExprCons(ExprVar("head"))(ExprVar("reversed")), None)
+    in
+        let emptyArm = (PatternEmptyList, ExprVar("reversed"), None)
+        in
+            let body = ExprMatch(ExprVar("values"))([consArm, emptyArm])(None)
+            in
+                let sig = FunctionSignature(name = "reverse", origin = dummyOrigin("reverse"), parameters = ["values", "reversed"], body = body)
+                in
+                    let summary = inferFunctionOwnership(sig)([])
+                    in
+                        match summary with
+                            | FunctionOwnershipSummary { resultReachFacts = facts } ->
+                                let _ =
+                                    "reversed"
+                                    |> resultReachesParameterWhole(facts)
+                                    |> test.assertEqual(true)
+                                in
+                                    let _ =
+                                        "values"
+                                        |> resultReachesParameterWhole(facts)
+                                        |> test.assertEqual(false)
+                                    in
+                                        "values"
+                                        |> resultReachesParameter(facts)
+                                        |> test.assertEqual(false))
 
 let testConditionalBranchReachingResult unit =
     (let body = ExprIf(ExprVar("cond"))(ExprVar("a"))(ExprVar("b"))
@@ -405,6 +441,7 @@ let runOwnershipInferenceTests unit =
     |> testMixedParameters
     |> testFreshConstantResult
     |> testParameterReachingResult
+    |> testDestructuredParameterIsNotReachedWhole
     |> testConditionalBranchReachingResult
     |> testInternalSharingPoisoning
     |> testDirectRcConstruction
