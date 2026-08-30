@@ -16,7 +16,7 @@ internal static partial class LlvmCodegen
         // Allocate 8 bytes (length word only, no data), store length = 0.
         LlvmValueHandle bytesRef = runtimeManaged
             ? EmitRuntimeRcAlloc(state, 8, "rc_bytes_empty")
-            : EmitAlloc(state, 8);
+            : EmitArenaValueAlloc(state, 8);
         StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "bytes_empty_len");
         return bytesRef;
     }
@@ -30,7 +30,7 @@ internal static partial class LlvmCodegen
         // Allocate 16 bytes: 8 for length + 8 aligned for 1 data byte.
         LlvmValueHandle bytesRef = runtimeManaged
             ? EmitRuntimeRcAlloc(state, 16, "rc_bytes_singleton")
-            : EmitAlloc(state, 16);
+            : EmitArenaValueAlloc(state, 16);
         StoreMemory(state, bytesRef, 0, LlvmApi.ConstInt(state.I64, 1, 0), "bytes_singleton_len");
         LlvmValueHandle dataPtr = GetStringBytesPointer(state, bytesRef, "bytes_singleton_data");
         // byteVal is an i64 (Ashes uniform representation); truncate to i8 for storage.
@@ -479,7 +479,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, copyLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_sub_total");
         LlvmValueHandle destRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_subtext")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, copyLen, "bytes_sub_len");
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_sub_dest");
         LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_sub_src");
@@ -510,7 +510,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, newLen, LlvmApi.ConstInt(state.I64, 8, 0), "bytes_appb_total_bytes");
         LlvmValueHandle destRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_appb")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, newLen, "bytes_appb_len");
         LlvmValueHandle destData = GetStringBytesPointer(state, destRef, "bytes_appb_dest");
         LlvmValueHandle srcData = GetStringBytesPointer(state, bytesRef, "bytes_appb_src");
@@ -818,7 +818,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "bfl_total_bytes");
         LlvmValueHandle destRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_bytes_from_list")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, length, "bfl_dest_len");
         LlvmApi.BuildStore(builder, destRef, resultSlot);
         // Reset cursor for fill pass.
@@ -902,7 +902,7 @@ internal static partial class LlvmCodegen
     {
         return runtimeManaged
             ? EmitRuntimeRcAlloc(state, 16, name)
-            : EmitAlloc(state, 16);
+            : EmitArenaValueAlloc(state, 16);
     }
 
     private static LlvmValueHandle EmitBytesGetU16Le(LlvmCodegenState state, LlvmValueHandle bytesRef, LlvmValueHandle offsetVal)

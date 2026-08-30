@@ -723,7 +723,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, finishSomeBlock);
         LlvmValueHandle finalLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, prefix + "_final_len");
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_string_bytes"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_string_bytes"));
         StoreMemory(state, stringRef, 0, finalLen, prefix + "_string_len");
         EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, prefix + "_string_dest"), inputBufPtr, finalLen, prefix + "_copy_bytes");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);

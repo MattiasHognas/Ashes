@@ -110,7 +110,7 @@ public sealed partial class Lowering
         bool runtimeManaged = runtimeManagedResultArms is not null
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.Select((arm, index) =>
-                arm.RuntimeManaged || MatchArmReturnsRuntimeManagedTcoParam(cases[index].Body))
+                arm.RuntimeManaged || BranchJoinsRuntimeManagedResult(cases[index].Body, resultType))
                 .All(value => value);
         // An arm returning a runtime-managed TCO parameter is RC but OWNED (the parameter's own drop
         // machinery releases it), so it must not count toward the all-fresh join property.
@@ -118,19 +118,6 @@ public sealed partial class Lowering
             && runtimeManagedResultArms.Count == cases.Count
             && runtimeManagedResultArms.All(arm => arm.NewlyProduced);
         RecordControlFlowJoinTemp(resultTemp, resultType, runtimeManaged, allNewlyProduced);
-    }
-
-    private bool MatchArmReturnsRuntimeManagedTcoParam(Expr body)
-    {
-        Expr result = body;
-        while (result is Expr.Let let)
-        {
-            result = let.Body;
-        }
-
-        return result is Expr.Var variable
-            && Lookup(variable.Name) is Binding.Local local
-            && IsRuntimeManagedTcoParamSlot(local);
     }
 
     private List<MatchArmResultOwnership>? LowerMatchArms(
@@ -700,7 +687,7 @@ public sealed partial class Lowering
                 Unify(resultType, bodyType);
             }
         }
-        bodyTemp = TransferDirectRuntimeManagedMatchResult(cases[i].Body, bodyTemp);
+        bodyTemp = TransferDirectRuntimeManagedBranchResult(cases[i].Body, bodyTemp);
         Emit(new IrInst.StoreLocal(resultSlot, bodyTemp));
         int armFinalTemp = PopOwnershipScope(bodyType, bodyTemp);
         if (armFinalTemp != bodyTemp)

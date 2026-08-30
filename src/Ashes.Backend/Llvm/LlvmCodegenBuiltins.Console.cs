@@ -282,7 +282,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, blocks.Some);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, bytesRead, LlvmApi.ConstInt(state.I64, 8, 0), "console_poll_string_bytes"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, bytesRead, LlvmApi.ConstInt(state.I64, 8, 0), "console_poll_string_bytes"));
         StoreMemory(state, stringRef, 0, bytesRead, "console_poll_string_len");
         EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, "console_poll_string_dest"), bufPtr, bytesRead, "console_poll_copy");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);
@@ -291,7 +291,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, blocks.Done);
 
         LlvmApi.PositionBuilderAtEnd(builder, blocks.Empty);
-        LlvmValueHandle emptyStringRef = EmitAllocDynamic(state, LlvmApi.ConstInt(state.I64, 8, 0));
+        LlvmValueHandle emptyStringRef = EmitArenaValueAllocDynamic(state, LlvmApi.ConstInt(state.I64, 8, 0));
         StoreMemory(state, emptyStringRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "console_poll_empty_len");
         LlvmValueHandle someEmptyRef = EmitAllocAdt(state, 1, 1);
         StoreMemory(state, someEmptyRef, 8, emptyStringRef, "console_poll_some_empty");

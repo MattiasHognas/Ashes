@@ -47,7 +47,7 @@ internal static partial class LlvmCodegen
             : EmitStringView(state, tailPtr, tailLen, "text_uncons_tail");
         LlvmValueHandle tupleRef = runtimeManaged
             ? EmitRuntimeRcAlloc(state, 16, "rc_text_uncons_tuple")
-            : EmitAlloc(state, 16);
+            : EmitArenaValueAlloc(state, 16);
         StoreMemory(state, tupleRef, 0, headRef, "text_uncons_tuple_head");
         StoreMemory(state, tupleRef, 8, tailRef, "text_uncons_tuple_tail");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1, runtimeManaged);
@@ -281,7 +281,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle size = LlvmApi.ConstInt(state.I64, 12, 0);
         LlvmValueHandle text = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, size, "rc_rune_text")
-            : EmitAllocDynamic(state, size);
+            : EmitArenaValueAllocDynamic(state, size);
         StoreMemory(state, text, 0, width, "rune_text_len");
         LlvmValueHandle bytes = GetStringBytesPointer(state, text, "rune_text_bytes");
         EmitRuneStoreUtf8(state, bytes, rune, width);

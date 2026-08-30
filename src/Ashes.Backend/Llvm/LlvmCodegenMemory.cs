@@ -736,7 +736,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "str_cat_total_bytes");
         LlvmValueHandle destRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_str_cat")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, totalLen, "str_cat_len");
 
         LlvmValueHandle destBytes = GetStringBytesPointer(state, destRef, "str_cat_dest_bytes");
@@ -771,7 +771,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, totalLen, LlvmApi.ConstInt(state.I64, 8, 0), "str_cat_n_total_bytes");
         LlvmValueHandle destRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, totalBytes, "rc_str_cat_n")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, destRef, 0, totalLen, "str_cat_n_len");
 
         LlvmValueHandle destBytes = GetStringBytesPointer(state, destRef, "str_cat_n_dest_bytes");
@@ -905,7 +905,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle normalizedLen = NormalizeToI64(state, len);
-        LlvmValueHandle viewRef = EmitAlloc(state, 16);
+        LlvmValueHandle viewRef = EmitArenaValueAlloc(state, 16);
         LlvmValueHandle tagged = LlvmApi.BuildOr(builder, normalizedLen, LlvmApi.ConstInt(state.I64, StringViewFlag, 0), prefix + "_tagged_len");
         StoreMemory(state, viewRef, 0, tagged, prefix + "_len");
         LlvmValueHandle bytesAsInt = LlvmApi.BuildPtrToInt(builder, bytesPtr, state.I64, prefix + "_bytes_int");
@@ -925,6 +925,53 @@ internal static partial class LlvmCodegen
         LlvmValueHandle nextCursor = LlvmApi.BuildAdd(builder, cursor, normalizedSize, "heap_cursor_next_dyn");
         LlvmApi.BuildStore(builder, nextCursor, cursorSlot);
         return cursor;
+    }
+
+    /// <summary>
+    /// Arena-allocates a <c>Str</c>/<c>Bytes</c>/<c>BigInt</c> value behind an immortal RC header.
+    /// Every such value the program can hold must be safe to hand to <see cref="EmitRuntimeRcDup"/>,
+    /// <see cref="EmitRuntimeRcDrop"/>, and <see cref="EmitRuntimeDropReuse"/>: lowering retains and
+    /// releases a string it extracts from a pattern regardless of whether the structure it came from is
+    /// runtime-managed (see <c>ResolvePatternBindingPlacementOutcome</c>), and static literals already
+    /// carry this header for the same reason (<see cref="EmitHeapStringLiteral"/>). A bare
+    /// <c>{len, bytes}</c> arena string has whatever preceded it where a count word is expected, so an RC
+    /// operation on it corrupts its neighbor. The header marks the value immortal: retains and releases
+    /// are no-ops, uniqueness reads as false, and the arena reset that owns the value frees it as before.
+    /// The value pointer is the word after the header, exactly as for a runtime-managed allocation.
+    /// </summary>
+    private static LlvmValueHandle EmitArenaValueAllocDynamic(LlvmCodegenState state, LlvmValueHandle valueSizeBytes)
+        => EmitArenaValueAllocDynamic(state, valueSizeBytes, state.HeapCursorSlot, state.HeapEndSlot);
+
+    private static LlvmValueHandle EmitArenaValueAllocDynamic(
+        LlvmCodegenState state,
+        LlvmValueHandle valueSizeBytes,
+        LlvmValueHandle cursorSlot,
+        LlvmValueHandle endSlot)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle totalSize = LlvmApi.BuildAdd(
+            builder,
+            NormalizeToI64(state, valueSizeBytes),
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0),
+            "arena_value_total_size");
+        LlvmValueHandle allocationBase = EmitAllocDynamic(state, totalSize, cursorSlot, endSlot);
+        return EmitArenaValueHeader(state, allocationBase);
+    }
+
+    private static LlvmValueHandle EmitArenaValueAlloc(LlvmCodegenState state, int valueSizeBytes)
+    {
+        LlvmValueHandle allocationBase = EmitAlloc(state, HeapLayouts.RcHeader.TotalAllocationSizeBytes(valueSizeBytes));
+        return EmitArenaValueHeader(state, allocationBase);
+    }
+
+    private static LlvmValueHandle EmitArenaValueHeader(LlvmCodegenState state, LlvmValueHandle allocationBase)
+    {
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.ReferenceCountOffsetBytes,
+            LlvmApi.ConstInt(state.I64, RuntimeRcImmortalSentinel, 0), "arena_value_immortal_count");
+        StoreMemory(state, allocationBase, HeapLayouts.RcHeader.AllocationSizeOffsetBytes,
+            LlvmApi.ConstInt(state.I64, 0, 0), "arena_value_unused_size");
+        return LlvmApi.BuildAdd(state.Target.Builder, allocationBase,
+            LlvmApi.ConstInt(state.I64, (ulong)HeapLayouts.RcHeader.SizeBytes, 0), "arena_value");
     }
 
     private static LlvmValueHandle AlignRuntimeSize(LlvmCodegenState state, LlvmValueHandle sizeBytes, string name)
@@ -1705,7 +1752,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle length = LoadStringLength(state, srcPtr, "copy_out_str_len");
         LlvmValueHandle srcBytes = GetStringBytesPointer(state, srcPtr, "copy_out_src");
         LlvmValueHandle dynSize = LlvmApi.BuildAdd(builder, length, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_str_total");
-        LlvmValueHandle dynDest = EmitAllocDynamic(state, dynSize, cursorSlot, endSlot);
+        LlvmValueHandle dynDest = EmitArenaValueAllocDynamic(state, dynSize, cursorSlot, endSlot);
         StoreMemory(state, dynDest, 0, length, "copy_out_str_dest_len");
         LlvmValueHandle dynDestBytes = GetStringBytesPointer(state, dynDest, "copy_out_dest");
         EmitMoveBytes(state, dynDestBytes, srcBytes, length, "copy_out");
@@ -1732,7 +1779,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle size = LlvmApi.BuildAdd(builder, limbBytes, LlvmApi.ConstInt(state.I64, 8, 0), "copy_out_bigint_size");
         LlvmValueHandle dest = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, size, "copy_out_rc_bigint")
-            : EmitAllocDynamic(state, size);
+            : EmitArenaValueAllocDynamic(state, size);
         LlvmValueHandle srcBytes = LlvmApi.BuildIntToPtr(builder, srcPtr, state.I8Ptr, "copy_out_bigint_src");
         LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder, dest, state.I8Ptr, "copy_out_bigint_dest");
         EmitMoveBytes(state, destBytes, srcBytes, size, "copy_out_bigint");
@@ -2822,7 +2869,7 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmValueHandle len = LlvmApi.ConstInt(state.I64, (ulong)bytes.Count, 0);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, len, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
         StoreMemory(state, stringRef, 0, len, prefix + "_len");
 
         if (bytes.Count > 0)
@@ -3561,7 +3608,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size");
         LlvmValueHandle stringRef = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, valueSize, "rc_" + prefix)
-            : EmitAllocDynamic(state, valueSize);
+            : EmitArenaValueAllocDynamic(state, valueSize);
         StoreMemory(state, stringRef, 0, normalizedLen, prefix + "_len");
         LlvmValueHandle destBytes = GetStringBytesPointer(state, stringRef, prefix + "_dest");
         EmitCopyBytes(state, destBytes, bytesPtr, normalizedLen, prefix + "_copy");
@@ -3669,7 +3716,7 @@ internal static partial class LlvmCodegen
             LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_size");
         LlvmValueHandle dest = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, allocSize, "rc_csr_fb")
-            : EmitAllocDynamic(state, allocSize);
+            : EmitArenaValueAllocDynamic(state, allocSize);
         StoreMemory(state, dest, 0, total, "csr_fb_hdr");
         LlvmValueHandle destBytes = LlvmApi.BuildIntToPtr(builder,
             LlvmApi.BuildAdd(builder, dest, LlvmApi.ConstInt(state.I64, 8, 0), "csr_fb_d8"), state.I8Ptr, "csr_fb_dbytes");

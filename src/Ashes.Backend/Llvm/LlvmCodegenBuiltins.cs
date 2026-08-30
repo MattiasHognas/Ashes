@@ -177,7 +177,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, finishSomeBlock);
         LlvmValueHandle finalLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "read_line_final_len");
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), "read_line_string_bytes"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), "read_line_string_bytes"));
         StoreMemory(state, stringRef, 0, finalLen, "read_line_string_len");
         EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, "read_line_string_dest"), inputBufPtr, finalLen, "read_line_copy_bytes");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);
@@ -353,7 +353,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, buildNodeBlock);
         LlvmValueHandle argLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "program_args_arg_len_value");
-        LlvmValueHandle stringRef = EmitAllocDynamic(
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(
             state,
             LlvmApi.BuildAdd(builder, argLen, LlvmApi.ConstInt(state.I64, 8, 0), "program_args_string_bytes"));
         StoreMemory(state, stringRef, 0, argLen, "program_args_string_len");
@@ -587,7 +587,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasBytes, createUtf8StringBlock, createEmptyStringBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createUtf8StringBlock);
-        LlvmValueHandle stringRef = EmitAllocDynamic(
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(
             state,
             LlvmApi.BuildAdd(builder, LlvmApi.BuildZExt(builder, byteCount, state.I64, "program_args_byte_count_i64"), LlvmApi.ConstInt(state.I64, 8, 0), "program_args_string_bytes"));
         StoreMemory(state, stringRef, 0, LlvmApi.BuildZExt(builder, byteCount, state.I64, "program_args_string_len"), "program_args_string_len");
@@ -617,7 +617,7 @@ internal static partial class LlvmCodegen
         var (haveArgvBlock, maybeLoopBlock, loopCheckBlock, wideArgSetupBlock, wideLenBodyBlock, wideLenIncBlock, convertArgBlock, createUtf8StringBlock, createEmptyStringBlock, linkArgBlock, freeArgvBlock, doneBlock) = blocks;
 
         LlvmApi.PositionBuilderAtEnd(builder, createEmptyStringBlock);
-        LlvmValueHandle emptyStringRef = EmitAlloc(state, 8);
+        LlvmValueHandle emptyStringRef = EmitArenaValueAlloc(state, 8);
         StoreMemory(state, emptyStringRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "program_args_empty_string_len");
         LlvmApi.BuildStore(builder, emptyStringRef, stringRefSlot);
         LlvmApi.BuildBr(builder, linkArgBlock);
@@ -681,7 +681,7 @@ internal static partial class LlvmCodegen
 
         // Allocate: string header (8 bytes for length) + count bytes.
         LlvmValueHandle totalBytes = LlvmApi.BuildAdd(builder, countVal, LlvmApi.ConstInt(state.I64, 8, 0), "re_total_bytes");
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, totalBytes);
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, stringRef, 0, countVal, "re_string_len");
         LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, "re_dest_ptr");
 

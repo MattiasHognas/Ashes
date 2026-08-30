@@ -1072,7 +1072,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildBr(builder, continueBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), prefix + "_size"));
         StoreMemory(state, stringRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_len_init");
         LlvmValueHandle readCount = emitRead(state, socket, GetStringBytesPointer(state, stringRef, prefix + "_bytes"), LlvmApi.BuildTrunc(builder, maxBytes, state.I32, prefix + "_max_i32"), prefix + "_read_call");
         LlvmValueHandle readFailed = LlvmApi.BuildICmp(builder, LlvmIntPredicate.Slt, readCount, LlvmApi.ConstInt(state.I64, 0, 0), prefix + "_read_failed");
