@@ -938,6 +938,17 @@ let recursive lookupProvenance (name: Str) (provMap: List((Str, FunctionResultPr
                     then Some(v)
                     else lookupProvenance(name)(rest)
 
+// Every parameter this walk reaches is reached whole: reach flows only through a parameter's own
+// variable (and `let` aliases of it) — `analyzeMatchArmsReach` analyzes each arm under the
+// unchanged environment, so a pattern-bound name (a matched head or field, the only way to reach
+// a parameter's component) carries no reach at all. Stage 0 additionally tracks component paths
+// ("values/0") and keeps whole and component reach apart; until that path model is ported the
+// whole set is exactly the reached set, and a component-only reach is simply absent.
+let recursive reachedParameterNames (entries: List(ParameterReachEntry)) =
+    match entries with
+        | [] -> []
+        | ParameterReachEntry { parameterName = name } :: rest -> name :: reachedParameterNames(rest)
+
 let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) =
     match sig with
         | FunctionSignature { name = fName, origin = origin, parameters = params, body = body } ->
@@ -947,7 +958,13 @@ let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, Functio
                 in
                     let reachFacts =
                         match reachState with
-                            | ResultReachState { counts = counts, causes = causes, isPoisoned = poisoned } -> FunctionResultReachFacts(parameterReach = counts, causes = causes, isPoisoned = poisoned)
+                            | ResultReachState { counts = counts, causes = causes, isPoisoned = poisoned } ->
+                                FunctionResultReachFacts(
+                                    parameterReach = counts,
+                                    causes = causes,
+                                    isPoisoned = poisoned,
+                                    wholeParameterReach = reachedParameterNames(counts)
+                                )
                     in
                         let paramOwnership = classifyParameterOwnership(params)(body)([])
                         in
