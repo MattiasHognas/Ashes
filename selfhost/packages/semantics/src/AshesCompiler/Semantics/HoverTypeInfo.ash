@@ -28,6 +28,9 @@ let recursive containsText (target: Str) (items: List(Str)) =
             then true
             else containsText(target)(tail)
 
+// `isDefinition` marks the binding's own definition site, whose `inferredType` is the generalized
+// scheme body; a use site records that use's instantiation instead, whose open capability row has
+// been unified with the calling context's, so it also lists everything the caller performs.
 type HoverTypeInfo =
     | span: TextSpan
     | name: Maybe(Str)
@@ -35,6 +38,7 @@ type HoverTypeInfo =
     | constraints: List(TraitConstraint)
     | parameterNames: List(Str)
     | isParameter: Bool
+    | isDefinition: Bool
     deriving {Eq, Show}
 
 type ExternalOwnershipInfo =
@@ -49,14 +53,15 @@ type PublicAuthorityRecord =
     | capabilities: List(Str)
     deriving {Eq, Show}
 
-let recordHoverType (span: TextSpan) (name: Maybe(Str)) (inferredType: SemanticType) (constraints: List(TraitConstraint)) (parameterNames: List(Str)) (isParameter: Bool) (hoverList: List(HoverTypeInfo)) =
+let recordHoverType (span: TextSpan) (name: Maybe(Str)) (inferredType: SemanticType) (constraints: List(TraitConstraint)) (parameterNames: List(Str)) (isParameter: Bool) (isDefinition: Bool) (hoverList: List(HoverTypeInfo)) =
     HoverTypeInfo(
         span = span,
         name = name,
         inferredType = inferredType,
         constraints = constraints,
         parameterNames = parameterNames,
-        isParameter = isParameter
+        isParameter = isParameter,
+        isDefinition = isDefinition
     ) :: hoverList
 
 let recursive findHoverAtOffset (offset: Int) (hoverList: List(HoverTypeInfo)) =
@@ -64,7 +69,7 @@ let recursive findHoverAtOffset (offset: Int) (hoverList: List(HoverTypeInfo)) =
         | [] -> None
         | head :: tail ->
             match head with
-                | HoverTypeInfo(TextSpan(start, end), _n, _t, _c, _p, _param) ->
+                | HoverTypeInfo { span = TextSpan(start, end) } ->
                     if offset >= start
                     then
                         if offset <= end
@@ -125,23 +130,41 @@ let recursive collectCaps (semType: SemanticType) (depth: Int) (acc: List(Str)) 
 
 let collectTypeCapabilities (semType: SemanticType) = sort(collectCaps(semType)(0)([]))
 
+let recursive dedupeSorted (items: List(Str)) =
+    match items with
+        | [] -> []
+        | first :: second :: rest ->
+            if first == second
+            then dedupeSorted(second :: rest)
+            else first :: dedupeSorted(second :: rest)
+        | single :: [] -> [single]
+
+// Merges `capabilities` into the record for `name`, keeping the records ordered by binding name
+// and each capability list sorted and duplicate-free.
+let recursive mergeAuthority (name: Str) (capabilities: List(Str)) (records: List(PublicAuthorityRecord)) =
+    match records with
+        | [] -> [PublicAuthorityRecord(bindingName = name, capabilities = capabilities)]
+        | PublicAuthorityRecord { bindingName = existing, capabilities = existingCaps } :: rest ->
+            if existing == name
+            then PublicAuthorityRecord(bindingName = name, capabilities = dedupeSorted(sort(append(existingCaps)(capabilities)))) :: rest
+            else
+                if Ashes.Text.compare(name)(existing) < 0
+                then PublicAuthorityRecord(bindingName = name, capabilities = capabilities) :: records
+                else PublicAuthorityRecord(bindingName = existing, capabilities = existingCaps) :: mergeAuthority(name)(capabilities)(rest)
+
+// The capabilities in each exported (top-level) binding's inferred type, read from DEFINITION
+// entries only: a use site records that use's instantiation, whose open row has been unified with
+// the caller's context and so also lists every capability the caller performs — reading those
+// would charge a helper with its callers' authority.
 let recursive capturePublicAuthorityAux (topLevelBindingNames: List(Str)) (hoverList: List(HoverTypeInfo)) (acc: List(PublicAuthorityRecord)) =
     match hoverList with
-        | [] -> reverse(acc)
+        | [] -> acc
         | head :: tail ->
             match head with
-                | HoverTypeInfo(_span, Some(name), semType, _consts, _params, _isP) ->
+                | HoverTypeInfo { name = Some(name), inferredType = semType, isDefinition = true } ->
                     if containsText(name)(topLevelBindingNames)
-                    then
-                        let caps = collectTypeCapabilities(semType)
-                        in
-                            let record =
-                                PublicAuthorityRecord(
-                                    bindingName = name,
-                                    capabilities = caps
-                                )
-                            in capturePublicAuthorityAux(topLevelBindingNames)(tail)(record :: acc)
+                    then capturePublicAuthorityAux(topLevelBindingNames)(tail)(mergeAuthority(name)(collectTypeCapabilities(semType))(acc))
                     else capturePublicAuthorityAux(topLevelBindingNames)(tail)(acc)
-                | HoverTypeInfo(_span, None, _t, _c, _p, _isP) -> capturePublicAuthorityAux(topLevelBindingNames)(tail)(acc)
+                | _ -> capturePublicAuthorityAux(topLevelBindingNames)(tail)(acc)
 
 let capturePublicAuthority (topLevelBindingNames: List(Str)) (hoverList: List(HoverTypeInfo)) = capturePublicAuthorityAux(topLevelBindingNames)(hoverList)([])
