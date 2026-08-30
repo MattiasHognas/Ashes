@@ -2122,6 +2122,17 @@ same public behavior.
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
   [Linking → Constants](../internals/architecture.md#constants).
+- [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
+  `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
+  static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
+  `textVa + 20`, and every text/rodata/import patch resolves against that shifted base). Found
+  while adding lifted-function codegen: the linker used to set `e_entry` straight to the entry
+  function, so the process started with the kernel's 16-byte-aligned `rsp` where LLVM-compiled
+  code assumes the post-`call` `rsp ≡ 8 mod 16` — every frame and every libc call in the program
+  was misaligned by 8, a latent ABI violation glibc's `malloc`/`memcmp`/`memcpy` merely happened
+  to tolerate. The trampoline's `call` restores the contract exactly as stage 0 does (and passes
+  the initial stack pointer in `rdi`, which this entry function does not yet read — program
+  arguments remain unported).
 - [ ] Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
   (`LlvmImageLinkerElf.cs`; [Linux x86-64](../internals/architecture.md#linux-x86-64-elf64) lists the relocation set and
   the trampoline).
