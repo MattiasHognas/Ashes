@@ -83,6 +83,11 @@ export (
     value getParam,
     value buildAdd,
     value buildSub,
+    value buildShl,
+    value buildLShr,
+    value buildAnd,
+    value buildOr,
+    value buildXor,
     value buildMul,
     value buildSDiv,
     value buildSRem,
@@ -98,6 +103,12 @@ export (
     value intPredicateNe,
     value intPredicateSgt,
     value intPredicateSlt,
+    value intPredicateSge,
+    value intPredicateSle,
+    value intPredicateUgt,
+    value intPredicateUge,
+    value intPredicateUlt,
+    value intPredicateUle,
     value buildCondBr,
     value buildSwitch,
     value addCase,
@@ -175,6 +186,11 @@ external LLVMGetHostCPUFeatures() -> FfiStr(owned LLVMDisposeMessage) = "LLVMGet
 external LLVMGetParam(LLVMValueRef, u32) -> LLVMValueRef = "LLVMGetParam@libLLVM.so"
 external LLVMBuildAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAdd@libLLVM.so"
 external LLVMBuildSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSub@libLLVM.so"
+external LLVMBuildShl(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildShl@libLLVM.so"
+external LLVMBuildLShr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLShr@libLLVM.so"
+external LLVMBuildAnd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildAnd@libLLVM.so"
+external LLVMBuildOr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildOr@libLLVM.so"
+external LLVMBuildXor(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildXor@libLLVM.so"
 external LLVMBuildMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildMul@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
 external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
@@ -337,6 +353,16 @@ let buildAdd builder lhs rhs name = LLVMBuildAdd(builder)(lhs)(rhs)(name)
 
 let buildSub builder lhs rhs name = LLVMBuildSub(builder)(lhs)(rhs)(name)
 
+let buildShl builder lhs rhs name = LLVMBuildShl(builder)(lhs)(rhs)(name)
+
+let buildLShr builder lhs rhs name = LLVMBuildLShr(builder)(lhs)(rhs)(name)
+
+let buildAnd builder lhs rhs name = LLVMBuildAnd(builder)(lhs)(rhs)(name)
+
+let buildOr builder lhs rhs name = LLVMBuildOr(builder)(lhs)(rhs)(name)
+
+let buildXor builder lhs rhs name = LLVMBuildXor(builder)(lhs)(rhs)(name)
+
 let buildMul builder lhs rhs name = LLVMBuildMul(builder)(lhs)(rhs)(name)
 
 let buildSDiv builder lhs rhs name = LLVMBuildSDiv(builder)(lhs)(rhs)(name)
@@ -366,6 +392,18 @@ let intPredicateNe = 33u32
 let intPredicateSgt = 38u32
 
 let intPredicateSlt = 40u32
+
+let intPredicateSge = 39u32
+
+let intPredicateSle = 41u32
+
+let intPredicateUgt = 34u32
+
+let intPredicateUge = 35u32
+
+let intPredicateUlt = 36u32
+
+let intPredicateUle = 37u32
 
 let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
 
