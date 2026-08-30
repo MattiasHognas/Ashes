@@ -1050,20 +1050,10 @@ let codegenInstructionKind cx builder kind state =
                         // a bare two-operand `ConcatStr` — this case exists for robustness against
                         // whatever the fold declines, sharing the exact same N-ary helper with a
                         // two-element part list rather than a separate pairwise implementation.
-                        // `parts`/`[left, right]` are resolved to LLVM values HERE, at the ordinary
-                        // (non-recursive) `codegenInstructionKind` call site — exactly where every
-                        // other case in this whole match already resolves a temp via `lookupIndexed`
-                        // alongside its own FFI calls — rather than inside `emitStringConcatN` or a
-                        // separate helper: a self-recursive helper (or even a `Ashes.Collection.List.map`
-                        // closure) that itself calls `lookupIndexed` (needs `ConsoleIO`) hits a real
-                        // capability-row inference limitation in this compiler when the surrounding
-                        // scope also needs `UnsafeFfi` — confirmed by extensive bisection, not
-                        // assumed; every fix attempt that kept the resolution inside a nested
-                        // function reproduced the same spurious `ASH018` regardless of whether that
-                        // function was a hand-written recursive helper, a locally-nested one, or the
-                        // standard library's own `map`. Resolving inline here, where `lookupIndexed`
-                        // is already always called directly (never through a wrapper) alongside FFI
-                        // calls in every other case, sidesteps it entirely.
+                        // `parts`/`[left, right]` are resolved to LLVM values here, at the
+                        // `codegenInstructionKind` call site — where every other case in this match
+                        // resolves its temps via `lookupIndexed` — so `emitStringConcatN` and its
+                        // helpers take plain `List(LLVMValueRef)` and never touch `tempEnv`.
                                         | ConcatStr(target, left, right, _managed) ->
                                             let result =
                                                 emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
