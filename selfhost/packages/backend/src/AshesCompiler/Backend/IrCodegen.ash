@@ -421,6 +421,62 @@ let storePrintBufferByte builder i64 i8 bufferType buffer index value =
         in
             buildStore(builder)(buildTrunc(builder)(value)(i8)("to_i8"))(ptr))
 
+// `amount & 63` — see the `ShlInt`/`ShrInt` cases for why.
+let maskShiftAmount builder i64 amount =
+    buildAnd(builder)(amount)(constInt(i64)(63u64)(false))("shift_amount")
+
+let recursive storeAsciiBytes builder i64 i8 bufferType buffer index codes =
+    match codes with
+        | [] -> Unit
+        | code :: rest ->
+            let _ =
+                false
+                |> constInt(i64)(Ashes.Number.UInt.fromInt64(code))
+                |> storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(constInt(i64)(Ashes.Number.UInt.fromInt64(index))(false))
+            in storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(index + 1)(rest)
+
+// Writes one of two fixed ASCII lines into a fresh stack buffer and `write`s it — one block per
+// outcome, both falling into `continueBlock`.
+let emitPrintBoolBranch builder i64 i8 bufferType codes block continueBlock =
+    (let _ = positionBuilderAtEnd(builder)(block)
+    in
+        let buffer = buildAlloca(builder)(bufferType)("bool_buf")
+        in
+            let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)(codes)
+            in
+                let bufferAddr = buildPtrToInt(builder)(buffer)(i64)("bool_buf_addr")
+                in
+                    let _ =
+                        false
+                        |> constInt(i64)(codes
+                        |> Ashes.Collection.List.length
+                        |> Ashes.Number.UInt.fromInt64)
+                        |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(bufferAddr)
+                    in buildBr(builder)(continueBlock))
+
+// `PrintBool`: the canonical 0/1 `i64` a Bool is represented as (see `LoadConstBool`) selects
+// between `true\n` and `false\n`, each written from a stack buffer via the raw `write` syscall —
+// matching `LlvmCodegenExpressions.cs`'s `EmitPrintBool`/`EmitConditionalWrite` (`icmp ne 0`,
+// two blocks, static bytes, newline appended), and entirely stack-local like `PrintInt`.
+let emitPrintBool context function_ i64 i8 builder value =
+    (let bufferType = arrayType(i8)(6u64)
+    in
+        let isTrue =
+            buildICmp(builder)(intPredicateNe)(value)(constInt(i64)(0u64)(false))("bool_is_true")
+        in
+            let trueBlock = appendBasicBlock(context)(function_)("bool_true")
+            in
+                let falseBlock = appendBasicBlock(context)(function_)("bool_false")
+                in
+                    let continueBlock = appendBasicBlock(context)(function_)("bool_continue")
+                    in
+                        let _ = buildCondBr(builder)(isTrue)(trueBlock)(falseBlock)
+                        in
+                            let _ = emitPrintBoolBranch(builder)(i64)(i8)(bufferType)([116, 114, 117, 101, 10])(trueBlock)(continueBlock)
+                            in
+                                let _ = emitPrintBoolBranch(builder)(i64)(i8)(bufferType)([102, 97, 108, 115, 101, 10])(falseBlock)(continueBlock)
+                                in positionBuilderAtEnd(builder)(continueBlock))
+
 // Allocates the 32-byte stack digit buffer plus the index/work stack slots `PrintInt`'s block
 // structure shares, matching `LlvmCodegenPlatform.cs`'s own `EmitPrintIntPrologue`: `workSlot`
 // starts at `value`'s absolute value (a negative `value` is negated via `buildSelect`, no branch
@@ -1018,6 +1074,48 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, buildAdd(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | SubInt(target, left, right) ->
                                             ((target, buildSub(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | DivInt(target, left, right) ->
+                                            ((target, buildSDiv(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | DivUInt(target, left, right) ->
+                                            ((target, buildUDiv(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | AndInt(target, left, right) ->
+                                            ((target, buildAnd(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | OrInt(target, left, right) ->
+                                            ((target, buildOr(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | XorInt(target, left, right) ->
+                                            ((target, buildXor(builder)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // Both shifts mask the amount to `0..63` first, exactly as
+                        // `LlvmCodegenExpressions.cs`'s `EmitShiftInt` does: an LLVM shift by 64 or
+                        // more is poison, and `>>` on `Int` is the LOGICAL right shift (`lshr`),
+                        // never arithmetic — the same choice stage 0 makes.
+                                        | ShlInt(target, left, right) ->
+                                            ((target, buildShl(builder)(lookupIndexed(left)(tempEnv))(tempEnv
+                                            |> lookupIndexed(right)
+                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | ShrInt(target, left, right) ->
+                                            ((target, buildLShr(builder)(lookupIndexed(left)(tempEnv))(tempEnv
+                                            |> lookupIndexed(right)
+                                            |> maskShiftAmount(builder)(i64))("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpIntGe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSge)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpIntLt(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSlt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpIntLe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSle)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpUIntGt(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpUIntGe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUge)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpUIntLt(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUlt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpUIntLe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildICmp(builder)(intPredicateUle)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | PrintBool(source) ->
+                                            let _ =
+                                                tempEnv
+                                                |> lookupIndexed(source)
+                                                |> emitPrintBool(context)(function_)(i64)(i8)(builder)
+                                            in (tempEnv, false)
                                         | CmpIntGt(target, left, right) ->
                                             ((target, buildZExt(builder)(buildICmp(builder)(intPredicateSgt)(lookupIndexed(left)(tempEnv))(lookupIndexed(right)(tempEnv))("t" + Ashes.Text.fromInt(target) + "_i1"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | CmpIntEq(target, left, right) ->

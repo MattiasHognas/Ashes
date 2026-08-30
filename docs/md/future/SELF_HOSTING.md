@@ -2122,6 +2122,21 @@ same public behavior.
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
   [Linking → Constants](../internals/architecture.md#constants).
+- [~] `AshesCompiler.Backend.IrCodegen` gained every remaining scalar integer instruction the
+  self-hosted lowering already emits for ordinary source: `DivInt`/`DivUInt` (`sdiv`/`udiv`),
+  `AndInt`/`OrInt`/`XorInt`, `ShlInt`/`ShrInt` (amount masked to `0..63`, logical right shift —
+  `LlvmCodegenExpressions.cs`'s `EmitShiftInt` exactly), the seven comparison predicates that had
+  no case (`CmpIntGe`/`Lt`/`Le` and `CmpUIntGt`/`Ge`/`Lt`/`Le`, each a zero-extended `icmp`
+  like the existing three), and `PrintBool` (`icmp ne 0` selecting `true`/`false` written from a
+  stack buffer via the raw `write` syscall, the shape of stage 0's `EmitPrintBool`/
+  `EmitConditionalWrite`). `AshesCompiler.Backend.Llvm` grew the matching bindings
+  (`LLVMBuildShl`/`LShr`/`And`/`Or`/`Xor` and the `sge`/`sle`/`ugt`/`uge`/`ult`/`ule` predicate
+  codes). Verified end to end through the complete self-hosted pipeline on a real Linux process:
+  `(1 << 4) + (256 >> 2) + (10 / 3) + (6 & 3) + (6 | 1) + (6 ^ 3)` prints `97`, a `&&`-chain of
+  `>=`/`<`/`<=`/`>` and a `u64` `<` prints `1`, and `print(true)`/`print(1 > 2)` print `true`/
+  `false`. Chosen by probing what real source lowers to rather than by the instruction list:
+  lists, tuples, list recursion, and lambda arguments already lowered to instructions codegen
+  covered, and these were the only scalar cases still panicking.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

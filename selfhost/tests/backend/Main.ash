@@ -2220,6 +2220,19 @@ let buildOptimizedIrCurriedHelperModule name context = codegenOptimizedRealSourc
 // `1 << 63` only because this codegen has no `ShlInt` case yet.
 let buildRealIrPrintIntMinModule name context = codegenRealSource("Ashes.IO.print(-9223372036854775807 - 1)")(name)(context)
 
+// Every remaining integer operator in one expression: `<<`/`>>` (`ShlInt`/`ShrInt`, amount masked
+// to 0..63, logical right shift), `/` (`DivInt`), `&`/`|`/`^` (`AndInt`/`OrInt`/`XorInt`):
+// 16 + 64 + 3 + 2 + 7 + 5 = 97.
+let buildRealIrIntegerOperatorsModule name context = codegenRealSource("Ashes.IO.print((1 << 4) + (256 >> 2) + (10 / 3) + (6 & 3) + (6 | 1) + (6 ^ 3))")(name)(context)
+
+// The four signed comparisons that had no case (`>=`, `<`, `<=`, plus `>` again) and an unsigned
+// one (`CmpUIntLt` via `u64` operands), all true, joined by `&&`.
+let buildRealIrIntegerComparisonsModule name context = codegenRealSource("Ashes.IO.print(if 3 >= 3 && 2 < 3 && 2 <= 2 && 4 > 3 && 1u64 < 2u64 then 1 else 0)")(name)(context)
+
+let buildRealIrPrintBoolTrueModule name context = codegenRealSource("Ashes.IO.print(true)")(name)(context)
+
+let buildRealIrPrintBoolFalseModule name context = codegenRealSource("Ashes.IO.print(1 > 2)")(name)(context)
+
 let buildOptimizedIrRecursiveHelperModule name context = codegenOptimizedRealSource("let recursive fact n = if n > 1 then n * fact(n - 1) else 1\nAshes.IO.print(fact(5))")(name)(context)
 
 let resolveHostTargetMachine triple =
@@ -2922,6 +2935,14 @@ let testRunStaticExecutableForOptimizedIrCurriedHelperModule unit = assertProgra
 
 let testRunStaticExecutableForRealIrPrintIntMinModule unit = assertProgramPrints(buildRealIrPrintIntMinModule)("selfhostBackendRunPrintIntMin")("selfhost_backend_print_int_min_e2e")("-9223372036854775808")
 
+let testRunStaticExecutableForRealIrIntegerOperatorsModule unit = assertProgramPrints(buildRealIrIntegerOperatorsModule)("selfhostBackendRunIntegerOperators")("selfhost_backend_integer_operators_e2e")("97")
+
+let testRunStaticExecutableForRealIrIntegerComparisonsModule unit = assertProgramPrints(buildRealIrIntegerComparisonsModule)("selfhostBackendRunIntegerComparisons")("selfhost_backend_integer_comparisons_e2e")("1")
+
+let testRunStaticExecutableForRealIrPrintBoolTrueModule unit = assertProgramPrints(buildRealIrPrintBoolTrueModule)("selfhostBackendRunPrintBoolTrue")("selfhost_backend_print_bool_true_e2e")("true")
+
+let testRunStaticExecutableForRealIrPrintBoolFalseModule unit = assertProgramPrints(buildRealIrPrintBoolFalseModule)("selfhostBackendRunPrintBoolFalse")("selfhost_backend_print_bool_false_e2e")("false")
+
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
@@ -3186,6 +3207,10 @@ let run unit =
     |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
     |> testRunStaticExecutableForRealIrPrintIntMinModule
+    |> testRunStaticExecutableForRealIrIntegerOperatorsModule
+    |> testRunStaticExecutableForRealIrIntegerComparisonsModule
+    |> testRunStaticExecutableForRealIrPrintBoolTrueModule
+    |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
