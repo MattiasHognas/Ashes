@@ -453,15 +453,19 @@ let printIntPrologue builder i64 i8 value =
 // by the caller), write its ASCII byte, and advance both `workSlot` (for the next iteration's
 // `loopCheckBlock` read) and `indexSlot`. Matches `LlvmCodegenPlatform.cs`'s own
 // `EmitPrintIntDigitLoopBody` — buffer filled from the END backward (`31 - index`), so the digits
-// land in the correct left-to-right order without a separate reverse pass.
+// land in the correct left-to-right order without a separate reverse pass. The division is
+// UNSIGNED (`urem`/`udiv`), never `srem`/`sdiv`: `printIntPrologue`'s `0 - value` negation of
+// `Int.min` overflows back to `Int.min` itself, whose bit pattern read unsigned is exactly the
+// magnitude `9223372036854775808` — signed division would instead peel negative "digits" off it
+// and print garbage for that one value.
 let printIntDigitLoopBody builder i64 i8 printState work =
     match printState with
         | PrintIntState { bufferType = bufferType, buffer = buffer, workSlot = workSlot, indexSlot = indexSlot } ->
             let ten = constInt(i64)(10u64)(false)
             in
-                let digit = buildSRem(builder)(work)(ten)("digit")
+                let digit = buildURem(builder)(work)(ten)("digit")
                 in
-                    let nextWork = buildSDiv(builder)(work)(ten)("next_work")
+                    let nextWork = buildUDiv(builder)(work)(ten)("next_work")
                     in
                         let _ = buildStore(builder)(nextWork)(workSlot)
                         in
