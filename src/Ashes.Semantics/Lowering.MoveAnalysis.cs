@@ -163,12 +163,21 @@ public sealed partial class Lowering
     // to `x` is itself a move. A function whose result reaches {} and is not poisoned is result-fresh
     // (its result is a uniquely-owned freshly-allocated value for any arguments) — the higher-order-seed
     // case, subsumed here as the empty-reach special case.
+    // <c>Whole</c> is set only on a stored (stripped) per-function state: the parameters the result may
+    // alias AS THEMSELVES — reached by a path with no field segment — as opposed to only through a
+    // destructured sub-cell ("values/0"). A working (path-keyed) state carries that distinction in
+    // its keys instead and leaves this null.
     private readonly record struct ResultReachState(
         Dictionary<string, int> Counts,
-        ResultReachCause Causes)
+        ResultReachCause Causes,
+        IReadOnlySet<string>? Whole = null)
     {
         public bool Poison => Causes != ResultReachCause.None;
+
+        public IReadOnlySet<string> WholeRoots => Whole ?? EmptyWholeRoots;
     }
+
+    private static readonly IReadOnlySet<string> EmptyWholeRoots = new HashSet<string>(StringComparer.Ordinal);
 
     private readonly Dictionary<FuncKey, ResultReachState> _maResultReach = new();
     private readonly Dictionary<FuncKey, HashSet<FuncKey>> _maResultReachDependents = new();
@@ -1036,7 +1045,8 @@ public sealed partial class Lowering
                 new SortedDictionary<string, int>(
                     resultReach.Counts,
                     StringComparer.Ordinal),
-                resultReach.Causes),
+                resultReach.Causes,
+                resultReach.WholeRoots),
             expressionFreshness,
             _maFunctionsMayExecuteUnderLiveHandlerPost.Contains(function),
             provenance,
@@ -3385,7 +3395,10 @@ public sealed partial class Lowering
             counts[k] = counts.TryGetValue(k, out var e) && e > v ? e : v;
         }
 
-        return new ResultReachState(counts, a.Causes | b.Causes);
+        IReadOnlySet<string>? whole = a.Whole is null && b.Whole is null
+            ? null
+            : new HashSet<string>(a.WholeRoots.Concat(b.WholeRoots), StringComparer.Ordinal);
+        return new ResultReachState(counts, a.Causes | b.Causes, whole);
     }
 
     // Fixpoint join: identical to the branch max (grow reach sets / poison until stable).
@@ -3426,7 +3439,7 @@ public sealed partial class Lowering
         ResultReachState a,
         ResultReachState b)
     {
-        if (a.Causes != b.Causes || a.Counts.Count != b.Counts.Count)
+        if (a.Causes != b.Causes || a.Counts.Count != b.Counts.Count || !a.WholeRoots.SetEquals(b.WholeRoots))
         {
             return false;
         }
@@ -3462,6 +3475,7 @@ public sealed partial class Lowering
         ResultReachState r)
     {
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var whole = new HashSet<string>(StringComparer.Ordinal);
         foreach (var k in r.Counts.Keys)
         {
             int slash = k.IndexOf('/');
@@ -3472,6 +3486,25 @@ public sealed partial class Lowering
             }
 
             counts[root] = 1;
+            if (slash < 0)
+            {
+                whole.Add(root);
+            }
+        }
+
+        return new ResultReachState(counts, r.Causes, whole);
+    }
+
+    // Extends every token by an unspecified sub-cell position: a callee that reaches its parameter
+    // only through destructured components hands the caller a value containing parts of the
+    // argument, never the argument itself, so the argument's roots must not read as reached whole.
+    private static ResultReachState ExtendPathsComponent(
+        ResultReachState r)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var (k, v) in r.Counts)
+        {
+            counts[k + "/*"] = v;
         }
 
         return new ResultReachState(counts, r.Causes);
@@ -3871,6 +3904,11 @@ public sealed partial class Lowering
                 return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
+            if (!selfSummary.WholeRoots.Contains(paramName))
+            {
+                paramReach = ExtendPathsComponent(paramReach);
+            }
+
             selfResult = ReachSum(selfResult, ReachScale(paramReach, mult));
         }
 
@@ -3961,7 +3999,13 @@ public sealed partial class Lowering
                 return ReachPoisoned(ResultReachCause.ConservativeUnknown);
             }
 
-            result = ReachSum(result, ReachScale(ResultReach(args[idx], env, scope), mult));
+            ResultReachState argumentReach = ResultReach(args[idx], env, scope);
+            if (!summary.WholeRoots.Contains(paramName))
+            {
+                argumentReach = ExtendPathsComponent(argumentReach);
+            }
+
+            result = ReachSum(result, ReachScale(argumentReach, mult));
             covered?.Add(idx);
         }
 

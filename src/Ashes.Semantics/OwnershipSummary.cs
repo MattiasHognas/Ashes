@@ -63,9 +63,16 @@ internal enum ResultReachCause
     ConservativeUnknown = 1 << 3,
 }
 
+/// <param name="ParameterReach">Each parameter the result may alias (through any path), at presence.</param>
+/// <param name="Causes">Why the result is not provably confined to those parameters, if it is not.</param>
+/// <param name="WholeParameterReach">The parameters the result may alias as themselves — not only
+/// through a destructured component (a list's head or tail, a record field). A callee that stores a
+/// parameter into the value it returns reaches it whole; one that rebuilds a value from the
+/// parameter's parts does not.</param>
 internal sealed record FunctionResultReachFacts(
     IReadOnlyDictionary<string, int> ParameterReach,
-    ResultReachCause Causes)
+    ResultReachCause Causes,
+    IReadOnlySet<string> WholeParameterReach)
 {
     public bool Poisoned => Causes != ResultReachCause.None;
 }
@@ -299,4 +306,10 @@ internal sealed record FunctionOwnershipSummary(
 
     /// <summary>True if the result may alias parameter <paramref name="parameter"/>.</summary>
     public bool ResultReaches(string parameter) => ResultReach.ContainsKey(parameter);
+
+    /// <summary>
+    /// True if the result may alias parameter <paramref name="parameter"/> as itself (embedded or
+    /// returned whole), not merely through one of its destructured components.
+    /// </summary>
+    public bool ResultReachesWhole(string parameter) => ResultReachFacts.WholeParameterReach.Contains(parameter);
 }
