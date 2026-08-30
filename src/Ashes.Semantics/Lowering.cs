@@ -10939,6 +10939,34 @@ public sealed partial class Lowering
             && argumentIndex < summary.Parameters.Count
             && summary.ResultReaches(summary.Parameters[argumentIndex]);
 
+    // Whether the callee's result may alias this parameter AS ITSELF (embedded whole in a
+    // constructor field or a captured environment, or returned), per the same analysis as
+    // CalleeResultMayReachParameter but excluding reach through destructured components: a
+    // `reverse` that rebuilds a list from its head cells reaches the parameter, never keeps it.
+    private bool CalleeResultMayKeepParameterWhole(Expr rootExpr, int argumentIndex, int argumentTemp)
+        => IsRuntimeManagedResultTemp(argumentTemp)
+            && GetOwnershipSummaryForCallRoot(rootExpr) is { } summary
+            && argumentIndex < summary.Parameters.Count
+            && summary.ResultReachesWhole(summary.Parameters[argumentIndex]);
+
+    // A fresh argument is released by the caller after the call unless it is transferred. An
+    // entry-normalized callee adopts it through the ownership flag; for any other callee whose
+    // result keeps the argument itself (a curry stage that stores it into the value it returns),
+    // releasing it in the caller would free a cell the callee's result still references, so
+    // ownership moves to the callee outright. A callee that only keeps destructured parts of the
+    // argument (the pattern-transferred heads a `reverse` re-conses) does not take the whole
+    // value, and the caller's release of the now-unreferenced spine stays.
+    private bool TransfersFreshRuntimeArgument(
+        Expr rootExpr,
+        int argumentIndex,
+        int argumentTemp,
+        bool borrowsOnly,
+        bool freshRuntimeArgument)
+        => !borrowsOnly
+            && freshRuntimeArgument
+            && (IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex)
+                || CalleeResultMayKeepParameterWhole(rootExpr, argumentIndex, argumentTemp));
+
     private int LowerAppliedClosureCall(
         Expr rootExpr,
         Expr argument,
@@ -10959,11 +10987,10 @@ public sealed partial class Lowering
         bool freshRuntimeArgument = argument is not Expr.Var
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
             && !IsBorrowedOwnershipTemp(originalArgumentTemp);
-        bool transfersFreshRuntimeArgument = !borrowsOnly
-            && freshRuntimeArgument
-            && IsKnownRuntimeNormalizedFunctionArgument(rootExpr, argumentIndex);
         bool calleeResultMayReachThisParameter =
             CalleeResultMayReachParameter(rootExpr, argumentIndex, originalArgumentTemp);
+        bool transfersFreshRuntimeArgument = TransfersFreshRuntimeArgument(
+            rootExpr, argumentIndex, originalArgumentTemp, borrowsOnly, freshRuntimeArgument);
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
             argument,
             argumentType,
