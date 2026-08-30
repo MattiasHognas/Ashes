@@ -10,7 +10,10 @@
 // are observed in practice for the exact same kind of access. The same shapes against a symbol
 // defined in `.text` itself (a multi-function object's own helper functions: their `call` sites
 // and their addresses taken for closure code words) resolve against `.text`'s own base on either
-// path, and never count as imports.
+// path, and never count as imports. Relocations whose patch site lies inside `.rodata` itself
+// (`.rela.rodata`: the absolute `.text` block addresses of a `switch` jump table, which LLVM emits
+// for a `SwitchTag` over enough constructors) are applied to the `.rodata` bytes with the same
+// formulas once both sections have their final addresses.
 // - No `R_X86_64_PLT32` relocations against an import: a fully static, non-PIE executable — one `R+X` `PT_LOAD`
 //   segment for `.text`, plus a second, read-only `PT_LOAD` for `.rodata` when the object has one.
 // - `R_X86_64_PLT32` relocations against a symbol `linuxDynamicImportLibraries` recognizes (the
@@ -427,6 +430,34 @@ let recursive collectTextPatches bytes shoff shentsize shnum textSectionIndex sy
                         | 9 -> Error("dynamic linker: SHT_REL (implicit-addend) .text relocations are not supported")
                         | _ -> collectTextPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(functionAcc)(dataAcc)
 
+// Every relocation whose patch site lies inside `.rodata` (the entries of a `switch` jump table:
+// `R_X86_64_64` against `.text`, occasionally a rodata-to-rodata reference), collected with the
+// same entry validation as the `.text` relocations. Offsets are relative to `.rodata`'s own bytes.
+// An import relocation cannot appear inside read-only data, so one is an `Error` rather than a
+// patch this path could never apply.
+let recursive collectRodataPatches bytes shoff shentsize shnum textSectionIndex symtabOffset strtabOffset rodataSectionIndex index dataAcc =
+    match rodataSectionIndex with
+        | None ->
+            dataAcc
+            |> reverseList
+            |> Ok
+        | Some(rodataIndex) ->
+            if index >= shnum
+            then
+                dataAcc
+                |> reverseList
+                |> Ok
+            else
+                let section = readSectionHeader(bytes)(shoff)(shentsize)(index)
+                in
+                    if section.sectionSize == 0 || section.sectionInfo != rodataIndex || section.sectionType != 4
+                    then collectRodataPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(dataAcc)
+                    else
+                        match collectRelaEntryPatches(bytes)(section)(symtabOffset)(strtabOffset)(textSectionIndex)(rodataSectionIndex)(0)(section.sectionSize / 24)([])(dataAcc) with
+                            | Error(message) -> Error(message)
+                            | Ok(CollectedTextRelocations { functionPatches = [], dataPatches = nextDataAcc }) -> collectRodataPatches(bytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabOffset)(strtabOffset)(rodataSectionIndex)(index + 1)(nextDataAcc)
+                            | Ok(_) -> Error("linker: an import relocation inside .rodata is not supported")
+
 let recursive lookupStubVa symbolName stubVas =
     match stubVas with
         | [] -> Ashes.IO.panic("dynamic linker: missing stub VA for " + symbolName)
@@ -455,10 +486,12 @@ let recursive applyTextPatches patches stubVas textVa codeBytes =
 // one of those two (`dataPatchTargetsText` says which) with the symbol's own section offset
 // already folded into its addend, so unlike `applyTextPatches` there is no per-symbol lookup at
 // all. An 8-byte patch writes the full computed virtual address (`putU64`) rather than truncating
-// to 32 bits (`putU32FromInt`) the way every 4-byte type does.
-let recursive applyDataPatches patches rodataVa textVa codeBytes =
+// to 32 bits (`putU32FromInt`) the way every 4-byte type does. `placeVa` is the final base address
+// of `bytes` itself — `.text`'s when patching code, `.rodata`'s when patching a jump table — so a
+// PC-relative patch subtracts the patch site's own final address whichever section holds it.
+let recursive applyDataPatches patches rodataVa textVa placeVa bytes =
     match patches with
-        | [] -> codeBytes
+        | [] -> bytes
         | DataRelocationPatch { dataPatchOffset = patchOffset, dataPatchAddend = patchAddend, dataPatchPcRelative = pcRelative, dataPatchWidth = width, dataPatchTargetsText = targetsText } :: rest ->
             let targetVa =
                 if targetsText
@@ -467,15 +500,15 @@ let recursive applyDataPatches patches rodataVa textVa codeBytes =
             in
                 let value =
                     if pcRelative
-                    then targetVa - (textVa + patchOffset)
+                    then targetVa - (placeVa + patchOffset)
                     else targetVa
                 in
                     let patched =
                         if width == 8
                         then
-                            putU64(patchOffset)(Ashes.Number.UInt.fromInt64(value))(codeBytes)
-                        else putU32FromInt(patchOffset)(value)(codeBytes)
-                    in applyDataPatches(rest)(rodataVa)(textVa)(patched)
+                            putU64(patchOffset)(Ashes.Number.UInt.fromInt64(value))(bytes)
+                        else putU32FromInt(patchOffset)(value)(bytes)
+                    in applyDataPatches(rest)(rodataVa)(textVa)(placeVa)(patched)
 
 let linuxDynamicLoaderPath = "/lib64/ld-linux-x86-64.so.2"
 
@@ -923,7 +956,7 @@ let buildLinuxTrampoline entryOffsetInText =
     |> putU8(18)(15u8)
     |> putU8(19)(5u8)
 
-let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
+let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataPatches rodataBytes =
     (let textVa = elfBaseVa + pageSize
     in
         let objectTextVa = textVa + linuxTrampolineLength
@@ -939,35 +972,37 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
                                 let plan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
                                 in
                                     textBytes
-                                    |> applyDataPatches(dataPatches)(0)(objectTextVa)
+                                    |> applyDataPatches(dataPatches)(0)(objectTextVa)(objectTextVa)
                                     |> Ashes.Byte.append(trampoline)
                                     |> Ashes.Byte.append(buildHeaderPage(entryPoint)([plan]))
                                     |> Ok
-                            | Some(rodata) ->
+                            | Some(unpatchedRodata) ->
                                 let dataFileOffset = alignUp(textLoadSize)(pageSize)
                                 in
                                     let dataVa = elfBaseVa + dataFileOffset
                                     in
-                                        let patchedTextBytes =
-                                            textBytes
-                                            |> applyDataPatches(dataPatches)(dataVa)(objectTextVa)
-                                            |> Ashes.Byte.append(trampoline)
+                                        let rodata = applyDataPatches(rodataPatches)(dataVa)(objectTextVa)(dataVa)(unpatchedRodata)
                                         in
-                                            let textPlan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
+                                            let patchedTextBytes =
+                                                textBytes
+                                                |> applyDataPatches(dataPatches)(dataVa)(objectTextVa)(objectTextVa)
+                                                |> Ashes.Byte.append(trampoline)
                                             in
-                                                let dataPlan = ProgramHeaderPlan(phType = 1, phFlags = 4, phFileOffset = dataFileOffset, phVirtualAddress = dataVa, phSize = Ashes.Byte.length(rodata), phAlignment = pageSize)
+                                                let textPlan = ProgramHeaderPlan(phType = 1, phFlags = 5, phFileOffset = 0, phVirtualAddress = elfBaseVa, phSize = textLoadSize, phAlignment = pageSize)
                                                 in
-                                                    let headerAndText =
-                                                        Ashes.Byte.append(buildHeaderPage(entryPoint)([textPlan, dataPlan]))(patchedTextBytes)
+                                                    let dataPlan = ProgramHeaderPlan(phType = 1, phFlags = 4, phFileOffset = dataFileOffset, phVirtualAddress = dataVa, phSize = Ashes.Byte.length(rodata), phAlignment = pageSize)
                                                     in
-                                                        let padded =
-                                                            dataFileOffset - Ashes.Byte.length(headerAndText)
-                                                            |> Ashes.Byte.allocate
-                                                            |> Ashes.Byte.append(headerAndText)
+                                                        let headerAndText =
+                                                            Ashes.Byte.append(buildHeaderPage(entryPoint)([textPlan, dataPlan]))(patchedTextBytes)
                                                         in
-                                                            rodata
-                                                            |> Ashes.Byte.append(padded)
-                                                            |> Ok)
+                                                            let padded =
+                                                                dataFileOffset - Ashes.Byte.length(headerAndText)
+                                                                |> Ashes.Byte.allocate
+                                                                |> Ashes.Byte.append(headerAndText)
+                                                            in
+                                                                rodata
+                                                                |> Ashes.Byte.append(padded)
+                                                                |> Ok)
 
 // Dynamic imports exist: `.text` gains a `jmp *got(%rip)` stub per import (placed right after the
 // object's own code, same page-aligned text segment), followed by a second, page-aligned `R+W`
@@ -980,7 +1015,7 @@ let linkWithoutDynamicImports textBytes entrySymbol dataPatches rodataBytes =
 // page-aligned, read-only `PT_LOAD` right after the dynamic-linking data blob's own page — never
 // `R+W` and never executable — and patches every collected `.text` reference into it via the same
 // `applyDataPatches` the static-only path uses, absolute or PC-relative as each patch records.
-let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPatches imports rodataBytes =
+let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPatches rodataPatches imports rodataBytes =
     (let textVa = elfBaseVa + pageSize
     in
         let objectTextVa = textVa + linuxTrampolineLength
@@ -1004,7 +1039,7 @@ let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPat
                                                 let patchedTextBytes =
                                                     textBytes
                                                     |> applyTextPatches(textPatches)(stubVas)(objectTextVa)
-                                                    |> applyDataPatches(dataPatches)(rodataVa)(objectTextVa)
+                                                    |> applyDataPatches(dataPatches)(rodataVa)(objectTextVa)(objectTextVa)
                                                     |> Ashes.Byte.append(buildLinuxTrampoline(entrySymbol.symValue))
                                                 in
                                                     let codeBytes = Ashes.Byte.append(patchedTextBytes)(stubBytes)
@@ -1078,13 +1113,14 @@ let linkWithDynamicImports objectBytes textBytes entrySymbol textPatches dataPat
                                                                                 in
                                                                                     match rodataBytes with
                                                                                         | None -> Ok(headerCodeAndDynamicData)
-                                                                                        | Some(rodata) ->
+                                                                                        | Some(unpatchedRodata) ->
                                                                                             let paddedToRodata =
                                                                                                 Ashes.Byte.append(headerCodeAndDynamicData)(
                                                                                                     Ashes.Byte.allocate(rodataFileOffset - Ashes.Byte.length(headerCodeAndDynamicData))
                                                                                                 )
                                                                                             in
-                                                                                                rodata
+                                                                                                unpatchedRodata
+                                                                                                |> applyDataPatches(rodataPatches)(rodataVa)(objectTextVa)(rodataVa)
                                                                                                 |> Ashes.Byte.append(paddedToRodata)
                                                                                                 |> Ok)
 
@@ -1144,26 +1180,29 @@ let linkLinuxExecutable objectBytes entrySymbolName =
                                                                         )(rodataSectionIndex)(0)([])([]) with
                                                                             | Error(message) -> Error(message)
                                                                             | Ok(CollectedTextRelocations { functionPatches = functionPatches, dataPatches = dataPatches }) ->
-                                                                                let textBytes =
-                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
-                                                                                        textSection.sectionOffset
-                                                                                    )(textSection.sectionSize)
-                                                                                in
-                                                                                    let rodataBytes =
-                                                                                        match rodataLookup with
-                                                                                            | None -> None
-                                                                                            | Some((_index, section)) ->
-                                                                                                Some(
-                                                                                                    Ashes.Byte.copyRange(Ashes.Byte.allocate(section.sectionSize))(0)(objectBytes)(
-                                                                                                        section.sectionOffset
-                                                                                                    )(section.sectionSize)
-                                                                                                )
-                                                                                    in
-                                                                                        match functionPatches with
-                                                                                            | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataBytes)
-                                                                                            | _ ->
-                                                                                                let imports =
-                                                                                                    collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
-                                                                                                        strtabSection.sectionOffset
-                                                                                                    )
-                                                                                                in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(dataPatches)(imports)(rodataBytes))
+                                                                                match collectRodataPatches(objectBytes)(shoff)(shentsize)(shnum)(textSectionIndex)(symtabSection.sectionOffset)(strtabSection.sectionOffset)(rodataSectionIndex)(0)([]) with
+                                                                                    | Error(message) -> Error(message)
+                                                                                    | Ok(rodataPatches) ->
+                                                                                        let textBytes =
+                                                                                            Ashes.Byte.copyRange(Ashes.Byte.allocate(textSection.sectionSize))(0)(objectBytes)(
+                                                                                                textSection.sectionOffset
+                                                                                            )(textSection.sectionSize)
+                                                                                        in
+                                                                                            let rodataBytes =
+                                                                                                match rodataLookup with
+                                                                                                    | None -> None
+                                                                                                    | Some((_index, section)) ->
+                                                                                                        Some(
+                                                                                                            Ashes.Byte.copyRange(Ashes.Byte.allocate(section.sectionSize))(0)(objectBytes)(
+                                                                                                                section.sectionOffset
+                                                                                                            )(section.sectionSize)
+                                                                                                        )
+                                                                                            in
+                                                                                                match functionPatches with
+                                                                                                    | [] -> linkWithoutDynamicImports(textBytes)(entrySymbol)(dataPatches)(rodataPatches)(rodataBytes)
+                                                                                                    | _ ->
+                                                                                                        let imports =
+                                                                                                            collectLinuxDynamicImports(objectBytes)(symtabSection.sectionOffset)(symbolCount)(
+                                                                                                                strtabSection.sectionOffset
+                                                                                                            )
+                                                                                                        in linkWithDynamicImports(objectBytes)(textBytes)(entrySymbol)(functionPatches)(dataPatches)(rodataPatches)(imports)(rodataBytes))

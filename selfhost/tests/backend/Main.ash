@@ -3001,6 +3001,17 @@ let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
+// A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
+// jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
+// linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
+// relocations; before it did, the dispatch jumped through zeroed entries to address 0.
+let buildRealIrJumpTableDispatchModule name context =
+    codegenRealSource(
+        "type Color =\n    | Red(Int)\n    | Green(Int)\n    | Blue(Int)\n    | Yellow(Int)\n    | Purple(Int)\n    | Orange(Int)\n\nlet color = Orange(0)\n\nAshes.IO.print(match color with\n    | Red(_) -> \"red\"\n    | Green(_) -> \"green\"\n    | Blue(_) -> \"blue\"\n    | Yellow(_) -> \"yellow\"\n    | Purple(_) -> \"purple\"\n    | Orange(_) -> \"orange\")\n"
+    )(name)(context)
+
+let testRunStaticExecutableForRealIrJumpTableDispatchModule unit = assertProgramPrints(buildRealIrJumpTableDispatchModule)("selfhostBackendRunJumpTableDispatch")("selfhost_backend_jump_table_dispatch_e2e")("orange")
+
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
@@ -3269,6 +3280,7 @@ let run shipped =
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
+    |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

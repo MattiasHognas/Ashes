@@ -1721,7 +1721,12 @@ same public behavior.
   `AshesCompiler.Backend.IrCodegen` does not call `malloc`/`free` from real IR yet (an RC-managed
   `AllocAdt` remains the follow-up slice this unblocks) — this proves the linker mechanism alone,
   via a hand-built module, matching every earlier `ElfLinker`/`Llvm.ash` capability's own
-  verification precedent in this arc.
+  verification precedent in this arc. The linker also applies relocations whose patch site lies
+  inside `.rodata` itself (`collectRodataPatches`): a six-plus-constructor `match` lowers to one
+  `SwitchTag` that LLVM turns into a `.rodata` jump table of absolute `.text` block addresses
+  carried by `.rela.rodata` entries, which the earlier `.text`-only pass left zeroed — the
+  dispatch jumped to address 0 (found running `tests/pattern_large_adt_dispatch.ash` through the
+  self-hosted CLI; covered by the suite's jump-table dispatch test).
 - [~] `AshesCompiler.Backend.IrCodegen`'s `AllocAdt` gained real `malloc`-backed codegen for the
   RC-managed (field-carrying) case, closing the gap the previous item left open. Investigating what
   self-hosted's own lowering produces for a genuinely RC-managed value found the actual blocker was
