@@ -803,8 +803,11 @@ internal static partial class LlvmCodegen
     {
         LlvmBuilderHandle builder = state.Target.Builder;
         LlvmApi.PositionBuilderAtEnd(builder, loopBodyBlock);
-        LlvmValueHandle digit = LlvmApi.BuildSRem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "digit");
-        LlvmValueHandle nextWork = LlvmApi.BuildSDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "next_work");
+        // Unsigned division: the prologue's `0 - value` negation of long.MinValue overflows back to
+        // long.MinValue, whose bits read unsigned are exactly its magnitude (9223372036854775808);
+        // signed division would peel negative "digits" off it and print garbage for that one value.
+        LlvmValueHandle digit = LlvmApi.BuildURem(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "digit");
+        LlvmValueHandle nextWork = LlvmApi.BuildUDiv(builder, work, LlvmApi.ConstInt(state.I64, 10, 0), "next_work");
         LlvmApi.BuildStore(builder, nextWork, workSlot);
         LlvmValueHandle idx = LlvmApi.BuildLoad2(builder, state.I64, indexSlot, "digit_idx");
         LlvmValueHandle writeIndex = LlvmApi.BuildSub(builder, LlvmApi.ConstInt(state.I64, 31, 0), idx, "digit_write_index");

@@ -2215,6 +2215,11 @@ let buildRealIrRecursiveHelperModule name context = codegenRealSource("let recur
 // `CallKnown` of `lambda_0` from within `lambda_0`.
 let buildOptimizedIrCurriedHelperModule name context = codegenOptimizedRealSource("let add x y = x + y\nAshes.IO.print(add(40)(2))")(name)(context)
 
+// `Int.min` is the one value whose negation overflows back onto itself, so `PrintInt`'s digit
+// loop must divide unsigned — see `printIntDigitLoopBody`. `-9223372036854775807 - 1` rather than
+// `1 << 63` only because this codegen has no `ShlInt` case yet.
+let buildRealIrPrintIntMinModule name context = codegenRealSource("Ashes.IO.print(-9223372036854775807 - 1)")(name)(context)
+
 let buildOptimizedIrRecursiveHelperModule name context = codegenOptimizedRealSource("let recursive fact n = if n > 1 then n * fact(n - 1) else 1\nAshes.IO.print(fact(5))")(name)(context)
 
 let resolveHostTargetMachine triple =
@@ -2915,6 +2920,8 @@ let testRunStaticExecutableForRealIrRecursiveHelperModule unit = assertProgramPr
 
 let testRunStaticExecutableForOptimizedIrCurriedHelperModule unit = assertProgramPrints(buildOptimizedIrCurriedHelperModule)("selfhostBackendRunOptimizedCurriedHelper")("selfhost_backend_optimized_curried_helper_e2e")("42")
 
+let testRunStaticExecutableForRealIrPrintIntMinModule unit = assertProgramPrints(buildRealIrPrintIntMinModule)("selfhostBackendRunPrintIntMin")("selfhost_backend_print_int_min_e2e")("-9223372036854775808")
+
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
@@ -3178,6 +3185,7 @@ let run unit =
     |> testRunStaticExecutableForRealIrRecursiveHelperModule
     |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
+    |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 

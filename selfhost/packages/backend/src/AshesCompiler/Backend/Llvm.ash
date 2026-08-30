@@ -86,6 +86,8 @@ export (
     value buildMul,
     value buildSDiv,
     value buildSRem,
+    value buildUDiv,
+    value buildURem,
     value buildSelect,
     value buildTrunc,
     value buildZExt,
@@ -177,6 +179,8 @@ external LLVMBuildMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMVa
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
 external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
 external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSRem@libLLVM.so"
+external LLVMBuildUDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildUDiv@libLLVM.so"
+external LLVMBuildURem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildURem@libLLVM.so"
 external LLVMBuildSelect(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSelect@libLLVM.so"
 external LLVMBuildTrunc(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildTrunc@libLLVM.so"
 external LLVMBuildZExt(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildZExt@libLLVM.so"
@@ -338,6 +342,10 @@ let buildMul builder lhs rhs name = LLVMBuildMul(builder)(lhs)(rhs)(name)
 let buildSDiv builder lhs rhs name = LLVMBuildSDiv(builder)(lhs)(rhs)(name)
 
 let buildSRem builder lhs rhs name = LLVMBuildSRem(builder)(lhs)(rhs)(name)
+
+let buildUDiv builder lhs rhs name = LLVMBuildUDiv(builder)(lhs)(rhs)(name)
+
+let buildURem builder lhs rhs name = LLVMBuildURem(builder)(lhs)(rhs)(name)
 
 let buildSelect builder cond thenValue elseValue name = LLVMBuildSelect(builder)(cond)(thenValue)(elseValue)(name)
 
