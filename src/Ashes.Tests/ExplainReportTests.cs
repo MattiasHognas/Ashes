@@ -109,6 +109,33 @@ public sealed class ExplainReportTests
     }
 
     [Test]
+    public void Authority_report_charges_a_helper_only_with_what_it_performs_not_its_callers()
+    {
+        // `lookupIndexed` performs only ConsoleIO (its panic) and `sumAbs` only UnsafeFfi (the
+        // external call); `emit` calls both. A use site's instantiated row is unified with the
+        // caller's, so reading use sites would report each helper with the other's capability too.
+        const string source = """
+            external nativeAbs(Int) -> Int
+            let recursive lookupIndexed key env =
+                match env with
+                    | [] -> Ashes.IO.panic("missing")
+                    | (k, v) :: rest -> if k == key then v else lookupIndexed(key)(rest)
+            let recursive sumAbs values =
+                match values with
+                    | [] -> 0
+                    | v :: rest -> nativeAbs(v) + sumAbs(rest)
+            let emit env = sumAbs([lookupIndexed(1)(env), lookupIndexed(2)(env)])
+            emit([(1, -5), (2, 7)])
+            """;
+        var request = new ExplainRequest(new HashSet<ExplainKind> { ExplainKind.Authority });
+        CompilationExplainReport report = Report(source, request);
+
+        report.Authority.Single(binding => string.Equals(binding.Binding, "lookupIndexed", StringComparison.Ordinal)).Capabilities.ShouldBe(["ConsoleIO"]);
+        report.Authority.Single(binding => string.Equals(binding.Binding, "sumAbs", StringComparison.Ordinal)).Capabilities.ShouldBe(["UnsafeFfi"]);
+        report.Authority.Single(binding => string.Equals(binding.Binding, "emit", StringComparison.Ordinal)).Capabilities.ShouldBe(["ConsoleIO", "UnsafeFfi"]);
+    }
+
+    [Test]
     public void Reported_parameter_ownership_mirrors_the_analysis_partition()
     {
         // Borrowed and consumed partition the parameter list, and the report derives one from the

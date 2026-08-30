@@ -14,13 +14,17 @@ public sealed partial class Lowering
     /// <param name="Constraints"></param>
     /// <param name="ParameterNames">Source parameter names for a directly declared function, in curried order.</param>
     /// <param name="IsParameter">Whether the named span declares or references a function parameter.</param>
+    /// <param name="IsDefinition">Whether the span is the binding's own definition, whose <see cref="Type"/> is the
+    /// generalized scheme body — as opposed to a use site, whose type is that use's instantiation (its capability
+    /// row unified with the calling context's).</param>
     public readonly record struct HoverTypeInfo(
         TextSpan Span,
         string? Name,
         TypeRef Type,
         IReadOnlyList<TraitConstraint>? Constraints = null,
         IReadOnlyList<string>? ParameterNames = null,
-        bool IsParameter = false);
+        bool IsParameter = false,
+        bool IsDefinition = false);
 
     /// <summary>Declared affine ownership metadata exposed to tooling without reimplementing FFI semantics.</summary>
     public readonly record struct ExternalOwnershipInfo(
@@ -8782,7 +8786,7 @@ public sealed partial class Lowering
 
         if (Lookup(variable.Name) is Binding.Intrinsic intrinsic)
         {
-            RecordHoverScheme(GetSpan(rootExpression), variable.Name, intrinsic.S);
+            RecordHoverScheme(GetSpan(rootExpression), variable.Name, intrinsic.S, isDefinition: false);
             return LowerCallIntrinsic(rootExpression, intrinsic, arguments, request);
         }
         if (Lookup(variable.Name) is Binding.ExternalFunction externalFunction)

@@ -26,7 +26,10 @@ public sealed partial class Lowering
         var capabilitiesByBinding = new SortedDictionary<string, SortedSet<string>>(StringComparer.Ordinal);
         foreach (HoverTypeInfo hover in _hoverTypes)
         {
-            if (hover.Name is not { } name || !_topLevelBindingNames.Contains(name))
+            // Definitions only: a use site records that use's instantiated type, whose open row
+            // has been unified with the CALLER's context and so also lists every capability the
+            // caller performs — reading those would charge a helper with its callers' authority.
+            if (!hover.IsDefinition || hover.Name is not { } name || !_topLevelBindingNames.Contains(name))
             {
                 continue;
             }

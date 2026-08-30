@@ -461,6 +461,7 @@ public sealed partial class Lowering
         RecordHoverType(GetSpan(expr), null, type);
     }
 
+    // A use site: the type is this use's instantiation, never a definition's scheme.
     private void RecordHoverType(
         TextSpan span,
         string? name,
@@ -468,15 +469,18 @@ public sealed partial class Lowering
         IReadOnlyList<string>? parameterNames = null,
         bool isParameter = false)
     {
-        RecordHoverScheme(span, name, new TypeScheme([], type), parameterNames, isParameter);
+        RecordHoverScheme(span, name, new TypeScheme([], type), parameterNames, isParameter, isDefinition: false);
     }
 
+    // A binding's own definition by default (the scheme is the generalized one); a reference that
+    // happens to carry a scheme (an intrinsic, a trait method) passes `isDefinition: false`.
     private void RecordHoverScheme(
         TextSpan span,
         string? name,
         TypeScheme scheme,
         IReadOnlyList<string>? parameterNames = null,
-        bool isParameter = false)
+        bool isParameter = false,
+        bool isDefinition = true)
     {
         if (_collectInferredTraitElaboration || !IsValidSpan(span))
         {
@@ -498,7 +502,8 @@ public sealed partial class Lowering
             scheme.Body,
             scheme.Constraints,
             parameterNames,
-            isParameter));
+            isParameter,
+            isDefinition));
     }
 
     private static IReadOnlyList<string>? GetDeclaredHoverParameterNames(Expr value)
