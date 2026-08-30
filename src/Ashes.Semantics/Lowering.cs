@@ -6070,6 +6070,7 @@ public sealed partial class Lowering
         var (tTemp, tType) = LowerExpr(iff.Then, request);
         EndExclusiveBranch(thenCredits);
         var thenType = Prune(tType);
+        tTemp = TransferDirectRuntimeManagedBranchResult(iff.Then, tTemp);
         Emit(new IrInst.StoreLocal(slot, tTemp));
 
         Emit(new IrInst.Jump(endLabel));
@@ -6083,6 +6084,7 @@ public sealed partial class Lowering
         var (eTemp, eType) = LowerIfElseBranch(iff.Else, request, thenType);
         EndExclusiveBranch(elseCredits);
         var elseType = Prune(eType);
+        eTemp = TransferDirectRuntimeManagedBranchResult(iff.Else, eTemp);
         Emit(new IrInst.StoreLocal(slot, eTemp));
 
         // if expression result: put into a temp (phi) by storing chosen into target
@@ -6093,8 +6095,60 @@ public sealed partial class Lowering
         if (_tcoCtx is not null) _tcoCtx.InTailPosition = false;
 
         var resultType = thenType is TypeRef.TNever ? elseType : thenType;
-        MarkUniformRuntimeManagedResult(target, tTemp, eTemp, Prune(resultType));
+        MarkUniformRuntimeManagedResult(target, iff.Then, tTemp, iff.Else, eTemp, Prune(resultType));
         return (target, Prune(resultType));
+    }
+
+    // Whether a branch of a control-flow join contributes a runtime-managed value even though its
+    // temp carries no such fact: it returns a runtime-managed TCO parameter (RC but owned by the
+    // parameter's own release machinery), or it is the empty list literal of a list-typed join (nil is
+    // a valid runtime-managed list value; every list retain and release is nil-guarded). Without this a
+    // loop such as `match xs with | [] -> [] | h :: t -> if small(h) then loop(t) else xs` loses the
+    // join's RC marking, the exit transfer never engages, and the parameter it returns is released.
+    private bool BranchJoinsRuntimeManagedResult(Expr branch, TypeRef resultType)
+    {
+        Expr result = branch;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        return result switch
+        {
+            Expr.Var variable => Lookup(variable.Name) is Binding.Local local && IsRuntimeManagedTcoParamSlot(local)
+                || IsRuntimeManagedPatternOwnerOfTcoParameter(variable),
+            Expr.ListLit { Elements.Count: 0 } => Prune(resultType) is TypeRef.TList,
+            _ => false,
+        };
+    }
+
+    // A pattern binding destructured from a runtime-managed TCO parameter: RC, owned by the pattern
+    // owner's own release.
+    private bool IsRuntimeManagedPatternOwnerOfTcoParameter(Expr.Var variable)
+        => LookupOwnedValue(variable.Name) is
+        { PerceusPatternOwner: true, IsDropped: false, PerceusRootParameterSlot: >= 0 } owner
+            && _tcoCtx is { } tco
+            && tco.IsRuntimeManagedSlot(owner.PerceusRootParameterSlot);
+
+    // An if-branch that returns a Perceus pattern owner keeps a reference of its own. The owner's
+    // release is emitted once after the whole if (the loop-continuing branch has already re-consed or
+    // dropped it), so unlike a match arm, whose scope exit can transfer the owner into the result,
+    // the branch must retain; the marker becomes a runtime retain when the root parameter is
+    // runtime-managed. Every other returned binding transfers exactly as a match arm's would.
+    private int TransferDirectRuntimeManagedBranchResult(Expr branch, int branchTemp)
+    {
+        Expr result = branch;
+        while (result is Expr.Let let)
+        {
+            result = let.Body;
+        }
+
+        if (result is Expr.Var variable && IsRuntimeManagedPatternOwnerOfTcoParameter(variable))
+        {
+            return DuplicatePerceusPatternOwnerForAggregate(result, branchTemp);
+        }
+
+        return TransferDirectRuntimeManagedMatchResult(branch, branchTemp);
     }
 
     private LoweredValue LowerIfElseBranch(
@@ -6108,12 +6162,15 @@ public sealed partial class Lowering
 
     private void MarkUniformRuntimeManagedResult(
         int resultTemp,
+        Expr leftBranch,
         int leftTemp,
+        Expr rightBranch,
         int rightTemp,
         TypeRef resultType)
     {
         bool runtimeManaged =
-            IsRuntimeManagedResultTemp(leftTemp) && IsRuntimeManagedResultTemp(rightTemp);
+            (IsRuntimeManagedResultTemp(leftTemp) || BranchJoinsRuntimeManagedResult(leftBranch, resultType))
+            && (IsRuntimeManagedResultTemp(rightTemp) || BranchJoinsRuntimeManagedResult(rightBranch, resultType));
         RecordControlFlowJoinTemp(
             resultTemp,
             resultType,

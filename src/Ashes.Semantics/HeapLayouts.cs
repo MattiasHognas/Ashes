@@ -77,7 +77,9 @@ internal static class HeapLayouts
     public static HeapHeaderLayoutDescriptor RcHeader { get; } = new();
 
     // Value pointer layout: [tag, field0, field1, ...]. Runtime-managed values additionally have
-    // RcHeader immediately before this pointer; arena-managed values do not.
+    // RcHeader immediately before this pointer; arena-managed aggregates do not. Arena-allocated
+    // Str/Bytes/BigInt values and static string literals carry an RcHeader whose count is the immortal
+    // sentinel, so an RC operation on any such value is a no-op rather than a write into its neighbor.
     public static HeapLayoutDescriptor Adt { get; } = new(tagOffsetBytes: 0, payloadOffsetBytes: WordSizeBytes);
 
     // A type with exactly one constructor never needs its tag word: [field0, field1, ...]. Every IR

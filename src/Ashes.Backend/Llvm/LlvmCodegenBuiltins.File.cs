@@ -278,7 +278,7 @@ internal static partial class LlvmCodegen
         // (fields sliced out of it are copied into the arena as usual), so it is never arena-reclaimed.
         LlvmValueHandle stringRef = rawBytes
             ? EmitAllocateOsMemory(state, totalBytes, "fs_read_raw_buf")
-            : EmitAllocDynamic(state, totalBytes);
+            : EmitArenaValueAllocDynamic(state, totalBytes);
         StoreMemory(state, stringRef, 0, fileLength, "fs_read_len");
         LlvmApi.BuildStore(builder, stringRef, stringSlot);
         LlvmApi.BuildStore(builder, fileLength, remainingSlot);
@@ -759,7 +759,7 @@ internal static partial class LlvmCodegen
         LlvmBuilderHandle builder = state.Target.Builder;
 
         LlvmApi.PositionBuilderAtEnd(builder, readBlock);
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.ConstInt(state.I64, MaxFileReadBytes + 8, 0));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.ConstInt(state.I64, MaxFileReadBytes + 8, 0));
         StoreMemory(state, stringRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "fs_read_win_len_init");
         LlvmValueHandle readSucceeded = EmitWindowsReadFile(
             state,
@@ -1150,7 +1150,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle resultSlot = LlvmApi.BuildAlloca(builder, state.I64, "fchunk_result");
 
         // Allocate a string with room for `count` bytes; the actual length is set after the read.
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, countVal, LlvmApi.ConstInt(state.I64, 8, 0), "fchunk_total"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, countVal, LlvmApi.ConstInt(state.I64, 8, 0), "fchunk_total"));
         LlvmValueHandle destPtr = GetStringBytesPointer(state, stringRef, "fchunk_dest");
 
         LlvmValueHandle nRead;
@@ -1381,7 +1381,7 @@ internal static partial class LlvmCodegen
 
         LlvmApi.PositionBuilderAtEnd(builder, finishSomeBlock);
         LlvmValueHandle finalLen = LlvmApi.BuildLoad2(builder, state.I64, lenSlot, "fline_final_len");
-        LlvmValueHandle stringRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), "fline_string_bytes"));
+        LlvmValueHandle stringRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, finalLen, LlvmApi.ConstInt(state.I64, 8, 0), "fline_string_bytes"));
         StoreMemory(state, stringRef, 0, finalLen, "fline_string_len");
         EmitCopyBytes(state, GetStringBytesPointer(state, stringRef, "fline_string_dest"), lineBufPtr, finalLen, "fline_copy_bytes");
         LlvmValueHandle someRef = EmitAllocAdt(state, 1, 1);

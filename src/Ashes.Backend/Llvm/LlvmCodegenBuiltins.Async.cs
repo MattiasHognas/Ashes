@@ -712,7 +712,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasBuffer, reuseBufferBlock, createBufferBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createBufferBlock);
-        LlvmValueHandle newBufferRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tcp_receive_buffer_size"));
+        LlvmValueHandle newBufferRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tcp_receive_buffer_size"));
         StoreMemory(state, newBufferRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_buffer_len_init");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, newBufferRef, "step_tcp_receive_store_buffer");
         LlvmApi.BuildBr(builder, readBlock);
@@ -2362,7 +2362,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasBuffer, receiveBlock, allocateBufferBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, allocateBufferBlock);
-        LlvmValueHandle newBufferRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tls_receive_buffer_size"));
+        LlvmValueHandle newBufferRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tls_receive_buffer_size"));
         StoreMemory(state, newBufferRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tls_receive_store_buffer_len");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, newBufferRef, "step_tls_receive_store_buffer_ref");
         LlvmApi.BuildBr(builder, receiveBlock);
@@ -3199,7 +3199,7 @@ internal static partial class LlvmCodegen
         LlvmApi.BuildCondBr(builder, hasBuffer, reuseBufferBlock, createBufferBlock);
 
         LlvmApi.PositionBuilderAtEnd(builder, createBufferBlock);
-        LlvmValueHandle newBufferRef = EmitAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tcp_receive_win_buffer_size"));
+        LlvmValueHandle newBufferRef = EmitArenaValueAllocDynamic(state, LlvmApi.BuildAdd(builder, maxBytes, LlvmApi.ConstInt(state.I64, 8, 0), "step_tcp_receive_win_buffer_size"));
         StoreMemory(state, newBufferRef, 0, LlvmApi.ConstInt(state.I64, 0, 0), "step_tcp_receive_win_buffer_len_init");
         StoreMemory(state, taskPtr, TaskStructLayout.WaitData0, newBufferRef, "step_tcp_receive_win_store_buffer");
         LlvmApi.BuildBr(builder, afterBufferBlock);

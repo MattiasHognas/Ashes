@@ -48,7 +48,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, BigIntFromI64);
         LlvmValueHandle outAddress = runtimeManaged
             ? EmitRuntimeRcAlloc(state, 16, "rc_bigint_from_int")
-            : EmitAlloc(state, 16); // header + one limb
+            : EmitArenaValueAlloc(state, 16); // header + one limb
         LlvmApi.BuildCall2(state.Target.Builder, fnType, fn, [value, BigIntAsPtr(state, outAddress, "bigint_from_out")], "");
         return outAddress;
     }
@@ -67,7 +67,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle resultBytes = BigIntBytesForWords(state, words);
         LlvmValueHandle outAddress = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, resultBytes, "rc_bigint_arith")
-            : EmitAllocDynamic(state, resultBytes);
+            : EmitArenaValueAllocDynamic(state, resultBytes);
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr]);
@@ -90,10 +90,10 @@ internal static partial class LlvmCodegen
         LlvmValueHandle rBytes = BigIntBytesForWords(state, BigIntAddConst(state, lb, 2));
         LlvmValueHandle qAddress = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, qBytes, "rc_bigint_quotient")
-            : EmitAllocDynamic(state, qBytes);
+            : EmitArenaValueAllocDynamic(state, qBytes);
         LlvmValueHandle rAddress = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, rBytes, "rc_bigint_remainder")
-            : EmitAllocDynamic(state, rBytes);
+            : EmitArenaValueAllocDynamic(state, rBytes);
         // Algorithm D scratch: normalized divisor (2*lb digits) + working dividend (2*la + 1 digits),
         // as 32-bit digits — la + lb + 4 words covers both with slack.
         LlvmValueHandle laLb = LlvmApi.BuildAdd(state.Target.Builder, la, lb, "bigint_dsw");
@@ -155,7 +155,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle outBytes = BigIntBytesForWords(state, outWords);
         LlvmValueHandle outAddress = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, outBytes, "rc_bigint_text")
-            : EmitAllocDynamic(state, outBytes);
+            : EmitArenaValueAllocDynamic(state, outBytes);
 
         LlvmTypeHandle voidType = LlvmApi.VoidTypeInContext(state.Target.Context);
         LlvmTypeHandle fnType = LlvmApi.FunctionType(voidType, [state.I8Ptr, state.I8Ptr, state.I8Ptr]);
@@ -236,7 +236,7 @@ internal static partial class LlvmCodegen
         LlvmValueHandle outBytes = LlvmApi.BuildMul(builder, words, LlvmApi.ConstInt(state.I64, 8, 0), "bi_parse_sz");
         LlvmValueHandle outAddr = runtimeManaged
             ? EmitRuntimeRcAllocDynamic(state, outBytes, "rc_bigint_parse")
-            : EmitAllocDynamic(state, outBytes);
+            : EmitArenaValueAllocDynamic(state, outBytes);
 
         LlvmTypeHandle fnType = LlvmApi.FunctionType(state.I64, [state.I8Ptr, state.I64, state.I8Ptr]);
         LlvmValueHandle fn = LlvmApi.GetNamedFunction(state.Target.Module, "bignum_from_decimal");
