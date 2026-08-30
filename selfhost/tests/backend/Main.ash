@@ -16,6 +16,8 @@ import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOptimizer
+import AshesCompiler.Semantics.ProjectSyntaxStitching
+import AshesCompiler.Semantics.ShippedModuleStitching
 // Adds a function to `module_`, appends its entry block, and positions a builder at the end of it
 // — the shared prefix every module builder below needs before emitting a function body. Pass
 // `None` for `existingBuilder` for a module's first (or only) function; pass `Some(builder)` for a
@@ -1899,6 +1901,47 @@ let codegenOptimizedRealSource source name context =
     |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
     |> codegenProgram(name)(context)
 
+let isAshSourceName name = Ashes.Text.length(name) > 4 && Ashes.Text.substring(name)(Ashes.Text.length(name) - 4)(4) == ".ash"
+
+// Every `<Module.Path>.ash` under the shipped standard-library root (`lib/Ashes` in a checkout,
+// whose file names encode the module path under the implicit `Ashes.` prefix), as the in-memory
+// texts `stitchWithShippedModules` resolves `import Ashes.*` against. Read once per run; only
+// the modules a program actually reaches are ever parsed.
+let recursive readShippedModules root names =
+    match names with
+        | [] -> []
+        | name :: rest ->
+            if isAshSourceName(name) == false
+            then readShippedModules(root)(rest)
+            else
+                let path = root + "/" + name
+                in
+                    match Ashes.IO.File.readText(path) with
+                        | Error(message) -> test.fail("could not read shipped module " + path + ": " + message)
+                        | Ok(source) ->
+                            ShippedModuleText(
+                                moduleName = "Ashes." + Ashes.Text.substring(name)(0)(Ashes.Text.length(name) - 4),
+                                sourcePath = path,
+                                source = source
+                            ) :: readShippedModules(root)(rest)
+
+let loadShippedModules root =
+    match Ashes.IO.Directory.entries(root) with
+        | Error(message) -> test.fail("could not list shipped modules under " + root + ": " + message)
+        | Ok(names) -> readShippedModules(root)(names)
+
+// The same pipeline as `codegenRealSource`, with the program's `import Ashes.*` header resolved
+// against the shipped modules and stitched in first — the path any program using the standard
+// library takes.
+let codegenShippedSource shipped source name context =
+    match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
+        | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
+        | Ok(StitchedSyntaxProject { program = program }) ->
+            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                | CoreLoweringResult { program = Some(lowered), error = None } -> codegenProgram(name)(context)(lowered)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+
 // `simple_arith`'s own fixture source: `LoadConstInt` x3, `MulInt`, `AddInt`, `Return` — no
 // top-level `let`, so no arena bracketing at all.
 let buildRealIrArithmeticModule name context = codegenRealSource("1 + 2 * 3")(name)(context)
@@ -2943,6 +2986,19 @@ let testRunStaticExecutableForRealIrPrintBoolTrueModule unit = assertProgramPrin
 
 let testRunStaticExecutableForRealIrPrintBoolFalseModule unit = assertProgramPrints(buildRealIrPrintBoolFalseModule)("selfhostBackendRunPrintBoolFalse")("selfhost_backend_print_bool_false_e2e")("false")
 
+// The first programs reaching a shipped standard-library module: `Ashes.Collection.List.length`
+// (a pure-Ashes stdlib function, not an intrinsic) through a whole-module import and a
+// qualified reference, and through a selector import under a local alias.
+let buildShippedListLengthModule shipped name context = codegenShippedSource(shipped)("import Ashes.Collection.List\nAshes.IO.print(Ashes.Collection.List.length([1, 2, 3]))")(name)(context)
+
+let buildShippedListLengthSelectorModule shipped name context = codegenShippedSource(shipped)("import Ashes.Collection.List.length as len\nAshes.IO.print(len([4, 5, 6, 7]))")(name)(context)
+
+let testRunStaticExecutableForShippedListLengthModule shipped unit =
+    assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
+
+let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
+    assertProgramPrints(buildShippedListLengthSelectorModule(shipped))("selfhostBackendRunShippedListLengthSelector")("selfhost_backend_shipped_list_length_selector_e2e")("4")
+
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
@@ -3152,7 +3208,7 @@ let testRunStaticExecutableForRealIrStringConcatModule unit =
                                                         let _ = test.assertEqual("hello world")(line)
                                                         in test.assertEqual(0)(exitCode)
 
-let run unit =
+let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
     |> testEmitObjectFileForTrivialModule
@@ -3211,7 +3267,14 @@ let run unit =
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule
     |> testRunStaticExecutableForRealIrPrintBoolTrueModule
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
+    |> testRunStaticExecutableForShippedListLengthModule(shipped)
+    |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
-run(Unit)
+match Ashes.IO.args with
+    | root :: [] ->
+        root
+        |> loadShippedModules
+        |> run
+    | _ -> Ashes.IO.panic("usage: backend-tests <shipped-library-root>")

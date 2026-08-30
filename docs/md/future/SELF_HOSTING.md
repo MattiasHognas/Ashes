@@ -2122,6 +2122,26 @@ same public behavior.
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
   [Linking → Constants](../internals/architecture.md#constants).
+- [~] `AshesCompiler.Semantics.ShippedModuleStitching` gives the self-hosted pipeline its first
+  standard-library modules: `stitchWithShippedModules` takes an entry program's source plus the
+  shipped module texts (`lib/Ashes/<Module.Path>.ash`, supplied by the caller — the semantics
+  package reads nothing from disk here), splits each header (`parseImportHeader`), parses the
+  body, builds the module interface, loads the transitive `import Ashes.*` closure each once,
+  orders it with the frontend's `buildModulePlan`, and stitches it through the same
+  `stitchProjectSyntax` a multi-module project uses, so the combined program lowers like any
+  single program. `selfhost/tests/backend` now takes the shipped root as its one argument and
+  compiles `import Ashes.Collection.List` / `print(Ashes.Collection.List.length([1, 2, 3]))`
+  (prints `3`) and the selector form `import Ashes.Collection.List.length as len` (prints `4`)
+  through the complete self-hosted pipeline on a real Linux process — the first stdlib source
+  (not intrinsic) functions this compiler has taken from `lib/Ashes` to output. Stitching
+  `Collection.List` exposed a real stage-0 ownership bug (a fresh call argument the callee's
+  result keeps whole was released after the call — the crash behind the 2026-08-26 parser
+  `deepCopy` workaround), fixed at the root first. **Explicitly still open**: an import of an
+  intrinsic-only module (`Ashes.Byte`, `Ashes.Task`, ... — no shipped file) is an error here
+  rather than a builtin interface, so stdlib modules that import those (`Net.*`, `Text.Json`)
+  are not reachable yet; bare qualified references without an `import` (`Ashes.Text.length(...)`
+  with no header) are not collected, only imported modules are; and the shipped root is still
+  handed in by the caller rather than located from the compiler binary (the next item below).
 - [~] `AshesCompiler.Backend.IrCodegen` gained every remaining scalar integer instruction the
   self-hosted lowering already emits for ordinary source: `DivInt`/`DivUInt` (`sdiv`/`udiv`),
   `AndInt`/`OrInt`/`XorInt`, `ShlInt`/`ShrInt` (amount masked to `0..63`, logical right shift —
