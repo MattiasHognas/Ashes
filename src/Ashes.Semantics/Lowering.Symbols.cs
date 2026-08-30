@@ -1460,9 +1460,45 @@ public sealed partial class Lowering
         IReadOnlyDictionary<string, bool>? childBindings)
     {
         RetainRuntimeManagedTcoConstructorArguments(arguments, argumentTypes, argumentTemps);
-        if (runtimeManagedCandidate)
+        if (!runtimeManagedCandidate)
+        {
+            return;
+        }
+
+        if (childBindings is null)
+        {
+            RetainRuntimeManagedOwnedChildArguments(arguments, argumentTypes, argumentTemps);
+        }
+        else
         {
             PrepareRuntimeManagedAdtChildArguments(arguments, argumentTemps, childBindings);
+        }
+    }
+
+    // A runtime-RC aggregate owns its RC children. Outside a tail self-call (whose argument context
+    // decides per binding whether to move or share, see PrepareRuntimeManagedAdtChildArguments), a
+    // child read from a runtime-managed owned binding is retained here: the binding's own scope-exit
+    // release still fires, and without the extra reference the aggregate would carry a freed child
+    // out of that scope (`let updated = f(xs) in Hit(updated)`).
+    private void RetainRuntimeManagedOwnedChildArguments(
+        IReadOnlyList<Expr> arguments,
+        IReadOnlyList<TypeRef> argumentTypes,
+        List<int> argumentTemps)
+    {
+        for (int index = 0; index < arguments.Count; index++)
+        {
+            if (arguments[index] is not Expr.Var variable
+                || LookupOwnedValue(variable.Name) is not
+                { RuntimeManaged: true, IsDropped: false, PerceusPatternOwner: false } info)
+            {
+                continue;
+            }
+
+            argumentTemps[index] = DuplicateRuntimeManagedOwnedValueForTransfer(
+                arguments[index],
+                argumentTemps[index],
+                argumentTypes[index]);
+            info.RuntimeDeepUnique = false;
         }
     }
 

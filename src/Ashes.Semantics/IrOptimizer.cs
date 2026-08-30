@@ -1480,7 +1480,7 @@ public static partial class IrOptimizer
     /// rewritten according to <paramref name="remap"/>. Target (write) temps are
     /// left unchanged. Instructions with no source temps are returned as-is.
     /// </summary>
-    private static IrInst RemapSourceTemps(IrInst inst, Dictionary<int, int> remap)
+    internal static IrInst RemapSourceTemps(IrInst inst, Dictionary<int, int> remap)
     {
         int R(int temp) => remap.TryGetValue(temp, out int resolved) ? resolved : temp;
 
