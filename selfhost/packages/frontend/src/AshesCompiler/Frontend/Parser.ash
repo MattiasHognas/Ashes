@@ -3521,18 +3521,7 @@ and parserParseTopLevelBinding sourceBytes declarationColumn state =
                                 in
                                     match parserParseTopLevelValue(sourceBytes)(declarationColumn)(afterEquals) with
                                         | (rawValue, afterValue) ->
-                                            // Deep-copied immediately: `value` is the parsed value expression, which
-                                            // may itself contain a nested `let` whose own sugar-parameter list
-                                            // (`AshesCompiler.Frontend.Syntax.ExprLet`'s `sugarParameters: List(Str)`)
-                                            // was built in an inner arena scope that this binding's own later
-                                            // processing (e.g. parserExprEnd below) can reclaim and reuse — a stage-0
-                                            // arena-escape gap where a nested value's own nested owned lists don't
-                                            // reliably survive their enclosing parse returning. Copying the whole
-                                            // tree here, before anything else runs, keeps every nested list intact.
-                                            let value =
-                                                name.position
-                                                |> parserBuildLambdas(parameters)(rawValue)
-                                                |> Ashes.Internal.deepCopy
+                                            let value = parserBuildLambdas(parameters)(rawValue)(name.position)
                                             in
                                                 let binding =
                                                     LetBindingSyntax(name = name.text, value = value, sugarParameters = parserParameterNames(
