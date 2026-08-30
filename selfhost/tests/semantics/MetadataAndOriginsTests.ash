@@ -375,41 +375,69 @@ let testHoverTypeInfo unit =
                 inferredType = semType,
                 constraints = [],
                 parameterNames = ["unit"],
-                isParameter = false
+                isParameter = false,
+                isDefinition = true
             )
         in
-            let hoverList = [hover1]
+            let useSiteType =
+                SemFunction(
+                    SemInt,
+                    SemInt,
+                    Some(
+                        SemRow(
+                            [
+                                SemCapability("Clock")([]),
+                                SemCapability("FileSystem")([SemString]),
+                                SemCapability("UnsafeFfi")([])
+                            ],
+                            None
+                        )
+                    )
+                )
             in
-                let found = findHoverAtOffset(5)(hoverList)
+                let useSite =
+                    HoverTypeInfo(
+                        span = TextSpan(30)(37),
+                        name = Some("getTime"),
+                        inferredType = useSiteType,
+                        constraints = [],
+                        parameterNames = [],
+                        isParameter = false,
+                        isDefinition = false
+                    )
                 in
-                    let _ =
-                        match found with
-                            | Some(HoverTypeInfo(_s, Some(name), _t, _c, _p, _param)) -> test.assertEqual("getTime")(name)
-                            | _ -> test.fail("expected to find hover info at offset 5")
+                    let hoverList = [hover1, useSite]
                     in
-                        let notFound = findHoverAtOffset(20)(hoverList)
+                        let found = findHoverAtOffset(5)(hoverList)
                         in
-                            let _ = test.assertEqual(true)(notFound == None)
+                            let _ =
+                                match found with
+                                    | Some(HoverTypeInfo { name = Some(name) }) -> test.assertEqual("getTime")(name)
+                                    | _ -> test.fail("expected to find hover info at offset 5")
                             in
-                                let caps = collectTypeCapabilities(semType)
+                                let notFound = findHoverAtOffset(20)(hoverList)
                                 in
-                                    let _ =
-                                        caps
-                                        |> length
-                                        |> test.assertEqual(2)
+                                    let _ = test.assertEqual(true)(notFound == None)
                                     in
-                                        let authority = capturePublicAuthority(["getTime"])(hoverList)
+                                        let caps = collectTypeCapabilities(semType)
                                         in
                                             let _ =
-                                                match authority with
-                                                    | PublicAuthorityRecord(name, authCaps) :: [] ->
-                                                        let _ = test.assertEqual("getTime")(name)
-                                                        in
-                                                            authCaps
-                                                            |> length
-                                                            |> test.assertEqual(2)
-                                                    | _ -> test.fail("unexpected public authority record")
-                                            in Unit)
+                                                caps
+                                                |> length
+                                                |> test.assertEqual(2)
+                                            in
+                                                let authority = capturePublicAuthority(["getTime"])(hoverList)
+                                                in
+                                                    let _ =
+                                                        match authority with
+                                                            | PublicAuthorityRecord(name, authCaps) :: [] ->
+                                                                let _ = test.assertEqual("getTime")(name)
+                                                                in
+                                                                    authCaps
+                                                                    |> length
+                                                                    |> test.assertEqual(2)
+                                                            | _ -> test.fail("unexpected public authority record")
+                                                    in Unit)
 
 let testDecisionSnapshot unit =
     (let srcOrigin = createSourceFunctionOrigin("compute")(None)(None)(0)
