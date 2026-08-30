@@ -7,11 +7,13 @@
     "AshesCompiler.Frontend": "=0.1.0",
     "AshesCompiler.Formatter": "=0.1.0",
     "AshesCompiler.Semantics": "=0.1.0",
+    "AshesCompiler.Backend": "=0.1.0",
     "cli": { "path": "../../packages/cli" }
   },
   "overrides": {
     "AshesCompiler.Frontend": { "path": "../../packages/frontend" },
     "AshesCompiler.Formatter": { "path": "../../packages/formatter" },
-    "AshesCompiler.Semantics": { "path": "../../packages/semantics" }
+    "AshesCompiler.Semantics": { "path": "../../packages/semantics" },
+    "AshesCompiler.Backend": { "path": "../../packages/backend" }
   }
 }

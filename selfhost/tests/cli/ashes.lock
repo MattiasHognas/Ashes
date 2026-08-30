@@ -21,6 +21,13 @@
       "source": "registry+https://pkg.ashes-lang.org",
       "hash": "ash1:0000000000000000000000000000000000000000000000000000000000001",
       "dependencies": ["AshesCompiler.Frontend"]
+    },
+    {
+      "namespace": "AshesCompiler.Backend",
+      "version": "0.1.0",
+      "source": "registry+https://pkg.ashes-lang.org",
+      "hash": "ash1:0000000000000000000000000000000000000000000000000000000000002",
+      "dependencies": ["AshesCompiler.Semantics"]
     }
   ]
 }

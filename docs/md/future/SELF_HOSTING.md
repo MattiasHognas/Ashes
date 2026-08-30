@@ -2214,13 +2214,29 @@ same public behavior.
   own equivalent has no self-hosted counterpart yet: `--version`/`-v` (the version string comes
   from assembly metadata this package doesn't have an analog of) falls through to usage like any
   other unknown command rather than reproducing a version string; target selection, CPU/worker/
-  stack options, optimization levels, and debug options don't apply to any command this package
-  has ported (they're all `compile`/`run`/`test`-only flags, and none of those three commands
-  exist here yet).
-- [ ] Implement `compile` for files, expressions, projects, output selection, IR dumps, and compiler
-  reports.
-- [ ] Implement `run`, program argument forwarding, temporary outputs, and propagation of program exit
-  status.
+  stack options, optimization levels, and debug options are not parsed by any command this package
+  has ported (`compile` and `run` accept only their file form so far, and `test` does not exist
+  here yet).
+- [~] Implement `compile` for files, expressions, projects, output selection, IR dumps, and compiler
+  reports. `AshesCompiler.Cli.Compile` compiles one `.ash` file to a linux-x64 executable through
+  the self-hosted pipeline (`stitchWithShippedModules` against the shipped `lib/Ashes` texts,
+  `lowerCoreProgramWithSource`, `optimizeIrProgram`, `codegenProgram`, `linkLinuxExecutable`), with
+  `-o`/`--out`, the derived default output path, the `OK Wrote <size> to <output>` confirmation,
+  and stage 0's exit codes. Not yet: `--expr`, `--project`, other targets, optimization/debug
+  options, `--explain`, IR dumps, elapsed time, and locating the shipped library from an installed
+  layout (it probes `lib/Ashes` beside the executable, its parent, and the working directory).
+  Surveying `tests/*.ash` through this command (2026-08-30): 118 programs compile and print their
+  expected output, 63 expected compile errors are reported, 428 fail to compile (intrinsic-only
+  module imports such as `import Ashes.IO`, unported builtins such as `Ashes.Task.run`/`async`/
+  `Ashes.Text.parseFloat`, float codegen, non-scalar constructor fields), 15 compile that stage 0
+  rejects (exhaustiveness, redundancy, capability, and alias-cycle diagnostics), and 7 compile but
+  crash at run time (closures with several captures, mutual-recursion TCO, large ADT dispatch,
+  arena growth).
+- [~] Implement `run`, program argument forwarding, temporary outputs, and propagation of program exit
+  status. The file form compiles to `<temp>/ashes/<stem>`, forwards the arguments after `--`, relays
+  the program's stdout and stderr line by line (not inherited), and returns the program's own exit
+  code. Not yet: `--expr`, `--project`, uniquely named temporary outputs, and the compile options
+  `compile` also lacks.
 - [ ] Implement the stateful `repl`, target/optimization commands, recovery after diagnostics, and
   deterministic cleanup.
 - [~] Implement `fmt` discovery, preview/write behavior, project awareness, malformed-file handling, and
