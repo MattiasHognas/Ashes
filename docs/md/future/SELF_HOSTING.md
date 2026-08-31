@@ -2174,6 +2174,16 @@ same public behavior.
   `false`. Chosen by probing what real source lowers to rather than by the instruction list:
   lists, tuples, list recursion, and lambda arguments already lowered to instructions codegen
   covered, and these were the only scalar cases still panicking.
+- [~] The first qualified builtin members beyond the original `Ashes.IO` set are lowerable and
+  codegen end to end: `Ashes.Text.fromInt` (the `PrintInt` prologue/zero/digit/sign phases with the
+  write-syscall phase replaced by allocating a fresh RC heap string in `emitStringConcatN`'s exact
+  layout and copying the digit buffer's tail in), `Ashes.Text.byteLength`, and `Ashes.Byte.length`
+  (both the `len` word every heap `Str`/`Bytes` value starts with, masked free of the bit-63 view
+  flag — `LoadStringLength`'s shape). Each has a `standardBuiltinLayouts` scheme; the emission
+  cases already existed. Verified end to end (`-42|0|9007`, `13`). The set `lib/Ashes/Text.ash`'s
+  own body needs before `import Ashes.Text` programs can lower — `Ashes.Byte.fromText`/`length`/
+  `subText`/`get`/`subView`/`indexOf`/`compare`, `Ashes.Text.unconsText`, `Ashes.Rune.toText`, and
+  the `Ashes.Number.UInt` pair — is the natural next slice of this item.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

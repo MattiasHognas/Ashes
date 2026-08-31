@@ -2999,6 +2999,10 @@ let buildShippedListLengthSelectorModule shipped name context = codegenShippedSo
 
 let buildIntrinsicModuleImportModule shipped name context = codegenShippedSource(shipped)("import Ashes.IO\nAshes.IO.print(42)")(name)(context)
 
+let buildTextFromIntModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.fromInt(0 - 42) + \"|\" + Ashes.Text.fromInt(0) + \"|\" + Ashes.Text.fromInt(9007))")(name)(context)
+
+let buildTextByteLengthModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.byteLength(\"hello, world\" + \"!\"))")(name)(context)
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3007,6 +3011,10 @@ let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
 
 let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
     assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
+
+let testRunStaticExecutableForTextFromIntModule unit = assertProgramPrints(buildTextFromIntModule)("selfhostBackendRunTextFromInt")("selfhost_backend_text_from_int_e2e")("-42|0|9007")
+
+let testRunStaticExecutableForTextByteLengthModule unit = assertProgramPrints(buildTextByteLengthModule)("selfhostBackendRunTextByteLength")("selfhost_backend_text_byte_length_e2e")("13")
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
@@ -3296,6 +3304,8 @@ let run shipped =
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
+    |> testRunStaticExecutableForTextFromIntModule
+    |> testRunStaticExecutableForTextByteLengthModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

@@ -460,6 +460,15 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.IO")("writeLine")(
             TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("fromInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("byteLength")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("length")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemInt)(None), constraints = [])
         )
     ]
 
