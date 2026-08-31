@@ -2146,12 +2146,19 @@ same public behavior.
   (not intrinsic) functions this compiler has taken from `lib/Ashes` to output. Stitching
   `Collection.List` exposed a real stage-0 ownership bug (a fresh call argument the callee's
   result keeps whole was released after the call — the crash behind the 2026-08-26 parser
-  `deepCopy` workaround), fixed at the root first. **Explicitly still open**: an import of an
-  intrinsic-only module (`Ashes.Byte`, `Ashes.Task`, ... — no shipped file) is an error here
-  rather than a builtin interface, so stdlib modules that import those (`Net.*`, `Text.Json`)
-  are not reachable yet; bare qualified references without an `import` (`Ashes.Text.length(...)`
-  with no header) are not collected, only imported modules are; and the shipped root is still
-  handed in by the caller rather than located from the compiler binary (the next item below).
+  `deepCopy` workaround), fixed at the root first. An import of an intrinsic-only module
+  (`Ashes.IO`, `Ashes.Byte`, and the rest of `coreBuiltinKind`'s modules — no shipped file) now
+  resolves to a synthesized empty module instead of erroring, leaving its members to the
+  no-import-required qualified-access path, so entry programs and stdlib modules that import
+  those are reachable (`import Ashes.IO` / `Ashes.IO.print(42)` runs end to end in
+  `selfhost/tests/backend`). **Explicitly still open**: a builtin module none of whose members
+  lower yet (`Ashes.Task`, `Ashes.Internal`) still errors rather than pretending to exist; an
+  aliased intrinsic import (`import Ashes.IO as io`) binds nothing, so `io.print` does not
+  resolve; selector imports of intrinsic members (`import Ashes.IO.print`) find no exported
+  definition in the empty module; bare qualified references without an `import`
+  (`Ashes.Text.length(...)` with no header) are not collected, only imported modules are; and
+  the shipped root is still handed in by the caller rather than located from the compiler
+  binary (the next item below).
 - [~] `AshesCompiler.Backend.IrCodegen` gained every remaining scalar integer instruction the
   self-hosted lowering already emits for ordinary source: `DivInt`/`DivUInt` (`sdiv`/`udiv`),
   `AndInt`/`OrInt`/`XorInt`, `ShlInt`/`ShrInt` (amount masked to `0..63`, logical right shift —
