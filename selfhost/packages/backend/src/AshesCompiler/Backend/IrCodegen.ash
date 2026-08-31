@@ -305,31 +305,40 @@ let emitStringParts builder i64 ptrType stringRef name =
                                 let viewPtr = buildLoad(builder)(i64)(viewPtrPtr)(name + "_view_ptr")
                                 in (len, buildSelect(builder)(isView)(viewPtr)(inlineAddr)(name + "_bytes_addr")))
 
-// Reads a runtime-managed `Str` value's own `[len:i64][bytes...]` header (word `0` is `len`, byte
-// offset `8` is where the raw bytes start — the SAME layout `LoadConstStr`'s global builds, and
-// the general one every real `Str` value uses, not just a literal) and writes it to stdout via the
-// raw `write` syscall, then a trailing newline byte — matching `LlvmCodegenExpressions.cs`'s own
-// `EmitPrintStringFromTemp(appendNewline: true)` exactly. `stringRef`'s own `i64` value doubles as
-// the byte address once offset by `8`, so writing needs no extra pointer round-trip beyond the one
-// `buildLoad` already needs to read `len`. Shared by `PrintStr` and `PanicStr` — stage 0's own
-// `EmitPanic` prints its message through this exact same helper (`EmitPrintStringFromTemp`) before
-// exiting, not a stderr-specific write.
-let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
-    match emitStringParts(builder)(i64)(ptrType)(stringRef)("print_str") with
-        | (len, byteAddress) ->
-            let _ =
-                emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
+// Writes a runtime-managed `Str`/`Bytes` value's own `[len:i64][bytes...]` header bytes (word `0`
+// is `len`, byte offset `8` is where the raw bytes start — the SAME layout `LoadConstStr`'s global
+// builds, and the general one every real `Str`/`Bytes` value uses, not just a literal) to `fd` via
+// the raw `write` syscall, with no trailing newline. `stringRef`'s own `i64` value doubles as the
+// byte address once offset by `8`, so writing needs no extra pointer round-trip beyond the one
+// `emitStringParts` already needs to read `len`. Shared by every direct (non-buffered) write path —
+// `Ashes.IO.write`/`writeBytes` (fd 1), `writeError` (fd 2), and `print`/`panic`'s own
+// newline-appending wrapper below.
+let emitWriteStrBytesToFd builder i64 ptrType fd stringRef =
+    match emitStringParts(builder)(i64)(ptrType)(stringRef)("write_str") with
+        | (len, byteAddress) -> emitLinuxWrite(builder)(i64)(fd)(byteAddress)(len)
+
+// A single `\n` byte written to `fd` via the raw `write` syscall, from a one-byte stack slot.
+// Shared by `print`/`panic`'s stdout newline and `Ashes.IO.writeLine`/`writeErrorLine`'s own.
+let emitWriteNewlineToFd builder i64 i8 fd =
+    (let newlineBuf = buildAlloca(builder)(i8)("write_newline")
+    in
+        let _ =
+            buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
+        in
+            let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
             in
-                let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
-                in
-                    let _ =
-                        buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
-                    in
-                        let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
-                        in
-                            false
-                            |> constInt(i64)(1u64)
-                            |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr)
+                false
+                |> constInt(i64)(1u64)
+                |> emitLinuxWrite(builder)(i64)(fd)(newlineAddr))
+
+// `print`/`panic`'s own stdout (fd 1) write-then-newline, matching `LlvmCodegenExpressions.cs`'s
+// `EmitPrintStringFromTemp(appendNewline: true)` exactly. Stage 0's own `EmitPanic` prints its
+// message through this exact same helper before exiting, not a stderr-specific write.
+let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
+    let _ =
+        stringRef
+        |> emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(1u64)(false))
+    in emitWriteNewlineToFd(builder)(i64)(i8)(constInt(i64)(1u64)(false))
 
 // The four basic blocks `emitStringEquals`'s three-way branch (lengths differ / lengths match but
 // bytes differ / bytes match) needs, bundled so each phase helper below takes one value instead of
@@ -3614,6 +3623,31 @@ let codegenInstructionKind cx builder kind state =
                                                     |> lookupIndexed(source)
                                                     |> buildRet(builder)
                                                 in (tempEnv, true)
+                        // `Ashes.IO.write`/`writeBytes` — a raw `write` syscall to stdout with no
+                        // trailing newline. `CoreBuiltinLowering.ash`'s `emitCoreBuiltin` lowers
+                        // both `CoreWrite` and `CoreWriteBytes` to this same instruction: a `Bytes`
+                        // value shares its `[len:i64][bytes...]` header layout with `Str`, so no
+                        // separate instruction is needed for the two builtins.
+                                        | WriteStr(source) ->
+                                            let _ =
+                                                tempEnv
+                                                |> lookupIndexed(source)
+                                                |> emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(1u64)(false))
+                                            in (tempEnv, false)
+                        // `Ashes.IO.writeError`/`writeErrorLine` — the same raw write, to fd 2
+                        // (stderr) instead of fd 1, with the newline appended only when `newline`
+                        // (`writeErrorLine`) is set.
+                                        | WriteErrorStr(source, newline) ->
+                                            let stringRef = lookupIndexed(source)(tempEnv)
+                                            in
+                                                let _ =
+                                                    emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(2u64)(false))(stringRef)
+                                                in
+                                                    let _ =
+                                                        if newline
+                                                        then emitWriteNewlineToFd(builder)(i64)(i8)(constInt(i64)(2u64)(false))
+                                                        else constInt(i64)(0u64)(false)
+                                                    in (tempEnv, false)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
