@@ -105,6 +105,7 @@ export (
     value buildFMul,
     value buildFDiv,
     value buildBitCast,
+    value buildSIToFP,
     value doubleType,
     value constReal,
     value realPredicateOeq,
@@ -216,6 +217,7 @@ external LLVMBuildFSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMV
 external LLVMBuildFMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFMul@libLLVM.so"
 external LLVMBuildFDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFDiv@libLLVM.so"
 external LLVMBuildBitCast(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildBitCast@libLLVM.so"
+external LLVMBuildSIToFP(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildSIToFP@libLLVM.so"
 external LLVMDoubleTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMDoubleTypeInContext@libLLVM.so"
 external LLVMConstReal(LLVMTypeRef, Float) -> LLVMValueRef = "LLVMConstReal@libLLVM.so"
 external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
@@ -458,6 +460,8 @@ let buildFMul builder lhs rhs name = LLVMBuildFMul(builder)(lhs)(rhs)(name)
 let buildFDiv builder lhs rhs name = LLVMBuildFDiv(builder)(lhs)(rhs)(name)
 
 let buildBitCast builder value targetType name = LLVMBuildBitCast(builder)(value)(targetType)(name)
+
+let buildSIToFP builder value targetType name = LLVMBuildSIToFP(builder)(value)(targetType)(name)
 
 let doubleType context = LLVMDoubleTypeInContext(context)
 

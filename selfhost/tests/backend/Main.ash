@@ -3048,6 +3048,14 @@ let testRunStaticExecutableForBytesSliceModule unit = assertProgramPrints(buildB
 
 let testRunStaticExecutableForBytesScalarOpsModule unit = assertProgramPrints(buildBytesScalarOpsModule)("selfhostBackendRunBytesScalarOps")("selfhost_backend_bytes_scalar_ops_e2e")("2101-1")
 
+let buildTextParseUnconsModule name context = codegenOptimizedRealSource("Ashes.IO.print((match Ashes.Text.parseInt(\"-42\") with | Ok(v) -> Ashes.Text.fromInt(v) | Error(m) -> m) + \"/\" + (match Ashes.Text.parseInt(\"4x\") with | Ok(v2) -> Ashes.Text.fromInt(v2) | Error(m2) -> m2) + \"/\" + (match Ashes.Text.uncons(\"hi\") with | Some(pair) -> (match pair with | (r, rest) -> Ashes.Rune.toText(r) + rest) | None -> \"none\"))")(name)(context)
+
+let testRunStaticExecutableForTextParseUnconsModule unit = assertProgramPrints(buildTextParseUnconsModule)("selfhostBackendRunTextParseUncons")("selfhost_backend_text_parse_uncons_e2e")("-42/Ashes.Text.parseInt() invalid input/hi")
+
+let buildBytesBuilderOpsModule name context = codegenOptimizedRealSource("let grown = Ashes.Byte.appendByte(Ashes.Byte.singleton(65u8))(66u8)\nlet listed = Ashes.Byte.fromList([65u8, 66u8])\nlet zeros = Ashes.Byte.allocate(3)\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Byte.length(grown)) + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(zeros)(2))) + (if Ashes.Byte.hash(grown) == Ashes.Byte.hash(listed) then \"eq\" else \"ne\"))")(name)(context)
+
+let testRunStaticExecutableForBytesBuilderOpsModule unit = assertProgramPrints(buildBytesBuilderOpsModule)("selfhostBackendRunBytesBuilderOps")("selfhost_backend_bytes_builder_ops_e2e")("20eq")
+
 let testRunStaticExecutableForTextUnconsTextModule unit = assertProgramPrints(buildTextUnconsTextModule)("selfhostBackendRunTextUnconsText")("selfhost_backend_text_uncons_text_e2e")("h|ello<empty>")
 
 let testRunStaticExecutableForRuneToTextModule unit = assertProgramPrints(buildRuneToTextModule)("selfhostBackendRunRuneToText")("selfhost_backend_rune_to_text_e2e")("Aé€")
@@ -3358,6 +3366,8 @@ let run shipped =
     |> testRunStaticExecutableForRecursiveAdtFieldModule
     |> testRunStaticExecutableForDeepMatchJoinLoopModule
     |> testRunStaticExecutableForFloatScalarOpsModule
+    |> testRunStaticExecutableForTextParseUnconsModule
+    |> testRunStaticExecutableForBytesBuilderOpsModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
