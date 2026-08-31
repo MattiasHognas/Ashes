@@ -2262,12 +2262,15 @@ same public behavior.
   missing pieces were the `standardBuiltinLayouts` schemes (the reachability gate behind their
   `UnknownLoweringBinding` failures) and the backend emission cases. Verified end to end
   (survey 210 → 223, the parseInt/uncons/hash/allocate test files pass, `Byte.allocate(-1)` panics
-  with stage 0's message and exit 1). Still open in this area: stage 0's `Text.fromInt` accepts
-  `Int` OR `u8`/`u16`/`u32` through an ad-hoc argument rule the scheme-based selfhost typing cannot
-  express, which keeps `bytes_singleton`-style tests (`fromInt(Byte.get(...))`) blocked;
-  `Ashes.Text.parseFloat` (the phased float parse) and the remaining `Ashes.Byte` members
-  (`empty`, `append`, `u16Le`/`u32Le`/`u64Le`, `getU16Le`..., `setU64Le`..., `copyRange`, `set`)
-  are the next slices.
+  with stage 0's message and exit 1). Stage 0's `Text.fromInt` additionally accepts a
+  `u8`/`u16`/`u32` argument through an ad-hoc rule in `LowerTextFromInt` rather than unification
+  (every `uN` is stored widened, so the digit phases read the word directly); the scheme-based
+  selfhost typing mirrors it with `acceptBuiltinArgumentWidths`, which lets a matching
+  small-unsigned actual stand in for the scheme's `Int` parameter before `bindCoreValueTypes`
+  runs, unblocking the `fromInt(Byte.get(...))` shape the byte test files use.
+  `Ashes.Text.parseFloat` (the phased float parse; `LLVMBuildSIToFP` is already bound) and the
+  remaining `Ashes.Byte` members (`empty`, `append`, `u16Le`/`u32Le`/`u64Le`, `getU16Le`...,
+  `setU64Le`..., `copyRange`, `set`) are the next slices.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
