@@ -1873,21 +1873,35 @@ same public behavior.
   check (`typeExprArityErrorsList`, run before `constructorFieldSemanticTypes`) then finds `Inner`'s
   now-correct arity of `1` and reports `Type 'Inner' expects 1 type argument(s) but got 0.` for
   `Outer(Inner)`'s bare field. Verified end to end (survey 251 → 253, plus the diagnostic itself
-  closing `adt_field_parameterized_needs_args`: three tests, not one). **Found and worked around,
-  not fixed, while landing this**: importing `Ashes.Collection.List.length` into `CoreLowering.ash`
-  specifically (every other file in the package already imports it fine) corrupted stage 0's own
+  closing `adt_field_parameterized_needs_args`: three tests, not one). **Found while landing this,
+  fixed as its own follow-up**: importing `Ashes.Collection.List.length` into `CoreLowering.ash`
+  specifically (every other file in the package already imported it fine) corrupted stage 0's own
   project-mode module-stitching badly enough to fail the PARSE stage with a cascade of unrelated
-  `ASH003` errors — root-caused (not just observed) to two unrelated pre-existing local function
-  parameters in this same file, `bigIntFitsLength`/`bigIntFirstLength`, each named `length`,
-  shadowing the newly-imported top-level binding of the same name; stage 0's reference-rewriting
-  pass evidently does not respect that a local parameter should shadow an outer import when
-  rewriting name references during stitching. Renaming both parameters to `digitCount` — a real
-  naming improvement independent of this fix, not a workaround — resolved it, so `length` is now the
-  genuine `Ashes.Collection.List` import throughout this file rather than a local duplicate. The
-  underlying stage-0 shadowing bug itself remains unfixed and is a real, separate, higher-value
-  target for its own slice: it can silently corrupt ANY future selfhost source file that imports a
-  name already used as a local parameter somewhere in that file, with no diagnostic at all — just
-  cascading, misleading parse errors far from the real cause. Function-typed fields (`TypeArrow`) still refuse cleanly
+  `ASH003` errors — root-caused to two unrelated pre-existing local function parameters in this same
+  file, `bigIntFitsLength`/`bigIntFirstLength`, each named `length`, colliding with the
+  newly-imported top-level binding of the same name. `ProjectSupport.cs`'s `ApplyAliasesByRenaming`
+  (the flat-module import-alias path, used because wrapping a value in `let alias = ... in body`
+  would change an exported function's identity) renames every source token matching an import alias
+  key with no scope awareness at all, so a same-named parameter's own declaration and every
+  legitimate use of it inside its function body were being rewritten into references to the outer
+  import instead of staying shadowed — sometimes producing invalid syntax outright when the
+  replacement text landed in a position (like a parameter list) that can't contain it. Fixed by
+  collecting the binding's own leading `given (name) -> ...` parameter chain (the exact shape
+  `TryExtractFlatBindingValue` desugars a flat binding's curried parameters into) before renaming,
+  and excluding any alias whose key matches one of those parameter names — parameter shadowing wins
+  for the whole definition, matching ordinary lexical scoping. `bigIntFitsLength`/`bigIntFirstLength`
+  keep their `digitCount` rename regardless (a real naming improvement, not a revert), but `length`
+  now imports and resolves correctly wherever it collides with a local parameter. Verified with a
+  minimized two-file reproduction outside `CoreLowering.ash` (a package importing
+  `Ashes.Collection.List.length` where the importing module also has a same-named parameter),
+  confirmed against the original real trigger by temporarily restoring `CoreLowering.ash`'s
+  pre-`digitCount` text, and validated through the full selfhost verification loop this fix itself
+  motivates: stage 0 rebuilds `selfhost/packages/cli` into a real `ashes-selfhost` executable, and
+  that executable then compiles and correctly runs a `.ash` file exercising the same
+  parameter-shadowing shape end to end. Full stage-0 gate (`Ashes.Tests`, `Ashes.Lsp.Tests`, the
+  `tests/*.ash` suite, `dotnet format --verify-no-changes`) passes clean, since this touches shared
+  C# compiler infrastructure every project-mode compile goes through, not just selfhost's own build.
+  Function-typed fields (`TypeArrow`) still refuse cleanly
   with `UnsupportedTypeDeclaration` rather than registering an incorrect layout. `isZeroCost` is
   always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
   to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
