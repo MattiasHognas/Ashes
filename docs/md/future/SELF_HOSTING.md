@@ -2195,7 +2195,12 @@ same public behavior.
   `>=`/`<`/`<=`/`>` and a `u64` `<` prints `1`, and `print(true)`/`print(1 > 2)` print `true`/
   `false`. Chosen by probing what real source lowers to rather than by the instruction list:
   lists, tuples, list recursion, and lambda arguments already lowered to instructions codegen
-  covered, and these were the only scalar cases still panicking.
+  covered, and these were the only scalar cases still panicking. Float scalars followed:
+  `LoadConstFloat` (`LLVMConstReal` — the FFI passes `Float` as a real `f64` argument), the four
+  arithmetic forms, and all six ordered comparisons, with every Float value travelling through the
+  uniform `i64` word as its raw `f64` bits (bitcast to `double` around each operation and back,
+  `LoadTempAsFloat`'s shape; `fcmp` zero-extends to the canonical 0/1 word). Float FORMATTING is
+  still unported — the float tests all print `Int`s, which is exactly what they need.
 - [~] The first qualified builtin members beyond the original `Ashes.IO` set are lowerable and
   codegen end to end: `Ashes.Text.fromInt` (the `PrintInt` prologue/zero/digit/sign phases with the
   write-syscall phase replaced by allocating a fresh RC heap string in `emitStringConcatN`'s exact

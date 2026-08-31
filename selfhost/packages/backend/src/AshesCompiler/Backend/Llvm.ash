@@ -99,6 +99,20 @@ export (
     value buildPtrToInt,
     value buildIntToPtr,
     value buildICmp,
+    value buildFCmp,
+    value buildFAdd,
+    value buildFSub,
+    value buildFMul,
+    value buildFDiv,
+    value buildBitCast,
+    value doubleType,
+    value constReal,
+    value realPredicateOeq,
+    value realPredicateOgt,
+    value realPredicateOge,
+    value realPredicateOlt,
+    value realPredicateOle,
+    value realPredicateOne,
     value intPredicateEq,
     value intPredicateNe,
     value intPredicateSgt,
@@ -196,6 +210,14 @@ external LLVMBuildOr(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMVal
 external LLVMBuildXor(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildXor@libLLVM.so"
 external LLVMBuildMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildMul@libLLVM.so"
 external LLVMBuildICmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildICmp@libLLVM.so"
+external LLVMBuildFCmp(LLVMBuilderRef, u32, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFCmp@libLLVM.so"
+external LLVMBuildFAdd(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFAdd@libLLVM.so"
+external LLVMBuildFSub(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFSub@libLLVM.so"
+external LLVMBuildFMul(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFMul@libLLVM.so"
+external LLVMBuildFDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildFDiv@libLLVM.so"
+external LLVMBuildBitCast(LLVMBuilderRef, LLVMValueRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildBitCast@libLLVM.so"
+external LLVMDoubleTypeInContext(LLVMContextRef) -> LLVMTypeRef = "LLVMDoubleTypeInContext@libLLVM.so"
+external LLVMConstReal(LLVMTypeRef, Float) -> LLVMValueRef = "LLVMConstReal@libLLVM.so"
 external LLVMBuildSDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSDiv@libLLVM.so"
 external LLVMBuildSRem(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildSRem@libLLVM.so"
 external LLVMBuildUDiv(LLVMBuilderRef, LLVMValueRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildUDiv@libLLVM.so"
@@ -410,6 +432,36 @@ let intPredicateUlt = 36u32
 let intPredicateUle = 37u32
 
 let buildICmp builder predicate lhs rhs name = LLVMBuildICmp(builder)(predicate)(lhs)(rhs)(name)
+
+// LLVM's ordered `fcmp` predicate codes (`LLVMRealPredicate`: `OEQ = 1` through `ONE = 6`) —
+// ordered comparisons are false on NaN operands, matching stage 0's `LlvmRealPredicate` choices.
+let realPredicateOeq = 1u32
+
+let realPredicateOgt = 2u32
+
+let realPredicateOge = 3u32
+
+let realPredicateOlt = 4u32
+
+let realPredicateOle = 5u32
+
+let realPredicateOne = 6u32
+
+let buildFCmp builder predicate lhs rhs name = LLVMBuildFCmp(builder)(predicate)(lhs)(rhs)(name)
+
+let buildFAdd builder lhs rhs name = LLVMBuildFAdd(builder)(lhs)(rhs)(name)
+
+let buildFSub builder lhs rhs name = LLVMBuildFSub(builder)(lhs)(rhs)(name)
+
+let buildFMul builder lhs rhs name = LLVMBuildFMul(builder)(lhs)(rhs)(name)
+
+let buildFDiv builder lhs rhs name = LLVMBuildFDiv(builder)(lhs)(rhs)(name)
+
+let buildBitCast builder value targetType name = LLVMBuildBitCast(builder)(value)(targetType)(name)
+
+let doubleType context = LLVMDoubleTypeInContext(context)
+
+let constReal floatType value = LLVMConstReal(floatType)(value)
 
 let buildCondBr builder cond thenBlock elseBlock = LLVMBuildCondBr(builder)(cond)(thenBlock)(elseBlock)
 
