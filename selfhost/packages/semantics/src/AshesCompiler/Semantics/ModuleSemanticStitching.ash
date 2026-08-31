@@ -22,6 +22,7 @@ export (
     value buildStitchedSemanticProject,
     value resolveStitchedUnqualified,
     value resolveStitchedQualified,
+    value resolveStitchedModuleAlias,
 )
 
 type StitchedNameKind =
@@ -68,6 +69,7 @@ type StitchedModuleScope =
     | packageId: Str
     | sourcePath: Str
     | imports: List(StitchedImportBinding)
+    | moduleAliases: List((Str, Str))
     | definitions: List(StitchedDefinition)
     deriving {Eq, Show}
 
@@ -547,6 +549,41 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                             | Error(error) -> Error(error)
                             | Ok(next) -> buildImportBindings(ownerModule)(rest)(completed)(next)
 
+// The qualifier shorthands a module's whole-module imports establish: an explicit alias
+// (`import Ashes.IO as io` maps `io`) and the module-path leaf (`import Ashes.IO` maps `IO`),
+// each to the imported module's full name. Consulted by the reference rewriter when a qualified
+// name matches no stitched binding — an intrinsic builtin module contributes no bindings at all,
+// so its members are reachable only by rewriting the alias back to the full module name and
+// letting the no-import-required qualified-access path resolve them.
+let recursive collectModuleAliases resolvedImports =
+    match resolvedImports with
+        | [] -> []
+        | ResolvedModuleImport(importedName, alias, _line, _written) :: rest ->
+            let leafEntries =
+                let leaf = moduleLeaf(importedName)
+                in
+                    if leaf == importedName
+                    then []
+                    else [(deepCopy(leaf), deepCopy(importedName))]
+            in
+                match alias with
+                    | Some(name) -> (deepCopy(name), deepCopy(importedName)) :: appendList(leafEntries)(collectModuleAliases(rest))
+                    | None -> appendList(leafEntries)(collectModuleAliases(rest))
+        | _ :: rest -> collectModuleAliases(rest)
+
+let recursive findModuleAlias (qualifier: Str) (aliases: List((Str, Str))) =
+    match aliases with
+        | [] -> None
+        | (alias, target) :: rest ->
+            if alias == qualifier
+            then Some(deepCopy(target))
+            else findModuleAlias(qualifier)(rest)
+
+let resolveStitchedModuleAlias moduleName qualifier (project: StitchedSemanticProject) =
+    match findModule(moduleName)(project.scopes) with
+        | None -> None
+        | Some(moduleScope) -> findModuleAlias(qualifier)(moduleScope.moduleAliases)
+
 let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
     match (unit, state) with
         | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = ProgramSyntax { items = items, body = _body }, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
@@ -572,7 +609,7 @@ let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
                                                 | Error(error) -> Error(error)
                                                 | Ok(imports) ->
                                                     Ok(
-                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, definitions = definitions) :: completedModules, nextDefinitionId = nextId)
+                                                        StitchState(reversedModules = StitchedModuleScope(name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = imports, moduleAliases = collectModuleAliases(resolvedImports), definitions = definitions) :: completedModules, nextDefinitionId = nextId)
                                                     )
 
 let recursive buildModules (units: List(SemanticStitchUnit)) (state: StitchState) =

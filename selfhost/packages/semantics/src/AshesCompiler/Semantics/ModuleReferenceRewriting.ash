@@ -290,22 +290,25 @@ let rewriteQualifiedExpression project moduleName boundary qualifier name =
             |> definitionCompilerName
             |> ExprVar
         | None ->
-            match parentAndLeaf(qualifier) with
-                | Some((parent, leaf)) ->
-                    match resolveStitchedQualified(moduleName)(parent)(StitchedType)(leaf)(project) with
-                        | Some(definition) ->
-                            ExprQualifiedVar(definitionCompilerName(definition))(name)
-                        | None -> ExprQualifiedVar(qualifier)(name)
+            match resolveStitchedModuleAlias(moduleName)(qualifier)(project) with
+                | Some(aliasTarget) -> ExprQualifiedVar(aliasTarget)(name)
                 | None ->
-                    match resolveStitchedUnqualified(moduleName)(boundary)(StitchedType)(qualifier)(project) with
-                        | Some(definition) ->
-                            match definitionKind(definition) with
-                                | StitchedTrait ->
+                    match parentAndLeaf(qualifier) with
+                        | Some((parent, leaf)) ->
+                            match resolveStitchedQualified(moduleName)(parent)(StitchedType)(leaf)(project) with
+                                | Some(definition) ->
                                     ExprQualifiedVar(definitionCompilerName(definition))(name)
-                                | StitchedCapability ->
-                                    ExprQualifiedVar(definitionCompilerName(definition))(name)
-                                | _ -> ExprQualifiedVar(qualifier)(name)
-                        | None -> ExprQualifiedVar(qualifier)(name)
+                                | None -> ExprQualifiedVar(qualifier)(name)
+                        | None ->
+                            match resolveStitchedUnqualified(moduleName)(boundary)(StitchedType)(qualifier)(project) with
+                                | Some(definition) ->
+                                    match definitionKind(definition) with
+                                        | StitchedTrait ->
+                                            ExprQualifiedVar(definitionCompilerName(definition))(name)
+                                        | StitchedCapability ->
+                                            ExprQualifiedVar(definitionCompilerName(definition))(name)
+                                        | _ -> ExprQualifiedVar(qualifier)(name)
+                                | None -> ExprQualifiedVar(qualifier)(name)
 
 let recursive rewriteOptionalExpression project moduleName boundary locals expression =
     match expression with
