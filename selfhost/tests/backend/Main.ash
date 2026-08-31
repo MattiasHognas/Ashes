@@ -3019,6 +3019,8 @@ let buildStringAccumulatorDefaultModule name context = codegenOptimizedRealSourc
 
 let buildRecursiveAdtFieldModule name context = codegenOptimizedRealSource("type Tree =\n    | Leaf(Int)\n    | Node(Tree, Tree)\nlet recursive sumTree tree =\n    match tree with\n        | Leaf(value) -> value\n        | Node(left, right) -> sumTree(left) + sumTree(right)\nAshes.IO.print(sumTree(Node(Node(Leaf(1))(Leaf(2)))(Leaf(3))))")(name)(context)
 
+let buildDeepMatchJoinLoopModule name context = codegenOptimizedRealSource("type Step =\n    | Done\n    | Continue(Int, Int)\nlet recursive next n = if n <= 0 then Done else Continue(n)(n)\nlet recursive loop n acc =\n    match next(n) with\n        | Done -> acc\n        | Continue(m, r) -> loop(m - 1)(acc + r)\nAshes.IO.print(loop(200000)(0))")(name)(context)
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3049,6 +3051,8 @@ let testRunStaticExecutableForRuneToTextModule unit = assertProgramPrints(buildR
 let testRunStaticExecutableForStringAccumulatorDefaultModule unit = assertProgramPrints(buildStringAccumulatorDefaultModule)("selfhostBackendRunStringAccumulatorDefault")("selfhost_backend_string_accumulator_default_e2e")("xxx")
 
 let testRunStaticExecutableForRecursiveAdtFieldModule unit = assertProgramPrints(buildRecursiveAdtFieldModule)("selfhostBackendRunRecursiveAdtField")("selfhost_backend_recursive_adt_field_e2e")("6")
+
+let testRunStaticExecutableForDeepMatchJoinLoopModule unit = assertProgramPrints(buildDeepMatchJoinLoopModule)("selfhostBackendRunDeepMatchJoinLoop")("selfhost_backend_deep_match_join_loop_e2e")("20000100000")
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
@@ -3348,6 +3352,7 @@ let run shipped =
     |> testRunStaticExecutableForRuneToTextModule
     |> testRunStaticExecutableForStringAccumulatorDefaultModule
     |> testRunStaticExecutableForRecursiveAdtFieldModule
+    |> testRunStaticExecutableForDeepMatchJoinLoopModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

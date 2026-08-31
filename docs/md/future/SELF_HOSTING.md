@@ -1208,12 +1208,20 @@ same public behavior.
   stack allocation (closure environments and capability/effect-handler frames both use the same
   stack-allocation mechanism, and a handler frame's pointer can outlive a tail call later in the same
   function via a dynamically-scoped global). `IrCodegen.ash` fuses three shapes into a `musttail`
-  call followed by `ret`: `CallKnown` immediately followed by the matching `Return`, and — because
-  every lowered multi-arm body converges on a `Label(end); LoadLocal(x, slot); Return(x)` join — a
-  `CallKnown` whose result is stored to that join slot followed by either `Jump(end)` or direct
-  fallthrough into `Label(end)`. When the function stack-allocates, the call keeps the advisory
-  `tail` marker instead. This makes deep self-recursion, mutual recursion, and closure-helper loops
-  run in constant stack without loop conversion.
+  call followed by `ret`: `CallKnown` immediately followed by the matching `Return`, and a
+  `CallKnown` whose result is stored to a tail-join slot followed by either a `Jump` or direct
+  fallthrough into the join label. Joins are recognized by `computeTailJoins`, a backward walk over
+  the copy-forwarding suffix (`LoadLocal(x, s); Return(x)` returns slot `s`; each
+  `LoadLocal(t, s2); StoreLocal(s, t)` pair above forwards `s2` into `s`; every label passed maps
+  to the slot current at that point), so arbitrarily deep match/if join chains fuse — a
+  `match ... with Continue(m, r) -> loop(m - 1)(acc + r)` back edge two joins from the return
+  included. When the function stack-allocates, the call keeps the advisory `tail` marker instead;
+  correspondingly, `IrOptimizer.ash`'s currying-stage inlining now allocates a chain's environment
+  on the HEAP (the stand-in allocator's leak-not-miscompile trade) instead of `AllocStack` when the
+  chain's final call re-enters the enclosing function itself, so a recursive back edge through an
+  inlined stage stays `musttail`-fusable rather than growing the frame per iteration until the
+  stack guard. This makes deep self-recursion, mutual recursion, closure-helper loops, and
+  fannkuch-shaped Step/State loops run in constant stack without loop conversion.
 - [ ] Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups with the
   dispatch slot layout: one dispatch slot per parameter position where every member's (structurally
   compared) parameter type agrees, and one slot per distinct type where they differ or where only some

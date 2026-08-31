@@ -2399,43 +2399,60 @@ let recursive buildStageEnvironmentStores (stageEnv: IrTemp) (argTemp: IrTemp) (
                     IrInstruction(instruction = StoreMemOffset(stackEnv)(offset)(nextTemp), location = None) :: IrInstruction(instruction = LoadMemOffset(nextTemp)(stageEnv)(captureIndex * 8), location = None) :: acc
                 )
 
-let buildStageEnvironment (stageEnv: IrTemp) (argTemp: IrTemp) location (stage: CurryingStage) (nextTemp: Int) =
+// A chain whose final call re-enters the enclosing function itself is a recursive back edge: a
+// per-iteration `AllocStack` would grow the caller's frame until the stack guard, so the
+// environment goes on the heap instead (the stand-in allocator's usual leak-not-miscompile trade)
+// and the retargeted call keeps a heap-environment flag — the exact shape the backend's
+// `musttail` fusion accepts, so the loop runs in constant stack.
+let buildStageEnvironment (stageEnv: IrTemp) (argTemp: IrTemp) location (stage: CurryingStage) (selfEdge: Bool) (nextTemp: Int) =
     (let stackEnv = nextTemp
     in
-        match buildStageEnvironmentStores(stageEnv)(argTemp)(stackEnv)(stage.stores)(nextTemp + 1)([]) with
-            | (stores, finalTemp) -> (IrInstruction(instruction = AllocStack(stackEnv)(stage.envSizeBytes), location = location) :: stores, stackEnv, finalTemp))
+        let allocation =
+            if selfEdge
+            then Alloc(stackEnv)(stage.envSizeBytes)(false)
+            else AllocStack(stackEnv)(stage.envSizeBytes)
+        in
+            match buildStageEnvironmentStores(stageEnv)(argTemp)(stackEnv)(stage.stores)(nextTemp + 1)([]) with
+                | (stores, finalTemp) -> (IrInstruction(instruction = allocation, location = location) :: stores, stackEnv, finalTemp))
 
-let retargetKnownCallEnvironment (stackEnv: IrTemp) irInst =
+let retargetKnownCallEnvironment (stackEnv: IrTemp) (stackAllocated: Bool) irInst =
     match irInst with
-        | IrInstruction { instruction = CallKnown(dest, label, _, argTemp, flagTemp, _), location = loc } -> IrInstruction(instruction = CallKnown(dest)(label)(stackEnv)(argTemp)(flagTemp)(true), location = loc)
+        | IrInstruction { instruction = CallKnown(dest, label, _, argTemp, flagTemp, _), location = loc } -> IrInstruction(instruction = CallKnown(dest)(label)(stackEnv)(argTemp)(flagTemp)(stackAllocated), location = loc)
         | other -> other
 
 // Each accepted site: the stage call's position mapped to its replacement, the position of the
 // environment-word load to drop, and the next call's position mapped to its retargeted form. A
 // call already retargeted in this pass is left for the next iteration.
-let recursive collectStageExpansions indexed remaining useCounts envLoads calls stages functions (nextTemp: Int) expansions (removed: List(Int)) rewrites =
+let stageChainReentersOwnFunction (ownLabel: Str) (callPosition: Int) indexed =
+    match lookupAssociation(callPosition)(indexed) with
+        | Some(IrInstruction { instruction = CallKnown(_, nextLabel, _, _, _, _) }) -> nextLabel == ownLabel
+        | _ -> false
+
+let recursive collectStageExpansions (ownLabel: Str) indexed remaining useCounts envLoads calls stages functions (nextTemp: Int) expansions (removed: List(Int)) rewrites =
     match remaining with
         | [] -> (expansions, removed, rewrites, nextTemp)
         | (position, irInst) :: tail ->
             match irInst with
                 | IrInstruction { instruction = CallKnown(resultTemp, stageLabel, envTemp, argTemp, _, _), location = loc } ->
                     match lookupAssociation(position)(rewrites) with
-                        | Some(_) -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                        | Some(_) -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
                         | None ->
                             match tryMatchInlinableStageChain(stageLabel)(resultTemp)(indexed)(useCounts)(envLoads)(calls)(stages)(functions) with
-                                | None -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                                | None -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
                                 | Some((loadPosition, callPosition, stage)) ->
-                                    match buildStageEnvironment(envTemp)(argTemp)(loc)(stage)(nextTemp) with
-                                        | (replacement, stackEnv, finalTemp) ->
-                                            let retargeted =
-                                                match lookupAssociation(callPosition)(indexed) with
-                                                    | Some(nextCall) -> retargetKnownCallEnvironment(stackEnv)(nextCall)
-                                                    | None -> irInst
-                                            in
-                                                collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(finalTemp)(setAssociation(position)(replacement)(expansions))(loadPosition :: removed)(
-                                                    setAssociation(callPosition)(retargeted)(rewrites)
-                                                )
-                | _ -> collectStageExpansions(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
+                                    let selfEdge = stageChainReentersOwnFunction(ownLabel)(callPosition)(indexed)
+                                    in
+                                        match buildStageEnvironment(envTemp)(argTemp)(loc)(stage)(selfEdge)(nextTemp) with
+                                            | (replacement, stackEnv, finalTemp) ->
+                                                let retargeted =
+                                                    match lookupAssociation(callPosition)(indexed) with
+                                                        | Some(nextCall) -> retargetKnownCallEnvironment(stackEnv)(selfEdge == false)(nextCall)
+                                                        | None -> irInst
+                                                in
+                                                    collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(finalTemp)(setAssociation(position)(replacement)(expansions))(loadPosition :: removed)(
+                                                        setAssociation(callPosition)(retargeted)(rewrites)
+                                                    )
+                | _ -> collectStageExpansions(ownLabel)(indexed)(tail)(useCounts)(envLoads)(calls)(stages)(functions)(nextTemp)(expansions)(removed)(rewrites)
 
 let recursive rebuildWithStageExpansions (indexed: List((Int, IrInstruction))) expansions (removed: List(Int)) rewrites acc =
     match indexed with
@@ -2458,7 +2475,7 @@ let inlineCurryingStagesOnce stages functions (fn: IrFunction) =
         in
             match indexStageChainSites(indexed)([])([]) with
                 | (envLoads, calls) ->
-                    match collectStageExpansions(indexed)(indexed)(useCounts)(envLoads)(calls)(stages)(functions)(fn.tempCount)([])([])([]) with
+                    match collectStageExpansions(fn.label)(indexed)(indexed)(useCounts)(envLoads)(calls)(stages)(functions)(fn.tempCount)([])([])([]) with
                         | ([], _, _, _) -> (fn, false)
                         | (expansions, removed, rewrites, nextTemp) -> ((fn with instructions = rebuildWithStageExpansions(indexed)(expansions)(removed)(rewrites)([]), tempCount = nextTemp), true))
 
