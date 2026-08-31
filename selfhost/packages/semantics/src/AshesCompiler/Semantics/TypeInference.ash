@@ -62,6 +62,7 @@ export (
     value inferExpressionFrom,
     value inferTopLevelBinding,
     value inferExpression,
+    value matchCoverageError,
 )
 
 type ConstructorInferenceDefinition =
@@ -1566,7 +1567,7 @@ let recursive coverageUnreachable cases environment (hasCatchAll: Bool) (composi
                                 in
                                     if coverageContainsText(key)(composites)
                                     then Some(UnreachableMatchArm("Unreachable match arm: pattern " + key + " is already matched earlier."))
-                                    else coverageUnreachableConstructor(pattern)(rest)(environment)(key :: composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
+                                    else coverageUnreachableConstructor(pattern)(rest)(environment)(Ashes.Internal.deepCopy(key) :: composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
                             else coverageUnreachableLiteral(pattern)(rest)(environment)(composites)(ints)(texts)(seenTrue)(seenFalse)(constructors)
 and coverageUnreachableLiteral pattern rest environment composites ints texts seenTrue seenFalse constructors =
     match coverageUnwrap(pattern) with
@@ -1698,6 +1699,29 @@ let coverageMissingCaseError environment (valueType: SemanticType) patterns =
         | Some(missing) -> Some(NonExhaustiveMatch("Non-exhaustive match expression. Missing case: " + coverageFormatPattern(missing) + "."))
         | None -> None
 
+let coverageAdtNameExhaustiveness environment (valueType: SemanticType) (adtName: Str) unguarded =
+    match coverageAdtConstructors(environmentConstructors(environment))(adtName)([]) with
+        | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
+        | constructors ->
+            match coverageMissingNames(constructors)(coverageSeenConstructors(unguarded)(environment)([]))([]) with
+                | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
+                | missing -> Some(NonExhaustiveMatch(coverageMissingConstructorsMessage(adtName)(missing)))
+
+// A scrutinee whose type is still an unresolved inference variable (a lambda parameter matched
+// before any call pins it) can still name its ADT through the arms: the first pattern that
+// resolves to a known constructor gives the declaring type, and the constructor-set check runs
+// exactly as it would with the resolved scrutinee type.
+let recursive coverageAdtNameFromArms environment patterns =
+    match patterns with
+        | [] -> None
+        | pattern :: rest ->
+            match coverageConstructorName(pattern)(environment) with
+                | Some(name) ->
+                    match coverageConstructorShape(name)(environment) with
+                        | Some((adtName, _arity)) -> Some(adtName)
+                        | None -> coverageAdtNameFromArms(environment)(rest)
+                | None -> coverageAdtNameFromArms(environment)(rest)
+
 let coverageExhaustiveness environment (valueType: SemanticType) cases =
     (let unguarded = coverageUnguardedPatterns(cases)([])
     in
@@ -1705,13 +1729,11 @@ let coverageExhaustiveness environment (valueType: SemanticType) cases =
         then None
         else
             match valueType with
-                | SemNamed(_id, adtName, _arguments) ->
-                    match coverageAdtConstructors(environmentConstructors(environment))(adtName)([]) with
-                        | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
-                        | constructors ->
-                            match coverageMissingNames(constructors)(coverageSeenConstructors(unguarded)(environment)([]))([]) with
-                                | [] -> coverageMissingCaseError(environment)(valueType)(unguarded)
-                                | missing -> Some(NonExhaustiveMatch(coverageMissingConstructorsMessage(adtName)(missing)))
+                | SemNamed(_id, adtName, _arguments) -> coverageAdtNameExhaustiveness(environment)(valueType)(adtName)(unguarded)
+                | SemVariable(_variableId) ->
+                    match coverageAdtNameFromArms(environment)(unguarded) with
+                        | Some(adtName) -> coverageAdtNameExhaustiveness(environment)(valueType)(adtName)(unguarded)
+                        | None -> None
                 | SemList(_element) ->
                     if !coverageAnyEmptyList(unguarded)
                     then Some(NonExhaustiveMatch("Non-exhaustive match expression. Missing case: []."))
@@ -4130,7 +4152,7 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
                     let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
-                        match mergeUnification(leftSubstitution, leftUnification, leftSupply, SemBool) with
+                        match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
@@ -4138,7 +4160,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),
-                                                mergeUnification(rightSubstitution, rightUnification, rightSupply, SemBool)
+                                                mergeUnification(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
                                             )
                                     | failure -> failure
                             | failure -> failure
@@ -4148,7 +4170,7 @@ and inferWith expression environment substitution supply ambientRow =
                 | TypeInferenceResult { semanticType = leftType, substitution = leftSubstitution, supply = leftSupply, constraints = leftConstraints, error = None } ->
                     let leftUnification = unify(applySubstitution(leftSubstitution)(leftType))(SemBool)
                     in
-                        match mergeUnification(leftSubstitution, leftUnification, leftSupply, SemBool) with
+                        match mergeUnification(leftSubstitution)(leftUnification)(leftSupply)(SemBool) with
                             | TypeInferenceResult { semanticType = _leftBool, substitution = leftBoolSubstitution, supply = leftBoolSupply, constraints = _leftUnificationConstraints, error = None } ->
                                 match inferWith(right)(environment)(leftBoolSubstitution)(leftBoolSupply)(ambientRow) with
                                     | TypeInferenceResult { semanticType = rightType, substitution = rightSubstitution, supply = rightSupply, constraints = rightConstraints, error = None } ->
@@ -4156,7 +4178,7 @@ and inferWith expression environment substitution supply ambientRow =
                                         in
                                             addConstraints(
                                                 appendConstraints(leftConstraints)(rightConstraints),
-                                                mergeUnification(rightSubstitution, rightUnification, rightSupply, SemBool)
+                                                mergeUnification(rightSubstitution)(rightUnification)(rightSupply)(SemBool)
                                             )
                                     | failure -> failure
                             | failure -> failure

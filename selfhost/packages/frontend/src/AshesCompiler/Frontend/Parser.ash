@@ -841,6 +841,16 @@ let parserBuildCallArguments function arguments start end isWhitespace isMultili
                     |> parserAt(start)(end))(tail)(false)
     in build(function)(arguments)(true))
 
+let parserLeadingPipeColumn (state: ParserState) =
+    match state with
+        | (tokens, _diagnostics, source) ->
+            match tokens with
+                | token :: _ ->
+                    if token.kind == Pipe
+                    then parserSourceColumn(source)(token.position)
+                    else -1
+                | [] -> -1
+
 let recursive parserParseExpression state = parserParseMatch(state)
 and parserParseMatch state =
     if parserCurrentKind(state) != Match
@@ -852,23 +862,26 @@ and parserParseMatch state =
                     | (scrutinee, afterScrutinee) ->
                         match parserConsume(With)(afterScrutinee) with
                             | (_withToken, afterWith) ->
-                                let caseStartState =
-                                    if parserCurrentKind(afterWith) == Pipe
-                                    then
-                                        match parserAdvance(afterWith) with
-                                            | (_pipe, afterPipe) -> afterPipe
-                                    else afterWith
+                                let firstPipeColumn = parserLeadingPipeColumn(afterWith)
                                 in
-                                    match parserParseMatchCase(caseStartState) with
-                                        | (firstCase, afterFirst) ->
-                                            parserParseMatchCases(
-                                                matchToken.position,
-                                                scrutinee,
-                                                firstCase :: [],
-                                                afterFirst
-                                            )
-and parserParseMatchCases start scrutinee reversedCases state =
-    if parserCurrentKind(state) != Pipe
+                                    let caseStartState =
+                                        if parserCurrentKind(afterWith) == Pipe
+                                        then
+                                            match parserAdvance(afterWith) with
+                                                | (_pipe, afterPipe) -> afterPipe
+                                        else afterWith
+                                    in
+                                        match parserParseMatchCase(caseStartState) with
+                                            | (firstCase, afterFirst) ->
+                                                parserParseMatchCases(
+                                                    matchToken.position,
+                                                    scrutinee,
+                                                    firstPipeColumn,
+                                                    firstCase :: [],
+                                                    afterFirst
+                                                )
+and parserParseMatchCases start scrutinee firstPipeColumn reversedCases state =
+    if parserCurrentKind(state) != Pipe || firstPipeColumn >= 0 && parserLeadingPipeColumn(state) < firstPipeColumn
     then
         (parserAt(
             start,
@@ -883,6 +896,7 @@ and parserParseMatchCases start scrutinee reversedCases state =
                         parserParseMatchCases(
                             start,
                             scrutinee,
+                            firstPipeColumn,
                             nextCase :: reversedCases,
                             afterCase
                         )
@@ -914,23 +928,26 @@ and parserParseHandle state =
                     | (body, afterBody) ->
                         match parserConsume(With)(afterBody) with
                             | (_withToken, afterWith) ->
-                                let armStartState =
-                                    if parserCurrentKind(afterWith) == Pipe
-                                    then
-                                        match parserAdvance(afterWith) with
-                                            | (_pipe, afterPipe) -> afterPipe
-                                    else afterWith
+                                let firstPipeColumn = parserLeadingPipeColumn(afterWith)
                                 in
-                                    match parserParseHandlerArm(armStartState) with
-                                        | (firstArm, afterFirst) ->
-                                            parserParseHandlerArms(
-                                                handleToken.position,
-                                                body,
-                                                firstArm :: [],
-                                                afterFirst
-                                            )
-and parserParseHandlerArms start body reversedArms state =
-    if parserCurrentKind(state) != Pipe
+                                    let armStartState =
+                                        if parserCurrentKind(afterWith) == Pipe
+                                        then
+                                            match parserAdvance(afterWith) with
+                                                | (_pipe, afterPipe) -> afterPipe
+                                        else afterWith
+                                    in
+                                        match parserParseHandlerArm(armStartState) with
+                                            | (firstArm, afterFirst) ->
+                                                parserParseHandlerArms(
+                                                    handleToken.position,
+                                                    body,
+                                                    firstPipeColumn,
+                                                    firstArm :: [],
+                                                    afterFirst
+                                                )
+and parserParseHandlerArms start body firstPipeColumn reversedArms state =
+    if parserCurrentKind(state) != Pipe || firstPipeColumn >= 0 && parserLeadingPipeColumn(state) < firstPipeColumn
     then
         match reversedArms with
             | (_capability, _operation, _parameters, lastBody) :: _ ->
@@ -949,7 +966,7 @@ and parserParseHandlerArms start body reversedArms state =
         match parserAdvance(state) with
             | (_pipe, afterPipe) ->
                 match parserParseHandlerArm(afterPipe) with
-                    | (nextArm, afterArm) -> parserParseHandlerArms(start)(body)(nextArm :: reversedArms)(afterArm)
+                    | (nextArm, afterArm) -> parserParseHandlerArms(start)(body)(firstPipeColumn)(nextArm :: reversedArms)(afterArm)
 and parserParseHandlerArm state =
     match parserConsume(Ident)(state) with
         | (head, afterHead) ->

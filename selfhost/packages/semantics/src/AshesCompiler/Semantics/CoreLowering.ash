@@ -75,6 +75,7 @@ type CoreLoweringError =
     | ForwardTopLevelReference(Str)
     | UnresolvedTraitEvidenceForwarding(TraitEvidenceForwardingError)
     | UnsupportedTypeDeclaration(Str)
+    | CoreMatchCoverageError(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -2569,10 +2570,49 @@ let lowerMatchArmsDispatch allCases lower (plan: CoreMatchPlan) =
                     | Some((groups, defaultIndex)) -> lowerMatchArmsViaTagGroups(cases)(groups)(defaultIndex)(lower)(plan)
                     | None -> lowerMatchArms(cases)(lower)(plan)
 
+// The coverage and reachability rules live in `TypeInference.ash`'s `matchCoverageError` — the
+// exact checker the project-inference path runs — fed here with a minimal `TypeEnvironment`
+// carrying the live constructor layouts (intrinsic and user-declared alike, deep-copied out of
+// the long-lived state), so the single-file lowering path reports the same non-exhaustive-match,
+// unreachable-arm, and mixed-ADT diagnostics with stage 0's wording.
+let recursive constructorInferenceDefinitionsFromLayouts layouts =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { name = name, scheme = scheme, fieldNames = fieldNames } :: rest ->
+            ConstructorInferenceDefinition(
+                name = Ashes.Internal.deepCopy(name),
+                scheme = Ashes.Internal.deepCopy(scheme),
+                fieldNames = Ashes.Internal.deepCopy(fieldNames)
+            ) :: constructorInferenceDefinitionsFromLayouts(rest)
+
+let coverageEnvironment state =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts } -> emptyTypeEnvironment(Unit) with constructors = constructorInferenceDefinitionsFromLayouts(layouts)
+
+let coverageErrorMessage inferenceError =
+    match inferenceError with
+        | NonExhaustiveMatch(message) -> message
+        | UnreachableMatchArm(message) -> message
+        | other -> Ashes.Trait.Show.show(other)
+
+let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state, valueType = valueType } ->
+            match state
+            |> coverageEnvironment
+            |> matchCoverageError(cases)(resolveType(state)(valueType)) with
+                | None -> plan
+                | Some(inferenceError) ->
+                    plan with error = Some(inferenceError
+                    |> coverageErrorMessage
+                    |> CoreMatchCoverageError)
+
 let lowerMatch value cases lower state =
     state
     |> lower(value)
     |> prepareMatchPlan
+    |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
     |> finishMatchPlan
 

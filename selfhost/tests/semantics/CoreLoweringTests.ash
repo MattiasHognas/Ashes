@@ -1214,6 +1214,7 @@ let guardedMatch =
         ExprVar("Red"),
         [
             (PatternConstructor("Red")([]), ExprInt(10), Some(ExprBool(true))),
+            shadeArm("Red")(15),
             shadeArm("Green")(20),
             shadeArm("Blue")(30),
             shadeArm("Cyan")(40),
