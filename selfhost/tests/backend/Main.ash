@@ -2997,11 +2997,16 @@ let buildShippedListLengthModule shipped name context = codegenShippedSource(shi
 
 let buildShippedListLengthSelectorModule shipped name context = codegenShippedSource(shipped)("import Ashes.Collection.List.length as len\nAshes.IO.print(len([4, 5, 6, 7]))")(name)(context)
 
+let buildIntrinsicModuleImportModule shipped name context = codegenShippedSource(shipped)("import Ashes.IO\nAshes.IO.print(42)")(name)(context)
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
 let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
     assertProgramPrints(buildShippedListLengthSelectorModule(shipped))("selfhostBackendRunShippedListLengthSelector")("selfhost_backend_shipped_list_length_selector_e2e")("4")
+
+let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
+    assertProgramPrints(buildIntrinsicModuleImportModule(shipped))("selfhostBackendRunIntrinsicModuleImport")("selfhost_backend_intrinsic_module_import_e2e")("42")
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
@@ -3290,6 +3295,7 @@ let run shipped =
     |> testRunStaticExecutableForRealIrPrintBoolFalseModule
     |> testRunStaticExecutableForShippedListLengthModule(shipped)
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
+    |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

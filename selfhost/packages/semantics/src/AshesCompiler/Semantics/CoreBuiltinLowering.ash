@@ -14,6 +14,7 @@ export (
     type CoreBuiltinEmissionResult(..),
     type CoreBuiltinEmission(..),
     value coreBuiltinKind,
+    value isIntrinsicBuiltinModule,
     value standardBuiltinLayouts,
     value reservedBuiltinTypeVariableCount,
     value emitCoreBuiltin,
@@ -385,6 +386,32 @@ let coreBuiltinKind moduleName memberName =
         | "Ashes.IO.Process" -> processBuiltinKind(memberName)
         | "Ashes.IO.Console" -> consoleBuiltinKind(memberName)
         | _ -> None
+
+// The module names `coreBuiltinKind` dispatches on — the builtin modules that exist without any
+// shipped `.ash` source. An import of one of these resolves to an empty synthesized module (its
+// members are reached through qualified access, which needs no import); every other missing
+// `Ashes.*` module stays a real error. Keep this list in step with `coreBuiltinKind`'s arms.
+let isIntrinsicBuiltinModule moduleName =
+    match moduleName with
+        | "Ashes.IO" -> true
+        | "Ashes.Number.Math" -> true
+        | "Ashes.IO.File" -> true
+        | "Ashes.IO.Directory" -> true
+        | "Ashes.IO.Environment" -> true
+        | "Ashes.Text" -> true
+        | "Ashes.Rune" -> true
+        | "Ashes.Number.BigInt" -> true
+        | "Ashes.Internal.Regex" -> true
+        | "Ashes.Byte" -> true
+        | "Ashes.Number.UInt" -> true
+        | "Ashes.Net.Http" -> true
+        | "Ashes.Net.Tcp" -> true
+        | "Ashes.Net.Tcp.Server" -> true
+        | "Ashes.Net.Tls" -> true
+        | "Ashes.Net.Tls.Server" -> true
+        | "Ashes.IO.Process" -> true
+        | "Ashes.IO.Console" -> true
+        | _ -> false
 
 // Backs "qualified access (no import required)" (language.md's own section title): a real Ashes
 // program never needs to `import Ashes.IO` before calling `Ashes.IO.print`, so builtin

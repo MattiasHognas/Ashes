@@ -16,6 +16,7 @@ import AshesCompiler.Frontend.ModulePlan
 import AshesCompiler.Frontend.ModuleSource
 import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 export (
@@ -97,7 +98,24 @@ let recursive loadReachable (importer: Str) (pending: List(Str)) (loaded: List(L
                     then Error(UnsupportedNonShippedImport(importer)(name))
                     else
                         match findShipped(name)(shipped) with
-                            | None -> Error(ShippedModuleMissing(importer)(name))
+                            | None ->
+                                if isIntrinsicBuiltinModule(name)
+                                then
+                                    let program = ProgramSyntax(items = [], body = None)
+                                    in
+                                        match buildModuleInterface(name)([])(program) with
+                                            | Error(error) -> Error(ShippedInterfaceError("<builtin>")(error))
+                                            | Ok(interface) ->
+                                                loadReachable(name)(rest)(
+                                                    LoadedShippedModule(
+                                                        name = name,
+                                                        sourcePath = "<builtin>",
+                                                        imports = [],
+                                                        program = program,
+                                                        interface = interface
+                                                    ) :: loaded
+                                                )(shipped)
+                                else Error(ShippedModuleMissing(importer)(name))
                             | Some(ShippedModuleText { sourcePath = path, source = source }) ->
                                 match loadModuleText(name)(path)(source) with
                                     | Error(error) -> Error(error)
