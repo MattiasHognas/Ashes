@@ -119,6 +119,9 @@ export (
     value buildStore,
     value buildLoad,
     value buildCall,
+    value tailCallKindTail,
+    value tailCallKindMustTail,
+    value setTailCallKind,
     value addGlobal,
     value setInitializer,
     value setGlobalConstant,
@@ -212,6 +215,7 @@ external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LL
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
+external LLVMSetTailCallKind(LLVMValueRef, u32) -> void = "LLVMSetTailCallKind@libLLVM.so"
 external LLVMAddGlobal(LLVMModuleRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMAddGlobal@libLLVM.so"
 external LLVMSetInitializer(LLVMValueRef, LLVMValueRef) -> void = "LLVMSetInitializer@libLLVM.so"
 external LLVMSetGlobalConstant(LLVMValueRef, Bool) -> void = "LLVMSetGlobalConstant@libLLVM.so"
@@ -456,6 +460,14 @@ let buildLoad builder type_ ptr name = LLVMBuildLoad2(builder)(type_)(ptr)(name)
 // external, matching `functionType`. `argCount` is likewise taken from the caller rather than
 // derived from `args`'s length, for the same reason `functionType`'s `paramCount` is.
 let buildCall builder calleeType callee args argCount name = LLVMBuildCall2(builder)(calleeType)(callee)(args)(argCount)(name)
+
+// LLVMTailCallKind: 1 = the advisory `tail` marker, 2 = the hard-guarantee `musttail` marker
+// (`LlvmApi.cs`'s own LlvmTailCallKind values).
+let tailCallKindTail = 1u32
+
+let tailCallKindMustTail = 2u32
+
+let setTailCallKind call kind = LLVMSetTailCallKind(call)(kind)
 
 let addGlobal module_ type_ name = LLVMAddGlobal(module_)(type_)(name)
 

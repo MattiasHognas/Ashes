@@ -2278,6 +2278,10 @@ let buildRealIrPrintBoolFalseModule name context = codegenRealSource("Ashes.IO.p
 
 let buildOptimizedIrRecursiveHelperModule name context = codegenOptimizedRealSource("let recursive fact n = if n > 1 then n * fact(n - 1) else 1\nAshes.IO.print(fact(5))")(name)(context)
 
+let buildOptimizedIrDeepTailLoopModule name context = codegenOptimizedRealSource("let recursive loop n acc = if n == 0 then acc else loop(n - 1)(acc + 1)\nAshes.IO.print(loop(2000000)(0))")(name)(context)
+
+let buildOptimizedIrDeepMutualRecursionModule name context = codegenOptimizedRealSource("let recursive isEven n = if n == 0 then true else isOdd(n - 1) and isOdd n = if n == 0 then false else isEven(n - 1)\nAshes.IO.print(isEven(2000000))")(name)(context)
+
 let resolveHostTargetMachine triple =
     match getTargetFromTriple(triple) with
         | (_, None, _) -> Error("could not resolve a target for " + triple)
@@ -3001,6 +3005,10 @@ let testRunStaticExecutableForShippedListLengthSelectorModule shipped unit =
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
+let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
+
+let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assertProgramPrints(buildOptimizedIrDeepMutualRecursionModule)("selfhostBackendRunOptimizedDeepMutualRecursion")("selfhost_backend_deep_mutual_recursion_e2e")("true")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -3273,6 +3281,8 @@ let run shipped =
     |> testRunStaticExecutableForRealIrRecursiveHelperModule
     |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
+    |> testRunStaticExecutableForOptimizedIrDeepTailLoopModule
+    |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

@@ -1411,15 +1411,126 @@ let codegenInstructionKind cx builder kind state =
                                                 in (tempEnv, true)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
-let recursive codegenInstructions cx builder instructions state =
+// Whether any instruction allocates native stack memory reachable outside its own frame slot
+// bookkeeping. `musttail` is a hard guarantee that the callee may reuse the caller's frame
+// immediately, so a function that stack-allocates anything a callee could still reach (a closure
+// environment, a handler frame) only gets the advisory `tail` marker — port of `LlvmCodegen.cs`'s
+// `FunctionAllocatesNativeStackMemory`.
+let recursive functionAllocatesStackMemory instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = AllocStack(_, _) } :: _ -> true
+        | IrInstruction { instruction = MakeClosureStack(_, _, _, _, _, _) } :: _ -> true
+        | _ :: rest -> functionAllocatesStackMemory(rest)
+
+// The join every lowered multi-arm function body converges on: a function whose last three
+// instructions are `Label(end); LoadLocal(x, slot); Return(x)` returns whatever each arm stored
+// into `slot` before jumping to `end`. An arm whose stored value is a just-made `CallKnown` result
+// is a tail call through that join, which the fusion below turns into a native tail call.
+let recursive functionTailReturnTriple instructions =
+    match instructions with
+        | IrInstruction { instruction = Label(endLabel) } :: IrInstruction { instruction = LoadLocal(loaded, slot) } :: IrInstruction { instruction = Return(source) } :: [] ->
+            if source == loaded
+            then Some((endLabel, slot))
+            else None
+        | [] -> None
+        | _ :: rest -> functionTailReturnTriple(rest)
+
+// The `(env, arg, flag)` direct call `CallKnown`'s dispatch case emits, shared with the fused
+// tail-call path below.
+let emitKnownCallValue cx builder tempEnv funcLabel envTemp argTemp flagTemp target =
+    match cx with
+        | CodegenContext { types = CoreLlvmTypes { i64 = i64 }, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType } ->
+            let flagRef =
+                if flagTemp < 0
+                then constInt(i64)(0u64)(false)
+                else lookupIndexed(flagTemp)(tempEnv)
+            in
+                buildCall(builder)(closureFunctionType)(lookupIndexed(funcLabel)(liftedFunctions))([lookupIndexed(envTemp)(tempEnv), lookupIndexed(argTemp)(tempEnv), flagRef])(3u32)(
+                    "t" + Ashes.Text.fromInt(target)
+                )
+
+// A `CallKnown` whose result the very next instruction returns is a native tail call: the loop a
+// TCO'd recursive function compiles to. Without the marker every iteration pushes a frame and a
+// deep loop overflows the stack (`LlvmCodegen.cs`'s `DetermineTailCallKind`). When nothing in the
+// function stack-allocates escaping memory the pair is fused into `musttail` + `ret` (LLVM's
+// verifier requires the call to precede its ret directly, so the ordinary temp store/load round
+// trip must not run between them); otherwise the call keeps the advisory `tail` marker and the
+// `Return` is emitted through the ordinary dispatch.
+let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack returnTriple instructions state =
     match instructions with
         | [] -> state
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = Return(source) } :: restAfterReturn as returnAndRest) ->
+            if environmentIsStackAllocated || source != target || cx.isEntry
+            then
+                state
+                |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
+                |> codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(returnAndRest)
+            else
+                match state with
+                    | (tempEnv, _terminated) ->
+                        let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
+                        in
+                            if allocatesStack
+                            then
+                                let _ = setTailCallKind(call)(tailCallKindTail)
+                                in codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(returnAndRest)(((target, call) :: tempEnv, false))
+                            else
+                                let _ = setTailCallKind(call)(tailCallKindMustTail)
+                                in
+                                    let _ = buildRet(builder)(call)
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(restAfterReturn)(((target, call) :: tempEnv, true))
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: IrInstruction { instruction = Jump(jumpLabel) } :: restAfterJump as storeAndRest) ->
+            let fused =
+                match returnTriple with
+                    | Some((endLabel, resultSlot)) -> environmentIsStackAllocated == false && cx.isEntry == false && storeSource == target && storeSlot == resultSlot && jumpLabel == endLabel
+                    | None -> false
+            in
+                if fused == false
+                then
+                    state
+                    |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
+                    |> codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(storeAndRest)
+                else
+                    match state with
+                        | (tempEnv, _terminated) ->
+                            let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
+                            in
+                                if allocatesStack
+                                then
+                                    let _ = setTailCallKind(call)(tailCallKindTail)
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(storeAndRest)(((target, call) :: tempEnv, false))
+                                else
+                                    let _ = setTailCallKind(call)(tailCallKindMustTail)
+                                    in
+                                        let _ = buildRet(builder)(call)
+                                        in codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(restAfterJump)(((target, call) :: tempEnv, true))
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: (IrInstruction { instruction = Label(nextLabel) } :: restAfterLabel as labelAndRest) as storeAndRest) ->
+            let fused =
+                match returnTriple with
+                    | Some((endLabel, resultSlot)) -> environmentIsStackAllocated == false && cx.isEntry == false && allocatesStack == false && storeSource == target && storeSlot == resultSlot && nextLabel == endLabel
+                    | None -> false
+            in
+                if fused == false
+                then
+                    state
+                    |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
+                    |> codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(storeAndRest)
+                else
+                    match state with
+                        | (tempEnv, _terminated) ->
+                            let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
+                            in
+                                let _ = setTailCallKind(call)(tailCallKindMustTail)
+                                in
+                                    let _ = buildRet(builder)(call)
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(labelAndRest)(((target, call) :: tempEnv, true))
         | instruction :: rest ->
             match instruction with
                 | IrInstruction { instruction = kind } ->
                     state
                     |> codegenInstructionKind(cx)(builder)(kind)
-                    |> codegenInstructions(cx)(builder)(rest)
+                    |> codegenInstructions(cx)(builder)(allocatesStack)(returnTriple)(rest)
 
 // Builds one function's own scaffolding (entry block, local slots, label blocks) once its
 // `irFunction`'s instructions are known and returns the `CodegenContext` its body is emitted
@@ -1477,7 +1588,8 @@ let buildFunctionContext mc functionValue isEntry irFunction =
 let codegenFunctionBody mc functionValue isEntry irFunction =
     match buildFunctionContext(mc)(functionValue)(isEntry)(irFunction) with
         | (cx, instructions) ->
-            let _ = codegenInstructions(cx)(mc.moduleBuilder)(instructions)(([], false))
+            let _ =
+                codegenInstructions(cx)(mc.moduleBuilder)(functionAllocatesStackMemory(instructions))(functionTailReturnTriple(instructions))(instructions)(([], false))
             in Unit
 
 // Emits every lifted function's body into the `LLVMValueRef` `declareLiftedFunctions` already
