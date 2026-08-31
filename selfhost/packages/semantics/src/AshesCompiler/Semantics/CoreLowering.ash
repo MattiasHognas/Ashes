@@ -5452,28 +5452,95 @@ let recursive buildConstructorSchemeBody (fieldTypes: List(SemanticType)) (resul
         | fieldType :: rest ->
             SemFunction(fieldType)(buildConstructorSchemeBody(rest)(resultType))(None)
 
-let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (tag: Int) (constructor: TypeConstructor) =
+// Looks up a previously-registered type's own declared arity from its constructors' shared result
+// type (`SemNamed(_, name, arguments)` at the end of a constructor's curried scheme — every
+// constructor of the same type shares that same result, so the first match found is authoritative).
+// Returns `None` both for a genuinely unknown name and for a type not yet registered when its own
+// fields are being classified (self/forward reference) — either way, `typeExprArityErrors` below
+// treats "not found here" as "nothing to check," preserving the existing lenient fallback a
+// self-referential ADT (`type Tree = | Node(Tree)`) or a not-yet-processed forward reference needs.
+let recursive resultNamedTypeArity (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_argument, result, _row) -> resultNamedTypeArity(result)
+        | SemNamed(_symbolId, name, arguments) -> Some((name, length(arguments)))
+        | _other -> None
+
+let recursive findDeclaredTypeArity (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | CoreConstructorLayout { scheme = TypeScheme { body = body } } :: rest ->
+            match resultNamedTypeArity(body) with
+                | Some((candidateName, arity)) ->
+                    if candidateName == name
+                    then Some(arity)
+                    else findDeclaredTypeArity(name)(rest)
+                | None -> findDeclaredTypeArity(name)(rest)
+
+// A bare reference to a generic type (`Inner` where `Inner` needs one type argument, as opposed to
+// `Inner(a)`) previously classified as `SemNamed(0, "Inner", [])` in `typeExprToSemanticType` below
+// with no arity check at all — silently wrong rather than diagnosed. This walk runs first and
+// reports the first mismatch it finds, so a genuinely wrong field type still gets a specific
+// "expects N type argument(s)" message instead of the generic unsupported-field-type fallback.
+let recursive typeExprArityErrors (typeExpr: TypeExpr) (layouts: List(CoreConstructorLayout)) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprArityErrors(inner)(layouts)
+        | TypeNamed(name) ->
+            match findDeclaredTypeArity(name)(layouts) with
+                | Some(arity) ->
+                    if arity == 0
+                    then None
+                    else Some((name, arity, 0))
+                | None -> None
+        | TypeApplied("List", element :: []) -> typeExprArityErrors(element)(layouts)
+        | TypeApplied(name, arguments) ->
+            match findDeclaredTypeArity(name)(layouts) with
+                | Some(arity) ->
+                    let actualArity = length(arguments)
+                    in
+                        if arity == actualArity
+                        then typeExprArityErrorsList(arguments)(layouts)
+                        else Some((name, arity, actualArity))
+                | None -> typeExprArityErrorsList(arguments)(layouts)
+        | TypeTuple(elements) -> typeExprArityErrorsList(elements)(layouts)
+        | _other -> None
+and typeExprArityErrorsList (typeExprs: List(TypeExpr)) (layouts: List(CoreConstructorLayout)) =
+    match typeExprs with
+        | [] -> None
+        | head :: tail ->
+            match typeExprArityErrors(head)(layouts) with
+                | Some(mismatch) -> Some(mismatch)
+                | None -> typeExprArityErrorsList(tail)(layouts)
+
+let arityMismatchMessage name expected actual = "Type '" + name + "' expects " + Ashes.Text.fromInt(expected) + " type argument(s) but got " + Ashes.Text.fromInt(actual) + "."
+
+let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (tag: Int) (layouts: List(CoreConstructorLayout)) (constructor: TypeConstructor) =
     match constructor with
         | TypeConstructor { name = name, parameters = parameters, fieldNames = fieldNames } ->
-            match constructorFieldSemanticTypes(parameters)(parameterTypes) with
-                | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, or one of the type's own type parameters)"))
-                | Some(fieldTypes) ->
-                    Ok(CoreConstructorLayout(
-                        name = name,
-                        tag = tag,
-                        scheme = TypeScheme(quantified = quantified, body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
-                        fieldNames = fieldNames,
-                        isZeroCost = false
-                    ))
+            match typeExprArityErrorsList(parameters)(layouts) with
+                | Some((typeName, expected, actual)) ->
+                    Error(actual
+                    |> arityMismatchMessage(typeName)(expected)
+                    |> UnsupportedTypeDeclaration)
+                | None ->
+                    match constructorFieldSemanticTypes(parameters)(parameterTypes) with
+                        | None -> Error(UnsupportedTypeDeclaration("constructor '" + name + "' has a field type outside the supported scalar/type-parameter set (Int, Str, Bool, Float, BigInt, Rune, Bytes, Unit, or one of the type's own type parameters)"))
+                        | Some(fieldTypes) ->
+                            Ok(CoreConstructorLayout(
+                                name = name,
+                                tag = tag,
+                                scheme = TypeScheme(quantified = quantified, body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
+                                fieldNames = fieldNames,
+                                isZeroCost = false
+                            ))
 
-let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (constructors: List(TypeConstructor)) =
+let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (layouts: List(CoreConstructorLayout)) (constructors: List(TypeConstructor)) =
     match constructors with
         | [] -> Ok([])
         | constructor :: rest ->
-            match buildUserConstructorLayout(resultType)(quantified)(parameterTypes)(index)(constructor) with
+            match buildUserConstructorLayout(resultType)(quantified)(parameterTypes)(index)(layouts)(constructor) with
                 | Error(error) -> Error(error)
                 | Ok(layout) ->
-                    match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(index + 1)(rest) with
+                    match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(index + 1)(layouts)(rest) with
                         | Error(error) -> Error(error)
                         | Ok(restLayouts) -> Ok(layout :: restLayouts)
 
@@ -5522,25 +5589,107 @@ let recursive typeParameterQuantified (namedIds: List((Str, Int))) =
 // already prove works at every call site. A type parameter's own id is quantified in the scheme,
 // so `instantiate` mints a fresh variable per use, never confusing two different call sites'
 // instantiations with each other.
+// language.md's "4. Algebraic Data Types" section: "canonical Ashes source should declare [type
+// parameters] explicitly," but for migration compatibility a payload name with no explicit
+// parameter list is an implicit type parameter "only when it denotes no known type" — a
+// self-recursive field, a primitive, or any other already-registered type stays concrete
+// (`type AppError = | Json(JsonError)` refers to the real `JsonError` type, not a fresh
+// parameter); only a genuinely unknown name, like `a` in `type Inner = | Inner(a)`, becomes one.
+let isPrimitiveTypeName name =
+    match name with
+        | "Int" -> true
+        | "Str" -> true
+        | "Bool" -> true
+        | "Float" -> true
+        | "BigInt" -> true
+        | "Rune" -> true
+        | "Bytes" -> true
+        | _other -> false
+
+let recursive containsTypeName names target =
+    match names with
+        | [] -> false
+        | head :: tail ->
+            if head == target
+            then true
+            else containsTypeName(tail)(target)
+
+let isKnownTypeName name selfName layouts externalOpaqueTypes =
+    if name == selfName
+    then true
+    else
+        if isPrimitiveTypeName(name)
+        then true
+        else
+            if containsTypeName(externalOpaqueTypes)(name)
+            then true
+            else
+                match findDeclaredTypeArity(name)(layouts) with
+                    | Some(_arity) -> true
+                    | None -> false
+
+let recursive collectImplicitTypeParameterNames (typeExpr: TypeExpr) selfName layouts externalOpaqueTypes acc =
+    match typeExpr with
+        | TypeAt(_span, inner) -> collectImplicitTypeParameterNames(inner)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeNamed(name) ->
+            if isKnownTypeName(name)(selfName)(layouts)(externalOpaqueTypes)
+            then acc
+            else
+                if containsTypeName(acc)(name)
+                then acc
+                else append(acc)([name])
+        | TypeApplied("List", element :: []) -> collectImplicitTypeParameterNames(element)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeApplied(_name, arguments) -> collectImplicitTypeParameterNamesList(arguments)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | TypeTuple(elements) -> collectImplicitTypeParameterNamesList(elements)(selfName)(layouts)(externalOpaqueTypes)(acc)
+        | _other -> acc
+and collectImplicitTypeParameterNamesList (typeExprs: List(TypeExpr)) selfName layouts externalOpaqueTypes acc =
+    match typeExprs with
+        | [] -> acc
+        | head :: tail ->
+            acc
+            |> collectImplicitTypeParameterNames(head)(selfName)(layouts)(externalOpaqueTypes)
+            |> collectImplicitTypeParameterNamesList(tail)(selfName)(layouts)(externalOpaqueTypes)
+
+let recursive collectImplicitTypeParametersFromConstructors (constructors: List(TypeConstructor)) selfName layouts externalOpaqueTypes acc =
+    match constructors with
+        | [] -> acc
+        | TypeConstructor { parameters = parameters } :: rest ->
+            acc
+            |> collectImplicitTypeParameterNamesList(parameters)(selfName)(layouts)(externalOpaqueTypes)
+            |> collectImplicitTypeParametersFromConstructors(rest)(selfName)(layouts)(externalOpaqueTypes)
+
+let recursive namesToTypeParameters (names: List(Str)) =
+    match names with
+        | [] -> []
+        | head :: tail -> TypeParameter(name = head) :: namesToTypeParameters(tail)
+
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
         | TypeDecl { name = name, typeParameters = typeParameters, constructors = constructors } ->
             match state with
-                | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts } ->
-                    match assignTypeParameterIds(typeParameters)(supply) with
-                        | (namedIds, nextSupply) ->
-                            let resultType =
-                                namedIds
-                                |> typeParameterSemVars
-                                |> SemNamed(0)(name)
-                            in
-                                let quantified = typeParameterQuantified(namedIds)
+                | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts, externalOpaqueTypes = externalOpaqueTypes } ->
+                    let effectiveTypeParameters =
+                        match typeParameters with
+                            | [] ->
+                                []
+                                |> collectImplicitTypeParametersFromConstructors(constructors)(name)(existingLayouts)(externalOpaqueTypes)
+                                |> namesToTypeParameters
+                            | explicit -> explicit
+                    in
+                        match assignTypeParameterIds(effectiveTypeParameters)(supply) with
+                            | (namedIds, nextSupply) ->
+                                let resultType =
+                                    namedIds
+                                    |> typeParameterSemVars
+                                    |> SemNamed(0)(name)
                                 in
-                                    let parameterTypes = typeParameterResolutionTable(namedIds)
+                                    let quantified = typeParameterQuantified(namedIds)
                                     in
-                                        match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(constructors) with
-                                            | Error(error) -> Error(error)
-                                            | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
+                                        let parameterTypes = typeParameterResolutionTable(namedIds)
+                                        in
+                                            match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
+                                                | Error(error) -> Error(error)
+                                                | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level

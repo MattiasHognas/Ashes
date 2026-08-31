@@ -1855,9 +1855,39 @@ same public behavior.
   `Str` fields already proved, so recursive ADTs, list-valued fields, and tuple fields compile and
   run end to end (a recursive tree sum prints `6`; a constructor holding a `List(Int)`, a
   `(Str, Int)` tuple, and a `Maybe(Int)` prints through all three). A bare reference to a
-  PARAMETERIZED type without its arguments is currently accepted as a zero-argument `SemNamed`
-  rather than rejected (`adt_field_parameterized_needs_args` compiles where stage 0 diagnoses it) —
-  part of the missing-diagnostics set. Function-typed fields (`TypeArrow`) still refuse cleanly
+  PARAMETERIZED type without its arguments now diagnoses rather than silently accepting a
+  zero-argument `SemNamed` — closing `adt_field_parameterized_needs_args`, the last of the
+  missing-diagnostics set that lived in this single-file pipeline rather than in `TypeResolution.ash`
+  proper. Fixing it exposed a bigger, genuinely separate gap along the way: language.md's own
+  migration-compatibility rule ("when type parameters are omitted, a payload name is an implicit
+  type parameter only when it denotes no known type") was entirely unimplemented here — `type Inner
+  = | Inner(a)` (no explicit `(a)` after the type name) resolved `a` as a bogus concrete
+  zero-argument type `SemNamed(0, "a", [])` rather than a fresh type variable, so ordinary omitted-
+  parameter ADTs (`adt_constructor_multi_arg_run`, `adt_pair_match`) failed to type-check their own
+  constructors at all — not just the arity diagnostic this item was scoped to add. `registerTopLevelTypeDeclaration`
+  now walks every constructor's payload types when the type's own `typeParameters` list is empty,
+  collecting each name that denotes no known type (not the declaring type's own name, not a
+  primitive, not an external opaque type, not an already-registered type — the same
+  `findDeclaredTypeArity` lookup the arity check itself uses) into an implicit parameter list in
+  first-occurrence order, and quantifies those the same way an explicit `(a)` would. The arity
+  check (`typeExprArityErrorsList`, run before `constructorFieldSemanticTypes`) then finds `Inner`'s
+  now-correct arity of `1` and reports `Type 'Inner' expects 1 type argument(s) but got 0.` for
+  `Outer(Inner)`'s bare field. Verified end to end (survey 251 → 253, plus the diagnostic itself
+  closing `adt_field_parameterized_needs_args`: three tests, not one). **Found and worked around,
+  not fixed, while landing this**: importing `Ashes.Collection.List.length` into `CoreLowering.ash`
+  specifically (every other file in the package already imports it fine) corrupted stage 0's own
+  project-mode module-stitching badly enough to fail the PARSE stage with a cascade of unrelated
+  `ASH003` errors — root-caused (not just observed) to two unrelated pre-existing local function
+  parameters in this same file, `bigIntFitsLength`/`bigIntFirstLength`, each named `length`,
+  shadowing the newly-imported top-level binding of the same name; stage 0's reference-rewriting
+  pass evidently does not respect that a local parameter should shadow an outer import when
+  rewriting name references during stitching. Renaming both parameters to `digitCount` — a real
+  naming improvement independent of this fix, not a workaround — resolved it, so `length` is now the
+  genuine `Ashes.Collection.List` import throughout this file rather than a local duplicate. The
+  underlying stage-0 shadowing bug itself remains unfixed and is a real, separate, higher-value
+  target for its own slice: it can silently corrupt ANY future selfhost source file that imports a
+  name already used as a local parameter somewhere in that file, with no diagnostic at all — just
+  cascading, misleading parse errors far from the real cause. Function-typed fields (`TypeArrow`) still refuse cleanly
   with `UnsupportedTypeDeclaration` rather than registering an incorrect layout. `isZeroCost` is
   always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
   to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
