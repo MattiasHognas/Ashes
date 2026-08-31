@@ -2202,11 +2202,17 @@ same public behavior.
   real lowering bug: `numericDefault` mapped `SemString` to `SemInt` through its catch-all, so a
   recursive accumulator parameter meeting `acc + "x"` was bound to `Int` and every
   string-accumulator function failed with `CoreOperatorTypeMismatch("+", SemInt, SemString)`.
-  Text.ash now lowers completely EXCEPT `join`, whose `first + second` sits in a nested recursive
-  group where BOTH operands are still unresolved type variables at the operator — the eager
-  both-variable default picks `Int` where full inference would later learn `Str` from `reduce`'s
-  `""`. Deferred operator typing (or running the stitched path through `TypeInference.ash` before
-  lowering) is the remaining blocker for `import Ashes.Text` programs. Separately observed:
+  The both-operands-unresolved case (`join`'s `first + second` in a nested recursive group, where
+  full inference only later learns `Str` from `reduce`'s `""`) is handled by deferred operator
+  typing: the operands are unified with each other, an `AddInt` is emitted speculatively and
+  recorded under its target temp (temps survive `pruneDeadCaptures`, positions do not), pendings
+  seal per function label at `finishLiftedFunction`, the pending variables are excluded from
+  generalization (bundled into one unquantified scheme treated as environment, so the first
+  concrete use binds them for the whole group instead of every call site getting a fresh
+  instantiation), and `buildProgram` swaps each recorded instruction for the resolved type's real
+  form — `ConcatStr`, `AddFloat`, BigInt add, or the `Int` default — once the substitution is
+  final. `import Ashes.Text` programs now compile and run end to end (`Ashes.Text.join(", ")` on a
+  real Linux process prints `a, b, c`). Separately observed:
   `ShippedParseError` labels a truncated Text.ash's diagnostics with `lib/Ashes/Trait.ash` — the
   error path attributes the wrong module's source path.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
