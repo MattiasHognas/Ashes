@@ -3056,6 +3056,10 @@ let buildBytesBuilderOpsModule name context = codegenOptimizedRealSource("let gr
 
 let testRunStaticExecutableForBytesBuilderOpsModule unit = assertProgramPrints(buildBytesBuilderOpsModule)("selfhostBackendRunBytesBuilderOps")("selfhost_backend_bytes_builder_ops_e2e")("20eq")
 
+let buildBytesRangeOpsModule name context = codegenOptimizedRealSource("let joined = Ashes.Byte.append(Ashes.Byte.empty(Unit))(Ashes.Byte.u32Le(16909060u32))\nlet patched = Ashes.Byte.setU16Le(Ashes.Byte.allocate(4))(1)(4660u16)\nlet shifted = Ashes.Byte.copyRange(Ashes.Byte.fromList([1u8, 2u8, 3u8, 4u8, 5u8]))(1)(Ashes.Byte.fromList([9u8, 8u8]))(0)(2)\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Byte.getU16Le(joined)(0)) + \"|\" + Ashes.Text.fromInt(Ashes.Byte.getU16Le(patched)(1)) + \"|\" + Ashes.Text.toHex(255) + \"|\" + Ashes.Text.fromInt(Ashes.Byte.get(shifted)(1)) + \"|\" + (match Ashes.Byte.scanHash(Ashes.Byte.fromList([65u8, 59u8]))(59)(0) with | (idx, _h) -> Ashes.Text.fromInt(idx)))")(name)(context)
+
+let testRunStaticExecutableForBytesRangeOpsModule unit = assertProgramPrints(buildBytesRangeOpsModule)("selfhostBackendRunBytesRangeOps")("selfhost_backend_bytes_range_ops_e2e")("772|4660|0xff|9|1")
+
 let testRunStaticExecutableForTextUnconsTextModule unit = assertProgramPrints(buildTextUnconsTextModule)("selfhostBackendRunTextUnconsText")("selfhost_backend_text_uncons_text_e2e")("h|ello<empty>")
 
 let testRunStaticExecutableForRuneToTextModule unit = assertProgramPrints(buildRuneToTextModule)("selfhostBackendRunRuneToText")("selfhost_backend_rune_to_text_e2e")("Aé€")
@@ -3368,6 +3372,7 @@ let run shipped =
     |> testRunStaticExecutableForFloatScalarOpsModule
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
+    |> testRunStaticExecutableForBytesRangeOpsModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

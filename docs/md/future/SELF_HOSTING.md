@@ -2268,9 +2268,18 @@ same public behavior.
   selfhost typing mirrors it with `acceptBuiltinArgumentWidths`, which lets a matching
   small-unsigned actual stand in for the scheme's `Int` parameter before `bindCoreValueTypes`
   runs, unblocking the `fromInt(Byte.get(...))` shape the byte test files use.
-  `Ashes.Text.parseFloat` (the phased float parse; `LLVMBuildSIToFP` is already bound) and the
-  remaining `Ashes.Byte` members (`empty`, `append`, `u16Le`/`u32Le`/`u64Le`, `getU16Le`...,
-  `setU64Le`..., `copyRange`, `set`) are the next slices.
+  The remaining `Ashes.Byte` members followed in the same schemes-plus-emission pattern: `empty`,
+  `append` (the shared string-concat layout), the little-endian encoders `u16Le`/`u32Le`/`u64Le`
+  and bounds-checked decoders `getU16Le`/`getU32Le`/`getU64Le`, the pure updates
+  `set`/`setU16Le`/`setU32Le`/`setU64Le` and `copyRange` (both range-checked with stage 0's panic
+  messages, writing into a fresh copy — the copy never aliases the source, so stage 0's
+  same-buffer scratch path is unreachable), and `scanHash` (the stop-at-needle FNV-1a pass
+  returning `(index, hash)`); `Ashes.Text.toHex` came along for the decode test's `u64` printing
+  (the 32-byte back-to-front digit buffer, `0x` prefix, and sign), with
+  `acceptBuiltinArgumentWidths` extended so `toHex` and `Ashes.Number.UInt.toInt` accept any
+  unsigned width the way stage 0's ad-hoc rules do (stage 0's `toInt` defaults an unconstrained
+  argument to `u8`, which the scheme's own unification already provides). `Ashes.Text.parseFloat` (the phased float parse; `LLVMBuildSIToFP` is already
+  bound) is the next slice.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

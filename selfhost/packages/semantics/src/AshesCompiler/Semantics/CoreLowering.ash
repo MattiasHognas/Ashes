@@ -3093,6 +3093,20 @@ let acceptBuiltinArgumentWidths kind expected actual state =
                             else expected
                         | _ -> expected
                 | _ -> expected
+        | CoreTextToHex ->
+            match (expected, actual) with
+                | (SemInt :: expectedTail, actualHead :: _actualTail) ->
+                    match resolveType(state)(actualHead) with
+                        | SemUInt(_bits) -> actualHead :: expectedTail
+                        | _ -> expected
+                | _ -> expected
+        | CoreUIntToInt ->
+            match (expected, actual) with
+                | (SemUInt(8) :: expectedTail, actualHead :: _actualTail) ->
+                    match resolveType(state)(actualHead) with
+                        | SemUInt(_bits) -> actualHead :: expectedTail
+                        | _ -> expected
+                | _ -> expected
         | _ -> expected
 
 let finishBuiltinArity arguments lower shape expectedArity actualArity =

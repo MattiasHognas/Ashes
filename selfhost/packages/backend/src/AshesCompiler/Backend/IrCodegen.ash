@@ -2073,6 +2073,418 @@ let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocTy
                                                                                                                                                                                                                     let _ = positionBuilderAtEnd(builder)(doneBlock)
                                                                                                                                                                                                                     in buildLoad(builder)(i64)(resultSlot)("bfl_result_value"))
 
+// A fixed ASCII line written from a stack buffer via the raw `write` syscall followed by exit 1 —
+// the generalized form of the `Bytes.get` panic (`EmitPanic`/`EmitBytesGuard`'s observable shape).
+let emitBytesPanicLine builder i64 i8 codes =
+    (let count = Ashes.Collection.List.length(codes)
+    in
+        let bufferType =
+            count
+            |> Ashes.Number.UInt.fromInt64
+            |> arrayType(i8)
+        in
+            let buffer = buildAlloca(builder)(bufferType)("bytes_panic_msg")
+            in
+                let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)(codes)
+                in
+                    let addr = buildPtrToInt(builder)(buffer)(i64)("bytes_panic_addr")
+                    in
+                        let _ =
+                            false
+                            |> constInt(i64)(Ashes.Number.UInt.fromInt64(count))
+                            |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(addr)
+                        in
+                            false
+                            |> constInt(i64)(1u64)
+                            |> emitLinuxProcessExitWithCode(builder)(i64))
+
+// `Byte.empty(Unit)`: a zero-length RC Bytes value (`EmitBytesEmpty`).
+let emitBytesEmpty builder i64 i8 mallocFn mallocType =
+    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(8)("bytes_empty")
+    in
+        let _ =
+            buildStore(builder)(constInt(i64)(0u64)(false))(payloadPtr)
+        in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_empty_result"))
+
+// Little-endian byte stores of `value` into `dataPtr[baseOffset + 0 .. width - 1]`.
+let recursive emitBytesLeStores builder i64 i8 dataPtr baseOffset value width index name =
+    if index >= width
+    then Unit
+    else
+        let shifted =
+            if index == 0
+            then value
+            else
+                buildLShr(builder)(value)(constInt(i64)(Ashes.Number.UInt.fromInt64(index * 8))(false))(name + "_shr" + Ashes.Text.fromInt(index))
+        in
+            let byteOffset =
+                buildAdd(builder)(baseOffset)(constInt(i64)(Ashes.Number.UInt.fromInt64(index))(false))(name + "_off" + Ashes.Text.fromInt(index))
+            in
+                let pointer = buildGEP(builder)(i8)(dataPtr)([byteOffset])(1u32)(name + "_ptr" + Ashes.Text.fromInt(index))
+                in
+                    let _ =
+                        buildStore(builder)(buildTrunc(builder)(shifted)(i8)(name + "_b" + Ashes.Text.fromInt(index)))(pointer)
+                    in emitBytesLeStores(builder)(i64)(i8)(dataPtr)(baseOffset)(value)(width)(index + 1)(name)
+
+// `Byte.u16Le`/`u32Le`/`u64Le`: a fresh `width`-byte RC Bytes value holding the little-endian
+// encoding (`EmitBytesU16Le`'s exact shape, parameterized over the width).
+let emitBytesUnsignedLe builder i64 i8 mallocFn mallocType width value name =
+    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)(name)
+    in
+        let _ =
+            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(payloadPtr)
+        in
+            let dataPtr = gepBytes(builder)(i64)(i8)(payloadPtr)(8)(name + "_data")
+            in
+                let _ =
+                    emitBytesLeStores(builder)(i64)(i8)(dataPtr)(constInt(i64)(0u64)(false))(value)(width)(0)(name)
+                in buildPtrToInt(builder)(payloadPtr)(i64)(name + "_result"))
+
+// Little-endian byte reads assembling `dataPtr[offset + 0 .. width - 1]` into one word.
+let recursive emitBytesLeReads builder i64 i8 dataPtr offsetVal width index acc name =
+    if index >= width
+    then acc
+    else
+        let idx =
+            buildAdd(builder)(offsetVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(index))(false))(name + "_idx" + Ashes.Text.fromInt(index))
+        in
+            let pointer = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)(name + "_eptr" + Ashes.Text.fromInt(index))
+            in
+                let extended =
+                    buildZExt(builder)(buildLoad(builder)(i8)(pointer)(name + "_byte" + Ashes.Text.fromInt(index)))(i64)(name + "_ext" + Ashes.Text.fromInt(index))
+                in
+                    let merged =
+                        if index == 0
+                        then extended
+                        else
+                            buildOr(builder)(acc)(buildShl(builder)(extended)(constInt(i64)(Ashes.Number.UInt.fromInt64(index * 8))(false))(name + "_shl" + Ashes.Text.fromInt(index)))(name + "_or" + Ashes.Text.fromInt(index))
+                    in emitBytesLeReads(builder)(i64)(i8)(dataPtr)(offsetVal)(width)(index + 1)(merged)(name)
+
+// `Byte.getU16Le`/`getU32Le`/`getU64Le`: bounds-checked little-endian decode
+// (`EmitBytesReadLeUnsigned`'s panic-or-assemble shape).
+let emitBytesReadLeUnsigned context function_ i64 i8 ptrType builder width panicCodes bytesRef offsetVal name =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name) with
+        | (len, dataAddr) ->
+            let end_ =
+                buildAdd(builder)(offsetVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(name + "_end")
+            in
+                let oob = buildICmp(builder)(intPredicateUgt)(end_)(len)(name + "_oob")
+                in
+                    let panicBlock = appendBasicBlock(context)(function_)(name + "_panic")
+                    in
+                        let okBlock = appendBasicBlock(context)(function_)(name + "_ok")
+                        in
+                            let _ = buildCondBr(builder)(oob)(panicBlock)(okBlock)
+                            in
+                                let _ = positionBuilderAtEnd(builder)(panicBlock)
+                                in
+                                    let _ = emitBytesPanicLine(builder)(i64)(i8)(panicCodes)
+                                    in
+                                        let _ = positionBuilderAtEnd(builder)(okBlock)
+                                        in
+                                            let dataPtr = buildIntToPtr(builder)(dataAddr)(ptrType)(name + "_data")
+                                            in
+                                                emitBytesLeReads(builder)(i64)(i8)(dataPtr)(offsetVal)(width)(0)(constInt(i64)(0u64)(false))(name)
+
+// `EmitCheckedBytesRange`: offset/length negativity and past-end checks against `bufferLength`,
+// panicking with the caller's message when invalid.
+let emitBytesCheckedRange context function_ i64 i8 builder bufferLength offset length panicCodes name =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        let offsetNegative = buildICmp(builder)(intPredicateSlt)(offset)(zero)(name + "_offset_negative")
+        in
+            let lengthNegative = buildICmp(builder)(intPredicateSlt)(length)(zero)(name + "_length_negative")
+            in
+                let offsetPastEnd = buildICmp(builder)(intPredicateUgt)(offset)(bufferLength)(name + "_offset_past_end")
+                in
+                    let available = buildSub(builder)(bufferLength)(offset)(name + "_available")
+                    in
+                        let lengthPastEnd = buildICmp(builder)(intPredicateUgt)(length)(available)(name + "_length_past_end")
+                        in
+                            let invalid =
+                                buildOr(builder)(buildOr(builder)(offsetNegative)(lengthNegative)(name + "_negative"))(buildOr(builder)(offsetPastEnd)(lengthPastEnd)(name + "_past_end"))(name + "_invalid")
+                            in
+                                let panicBlock = appendBasicBlock(context)(function_)(name + "_range_panic")
+                                in
+                                    let validBlock = appendBasicBlock(context)(function_)(name + "_range_valid")
+                                    in
+                                        let _ = buildCondBr(builder)(invalid)(panicBlock)(validBlock)
+                                        in
+                                            let _ = positionBuilderAtEnd(builder)(panicBlock)
+                                            in
+                                                let _ = emitBytesPanicLine(builder)(i64)(i8)(panicCodes)
+                                                in positionBuilderAtEnd(builder)(validBlock))
+
+// A fresh RC copy of a Bytes value (`EmitBytesCopyOnWrite` with the reuse path always off: every
+// selfhost dispatch arm passes reuse = false, so the result never aliases the input).
+let emitBytesCopyOnWrite builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef name =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)(name + "_src") with
+        | (len, srcAddr) -> emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(srcAddr)(len)(name)
+
+// `Byte.copyRange(bytes)(offset)(source)(sourceOffset)(length)`: both ranges checked, the
+// destination copied fresh, then one `memcpy` of the range. The fresh copy never aliases the
+// source buffer, so stage 0's same-buffer scratch path is unreachable here and the direct copy
+// suffices (`EmitBytesCopyRange`/`EmitBytesRangeCopy`).
+let emitBytesCopyRange context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType destRef destOffset sourceRef sourceOffset length =
+    (let destLen = emitStringLengthValue(builder)(i64)(ptrType)(destRef)("bytes_copyrange_dest_len")
+    in
+        let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(destLen)(destOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_dest")
+        in
+            let sourceLen = emitStringLengthValue(builder)(i64)(ptrType)(sourceRef)("bytes_copyrange_source_len")
+            in
+                let _ = emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(sourceLen)(sourceOffset)(length)([66, 121, 116, 101, 115, 46, 99, 111, 112, 121, 82, 97, 110, 103, 101, 58, 32, 115, 111, 117, 114, 99, 101, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])("bytes_copyrange_source")
+                in
+                    let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destRef)("bytes_copyrange")
+                    in
+                        match emitStringParts(builder)(i64)(ptrType)(result)("bytes_copyrange_result") with
+                            | (_resultLen, resultAddr) ->
+                                match emitStringParts(builder)(i64)(ptrType)(sourceRef)("bytes_copyrange_from") with
+                                    | (_srcLen, srcAddr) ->
+                                        let destination =
+                                            buildIntToPtr(builder)(buildAdd(builder)(resultAddr)(destOffset)("bytes_copyrange_dest_addr"))(ptrType)("bytes_copyrange_destination")
+                                        in
+                                            let source =
+                                                buildIntToPtr(builder)(buildAdd(builder)(srcAddr)(sourceOffset)("bytes_copyrange_src_addr"))(ptrType)("bytes_copyrange_source_start")
+                                            in
+                                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destination, source, length])(3u32)("bytes_copyrange_copy")
+                                                in result)
+
+// `Byte.set`/`setU16Le`/`setU32Le`/`setU64Le`: range checked, the input copied fresh, then the
+// little-endian byte stores at the offset (`EmitBytesSetUnsigned`).
+let emitBytesSetUnsigned context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType width panicCodes bytesRef offset value name =
+    (let bufferLength = emitStringLengthValue(builder)(i64)(ptrType)(bytesRef)(name + "_len")
+    in
+        let _ =
+            emitBytesCheckedRange(context)(function_)(i64)(i8)(builder)(bufferLength)(offset)(constInt(i64)(Ashes.Number.UInt.fromInt64(width))(false))(panicCodes)(name)
+        in
+            let result = emitBytesCopyOnWrite(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesRef)(name)
+            in
+                match emitStringParts(builder)(i64)(ptrType)(result)(name + "_result") with
+                    | (_resultLen, resultAddr) ->
+                        let dataPtr = buildIntToPtr(builder)(resultAddr)(ptrType)(name + "_data")
+                        in
+                            let _ = emitBytesLeStores(builder)(i64)(i8)(dataPtr)(offset)(value)(width)(0)(name)
+                            in result)
+
+// `Byte.scanHash(bytes)(needle)(from)`: one pass that stops at the first `needle` byte while
+// FNV-1a-hashing the bytes before it, returning the `(index, hash)` tuple (`EmitBytesScanHash`).
+let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocType bytesRef needleVal fromVal =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_sh") with
+        | (len, dataAddr) ->
+            let dataPtr = buildIntToPtr(builder)(dataAddr)(ptrType)("bytes_sh_data")
+            in
+                let needle8 = buildTrunc(builder)(needleVal)(i8)("bytes_sh_needle")
+                in
+                    let zero = constInt(i64)(0u64)(false)
+                    in
+                        let fromNeg = buildICmp(builder)(intPredicateSlt)(fromVal)(zero)("bytes_sh_from_neg")
+                        in
+                            let fromStart = buildSelect(builder)(fromNeg)(zero)(fromVal)("bytes_sh_from")
+                            in
+                                let idxSlot = buildAlloca(builder)(i64)("bytes_sh_idx")
+                                in
+                                    let hashSlot = buildAlloca(builder)(i64)("bytes_sh_hash")
+                                    in
+                                        let foundSlot = buildAlloca(builder)(i64)("bytes_sh_found")
+                                        in
+                                            let _ = buildStore(builder)(fromStart)(idxSlot)
+                                            in
+                                                let _ =
+                                                    buildStore(builder)(constInt(i64)(14695981039346656037u64)(false))(hashSlot)
+                                                in
+                                                    let _ =
+                                                        buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(foundSlot)
+                                                    in
+                                                        let checkBlock = appendBasicBlock(context)(function_)("bytes_sh_check")
+                                                        in
+                                                            let bodyBlock = appendBasicBlock(context)(function_)("bytes_sh_body")
+                                                            in
+                                                                let hitBlock = appendBasicBlock(context)(function_)("bytes_sh_hit")
+                                                                in
+                                                                    let stepBlock = appendBasicBlock(context)(function_)("bytes_sh_step")
+                                                                    in
+                                                                        let doneBlock = appendBasicBlock(context)(function_)("bytes_sh_done")
+                                                                        in
+                                                                            let _ = buildBr(builder)(checkBlock)
+                                                                            in
+                                                                                let _ = positionBuilderAtEnd(builder)(checkBlock)
+                                                                                in
+                                                                                    let idx = buildLoad(builder)(i64)(idxSlot)("bytes_sh_i")
+                                                                                    in
+                                                                                        let more = buildICmp(builder)(intPredicateUlt)(idx)(len)("bytes_sh_more")
+                                                                                        in
+                                                                                            let _ = buildCondBr(builder)(more)(bodyBlock)(doneBlock)
+                                                                                            in
+                                                                                                let _ = positionBuilderAtEnd(builder)(bodyBlock)
+                                                                                                in
+                                                                                                    let bytePtr = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)("bytes_sh_ptr")
+                                                                                                    in
+                                                                                                        let curByte = buildLoad(builder)(i8)(bytePtr)("bytes_sh_byte")
+                                                                                                        in
+                                                                                                            let eq = buildICmp(builder)(intPredicateEq)(curByte)(needle8)("bytes_sh_eq")
+                                                                                                            in
+                                                                                                                let _ = buildCondBr(builder)(eq)(hitBlock)(stepBlock)
+                                                                                                                in
+                                                                                                                    let _ = positionBuilderAtEnd(builder)(hitBlock)
+                                                                                                                    in
+                                                                                                                        let _ = buildStore(builder)(idx)(foundSlot)
+                                                                                                                        in
+                                                                                                                            let _ = buildBr(builder)(doneBlock)
+                                                                                                                            in
+                                                                                                                                let _ = positionBuilderAtEnd(builder)(stepBlock)
+                                                                                                                                in
+                                                                                                                                    let h = buildLoad(builder)(i64)(hashSlot)("bytes_sh_h")
+                                                                                                                                    in
+                                                                                                                                        let byte64 = buildZExt(builder)(curByte)(i64)("bytes_sh_b64")
+                                                                                                                                        in
+                                                                                                                                            let hm =
+                                                                                                                                                buildMul(builder)(buildXor(builder)(h)(byte64)("bytes_sh_hx"))(constInt(i64)(1099511628211u64)(false))("bytes_sh_hm")
+                                                                                                                                            in
+                                                                                                                                                let _ = buildStore(builder)(hm)(hashSlot)
+                                                                                                                                                in
+                                                                                                                                                    let _ =
+                                                                                                                                                        buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bytes_sh_next"))(idxSlot)
+                                                                                                                                                    in
+                                                                                                                                                        let _ = buildBr(builder)(checkBlock)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let tuplePtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("bytes_sh_tuple")
+                                                                                                                                                                in
+                                                                                                                                                                    let _ =
+                                                                                                                                                                        buildStore(builder)(buildLoad(builder)(i64)(foundSlot)("bytes_sh_found_v"))(tuplePtr)
+                                                                                                                                                                    in
+                                                                                                                                                                        let hashPtr = gepBytes(builder)(i64)(i8)(tuplePtr)(8)("bytes_sh_t1")
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                buildStore(builder)(buildLoad(builder)(i64)(hashSlot)("bytes_sh_hash_v"))(hashPtr)
+                                                                                                                                                                            in buildPtrToInt(builder)(tuplePtr)(i64)("bytes_sh_result")
+
+// `Text.toHex(value)`: `0x`-prefixed lowercase hex of the signed value's magnitude, digits written
+// back-to-front into a 32-byte stack buffer, then copied into a fresh RC string
+// (`EmitIntToHexString`'s zero/digit/prefix/sign phases).
+let emitTextToHex context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType value =
+    (let bufferType = arrayType(i8)(32u64)
+    in
+        let buffer = buildAlloca(builder)(bufferType)("tth_buffer")
+        in
+            let indexSlot = buildAlloca(builder)(i64)("tth_index")
+            in
+                let workSlot = buildAlloca(builder)(i64)("tth_work")
+                in
+                    let zero = constInt(i64)(0u64)(false)
+                    in
+                        let isNegative = buildICmp(builder)(intPredicateSlt)(value)(zero)("tth_is_negative")
+                        in
+                            let _ = buildStore(builder)(zero)(indexSlot)
+                            in
+                                let _ =
+                                    buildStore(builder)(buildSelect(builder)(isNegative)(buildSub(builder)(zero)(value)("tth_magnitude_neg"))(value)("tth_magnitude"))(workSlot)
+                                in
+                                    let zeroBlock = appendBasicBlock(context)(function_)("tth_zero")
+                                    in
+                                        let loopCheckBlock = appendBasicBlock(context)(function_)("tth_loop_check")
+                                        in
+                                            let loopBodyBlock = appendBasicBlock(context)(function_)("tth_loop_body")
+                                            in
+                                                let prefixBlock = appendBasicBlock(context)(function_)("tth_prefix")
+                                                in
+                                                    let signBlock = appendBasicBlock(context)(function_)("tth_sign")
+                                                    in
+                                                        let finishBlock = appendBasicBlock(context)(function_)("tth_finish")
+                                                        in
+                                                            let isZero = buildICmp(builder)(intPredicateEq)(value)(zero)("tth_is_zero")
+                                                            in
+                                                                let _ = buildCondBr(builder)(isZero)(zeroBlock)(loopCheckBlock)
+                                                                in
+                                                                    let _ = positionBuilderAtEnd(builder)(zeroBlock)
+                                                                    in
+                                                                        let _ =
+                                                                            false
+                                                                            |> constInt(i64)(48u64)
+                                                                            |> storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(constInt(i64)(31u64)(false))
+                                                                        in
+                                                                            let _ =
+                                                                                buildStore(builder)(constInt(i64)(1u64)(false))(indexSlot)
+                                                                            in
+                                                                                let _ = buildBr(builder)(prefixBlock)
+                                                                                in
+                                                                                    let _ = positionBuilderAtEnd(builder)(loopCheckBlock)
+                                                                                    in
+                                                                                        let work = buildLoad(builder)(i64)(workSlot)("tth_work_value")
+                                                                                        in
+                                                                                            let loopDone = buildICmp(builder)(intPredicateEq)(work)(zero)("tth_done")
+                                                                                            in
+                                                                                                let _ = buildCondBr(builder)(loopDone)(prefixBlock)(loopBodyBlock)
+                                                                                                in
+                                                                                                    let _ = positionBuilderAtEnd(builder)(loopBodyBlock)
+                                                                                                    in
+                                                                                                        let nibble =
+                                                                                                            buildAnd(builder)(work)(constInt(i64)(15u64)(false))("tth_nibble")
+                                                                                                        in
+                                                                                                            let isDecimal =
+                                                                                                                buildICmp(builder)(intPredicateUlt)(nibble)(constInt(i64)(10u64)(false))("tth_is_decimal")
+                                                                                                            in
+                                                                                                                let digitAscii =
+                                                                                                                    buildSelect(builder)(isDecimal)(buildAdd(builder)(nibble)(constInt(i64)(48u64)(false))("tth_decimal_ascii"))(buildAdd(builder)(buildSub(builder)(nibble)(constInt(i64)(10u64)(false))("tth_hex_alpha_index"))(constInt(i64)(97u64)(false))("tth_hex_ascii"))("tth_ascii")
+                                                                                                                in
+                                                                                                                    let idx = buildLoad(builder)(i64)(indexSlot)("tth_idx_value")
+                                                                                                                    in
+                                                                                                                        let _ =
+                                                                                                                            storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(buildSub(builder)(constInt(i64)(31u64)(false))(idx)("tth_write_idx"))(digitAscii)
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                buildStore(builder)(buildLShr(builder)(work)(constInt(i64)(4u64)(false))("tth_next_work"))(workSlot)
+                                                                                                                            in
+                                                                                                                                let _ =
+                                                                                                                                    buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("tth_idx_next"))(indexSlot)
+                                                                                                                                in
+                                                                                                                                    let _ = buildBr(builder)(loopCheckBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ = positionBuilderAtEnd(builder)(prefixBlock)
+                                                                                                                                        in
+                                                                                                                                            let idxBeforePrefix = buildLoad(builder)(i64)(indexSlot)("tth_idx_before_prefix")
+                                                                                                                                            in
+                                                                                                                                                let _ =
+                                                                                                                                                    false
+                                                                                                                                                    |> constInt(i64)(120u64)
+                                                                                                                                                    |> storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(buildSub(builder)(constInt(i64)(31u64)(false))(idxBeforePrefix)("tth_x_index"))
+                                                                                                                                                in
+                                                                                                                                                    let idxWithX =
+                                                                                                                                                        buildAdd(builder)(idxBeforePrefix)(constInt(i64)(1u64)(false))("tth_idx_with_x")
+                                                                                                                                                    in
+                                                                                                                                                        let _ =
+                                                                                                                                                            false
+                                                                                                                                                            |> constInt(i64)(48u64)
+                                                                                                                                                            |> storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(buildSub(builder)(constInt(i64)(31u64)(false))(idxWithX)("tth_zero_index"))
+                                                                                                                                                        in
+                                                                                                                                                            let _ =
+                                                                                                                                                                buildStore(builder)(buildAdd(builder)(idxWithX)(constInt(i64)(1u64)(false))("tth_idx_with_prefix"))(indexSlot)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = buildCondBr(builder)(isNegative)(signBlock)(finishBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(signBlock)
+                                                                                                                                                                    in
+                                                                                                                                                                        let idxBeforeSign = buildLoad(builder)(i64)(indexSlot)("tth_idx_before_sign")
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ =
+                                                                                                                                                                                false
+                                                                                                                                                                                |> constInt(i64)(45u64)
+                                                                                                                                                                                |> storePrintBufferByte(builder)(i64)(i8)(bufferType)(buffer)(buildSub(builder)(constInt(i64)(31u64)(false))(idxBeforeSign)("tth_sign_index"))
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ =
+                                                                                                                                                                                    buildStore(builder)(buildAdd(builder)(idxBeforeSign)(constInt(i64)(1u64)(false))("tth_idx_with_sign"))(indexSlot)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let _ = buildBr(builder)(finishBlock)
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(finishBlock)
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let count = buildLoad(builder)(i64)(indexSlot)("tth_count")
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let startAddr =
+                                                                                                                                                                                                    buildAdd(builder)(buildPtrToInt(builder)(buffer)(i64)("tth_buffer_addr"))(buildSub(builder)(constInt(i64)(32u64)(false))(count)("tth_start_index"))("tth_start_addr")
+                                                                                                                                                                                                in emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(startAddr)(count)("tth_string"))
+
 // The UTF-8 lead byte for a rune of the given width: the rune shifted down and OR'd with the
 // width's prefix bits — `RuneLeadByte`'s shape.
 let emitRuneLeadByte builder i64 rune shift prefix name =
@@ -2444,6 +2856,40 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(list)
                                             |> emitBytesFromList(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                        | BytesEmpty(target, _managed) -> ((target, emitBytesEmpty(builder)(i64)(i8)(mallocFn)(mallocType)) :: tempEnv, terminated)
+                                        | BytesAppend(target, left, right, _managed) -> ((target, emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)([lookupIndexed(left)(tempEnv), lookupIndexed(right)(tempEnv)])) :: tempEnv, terminated)
+                                        | BytesU16Le(target, value, _managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(2)(lookupIndexed(value)(tempEnv))("bytes_u16")) :: tempEnv, terminated)
+                                        | BytesU32Le(target, value, _managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(4)(lookupIndexed(value)(tempEnv))("bytes_u32")) :: tempEnv, terminated)
+                                        | BytesU64Le(target, value, _managed) ->
+                                            ((target, emitBytesUnsignedLe(builder)(i64)(i8)(mallocFn)(mallocType)(8)(lookupIndexed(value)(tempEnv))("bytes_u64")) :: tempEnv, terminated)
+                                        | BytesGetU16Le(target, bytes, offset) ->
+                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(2)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 49, 54, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(offset)(tempEnv))("bytes_getu16")) :: tempEnv, terminated)
+                                        | BytesGetU32Le(target, bytes, offset) ->
+                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(4)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 51, 50, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(offset)(tempEnv))("bytes_getu32")) :: tempEnv, terminated)
+                                        | BytesGetU64Le(target, bytes, offset) ->
+                                            ((target, emitBytesReadLeUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(8)([66, 121, 116, 101, 115, 46, 103, 101, 116, 85, 54, 52, 76, 101, 58, 32, 111, 102, 102, 115, 101, 116, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(offset)(tempEnv))("bytes_getu64")) :: tempEnv, terminated)
+                                        | BytesSet(target, bytes, index, item, _reuse, _managed) ->
+                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(1)([66, 121, 116, 101, 115, 46, 115, 101, 116, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(index)(tempEnv))(lookupIndexed(item)(tempEnv))("bytes_set")) :: tempEnv, terminated)
+                                        | BytesSetU16Le(target, bytes, index, item, _reuse, _managed) ->
+                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(2)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 49, 54, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(index)(tempEnv))(lookupIndexed(item)(tempEnv))("bytes_setu16")) :: tempEnv, terminated)
+                                        | BytesSetU32Le(target, bytes, index, item, _reuse, _managed) ->
+                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(4)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 51, 50, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(index)(tempEnv))(lookupIndexed(item)(tempEnv))("bytes_setu32")) :: tempEnv, terminated)
+                                        | BytesSetU64Le(target, bytes, index, item, _reuse, _managed) ->
+                                            ((target, emitBytesSetUnsigned(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(8)([66, 121, 116, 101, 115, 46, 115, 101, 116, 85, 54, 52, 76, 101, 58, 32, 114, 97, 110, 103, 101, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])(lookupIndexed(bytes)(tempEnv))(lookupIndexed(index)(tempEnv))(lookupIndexed(item)(tempEnv))("bytes_setu64")) :: tempEnv, terminated)
+                                        | BytesCopyRange(target, first, firstOffset, second, secondOffset, length, _reuse, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(length)
+                                            |> emitBytesCopyRange(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(first)(tempEnv))(lookupIndexed(firstOffset)(tempEnv))(lookupIndexed(second)(tempEnv))(lookupIndexed(secondOffset)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesScanHash(target, bytes, needle, from) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(from)
+                                            |> emitBytesScanHash(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(needle)(tempEnv))) :: tempEnv, terminated)
+                                        | TextToHex(target, value, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitTextToHex(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
                                         | ConcatStr(target, left, right, _managed) ->
                                             let result =
                                                 emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
