@@ -340,6 +340,18 @@ same public behavior.
   `ConstructorPatternsFromDifferentAdts` inference errors; or-alternatives, as-patterns, and record
   patterns are expanded to plain positional patterns first, exactly as stage 0's diagnostic
   pre-pass does. Stable `ASH###` codes for these messages remain uncoded in stage 0 as well.
+  `CoreLowering` now enforces the check during single-file lowering too: `checkCoreMatchCoverage`
+  runs `matchCoverageError` over every lowered match (constructors drawn from the lowering's own
+  registered layouts) and fails the compilation with the stage-0 message as a `CoreMatchCoverageError`,
+  so the eight `tests/pattern_*` diagnostic programs now fail through the self-hosted CLI with stage
+  0's exact wording; a scrutinee still typed as an inference variable at lowering time (a lambda
+  parameter) derives its ADT from the arms' constructor names before the constructor-set check.
+  **Found while porting:** the pure-Ashes parser had no column rule for match/handler arm
+  attachment — any following `|` continued the innermost arm list, so a match nested in an arm body
+  silently swallowed the enclosing match's remaining arms (making the outer match genuinely
+  non-exhaustive, caught only once this coverage check existed); stage 0 records the first arm's
+  `|` column and ends the arm list at any `|` dedented past it, and `parserLeadingPipeColumn` now
+  applies the same rule to both `parserParseMatchCases` and `parserParseHandlerArms`.
 - [ ] Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
   diagnostics at the semantic boundary.
 - [~] Seed the shipped standard trait/type identities and primitive/structural implementation heads so
