@@ -3222,15 +3222,77 @@ public static class ProjectSupport
             return trimmed;
         }
 
+        // A flat binding's own curried parameters are desugared into a leading `given (name) -> ...`
+        // chain before this text is built (see TryExtractFlatBindingValue), so every parameter name
+        // this binding introduces is textually visible right at the start, before the real body.
+        // Each one establishes a local scope covering the WHOLE definition, shadowing any
+        // same-named alias for its entire body — but RenameIdentifiers below has no scope awareness
+        // of its own: left unfiltered, an alias colliding with a parameter name gets blindly
+        // rewritten at every occurrence, corrupting both the `given (name)` declaration itself and
+        // every legitimate reference to that parameter inside the body (turning a local variable use
+        // into a reference to the unrelated outer import, and often leaving invalid syntax behind
+        // when the replacement text itself contains characters like `.` that cannot appear in a
+        // parameter or expression position). Excluding those aliases here keeps the parameter's own
+        // shadowing intact instead.
+        var shadowedByParameters = CollectLeadingGivenParameterNames(trimmed);
+        IReadOnlyList<KeyValuePair<string, string>> effectiveAliases = shadowedByParameters.Count == 0
+            ? aliases
+            : aliases.Where(alias => !shadowedByParameters.Contains(alias.Key)).ToArray();
+
         var valueNames = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var alias in aliases)
+        foreach (var alias in effectiveAliases)
         {
             valueNames.Add(alias.Key);
         }
 
         // Alias keys inhabit the value/type namespace. Preserve same-spelled record-field tokens;
         // those labels are not references to the binding being qualified.
-        return RenameIdentifiers(trimmed, aliases, valueNames);
+        return RenameIdentifiers(trimmed, effectiveAliases, valueNames);
+    }
+
+    /// <summary>
+    /// Collects the parameter names from a leading, consecutive <c>given (name) -&gt; ...</c> chain at
+    /// the very start of <paramref name="source"/> — the exact shape <see cref="TryExtractFlatBindingValue"/>
+    /// produces for a flat binding's own curried parameters. Stops at the first token that does not
+    /// continue the chain, so a <c>given</c> lambda written inside the real body (not one of this
+    /// binding's own parameters) is never collected.
+    /// </summary>
+    private static IReadOnlySet<string> CollectLeadingGivenParameterNames(string source)
+    {
+        var diagnostics = new Diagnostics();
+        var lexer = new StringOffsetLexer(source, diagnostics);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        while (true)
+        {
+            if (lexer.Next() is not { Kind: TokenKind.Given })
+            {
+                break;
+            }
+
+            if (lexer.Next() is not { Kind: TokenKind.LParen })
+            {
+                break;
+            }
+
+            if (lexer.Next() is not { Kind: TokenKind.Ident } name)
+            {
+                break;
+            }
+
+            if (lexer.Next() is not { Kind: TokenKind.RParen })
+            {
+                break;
+            }
+
+            if (lexer.Next() is not { Kind: TokenKind.Arrow })
+            {
+                break;
+            }
+
+            names.Add(name.Text);
+        }
+
+        return names;
     }
 
     private static IReadOnlyList<string> GetExportNames(ModuleSourceShape shape)
