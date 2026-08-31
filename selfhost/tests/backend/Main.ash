@@ -3021,6 +3021,10 @@ let buildRecursiveAdtFieldModule name context = codegenOptimizedRealSource("type
 
 let buildDeepMatchJoinLoopModule name context = codegenOptimizedRealSource("type Step =\n    | Done\n    | Continue(Int, Int)\nlet recursive next n = if n <= 0 then Done else Continue(n)(n)\nlet recursive loop n acc =\n    match next(n) with\n        | Done -> acc\n        | Continue(m, r) -> loop(m - 1)(acc + r)\nAshes.IO.print(loop(200000)(0))")(name)(context)
 
+let buildFloatScalarOpsModule name context = codegenOptimizedRealSource("Ashes.IO.print(if 1.0 + 2.0 * 3.0 == 7.0 && 8.0 / 2.0 - 1.0 >= 3.0 && 1.5 < 2.5 && 2.0 != 3.0 && 3.0 > 2.5 && 2.0 <= 2.0 then 1 else 0)")(name)(context)
+
+let testRunStaticExecutableForFloatScalarOpsModule unit = assertProgramPrints(buildFloatScalarOpsModule)("selfhostBackendRunFloatScalarOps")("selfhost_backend_float_scalar_ops_e2e")("1")
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3353,6 +3357,7 @@ let run shipped =
     |> testRunStaticExecutableForStringAccumulatorDefaultModule
     |> testRunStaticExecutableForRecursiveAdtFieldModule
     |> testRunStaticExecutableForDeepMatchJoinLoopModule
+    |> testRunStaticExecutableForFloatScalarOpsModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

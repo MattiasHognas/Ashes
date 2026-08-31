@@ -1688,6 +1688,32 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(count)
                                             |> emitBytesSubView(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
+                        // A Float value travels through the uniform `i64` word as its raw `f64`
+                        // bits — bitcast to `double` around each operation and back for storage,
+                        // `LlvmCodegen.cs`'s `LoadTempAsFloat` shape exactly; an `fcmp` result
+                        // zero-extends to the canonical 0/1 `i64` like every int comparison.
+                                        | LoadConstFloat(target, value) ->
+                                            ((target, buildBitCast(builder)(constReal(doubleType(context))(value))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | AddFloat(target, left, right) ->
+                                            ((target, buildBitCast(builder)(buildFAdd(builder)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fadd" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | SubFloat(target, left, right) ->
+                                            ((target, buildBitCast(builder)(buildFSub(builder)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fsub" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | MulFloat(target, left, right) ->
+                                            ((target, buildBitCast(builder)(buildFMul(builder)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fmul" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | DivFloat(target, left, right) ->
+                                            ((target, buildBitCast(builder)(buildFDiv(builder)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fdiv" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatEq(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOeq)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatNe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOne)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatGt(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOgt)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatGe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOge)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatLt(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOlt)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CmpFloatLe(target, left, right) ->
+                                            ((target, buildZExt(builder)(buildFCmp(builder)(realPredicateOle)(buildBitCast(builder)(lookupIndexed(left)(tempEnv))(doubleType(context))("fl" + Ashes.Text.fromInt(target)))(buildBitCast(builder)(lookupIndexed(right)(tempEnv))(doubleType(context))("fr" + Ashes.Text.fromInt(target)))("fcmp" + Ashes.Text.fromInt(target)))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | TextUnconsText(target, text, _managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(text)
