@@ -3017,6 +3017,8 @@ let buildRuneToTextModule name context = codegenOptimizedRealSource("Ashes.IO.pr
 
 let buildStringAccumulatorDefaultModule name context = codegenOptimizedRealSource("let recursive go remaining output =\n    match remaining with\n        | [] -> output\n        | _head :: tail -> go(tail)(output + \"x\")\nAshes.IO.print(go([1, 2, 3])(\"\"))")(name)(context)
 
+let buildRecursiveAdtFieldModule name context = codegenOptimizedRealSource("type Tree =\n    | Leaf(Int)\n    | Node(Tree, Tree)\nlet recursive sumTree tree =\n    match tree with\n        | Leaf(value) -> value\n        | Node(left, right) -> sumTree(left) + sumTree(right)\nAshes.IO.print(sumTree(Node(Node(Leaf(1))(Leaf(2)))(Leaf(3))))")(name)(context)
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3045,6 +3047,8 @@ let testRunStaticExecutableForTextUnconsTextModule unit = assertProgramPrints(bu
 let testRunStaticExecutableForRuneToTextModule unit = assertProgramPrints(buildRuneToTextModule)("selfhostBackendRunRuneToText")("selfhost_backend_rune_to_text_e2e")("Aé€")
 
 let testRunStaticExecutableForStringAccumulatorDefaultModule unit = assertProgramPrints(buildStringAccumulatorDefaultModule)("selfhostBackendRunStringAccumulatorDefault")("selfhost_backend_string_accumulator_default_e2e")("xxx")
+
+let testRunStaticExecutableForRecursiveAdtFieldModule unit = assertProgramPrints(buildRecursiveAdtFieldModule)("selfhostBackendRunRecursiveAdtField")("selfhost_backend_recursive_adt_field_e2e")("6")
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
@@ -3343,6 +3347,7 @@ let run shipped =
     |> testRunStaticExecutableForTextUnconsTextModule
     |> testRunStaticExecutableForRuneToTextModule
     |> testRunStaticExecutableForStringAccumulatorDefaultModule
+    |> testRunStaticExecutableForRecursiveAdtFieldModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
