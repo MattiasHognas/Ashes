@@ -1269,6 +1269,200 @@ let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVa
                                                         buildStore(builder)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(ptrWordPtr)
                                                     in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_subv_result")
 
+// A fresh RC heap string copied from `len` bytes at address `srcAddr` — the `{count, size, len,
+// bytes}` layout and single `memcpy` `emitStringConcatN` established, shared by the slicing and
+// UTF-8 builtins below.
+let emitHeapStringFromBytesAddr builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType srcAddr len name =
+    (let totalSize =
+        buildAdd(builder)(len)(constInt(i64)(24u64)(false))(name + "_total_size")
+    in
+        let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)(name + "_header")
+        in
+            let _ =
+                buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+            in
+                let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)(name + "_size_ptr")
+                in
+                    let _ =
+                        buildStore(builder)(buildAdd(builder)(len)(constInt(i64)(8u64)(false))(name + "_size_value"))(sizePtr)
+                    in
+                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)(name + "_payload_ptr")
+                        in
+                            let _ = buildStore(builder)(len)(payloadPtr)
+                            in
+                                let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)(name + "_dest_bytes_ptr")
+                                in
+                                    let srcPtr = buildIntToPtr(builder)(srcAddr)(ptrType)(name + "_src_ptr")
+                                    in
+                                        let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcPtr, len])(3u32)(name + "_memcpy")
+                                        in buildPtrToInt(builder)(payloadPtr)(i64)(name + "_result"))
+
+// `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
+// `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped
+// to one byte when the buffer is shorter than the class claims) — `EmitTextUnconsText`'s exact
+// shape, with head and rest always copied into fresh RC strings (stage 0's runtime-managed path;
+// its zero-copy arena views are an optimization this codegen's malloc stand-in does not need).
+let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
+    match emitStringParts(builder)(i64)(ptrType)(textRef)("text_uncons") with
+        | (len, bytesAddr) ->
+            let resultSlot = buildAlloca(builder)(i64)("text_uncons_result")
+            in
+                let emptyBlock = appendBasicBlock(context)(function_)("text_uncons_empty")
+                in
+                    let nonEmptyBlock = appendBasicBlock(context)(function_)("text_uncons_non_empty")
+                    in
+                        let continueBlock = appendBasicBlock(context)(function_)("text_uncons_continue")
+                        in
+                            let isEmpty =
+                                buildICmp(builder)(intPredicateEq)(len)(constInt(i64)(0u64)(false))("text_uncons_is_empty")
+                            in
+                                let _ = buildCondBr(builder)(isEmpty)(emptyBlock)(nonEmptyBlock)
+                                in
+                                    let _ = positionBuilderAtEnd(builder)(emptyBlock)
+                                    in
+                                        let _ =
+                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("text_uncons_none"))(resultSlot)
+                                        in
+                                            let _ = buildBr(builder)(continueBlock)
+                                            in
+                                                let _ = positionBuilderAtEnd(builder)(nonEmptyBlock)
+                                                in
+                                                    let bytesPtr = buildIntToPtr(builder)(bytesAddr)(ptrType)("text_uncons_bytes_ptr")
+                                                    in
+                                                        let firstByte =
+                                                            buildZExt(builder)(buildLoad(builder)(i8)(bytesPtr)("text_uncons_first"))(i64)("text_uncons_first_i64")
+                                                        in
+                                                            let isAscii =
+                                                                buildICmp(builder)(intPredicateUlt)(firstByte)(constInt(i64)(128u64)(false))("text_uncons_is_ascii")
+                                                            in
+                                                                let isTwoByte =
+                                                                    buildICmp(builder)(intPredicateUle)(firstByte)(constInt(i64)(223u64)(false))("text_uncons_is_two_byte")
+                                                                in
+                                                                    let isThreeByte =
+                                                                        buildICmp(builder)(intPredicateUle)(firstByte)(constInt(i64)(239u64)(false))("text_uncons_is_three_byte")
+                                                                    in
+                                                                        let widthThreeOrFour =
+                                                                            buildSelect(builder)(isThreeByte)(constInt(i64)(3u64)(false))(constInt(i64)(4u64)(false))("text_uncons_width_3_or_4")
+                                                                        in
+                                                                            let widthTwoOrMore =
+                                                                                buildSelect(builder)(isTwoByte)(constInt(i64)(2u64)(false))(widthThreeOrFour)("text_uncons_width_2_or_more")
+                                                                            in
+                                                                                let widthCandidate =
+                                                                                    buildSelect(builder)(isAscii)(constInt(i64)(1u64)(false))(widthTwoOrMore)("text_uncons_width_candidate")
+                                                                                in
+                                                                                    let hasFullScalar = buildICmp(builder)(intPredicateUge)(len)(widthCandidate)("text_uncons_has_full_scalar")
+                                                                                    in
+                                                                                        let headLen =
+                                                                                            buildSelect(builder)(hasFullScalar)(widthCandidate)(constInt(i64)(1u64)(false))("text_uncons_head_len")
+                                                                                        in
+                                                                                            let tailLen = buildSub(builder)(len)(headLen)("text_uncons_tail_len")
+                                                                                            in
+                                                                                                let tailAddr = buildAdd(builder)(bytesAddr)(headLen)("text_uncons_tail_addr")
+                                                                                                in
+                                                                                                    let headRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bytesAddr)(headLen)("text_uncons_head")
+                                                                                                    in
+                                                                                                        let tailRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(tailAddr)(tailLen)("text_uncons_tail")
+                                                                                                        in
+                                                                                                            let tuplePtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)("text_uncons_tuple")
+                                                                                                            in
+                                                                                                                let _ = buildStore(builder)(headRef)(tuplePtr)
+                                                                                                                in
+                                                                                                                    let tupleTailPtr = gepBytes(builder)(i64)(i8)(tuplePtr)(8)("text_uncons_tuple_tail_ptr")
+                                                                                                                    in
+                                                                                                                        let _ = buildStore(builder)(tailRef)(tupleTailPtr)
+                                                                                                                        in
+                                                                                                                            let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("text_uncons_some")
+                                                                                                                            in
+                                                                                                                                let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("text_uncons_some_ptr")
+                                                                                                                                in
+                                                                                                                                    let someFieldPtr = gepBytes(builder)(i64)(i8)(somePtr)(8)("text_uncons_some_field_ptr")
+                                                                                                                                    in
+                                                                                                                                        let _ =
+                                                                                                                                            buildStore(builder)(buildPtrToInt(builder)(tuplePtr)(i64)("text_uncons_tuple_value"))(someFieldPtr)
+                                                                                                                                        in
+                                                                                                                                            let _ = buildStore(builder)(someValue)(resultSlot)
+                                                                                                                                            in
+                                                                                                                                                let _ = buildBr(builder)(continueBlock)
+                                                                                                                                                in
+                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(continueBlock)
+                                                                                                                                                    in buildLoad(builder)(i64)(resultSlot)("text_uncons_result_value")
+
+// The UTF-8 lead byte for a rune of the given width: the rune shifted down and OR'd with the
+// width's prefix bits — `RuneLeadByte`'s shape.
+let emitRuneLeadByte builder i64 rune shift prefix name =
+    buildOr(builder)(buildLShr(builder)(rune)(constInt(i64)(Ashes.Number.UInt.fromInt64(shift))(false))(name + "_shift"))(constInt(i64)(Ashes.Number.UInt.fromInt64(prefix))(false))(name)
+
+// A UTF-8 continuation byte: six payload bits from the given shift, prefixed `10` —
+// `RuneContinuationByte`'s shape.
+let emitRuneContinuationByte builder i64 rune shift name =
+    (let shifted =
+        if shift == 0
+        then rune
+        else
+            buildLShr(builder)(rune)(constInt(i64)(Ashes.Number.UInt.fromInt64(shift))(false))(name + "_shift")
+    in
+        buildOr(builder)(buildAnd(builder)(shifted)(constInt(i64)(63u64)(false))(name + "_payload"))(constInt(i64)(128u64)(false))(name))
+
+let emitRuneStoreByte builder i64 i8 bytesPtr index value name =
+    (let pointer =
+        buildGEP(builder)(i8)(bytesPtr)([constInt(i64)(Ashes.Number.UInt.fromInt64(index))(false)])(1u32)(name + "_ptr")
+    in
+        buildStore(builder)(buildTrunc(builder)(value)(i8)(name))(pointer))
+
+// `Rune.toText(rune)`: the rune encoded as a fresh RC heap string of its UTF-8 width — a reserved
+// four-byte payload so the straight-line stores never address past the allocation, with the
+// logical length being the selected width; `EmitRuneToText`/`EmitRuneStoreUtf8`'s exact select
+// chains.
+let emitRuneToText builder i64 i8 ptrType mallocFn mallocType rune =
+    (let widthThreeOrFour =
+        buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(65536u64)(false))("rune_text_three"))(constInt(i64)(3u64)(false))(constInt(i64)(4u64)(false))("rune_text_width34")
+    in
+        let widthTwoOrMore =
+            buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(2048u64)(false))("rune_text_two"))(constInt(i64)(2u64)(false))(widthThreeOrFour)("rune_text_width234")
+        in
+            let width =
+                buildSelect(builder)(buildICmp(builder)(intPredicateUlt)(rune)(constInt(i64)(128u64)(false))("rune_text_ascii"))(constInt(i64)(1u64)(false))(widthTwoOrMore)("rune_text_width")
+            in
+                let textPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(12)("rune_text")
+                in
+                    let _ = buildStore(builder)(width)(textPtr)
+                    in
+                        let bytesPtr = gepBytes(builder)(i64)(i8)(textPtr)(8)("rune_text_bytes")
+                        in
+                            let one =
+                                buildICmp(builder)(intPredicateEq)(width)(constInt(i64)(1u64)(false))("rune_store_one")
+                            in
+                                let two =
+                                    buildICmp(builder)(intPredicateEq)(width)(constInt(i64)(2u64)(false))("rune_store_two")
+                                in
+                                    let three =
+                                        buildICmp(builder)(intPredicateEq)(width)(constInt(i64)(3u64)(false))("rune_store_three")
+                                    in
+                                        let first =
+                                            buildSelect(builder)(one)(rune)(
+                                                buildSelect(builder)(two)(emitRuneLeadByte(builder)(i64)(rune)(6)(192)("rune_lead2"))(
+                                                    buildSelect(builder)(three)(emitRuneLeadByte(builder)(i64)(rune)(12)(224)("rune_lead3"))(emitRuneLeadByte(builder)(i64)(rune)(18)(240)("rune_lead4"))("rune_first34")
+                                                )("rune_first234")
+                                            )("rune_first")
+                                        in
+                                            let _ = emitRuneStoreByte(builder)(i64)(i8)(bytesPtr)(0)(first)("rune_text_b0")
+                                            in
+                                                let second =
+                                                    buildSelect(builder)(two)(emitRuneContinuationByte(builder)(i64)(rune)(0)("rune_second2"))(
+                                                        buildSelect(builder)(three)(emitRuneContinuationByte(builder)(i64)(rune)(6)("rune_second3"))(emitRuneContinuationByte(builder)(i64)(rune)(12)("rune_second4"))("rune_second34")
+                                                    )("rune_second")
+                                                in
+                                                    let _ = emitRuneStoreByte(builder)(i64)(i8)(bytesPtr)(1)(second)("rune_text_b1")
+                                                    in
+                                                        let third =
+                                                            buildSelect(builder)(three)(emitRuneContinuationByte(builder)(i64)(rune)(0)("rune_third3"))(emitRuneContinuationByte(builder)(i64)(rune)(6)("rune_third4"))("rune_third")
+                                                        in
+                                                            let _ = emitRuneStoreByte(builder)(i64)(i8)(bytesPtr)(2)(third)("rune_text_b2")
+                                                            in
+                                                                let _ =
+                                                                    emitRuneStoreByte(builder)(i64)(i8)(bytesPtr)(3)(emitRuneContinuationByte(builder)(i64)(rune)(0)("rune_fourth"))("rune_text_b3")
+                                                                in buildPtrToInt(builder)(textPtr)(i64)("rune_text_result"))
+
 // `1 << 62`: the same immortal-refcount sentinel `LlvmCodegenMemory.cs`'s own `EmitHeapStringLiteral`
 // writes into a string literal's header instead of a real count of `1`. Decrementing this value by
 // any realistic number of drops never reaches zero, so the existing `RcDrop` codegen (unchanged for
@@ -1494,6 +1688,14 @@ let codegenInstructionKind cx builder kind state =
                                             ((target, tempEnv
                                             |> lookupIndexed(count)
                                             |> emitBytesSubView(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
+                                        | TextUnconsText(target, text, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(text)
+                                            |> emitTextUnconsText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                        | RuneToText(target, rune, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(rune)
+                                            |> emitRuneToText(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)) :: tempEnv, terminated)
                                         | TextFromInt(target, value, _managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(value)

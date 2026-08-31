@@ -2189,9 +2189,21 @@ same public behavior.
   (`{len|VIEW, backingBytesAddr}`), so every consumer of a string's bytes (`ConcatStr` parts,
   `CmpStrEq`, `PrintStr`, `PanicStr`, the length reads) now goes through one view-aware
   `emitStringParts` helper mirroring `LoadStringLength`/`GetStringBytesPointer`. Verified:
-  `world/hello` from a subText/subView concat, plus get/indexOf/compare scalars. Remaining before
-  `import Ashes.Text` programs can lower (Text.ash's own body): `Ashes.Text.unconsText` and
-  `Ashes.Rune.toText` — the UTF-8 decode/encode pair.
+  `world/hello` from a subText/subView concat, plus get/indexOf/compare scalars. The UTF-8 pair
+  followed: `Ashes.Text.unconsText` (`None` for empty, else `Some((head, rest))` with the head's
+  width classed from the lead byte, head and rest copied into fresh RC strings) and
+  `Ashes.Rune.toText` (the width select chain and lead/continuation-byte encodes into a fresh RC
+  string with a reserved four-byte payload). Getting Text.ash to lower also exposed and fixed a
+  real lowering bug: `numericDefault` mapped `SemString` to `SemInt` through its catch-all, so a
+  recursive accumulator parameter meeting `acc + "x"` was bound to `Int` and every
+  string-accumulator function failed with `CoreOperatorTypeMismatch("+", SemInt, SemString)`.
+  Text.ash now lowers completely EXCEPT `join`, whose `first + second` sits in a nested recursive
+  group where BOTH operands are still unresolved type variables at the operator — the eager
+  both-variable default picks `Int` where full inference would later learn `Str` from `reduce`'s
+  `""`. Deferred operator typing (or running the stitched path through `TypeInference.ash` before
+  lowering) is the remaining blocker for `import Ashes.Text` programs. Separately observed:
+  `ShippedParseError` labels a truncated Text.ash's diagnostics with `lib/Ashes/Trait.ash` — the
+  error path attributes the wrong module's source path.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
