@@ -2295,6 +2295,30 @@ same public behavior.
   relocations by folding the target section's layout offset into the symbol value, and applies
   inside-rodata relocation patches (`.rela.rodata.*`) at their section's layout offset. With it the whole non-async `Ashes.Text`/`Ashes.Byte`/`Ashes.Rune`/
   `Ashes.Number.UInt` builtin surface the test corpus uses lowers and codegens end to end.
+  The `Ashes.IO` write family followed the same schemes-plus-emission pattern: `write`/`writeBytes`
+  (`Str`/`Bytes` share one `[len:i64][bytes...]` header layout, so both lower to the same `WriteStr`
+  instruction stage 0's own `CoreWrite`/`CoreWriteBytes` already shared) and `writeError`/
+  `writeErrorLine` (`WriteErrorStr`, fd 2 instead of fd 1, with the trailing newline gated on the
+  instruction's own `Bool`). All four had their instruction constructors, name→kind mappings, and
+  `emitCoreBuiltin` dispatch arms already in place from an earlier slice — only the
+  `standardBuiltinLayouts` schemes and the backend emission cases were missing. The raw-write
+  codegen itself is a direct reuse of `PrintStr`'s own `write`-syscall machinery, factored out into
+  two fd-parametrized helpers (`emitWriteStrBytesToFd`, `emitWriteNewlineToFd`) that
+  `emitPrintStrBytesWithNewline` (stdout, fd 1, always newlined) now calls into rather than
+  duplicating; `print`/`panic`'s own codegen is unchanged byte-for-byte. Verified end to end
+  (survey 247 → 250: `io_write`, `io_write_bytes`, `io_write_then_write_line` now pass; a scratch
+  `writeError`/`writeErrorLine` program confirmed stdout stays empty while stderr receives
+  `err-line\n`), plus the selfhost backend suite (normal and `--debug-disable-reuse`) and the
+  selfhost semantics suite. `writeBuffered`/`writeBufferedLine`/`flush` are deliberately excluded
+  from this slice — they need a real process-wide stdout ring and a flush-on-exit contract wired
+  into every `Return`, a separate, bigger piece of work the existing `emitLinuxWrite` comment
+  already called out as unattempted. **Found while verifying, not caused by this change**: the
+  selfhost semantics test binary (`selfhost/tests/semantics`) segfaults on exit immediately after
+  its last suite ("all self-hosted IR optimizer tests passed") prints — reproduced identically on
+  an unmodified `origin/main` build (commit 1f99da92) with no write-family code in the picture at
+  all, so this is a pre-existing crash in some shared exit/cleanup path, not a regression; the
+  backend and CLI suites, and every `tests/*.ash` survey run, are unaffected. Left for a future
+  slice to root-cause.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
