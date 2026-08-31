@@ -3060,6 +3060,10 @@ let buildBytesRangeOpsModule name context = codegenOptimizedRealSource("let join
 
 let testRunStaticExecutableForBytesRangeOpsModule unit = assertProgramPrints(buildBytesRangeOpsModule)("selfhostBackendRunBytesRangeOps")("selfhost_backend_bytes_range_ops_e2e")("772|4660|0xff|9|1")
 
+let buildTextParseFloatModule name context = codegenOptimizedRealSource("Ashes.IO.print((match Ashes.Text.parseFloat(\"1.5e2\") with | Ok(v) -> (if v == 150.0 then \"ok\" else \"bad\") | Error(m) -> m) + \"|\" + (match Ashes.Text.parseFloat(\"x\") with | Ok(_v2) -> \"no\" | Error(m2) -> m2) + \"|\" + (match Ashes.Text.parseFloat(\"1e400\") with | Ok(_v3) -> \"no\" | Error(m3) -> m3))")(name)(context)
+
+let testRunStaticExecutableForTextParseFloatModule unit = assertProgramPrints(buildTextParseFloatModule)("selfhostBackendRunTextParseFloat")("selfhost_backend_text_parse_float_e2e")("ok|Ashes.Text.parseFloat() invalid input|Ashes.Text.parseFloat() out of range")
+
 let testRunStaticExecutableForTextUnconsTextModule unit = assertProgramPrints(buildTextUnconsTextModule)("selfhostBackendRunTextUnconsText")("selfhost_backend_text_uncons_text_e2e")("h|ello<empty>")
 
 let testRunStaticExecutableForRuneToTextModule unit = assertProgramPrints(buildRuneToTextModule)("selfhostBackendRunRuneToText")("selfhost_backend_rune_to_text_e2e")("Aé€")
@@ -3373,6 +3377,7 @@ let run shipped =
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
     |> testRunStaticExecutableForBytesRangeOpsModule
+    |> testRunStaticExecutableForTextParseFloatModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

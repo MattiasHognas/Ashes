@@ -2278,8 +2278,23 @@ same public behavior.
   (the 32-byte back-to-front digit buffer, `0x` prefix, and sign), with
   `acceptBuiltinArgumentWidths` extended so `toHex` and `Ashes.Number.UInt.toInt` accept any
   unsigned width the way stage 0's ad-hoc rules do (stage 0's `toInt` defaults an unconstrained
-  argument to `u8`, which the scheme's own unification already provides). `Ashes.Text.parseFloat` (the phased float parse; `LLVMBuildSIToFP` is already
-  bound) is the next slice.
+  argument to `u8`, which the scheme's own unification already provides). `Ashes.Text.parseFloat`
+  landed last: the full phased parse — sign, integer digits, optional fraction, optional `e`/`E`
+  exponent with its own sign and overflow thresholds, and the multiply/divide-by-ten scaling
+  loops — with every phase a block, the value carried through `f64` slots (`LLVMBuildSIToFP` for
+  digits), and `Ok(bits)`/`Error(message)` Results carrying stage 0's exact message strings. Every
+  `f64` constant (0.0, 0.1, 10.0, the maximum finite double for the range checks) is built from its
+  exact bit pattern through an `i64` bitcast, and the final sign is applied as a sign-bit XOR in
+  the integer domain rather than an `fsub` from zero — keeping this hand-written hot path free of
+  constant pools. Landing it still surfaced the general linker gap: real `double` constants (and
+  `fneg`'s `xorps` mask) make LLVM emit `.rodata.cst8`/`.rodata.cst16` constant-pool loads as
+  PC-relative relocations into sections the single-`.rodata` model rejected, so
+  `AshesCompiler.Backend.ElfLinker` now collects every PROGBITS section whose name starts with
+  `.rodata` into one concatenated read-only image (each section at a 16-byte-aligned layout
+  offset; plain `.rodata` alone stays byte-identical to the old model), resolves rodata-targeted
+  relocations by folding the target section's layout offset into the symbol value, and applies
+  inside-rodata relocation patches (`.rela.rodata.*`) at their section's layout offset. With it the whole non-async `Ashes.Text`/`Ashes.Byte`/`Ashes.Rune`/
+  `Ashes.Number.UInt` builtin surface the test corpus uses lowers and codegens end to end.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

@@ -517,6 +517,13 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.Text")("parseFloat")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemFloat]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.Byte")("singleton")(
             TypeScheme(quantified = [], body = SemFunction(SemUInt(8))(SemBytes)(None), constraints = [])
         ),
