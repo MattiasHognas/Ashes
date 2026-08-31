@@ -3077,6 +3077,24 @@ let emitTypedBuiltin layout resultType lower (lowered: LoweredCoreValues) typedS
         lowered with state = typedState
     )
 
+// Stage 0's LowerTextFromInt accepts an `Int` OR a `u8`/`u16`/`u32` argument through an ad-hoc
+// rule rather than unification (every uN is stored widened, so the digit phases read the word
+// directly). Mirror it by letting a matching small-unsigned actual stand in for the scheme's
+// `Int` parameter before the types are bound.
+let acceptBuiltinArgumentWidths kind expected actual state =
+    match kind with
+        | CoreTextFromInt ->
+            match (expected, actual) with
+                | (SemInt :: expectedTail, actualHead :: _actualTail) ->
+                    match resolveType(state)(actualHead) with
+                        | SemUInt(bits) ->
+                            if bits <= 32
+                            then actualHead :: expectedTail
+                            else expected
+                        | _ -> expected
+                | _ -> expected
+        | _ -> expected
+
 let finishBuiltinArity arguments lower shape expectedArity actualArity =
     match shape with
         | CoreBuiltinShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType } ->
@@ -3095,9 +3113,13 @@ let finishBuiltinArity arguments lower shape expectedArity actualArity =
                 match lowerCoreValues(arguments)(lower)(state) with
                     | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
                     | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
-                        match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
-                            | (failedState, Some(error)) -> failure(failedState)(error)
-                            | (typedState, None) -> emitTypedBuiltin(layout)(resultType)(lower)(lowered)(typedState)
+                        let boundParameterTypes =
+                            match layout with
+                                | CoreBuiltinLayout { kind = builtinKind } -> acceptBuiltinArgumentWidths(builtinKind)(parameterTypes)(actualTypes)(valuesState)
+                        in
+                            match bindCoreValueTypes(boundParameterTypes)(actualTypes)(valuesState) with
+                                | (failedState, Some(error)) -> failure(failedState)(error)
+                                | (typedState, None) -> emitTypedBuiltin(layout)(resultType)(lower)(lowered)(typedState)
 
 let finishBuiltinArguments arguments lower shape =
     match shape with
