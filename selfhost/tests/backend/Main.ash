@@ -3001,6 +3001,8 @@ let buildIntrinsicModuleImportModule shipped name context = codegenShippedSource
 
 let buildIntrinsicAliasImportModule shipped name context = codegenShippedSource(shipped)("import Ashes.IO as io\nio.print(43)")(name)(context)
 
+let buildShippedTextJoinModule shipped name context = codegenShippedSource(shipped)("import Ashes.Text\nAshes.IO.print(Ashes.Text.join(\", \")([\"a\", \"b\", \"c\"]))")(name)(context)
+
 let buildTextFromIntModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.fromInt(0 - 42) + \"|\" + Ashes.Text.fromInt(0) + \"|\" + Ashes.Text.fromInt(9007))")(name)(context)
 
 let buildTextByteLengthModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.byteLength(\"hello, world\" + \"!\"))")(name)(context)
@@ -3026,6 +3028,9 @@ let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
 
 let testRunStaticExecutableForIntrinsicAliasImportModule shipped unit =
     assertProgramPrints(buildIntrinsicAliasImportModule(shipped))("selfhostBackendRunIntrinsicAliasImport")("selfhost_backend_intrinsic_alias_import_e2e")("43")
+
+let testRunStaticExecutableForShippedTextJoinModule shipped unit =
+    assertProgramPrints(buildShippedTextJoinModule(shipped))("selfhostBackendRunShippedTextJoin")("selfhost_backend_shipped_text_join_e2e")("a, b, c")
 
 let testRunStaticExecutableForTextFromIntModule unit = assertProgramPrints(buildTextFromIntModule)("selfhostBackendRunTextFromInt")("selfhost_backend_text_from_int_e2e")("-42|0|9007")
 
@@ -3330,6 +3335,7 @@ let run shipped =
     |> testRunStaticExecutableForShippedListLengthSelectorModule(shipped)
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForIntrinsicAliasImportModule(shipped)
+    |> testRunStaticExecutableForShippedTextJoinModule(shipped)
     |> testRunStaticExecutableForTextFromIntModule
     |> testRunStaticExecutableForTextByteLengthModule
     |> testRunStaticExecutableForBytesSliceModule
