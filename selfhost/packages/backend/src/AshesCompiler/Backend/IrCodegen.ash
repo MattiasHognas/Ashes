@@ -947,6 +947,73 @@ let emitStringConcatN i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpy
                                                 emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(destBytesPtr)(constInt(i64)(0u64)(false))(partRefs)
                                             in buildPtrToInt(builder)(payloadPtr)(i64)("str_cat_result"))
 
+// `TextFromInt`'s finish: the same prologue/zero/digit/sign phases as `PrintInt` (the phase
+// helpers above), with the write-syscall phase replaced by allocating a fresh RC heap string —
+// `{i64 count, i64 size, i64 len, bytes}`, `emitStringConcatN`'s exact layout — and copying the
+// filled tail of the digit buffer into it. Returns the payload pointer (`header + 16`) as the
+// universal `i64` value word, exactly as `ConcatStr` does.
+let emitTextFromInt context function_ i64 builder mallocFn mallocType memcpyFn memcpyType value =
+    (let i8 = int8Type(context)
+    in
+        let printState = printIntPrologue(builder)(i64)(i8)(value)
+        in
+            let blocks = createPrintIntBlocks(context)(function_)
+            in
+                let _ = emitPrintIntEntryDispatch(builder)(i64)(printState)(blocks)
+                in
+                    let _ = emitPrintIntZeroPath(builder)(i64)(i8)(printState)(blocks)
+                    in
+                        let _ = emitPrintIntLoop(builder)(i64)(i8)(printState)(blocks)
+                        in
+                            let _ = emitPrintIntSignPath(builder)(i64)(i8)(printState)(blocks)
+                            in
+                                let _ = positionBuilderAtEnd(builder)(blocks.writeBlock)
+                                in
+                                    let count = buildLoad(builder)(i64)(printState.indexSlot)("from_int_count")
+                                    in
+                                        let startIndex =
+                                            buildSub(builder)(constInt(i64)(32u64)(false))(count)("from_int_start_index")
+                                        in
+                                            let dataPtr = buildGEP(builder)(printState.bufferType)(printState.buffer)([constInt(i64)(0u64)(false), startIndex])(2u32)("from_int_data_ptr")
+                                            in
+                                                let totalSize =
+                                                    buildAdd(builder)(count)(constInt(i64)(24u64)(false))("from_int_total_size")
+                                                in
+                                                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("from_int_header")
+                                                    in
+                                                        let _ =
+                                                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                                                        in
+                                                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("from_int_size_ptr")
+                                                            in
+                                                                let _ =
+                                                                    buildStore(builder)(buildAdd(builder)(count)(constInt(i64)(8u64)(false))("from_int_size_value"))(sizePtr)
+                                                                in
+                                                                    let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("from_int_payload_ptr")
+                                                                    in
+                                                                        let _ = buildStore(builder)(count)(payloadPtr)
+                                                                        in
+                                                                            let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("from_int_dest_bytes_ptr")
+                                                                            in
+                                                                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, dataPtr, count])(3u32)("from_int_memcpy")
+                                                                                in
+                                                                                    let result = buildPtrToInt(builder)(payloadPtr)(i64)("from_int_result")
+                                                                                    in
+                                                                                        let _ = buildBr(builder)(blocks.continueBlock)
+                                                                                        in
+                                                                                            let _ = positionBuilderAtEnd(builder)(blocks.continueBlock)
+                                                                                            in result)
+
+// The `len` word every heap `Str`/`Bytes` value starts with, masked free of the view flag
+// (`LlvmCodegenMemory.cs`'s `LoadStringLength`: bit 63 marks a borrowed view of another value's
+// bytes; the length itself occupies the low 63 bits).
+let emitStringLengthValue builder i64 ptrType valueRef name =
+    (let lenPtr = buildIntToPtr(builder)(valueRef)(ptrType)(name + "_ptr")
+    in
+        let raw = buildLoad(builder)(i64)(lenPtr)(name + "_raw")
+        in
+            buildAnd(builder)(raw)(constInt(i64)(Ashes.Number.UInt.fromInt64(9223372036854775807))(false))(name))
+
 // `1 << 62`: the same immortal-refcount sentinel `LlvmCodegenMemory.cs`'s own `EmitHeapStringLiteral`
 // writes into a string literal's header instead of a real count of `1`. Decrementing this value by
 // any realistic number of drops never reaches zero, so the existing `RcDrop` codegen (unchanged for
@@ -1152,6 +1219,14 @@ let codegenInstructionKind cx builder kind state =
                         // `codegenInstructionKind` call site — where every other case in this match
                         // resolves its temps via `lookupIndexed` — so `emitStringConcatN` and its
                         // helpers take plain `List(LLVMValueRef)` and never touch `tempEnv`.
+                                        | TextFromInt(target, value, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(value)
+                                            |> emitTextFromInt(context)(function_)(i64)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)) :: tempEnv, terminated)
+                                        | TextByteLength(target, text) ->
+                                            ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(text)(tempEnv))("text_byte_length")) :: tempEnv, terminated)
+                                        | BytesLength(target, bytes) ->
+                                            ((target, emitStringLengthValue(builder)(i64)(ptrType)(lookupIndexed(bytes)(tempEnv))("bytes_length")) :: tempEnv, terminated)
                                         | ConcatStr(target, left, right, _managed) ->
                                             let result =
                                                 emitStringConcatN(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(
