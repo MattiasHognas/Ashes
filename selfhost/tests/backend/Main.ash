@@ -3003,6 +3003,10 @@ let buildTextFromIntModule name context = codegenOptimizedRealSource("Ashes.IO.p
 
 let buildTextByteLengthModule name context = codegenOptimizedRealSource("Ashes.IO.print(Ashes.Text.byteLength(\"hello, world\" + \"!\"))")(name)(context)
 
+let buildBytesSliceModule name context = codegenOptimizedRealSource("let bytes = Ashes.Byte.fromText(\"hello world\")\nAshes.IO.print(Ashes.Byte.subText(bytes)(6)(5) + \"/\" + Ashes.Byte.subView(bytes)(0)(5))")(name)(context)
+
+let buildBytesScalarOpsModule name context = codegenOptimizedRealSource("let bytes = Ashes.Byte.fromText(\"hello\")\nAshes.IO.print(Ashes.Text.fromInt(Ashes.Byte.indexOf(bytes)(108)(0)) + Ashes.Text.fromInt(Ashes.Number.UInt.toInt(Ashes.Byte.get(bytes)(1))) + Ashes.Text.fromInt(Ashes.Byte.compare(bytes)(Ashes.Byte.fromText(\"hellp\"))))")(name)(context)
+
 let testRunStaticExecutableForShippedListLengthModule shipped unit =
     assertProgramPrints(buildShippedListLengthModule(shipped))("selfhostBackendRunShippedListLength")("selfhost_backend_shipped_list_length_e2e")("3")
 
@@ -3015,6 +3019,10 @@ let testRunStaticExecutableForIntrinsicModuleImportModule shipped unit =
 let testRunStaticExecutableForTextFromIntModule unit = assertProgramPrints(buildTextFromIntModule)("selfhostBackendRunTextFromInt")("selfhost_backend_text_from_int_e2e")("-42|0|9007")
 
 let testRunStaticExecutableForTextByteLengthModule unit = assertProgramPrints(buildTextByteLengthModule)("selfhostBackendRunTextByteLength")("selfhost_backend_text_byte_length_e2e")("13")
+
+let testRunStaticExecutableForBytesSliceModule unit = assertProgramPrints(buildBytesSliceModule)("selfhostBackendRunBytesSlice")("selfhost_backend_bytes_slice_e2e")("world/hello")
+
+let testRunStaticExecutableForBytesScalarOpsModule unit = assertProgramPrints(buildBytesScalarOpsModule)("selfhostBackendRunBytesScalarOps")("selfhost_backend_bytes_scalar_ops_e2e")("2101-1")
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
@@ -3306,6 +3314,8 @@ let run shipped =
     |> testRunStaticExecutableForIntrinsicModuleImportModule(shipped)
     |> testRunStaticExecutableForTextFromIntModule
     |> testRunStaticExecutableForTextByteLengthModule
+    |> testRunStaticExecutableForBytesSliceModule
+    |> testRunStaticExecutableForBytesScalarOpsModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))

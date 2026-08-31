@@ -278,6 +278,33 @@ let emitLinuxProcessExit builder i64 =
 let emitLinuxWrite builder i64 fd ptr len =
     emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
 
+// A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
+// view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address
+// stored at `ref + 8`) — `LlvmCodegenMemory.cs`'s `LoadStringLength`/`GetStringBytesPointer`
+// contract. Returns the masked length and the branchless select of the two byte addresses; every
+// consumer of a string's bytes goes through this one helper so views are valid everywhere.
+let emitStringParts builder i64 ptrType stringRef name =
+    (let basePtr = buildIntToPtr(builder)(stringRef)(ptrType)(name + "_hdr_ptr")
+    in
+        let raw = buildLoad(builder)(i64)(basePtr)(name + "_hdr")
+        in
+            let len =
+                buildAnd(builder)(raw)(constInt(i64)(Ashes.Number.UInt.fromInt64(9223372036854775807))(false))(name + "_len")
+            in
+                let viewBits =
+                    buildAnd(builder)(raw)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))(name + "_view_bit")
+                in
+                    let isView =
+                        buildICmp(builder)(intPredicateNe)(viewBits)(constInt(i64)(0u64)(false))(name + "_is_view")
+                    in
+                        let inlineAddr =
+                            buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))(name + "_inline_addr")
+                        in
+                            let viewPtrPtr = buildIntToPtr(builder)(inlineAddr)(ptrType)(name + "_view_ptr_ptr")
+                            in
+                                let viewPtr = buildLoad(builder)(i64)(viewPtrPtr)(name + "_view_ptr")
+                                in (len, buildSelect(builder)(isView)(viewPtr)(inlineAddr)(name + "_bytes_addr")))
+
 // Reads a runtime-managed `Str` value's own `[len:i64][bytes...]` header (word `0` is `len`, byte
 // offset `8` is where the raw bytes start — the SAME layout `LoadConstStr`'s global builds, and
 // the general one every real `Str` value uses, not just a literal) and writes it to stdout via the
@@ -288,26 +315,21 @@ let emitLinuxWrite builder i64 fd ptr len =
 // `EmitPanic` prints its message through this exact same helper (`EmitPrintStringFromTemp`) before
 // exiting, not a stderr-specific write.
 let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
-    (let basePtr = buildIntToPtr(builder)(stringRef)(ptrType)("str_len_ptr")
-    in
-        let len = buildLoad(builder)(i64)(basePtr)("str_len")
-        in
-            let byteAddress =
-                buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))("str_bytes_addr")
+    match emitStringParts(builder)(i64)(ptrType)(stringRef)("print_str") with
+        | (len, byteAddress) ->
+            let _ =
+                emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
             in
-                let _ =
-                    emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(byteAddress)(len)
+                let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
                 in
-                    let newlineBuf = buildAlloca(builder)(i8)("print_str_newline")
+                    let _ =
+                        buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
                     in
-                        let _ =
-                            buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
+                        let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
                         in
-                            let newlineAddr = buildPtrToInt(builder)(newlineBuf)(i64)("newline_addr")
-                            in
-                                false
-                                |> constInt(i64)(1u64)
-                                |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr))
+                            false
+                            |> constInt(i64)(1u64)
+                            |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(newlineAddr)
 
 // The four basic blocks `emitStringEquals`'s three-way branch (lengths differ / lengths match but
 // bytes differ / bytes match) needs, bundled so each phase helper below takes one value instead of
@@ -339,24 +361,18 @@ let emitStrCmpNotEqualPath builder i64 resultSlot blocks =
         in buildBr(builder)(blocks.continueBlock))
 
 // The one block that actually calls `memcmp`, reached only once lengths already match.
-let emitStrCmpByteCompare context i64 ptrType builder memcmpFn memcmpType leftRef rightRef leftLen blocks =
+let emitStrCmpByteCompare context i64 ptrType builder memcmpFn memcmpType leftBytesAddr rightBytesAddr leftLen blocks =
     (let _ = positionBuilderAtEnd(builder)(blocks.lenEqBlock)
     in
-        let leftBytesAddr =
-            buildAdd(builder)(leftRef)(constInt(i64)(8u64)(false))("str_cmp_left_bytes_addr")
+        let leftBytesPtr = buildIntToPtr(builder)(leftBytesAddr)(ptrType)("str_cmp_left_bytes_ptr")
         in
-            let rightBytesAddr =
-                buildAdd(builder)(rightRef)(constInt(i64)(8u64)(false))("str_cmp_right_bytes_addr")
+            let rightBytesPtr = buildIntToPtr(builder)(rightBytesAddr)(ptrType)("str_cmp_right_bytes_ptr")
             in
-                let leftBytesPtr = buildIntToPtr(builder)(leftBytesAddr)(ptrType)("str_cmp_left_bytes_ptr")
+                let cmpResult = buildCall(builder)(memcmpType)(memcmpFn)([leftBytesPtr, rightBytesPtr, leftLen])(3u32)("str_cmp_memcmp")
                 in
-                    let rightBytesPtr = buildIntToPtr(builder)(rightBytesAddr)(ptrType)("str_cmp_right_bytes_ptr")
-                    in
-                        let cmpResult = buildCall(builder)(memcmpType)(memcmpFn)([leftBytesPtr, rightBytesPtr, leftLen])(3u32)("str_cmp_memcmp")
-                        in
-                            let isZero =
-                                buildICmp(builder)(intPredicateEq)(cmpResult)(constInt(int32Type(context))(0u64)(false))("str_cmp_is_eq")
-                            in buildCondBr(builder)(isZero)(blocks.eqBlock)(blocks.notEqBlock))
+                    let isZero =
+                        buildICmp(builder)(intPredicateEq)(cmpResult)(constInt(int32Type(context))(0u64)(false))("str_cmp_is_eq")
+                    in buildCondBr(builder)(isZero)(blocks.eqBlock)(blocks.notEqBlock))
 
 let emitStrCmpEqualPath builder i64 resultSlot blocks =
     (let _ = positionBuilderAtEnd(builder)(blocks.eqBlock)
@@ -379,21 +395,17 @@ let emitStrCmpEqualPath builder i64 resultSlot blocks =
 let emitStringEquals context function_ i64 ptrType builder memcmpFn memcmpType leftRef rightRef =
     (let resultSlot = buildAlloca(builder)(i64)("str_cmp_result")
     in
-        let leftLenPtr = buildIntToPtr(builder)(leftRef)(ptrType)("str_cmp_left_len_ptr")
-        in
-            let rightLenPtr = buildIntToPtr(builder)(rightRef)(ptrType)("str_cmp_right_len_ptr")
-            in
-                let leftLen = buildLoad(builder)(i64)(leftLenPtr)("str_cmp_left_len")
-                in
-                    let rightLen = buildLoad(builder)(i64)(rightLenPtr)("str_cmp_right_len")
-                    in
+        match emitStringParts(builder)(i64)(ptrType)(leftRef)("str_cmp_left") with
+            | (leftLen, leftBytesAddr) ->
+                match emitStringParts(builder)(i64)(ptrType)(rightRef)("str_cmp_right") with
+                    | (rightLen, rightBytesAddr) ->
                         let blocks = createStrCmpBlocks(context)(function_)
                         in
                             let _ = emitStrCmpLenCheck(builder)(leftLen)(rightLen)(blocks)
                             in
                                 let _ = emitStrCmpNotEqualPath(builder)(i64)(resultSlot)(blocks)
                                 in
-                                    let _ = emitStrCmpByteCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(leftRef)(rightRef)(leftLen)(blocks)
+                                    let _ = emitStrCmpByteCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(leftBytesAddr)(rightBytesAddr)(leftLen)(blocks)
                                     in
                                         let _ = emitStrCmpEqualPath(builder)(i64)(resultSlot)(blocks)
                                         in
@@ -872,10 +884,8 @@ let recursive sumPartLengths builder i64 ptrType partRefs =
     match partRefs with
         | [] -> constInt(i64)(0u64)(false)
         | partRef :: rest ->
-            let partLenPtr = buildIntToPtr(builder)(partRef)(ptrType)("str_cat_part_len_ptr")
-            in
-                let partLen = buildLoad(builder)(i64)(partLenPtr)("str_cat_part_len")
-                in
+            match emitStringParts(builder)(i64)(ptrType)(partRef)("str_cat_part") with
+                | (partLen, _bytesAddr) ->
                     buildAdd(builder)(partLen)(sumPartLengths(builder)(i64)(ptrType)(rest))("str_cat_len_acc")
 
 // Copies each part's own payload bytes into its final position in `destBytesPtr`, back to back,
@@ -890,21 +900,16 @@ let recursive emitConcatCopyParts builder i64 i8 ptrType memcpyFn memcpyType des
     match partRefs with
         | [] -> Unit
         | partRef :: rest ->
-            let partLenPtr = buildIntToPtr(builder)(partRef)(ptrType)("str_cat_part_len_ptr")
-            in
-                let partLen = buildLoad(builder)(i64)(partLenPtr)("str_cat_part_len")
-                in
-                    let partBytesAddr =
-                        buildAdd(builder)(partRef)(constInt(i64)(8u64)(false))("str_cat_part_bytes_addr")
+            match emitStringParts(builder)(i64)(ptrType)(partRef)("str_cat_part") with
+                | (partLen, partBytesAddr) ->
+                    let partBytesPtr = buildIntToPtr(builder)(partBytesAddr)(ptrType)("str_cat_part_bytes_ptr")
                     in
-                        let partBytesPtr = buildIntToPtr(builder)(partBytesAddr)(ptrType)("str_cat_part_bytes_ptr")
+                        let destOffsetPtr = buildGEP(builder)(i8)(destBytesPtr)([offset])(1u32)("str_cat_dest_offset_ptr")
                         in
-                            let destOffsetPtr = buildGEP(builder)(i8)(destBytesPtr)([offset])(1u32)("str_cat_dest_offset_ptr")
+                            let _ = buildCall(builder)(memcpyType)(memcpyFn)([destOffsetPtr, partBytesPtr, partLen])(3u32)("str_cat_memcpy")
                             in
-                                let _ = buildCall(builder)(memcpyType)(memcpyFn)([destOffsetPtr, partBytesPtr, partLen])(3u32)("str_cat_memcpy")
-                                in
-                                    let nextOffset = buildAdd(builder)(offset)(partLen)("str_cat_offset_next")
-                                    in emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(destBytesPtr)(nextOffset)(rest)
+                                let nextOffset = buildAdd(builder)(offset)(partLen)("str_cat_offset_next")
+                                in emitConcatCopyParts(builder)(i64)(i8)(ptrType)(memcpyFn)(memcpyType)(destBytesPtr)(nextOffset)(rest)
 
 // Allocates one real `malloc`'d RC-managed `Str` (`{i64 refcount, i64 unusedAllocSize, i64 len,
 // bytes...}`, the SAME layout `AllocAdt`'s own runtime-managed branch and every string literal
@@ -1013,6 +1018,256 @@ let emitStringLengthValue builder i64 ptrType valueRef name =
         let raw = buildLoad(builder)(i64)(lenPtr)(name + "_raw")
         in
             buildAnd(builder)(raw)(constInt(i64)(Ashes.Number.UInt.fromInt64(9223372036854775807))(false))(name))
+
+// `Bytes.get`'s out-of-bounds exit: the fixed message plus newline written from a stack buffer via
+// the raw `write` syscall, then exit `1` — the same fixed-ASCII-line shape `emitPrintBoolBranch`
+// uses, since a codegen-internal message has no `IrStringLiteral` global to print through.
+let emitBytesGetPanicMessage builder i64 i8 =
+    (let bufferType = arrayType(i8)(31u64)
+    in
+        let buffer = buildAlloca(builder)(bufferType)("bytes_get_panic_msg")
+        in
+            let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)([66, 121, 116, 101, 115, 46, 103, 101, 116, 58, 32, 105, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])
+            in
+                let addr = buildPtrToInt(builder)(buffer)(i64)("bytes_get_panic_addr")
+                in
+                    let _ =
+                        false
+                        |> constInt(i64)(31u64)
+                        |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(addr)
+                    in
+                        false
+                        |> constInt(i64)(1u64)
+                        |> emitLinuxProcessExitWithCode(builder)(i64))
+
+// `Bytes.get(bytes)(index)`: bounds-checked single-byte read, zero-extended to the universal `i64`
+// word — `EmitBytesGet`'s exact panic-or-load shape.
+let emitBytesGet context function_ i64 i8 ptrType builder bytesRef indexVal =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_get") with
+        | (len, bytesAddr) ->
+            let panicBlock = appendBasicBlock(context)(function_)("bytes_get_panic")
+            in
+                let okBlock = appendBasicBlock(context)(function_)("bytes_get_ok")
+                in
+                    let oob = buildICmp(builder)(intPredicateUge)(indexVal)(len)("bytes_get_oob")
+                    in
+                        let _ = buildCondBr(builder)(oob)(panicBlock)(okBlock)
+                        in
+                            let _ = positionBuilderAtEnd(builder)(panicBlock)
+                            in
+                                let _ = emitBytesGetPanicMessage(builder)(i64)(i8)
+                                in
+                                    let _ = positionBuilderAtEnd(builder)(okBlock)
+                                    in
+                                        let bytesPtr = buildIntToPtr(builder)(bytesAddr)(ptrType)("bytes_get_data_ptr")
+                                        in
+                                            let elemPtr = buildGEP(builder)(i8)(bytesPtr)([indexVal])(1u32)("bytes_get_elem_ptr")
+                                            in
+                                                let byteVal = buildLoad(builder)(i8)(elemPtr)("bytes_get_byte")
+                                                in buildZExt(builder)(byteVal)(i64)("bytes_get_result")
+
+// `Bytes.compare(left)(right)`: three-way lexicographic order — `memcmp` over the common prefix,
+// ties broken by length (shorter first) — `EmitBytesCompare`'s exact select chain.
+let emitBytesCompare context i64 ptrType builder memcmpFn memcmpType leftRef rightRef =
+    match emitStringParts(builder)(i64)(ptrType)(leftRef)("bytes_cmp_left") with
+        | (leftLen, leftAddr) ->
+            match emitStringParts(builder)(i64)(ptrType)(rightRef)("bytes_cmp_right") with
+                | (rightLen, rightAddr) ->
+                    let leftSmaller = buildICmp(builder)(intPredicateUlt)(leftLen)(rightLen)("bytes_cmp_left_smaller")
+                    in
+                        let minLen = buildSelect(builder)(leftSmaller)(leftLen)(rightLen)("bytes_cmp_min_len")
+                        in
+                            let leftPtr = buildIntToPtr(builder)(leftAddr)(ptrType)("bytes_cmp_left_ptr")
+                            in
+                                let rightPtr = buildIntToPtr(builder)(rightAddr)(ptrType)("bytes_cmp_right_ptr")
+                                in
+                                    let raw = buildCall(builder)(memcmpType)(memcmpFn)([leftPtr, rightPtr, minLen])(3u32)("bytes_cmp_memcmp")
+                                    in
+                                        let zero32 =
+                                            constInt(int32Type(context))(0u64)(false)
+                                        in
+                                            let zero = constInt(i64)(0u64)(false)
+                                            in
+                                                let one = constInt(i64)(1u64)(false)
+                                                in
+                                                    let negOne =
+                                                        constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false)
+                                                    in
+                                                        let rawIsZero = buildICmp(builder)(intPredicateEq)(raw)(zero32)("bytes_cmp_prefix_eq")
+                                                        in
+                                                            let rawNeg = buildICmp(builder)(intPredicateSlt)(raw)(zero32)("bytes_cmp_raw_neg")
+                                                            in
+                                                                let bySign = buildSelect(builder)(rawNeg)(negOne)(one)("bytes_cmp_by_sign")
+                                                                in
+                                                                    let lenEq = buildICmp(builder)(intPredicateEq)(leftLen)(rightLen)("bytes_cmp_len_eq")
+                                                                    in
+                                                                        let byLenNonEq = buildSelect(builder)(leftSmaller)(negOne)(one)("bytes_cmp_by_len_ne")
+                                                                        in
+                                                                            let byLen = buildSelect(builder)(lenEq)(zero)(byLenNonEq)("bytes_cmp_by_len")
+                                                                            in buildSelect(builder)(rawIsZero)(byLen)(bySign)("bytes_cmp_result")
+
+// `Bytes.indexOf(bytes)(needle)(from)`: index of the first byte equal to `needle` at or after
+// `max(from, 0)`, or `-1` — `EmitBytesIndexOfScalarScan`'s exact loop (the memchr/SWAR fast paths
+// stage 0 layers on top are optimizations this codegen does not need yet).
+let emitBytesIndexOf context function_ i64 i8 ptrType builder bytesRef needleVal fromVal =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_idx") with
+        | (len, bytesAddr) ->
+            let zero = constInt(i64)(0u64)(false)
+            in
+                let fromNeg = buildICmp(builder)(intPredicateSlt)(fromVal)(zero)("bytes_idx_from_neg")
+                in
+                    let fromStart = buildSelect(builder)(fromNeg)(zero)(fromVal)("bytes_idx_from")
+                    in
+                        let dataPtr = buildIntToPtr(builder)(bytesAddr)(ptrType)("bytes_idx_data_ptr")
+                        in
+                            let needle8 = buildTrunc(builder)(needleVal)(i8)("bytes_idx_needle")
+                            in
+                                let idxSlot = buildAlloca(builder)(i64)("bytes_idx_slot")
+                                in
+                                    let resultSlot = buildAlloca(builder)(i64)("bytes_idx_result")
+                                    in
+                                        let _ = buildStore(builder)(fromStart)(idxSlot)
+                                        in
+                                            let checkBlock = appendBasicBlock(context)(function_)("bytes_idx_check")
+                                            in
+                                                let bodyBlock = appendBasicBlock(context)(function_)("bytes_idx_body")
+                                                in
+                                                    let foundBlock = appendBasicBlock(context)(function_)("bytes_idx_found")
+                                                    in
+                                                        let advanceBlock = appendBasicBlock(context)(function_)("bytes_idx_advance")
+                                                        in
+                                                            let notFoundBlock = appendBasicBlock(context)(function_)("bytes_idx_notfound")
+                                                            in
+                                                                let doneBlock = appendBasicBlock(context)(function_)("bytes_idx_done")
+                                                                in
+                                                                    let _ = buildBr(builder)(checkBlock)
+                                                                    in
+                                                                        let _ = positionBuilderAtEnd(builder)(checkBlock)
+                                                                        in
+                                                                            let idx = buildLoad(builder)(i64)(idxSlot)("bytes_idx_val")
+                                                                            in
+                                                                                let more = buildICmp(builder)(intPredicateUlt)(idx)(len)("bytes_idx_more")
+                                                                                in
+                                                                                    let _ = buildCondBr(builder)(more)(bodyBlock)(notFoundBlock)
+                                                                                    in
+                                                                                        let _ = positionBuilderAtEnd(builder)(bodyBlock)
+                                                                                        in
+                                                                                            let bytePtr = buildGEP(builder)(i8)(dataPtr)([idx])(1u32)("bytes_idx_byte_ptr")
+                                                                                            in
+                                                                                                let curByte = buildLoad(builder)(i8)(bytePtr)("bytes_idx_byte")
+                                                                                                in
+                                                                                                    let eq = buildICmp(builder)(intPredicateEq)(curByte)(needle8)("bytes_idx_eq")
+                                                                                                    in
+                                                                                                        let _ = buildCondBr(builder)(eq)(foundBlock)(advanceBlock)
+                                                                                                        in
+                                                                                                            let _ = positionBuilderAtEnd(builder)(foundBlock)
+                                                                                                            in
+                                                                                                                let _ = buildStore(builder)(idx)(resultSlot)
+                                                                                                                in
+                                                                                                                    let _ = buildBr(builder)(doneBlock)
+                                                                                                                    in
+                                                                                                                        let _ = positionBuilderAtEnd(builder)(advanceBlock)
+                                                                                                                        in
+                                                                                                                            let _ =
+                                                                                                                                buildStore(builder)(buildAdd(builder)(idx)(constInt(i64)(1u64)(false))("bytes_idx_next"))(idxSlot)
+                                                                                                                            in
+                                                                                                                                let _ = buildBr(builder)(checkBlock)
+                                                                                                                                in
+                                                                                                                                    let _ = positionBuilderAtEnd(builder)(notFoundBlock)
+                                                                                                                                    in
+                                                                                                                                        let _ =
+                                                                                                                                            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(resultSlot)
+                                                                                                                                        in
+                                                                                                                                            let _ = buildBr(builder)(doneBlock)
+                                                                                                                                            in
+                                                                                                                                                let _ = positionBuilderAtEnd(builder)(doneBlock)
+                                                                                                                                                in buildLoad(builder)(i64)(resultSlot)("bytes_idx_result_val")
+
+// Clamps `start` into `[0, srcLen]` and `len` into `[0, srcLen - start]` — the shared range
+// discipline of `EmitBytesSubText`/`EmitBytesSubView`, so neither ever reads out of bounds.
+let emitBytesSubClamp builder i64 srcLen startVal lenVal name =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        let startNeg = buildICmp(builder)(intPredicateSlt)(startVal)(zero)(name + "_start_neg")
+        in
+            let start0 = buildSelect(builder)(startNeg)(zero)(startVal)(name + "_start0")
+            in
+                let startBig = buildICmp(builder)(intPredicateSgt)(start0)(srcLen)(name + "_start_big")
+                in
+                    let start = buildSelect(builder)(startBig)(srcLen)(start0)(name + "_start")
+                    in
+                        let avail = buildSub(builder)(srcLen)(start)(name + "_avail")
+                        in
+                            let lenNeg = buildICmp(builder)(intPredicateSlt)(lenVal)(zero)(name + "_len_neg")
+                            in
+                                let len0 = buildSelect(builder)(lenNeg)(zero)(lenVal)(name + "_len0")
+                                in
+                                    let lenBig = buildICmp(builder)(intPredicateSgt)(len0)(avail)(name + "_len_big")
+                                    in (start, buildSelect(builder)(lenBig)(avail)(len0)(name + "_len")))
+
+// `Bytes.subText(bytes)(start)(len)`: copies the clamped range into a fresh RC heap string —
+// `emitStringConcatN`'s exact `{count, size, len, bytes}` allocation with a single `memcpy`.
+let emitBytesSubText builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bytesRef startVal lenVal =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_sub") with
+        | (srcLen, srcAddr) ->
+            match emitBytesSubClamp(builder)(i64)(srcLen)(startVal)(lenVal)("bytes_sub") with
+                | (start, copyLen) ->
+                    let totalSize =
+                        buildAdd(builder)(copyLen)(constInt(i64)(24u64)(false))("bytes_sub_total_size")
+                    in
+                        let headerPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)("bytes_sub_header")
+                        in
+                            let _ =
+                                buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                            in
+                                let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_sub_size_ptr")
+                                in
+                                    let _ =
+                                        buildStore(builder)(buildAdd(builder)(copyLen)(constInt(i64)(8u64)(false))("bytes_sub_size_value"))(sizePtr)
+                                    in
+                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_sub_payload_ptr")
+                                        in
+                                            let _ = buildStore(builder)(copyLen)(payloadPtr)
+                                            in
+                                                let destBytesPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_sub_dest_bytes_ptr")
+                                                in
+                                                    let srcStartAddr = buildAdd(builder)(srcAddr)(start)("bytes_sub_src_start_addr")
+                                                    in
+                                                        let srcStartPtr = buildIntToPtr(builder)(srcStartAddr)(ptrType)("bytes_sub_src_start_ptr")
+                                                        in
+                                                            let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcStartPtr, copyLen])(3u32)("bytes_sub_memcpy")
+                                                            in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_sub_result")
+
+// `Bytes.subView(bytes)(start)(len)`: a zero-copy view `{len|VIEW, backingBytesAddr}` over the
+// clamped range in a fresh 16-byte RC payload — O(1), the backing must outlive the view exactly as
+// stage 0's `EmitBytesSubView` documents.
+let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVal lenVal =
+    match emitStringParts(builder)(i64)(ptrType)(bytesRef)("bytes_subv") with
+        | (srcLen, srcAddr) ->
+            match emitBytesSubClamp(builder)(i64)(srcLen)(startVal)(lenVal)("bytes_subv") with
+                | (start, viewLen) ->
+                    let headerPtr = buildCall(builder)(mallocType)(mallocFn)([constInt(i64)(32u64)(false)])(1u32)("bytes_subv_header")
+                    in
+                        let _ =
+                            buildStore(builder)(constInt(i64)(1u64)(false))(headerPtr)
+                        in
+                            let sizePtr = gepBytes(builder)(i64)(i8)(headerPtr)(8)("bytes_subv_size_ptr")
+                            in
+                                let _ =
+                                    buildStore(builder)(constInt(i64)(16u64)(false))(sizePtr)
+                                in
+                                    let taggedLen =
+                                        buildOr(builder)(viewLen)(constInt(i64)(Ashes.Number.UInt.fromInt64(1 << 63))(false))("bytes_subv_tagged_len")
+                                    in
+                                        let payloadPtr = gepBytes(builder)(i64)(i8)(headerPtr)(16)("bytes_subv_payload_ptr")
+                                        in
+                                            let _ = buildStore(builder)(taggedLen)(payloadPtr)
+                                            in
+                                                let ptrWordPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_subv_ptr_word")
+                                                in
+                                                    let _ =
+                                                        buildStore(builder)(buildAdd(builder)(srcAddr)(start)("bytes_subv_src_start"))(ptrWordPtr)
+                                                    in buildPtrToInt(builder)(payloadPtr)(i64)("bytes_subv_result")
 
 // `1 << 62`: the same immortal-refcount sentinel `LlvmCodegenMemory.cs`'s own `EmitHeapStringLiteral`
 // writes into a string literal's header instead of a real count of `1`. Decrementing this value by
@@ -1219,6 +1474,26 @@ let codegenInstructionKind cx builder kind state =
                         // `codegenInstructionKind` call site — where every other case in this match
                         // resolves its temps via `lookupIndexed` — so `emitStringConcatN` and its
                         // helpers take plain `List(LLVMValueRef)` and never touch `tempEnv`.
+                                        | BytesGet(target, bytes, index) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(index)
+                                            |> emitBytesGet(context)(function_)(i64)(i8)(ptrType)(builder)(lookupIndexed(bytes)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesIndexOf(target, bytes, needle, from) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(from)
+                                            |> emitBytesIndexOf(context)(function_)(i64)(i8)(ptrType)(builder)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(needle)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesCompare(target, left, right) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(right)
+                                            |> emitBytesCompare(context)(i64)(ptrType)(builder)(memcmpFn)(memcmpType)(lookupIndexed(left)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesSubText(target, bytes, start, count, _managed) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(count)
+                                            |> emitBytesSubText(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
+                                        | BytesSubView(target, bytes, start, count) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(count)
+                                            |> emitBytesSubView(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(lookupIndexed(bytes)(tempEnv))(lookupIndexed(start)(tempEnv))) :: tempEnv, terminated)
                                         | TextFromInt(target, value, _managed) ->
                                             ((target, tempEnv
                                             |> lookupIndexed(value)

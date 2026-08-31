@@ -469,6 +469,27 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Byte")("length")(
             TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("fromText")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("get")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemUInt(8))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("indexOf")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemInt)(SemInt)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("compare")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemBytes)(SemInt)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("subText")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemInt)(SemString)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("subView")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemInt)(SemString)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.UInt")("toInt")(
+            TypeScheme(quantified = [], body = SemFunction(SemUInt(8))(SemInt)(None), constraints = [])
         )
     ]
 
