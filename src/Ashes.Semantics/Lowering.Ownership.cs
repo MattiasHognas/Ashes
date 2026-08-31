@@ -713,6 +713,88 @@ public sealed partial class Lowering
         Emit(new IrInst.Label(endLabel));
     }
 
+    /// <summary>
+    /// Releases a runtime-managed list spine while leaving every head reference untouched: the
+    /// release for a consumed call argument whose destructured heads the callee's result may keep.
+    /// Unique cells are freed exactly as <see cref="EmitRuntimeManagedListDrop"/> frees them; the
+    /// heads' references now belong to the callee's result. A head the result did not actually keep
+    /// retains one reference on this conservative path instead of being freed out from under the
+    /// result.
+    /// </summary>
+    private void EmitRuntimeManagedListSpineDrop(int listTemp)
+    {
+        int currentSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(currentSlot, listTemp));
+        string loopLabel = NewLabel("rcdrop_list_spine");
+        string sharedLabel = NewLabel("rcdrop_list_spine_shared");
+        string endLabel = NewLabel("rcdrop_list_spine_end");
+
+        Emit(new IrInst.Label(loopLabel));
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, currentSlot));
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, currentTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+
+        int uniqueTemp = NewTemp();
+        Emit(new IrInst.RcIsUnique(uniqueTemp, currentTemp));
+        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
+        int tailTemp = NewTemp();
+        Emit(new IrInst.LoadMemOffset(
+            tailTemp,
+            currentTemp,
+            HeapLayouts.List.PayloadWordOffsetBytes(HeapLayouts.ListTailIndex)));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.StoreLocal(currentSlot, tailTemp));
+        Emit(new IrInst.Jump(loopLabel));
+
+        Emit(new IrInst.Label(sharedLabel));
+        Emit(new IrInst.RcDrop(currentTemp, "List", RuntimeManaged: true));
+        Emit(new IrInst.Jump(endLabel));
+        Emit(new IrInst.Label(endLabel));
+    }
+
+    /// <summary>
+    /// Releases a consumed call argument whose destructured parts the callee's result may keep:
+    /// only references the caller still owns are dropped. A list releases its spine and leaves the
+    /// heads to the result; any other aggregate gives up just its own header reference so children
+    /// the result kept stay alive; unstructured RC values (Str/Bytes/BigInt) have no parts and
+    /// release normally.
+    /// </summary>
+    private void EmitRuntimeManagedChildPreservingDrop(int valueTemp, TypeRef type)
+    {
+        TypeRef pruned = Prune(type);
+        switch (pruned)
+        {
+            case TypeRef.TList:
+                EmitRuntimeManagedListSpineDrop(valueTemp);
+                break;
+            case TypeRef.TTuple:
+                EmitRuntimeManagedShallowAggregateDrop(valueTemp, "Tuple");
+                break;
+            case TypeRef.TNamedType named:
+                EmitRuntimeManagedShallowAggregateDrop(valueTemp, named.Symbol.Name);
+                break;
+            default:
+                EmitRuntimeManagedChildDrop(valueTemp, pruned);
+                break;
+        }
+    }
+
+    private void EmitRuntimeManagedShallowAggregateDrop(int valueTemp, string typeName)
+    {
+        string endLabel = NewLabel("rcdrop_shallow_end");
+        int zeroTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(zeroTemp, 0));
+        int nonEmptyTemp = NewTemp();
+        Emit(new IrInst.CmpIntNe(nonEmptyTemp, valueTemp, zeroTemp));
+        Emit(new IrInst.JumpIfFalse(nonEmptyTemp, endLabel));
+        Emit(new IrInst.RcDrop(valueTemp, typeName, RuntimeManaged: true));
+        Emit(new IrInst.Label(endLabel));
+    }
+
     private void EmitRuntimeManagedUniqueListDrop(int listTemp, TypeRef elementType)
     {
         int currentSlot = NewLocal();

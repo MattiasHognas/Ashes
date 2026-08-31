@@ -10428,7 +10428,7 @@ public sealed partial class Lowering
 
         PreconstrainCallResultType(currentType, collectedArgs.Count, request.ExpectedType);
 
-        List<(int Temp, TypeRef Type)> consumedRuntimeArguments = [];
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments = [];
         if (LowerCallApplyArgs(call, rootExpr, collectedArgs, ref currentTemp, ref currentType,
                 consumedRuntimeArguments, out int runtimeManagedResultFlagTemp) is { } earlyResult)
         {
@@ -10849,7 +10849,7 @@ public sealed partial class Lowering
     // early error, or null when the whole chain applied cleanly.
     private (int, TypeRef)? LowerCallApplyArgs(Expr.Call call, Expr rootExpr, List<Expr> collectedArgs,
         ref int currentTemp, ref TypeRef currentType,
-        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         out int runtimeManagedResultFlagTemp)
     {
         runtimeManagedResultFlagTemp = -1;
@@ -10894,7 +10894,7 @@ public sealed partial class Lowering
         int i,
         TypeRef.TFun funType,
         ref int currentTemp,
-        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
         // A callee whose own type scheme leaves this parameter position quantified is compiled
@@ -11040,7 +11040,7 @@ public sealed partial class Lowering
         int closureTemp,
         int argumentTemp,
         TypeRef argumentType,
-        List<(int Temp, TypeRef Type)> consumedRuntimeArguments,
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
@@ -11075,7 +11075,7 @@ public sealed partial class Lowering
             MarkResourceArgMoved(argument);
             if (freshRuntimeArgument && !transfersFreshRuntimeArgument)
             {
-                consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType)));
+                consumedRuntimeArguments.Add((originalArgumentTemp, Prune(argumentType), calleeResultMayReachThisParameter));
             }
         }
 
@@ -11238,7 +11238,7 @@ public sealed partial class Lowering
 
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
-        IReadOnlyList<(int Temp, TypeRef Type)> consumedRuntimeArguments)
+        IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -11246,7 +11246,7 @@ public sealed partial class Lowering
         }
 
         HashSet<int> dropped = [];
-        foreach ((int temp, TypeRef type) in consumedRuntimeArguments)
+        foreach ((int temp, TypeRef type, bool preserveEscapedChildren) in consumedRuntimeArguments)
         {
             TypeRef valueType = Prune(type);
             if (CanArenaReset(valueType) || !dropped.Add(temp))
@@ -11258,6 +11258,10 @@ public sealed partial class Lowering
             {
                 Emit(new IrInst.CleanupResource(temp, "Function"));
                 Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
+            }
+            else if (preserveEscapedChildren)
+            {
+                EmitRuntimeManagedChildPreservingDrop(temp, valueType);
             }
             else
             {
