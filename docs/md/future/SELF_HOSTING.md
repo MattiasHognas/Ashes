@@ -1828,8 +1828,17 @@ same public behavior.
   site. A constructor field's `TypeExpr` resolves against a small hand-written primitive map
   (`Int`/`Str`/`Bool`/`Float`/`BigInt`/`Rune`/`Bytes`/`Unit`) plus the type's own parameter names —
   not `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment` this
-  single-file pipeline does not build; a field type outside that set refuses cleanly with a new
-  `UnsupportedTypeDeclaration` error rather than registering an incorrect layout. `isZeroCost` is
+  single-file pipeline does not build — and now also another named type (including the declaring
+  type itself, so a recursive `Tree = Leaf(Int) | Node(Tree, Tree)` classifies), a generic
+  application mapped to `SemNamed` over its mapped arguments, `List(...)` mapped to `SemList`, and
+  tuples mapped to `SemTuple`: every such field is one pointer word at runtime, the exact path
+  `Str` fields already proved, so recursive ADTs, list-valued fields, and tuple fields compile and
+  run end to end (a recursive tree sum prints `6`; a constructor holding a `List(Int)`, a
+  `(Str, Int)` tuple, and a `Maybe(Int)` prints through all three). A bare reference to a
+  PARAMETERIZED type without its arguments is currently accepted as a zero-argument `SemNamed`
+  rather than rejected (`adt_field_parameterized_needs_args` compiles where stage 0 diagnoses it) —
+  part of the missing-diagnostics set. Function-typed fields (`TypeArrow`) still refuse cleanly
+  with `UnsupportedTypeDeclaration` rather than registering an incorrect layout. `isZeroCost` is
   always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
   to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
   read back (`p.x`) compiles through the complete self-hosted pipeline and runs on a real Linux

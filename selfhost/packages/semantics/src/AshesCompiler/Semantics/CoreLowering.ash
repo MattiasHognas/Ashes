@@ -5321,8 +5321,39 @@ let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List(
             []
             |> SemNamed(0)("Unit")
             |> Some
-        | TypeNamed(name) -> lookupTypeParameter(name)(parameterTypes)
+        | TypeNamed(name) ->
+            match lookupTypeParameter(name)(parameterTypes) with
+                | Some(parameterType) -> Some(parameterType)
+                | None ->
+                    []
+                    |> SemNamed(0)(name)
+                    |> Some
+        | TypeApplied("List", element :: []) ->
+            match typeExprToSemanticType(element)(parameterTypes) with
+                | None -> None
+                | Some(elementType) -> Some(SemList(elementType))
+        | TypeApplied(name, arguments) ->
+            match typeExprListToSemanticTypes(arguments)(parameterTypes) with
+                | None -> None
+                | Some(argumentTypes) ->
+                    argumentTypes
+                    |> SemNamed(0)(name)
+                    |> Some
+        | TypeTuple(elements) ->
+            match typeExprListToSemanticTypes(elements)(parameterTypes) with
+                | None -> None
+                | Some(elementTypes) -> Some(SemTuple(elementTypes))
         | _other -> None
+and typeExprListToSemanticTypes (typeExprs: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
+    match typeExprs with
+        | [] -> Some([])
+        | typeExpr :: rest ->
+            match typeExprToSemanticType(typeExpr)(parameterTypes) with
+                | None -> None
+                | Some(semanticType) ->
+                    match typeExprListToSemanticTypes(rest)(parameterTypes) with
+                        | None -> None
+                        | Some(restTypes) -> Some(semanticType :: restTypes)
 
 let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
     match parameters with
