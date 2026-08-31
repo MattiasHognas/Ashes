@@ -1203,12 +1203,17 @@ same public behavior.
   pair, or the two list shapes, so it needs no per-field engine; a literal, record, or nested
   constructor sub-pattern stops the prefix, and the trailing arms after a covering prefix are dropped
   before planning or lowering.
-- [ ] Upgrade LLVM's advisory `tail` marker to the hard-guarantee `musttail` marker for a non-loop tail
-  call already proven `CanEmitNativeTailCall`-eligible (exact `CallKnown`-immediately-followed-by-
-  matching-`Return` adjacency), gated by a whole-function scan for any native stack allocation
-  (closure environments and capability/effect-handler frames both use the same stack-allocation
-  mechanism, and a handler frame's pointer can outlive a tail call later in the same function via a
-  dynamically-scoped global). Blocked on LLVM code generation existing in `selfhost/` first (see below).
+- [x] Upgrade LLVM's advisory `tail` marker to the hard-guarantee `musttail` marker for a non-loop tail
+  call already proven `CanEmitNativeTailCall`-eligible, gated by a whole-function scan for any native
+  stack allocation (closure environments and capability/effect-handler frames both use the same
+  stack-allocation mechanism, and a handler frame's pointer can outlive a tail call later in the same
+  function via a dynamically-scoped global). `IrCodegen.ash` fuses three shapes into a `musttail`
+  call followed by `ret`: `CallKnown` immediately followed by the matching `Return`, and — because
+  every lowered multi-arm body converges on a `Label(end); LoadLocal(x, slot); Return(x)` join — a
+  `CallKnown` whose result is stored to that join slot followed by either `Jump(end)` or direct
+  fallthrough into `Label(end)`. When the function stack-allocates, the call keeps the advisory
+  `tail` marker instead. This makes deep self-recursion, mutual recursion, and closure-helper loops
+  run in constant stack without loop conversion.
 - [ ] Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups with the
   dispatch slot layout: one dispatch slot per parameter position where every member's (structurally
   compared) parameter type agrees, and one slot per distinct type where they differ or where only some
