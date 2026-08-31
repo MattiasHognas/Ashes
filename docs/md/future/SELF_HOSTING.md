@@ -2151,11 +2151,16 @@ same public behavior.
   resolves to a synthesized empty module instead of erroring, leaving its members to the
   no-import-required qualified-access path, so entry programs and stdlib modules that import
   those are reachable (`import Ashes.IO` / `Ashes.IO.print(42)` runs end to end in
-  `selfhost/tests/backend`). **Explicitly still open**: a builtin module none of whose members
-  lower yet (`Ashes.Task`, `Ashes.Internal`) still errors rather than pretending to exist; an
-  aliased intrinsic import (`import Ashes.IO as io`) binds nothing, so `io.print` does not
-  resolve; selector imports of intrinsic members (`import Ashes.IO.print`) find no exported
-  definition in the empty module; bare qualified references without an `import`
+  `selfhost/tests/backend`). Whole-module import shorthands now resolve too: each stitched module
+  scope carries a `moduleAliases` map (the explicit alias and the module-path leaf, each to the
+  full module name, strings deep-copied out of the borrowed resolved-import list), and the
+  reference rewriter turns a qualified name whose qualifier matches no stitched binding but is a
+  known alias back into the full module path (`io.print` → `Ashes.IO.print`), letting the
+  no-import-required qualified-access path resolve it — for intrinsic and shipped modules alike.
+  **Explicitly still open**: a builtin module none of whose members lower yet (`Ashes.Task`,
+  `Ashes.Internal`) still errors rather than pretending to exist; selector imports of intrinsic
+  members (`import Ashes.IO.print`) find no exported definition in the empty module; bare
+  qualified references without an `import`
   (`Ashes.Text.length(...)` with no header) are not collected, only imported modules are; and
   the shipped root is still handed in by the caller rather than located from the compiler
   binary (the next item below).
