@@ -1209,7 +1209,8 @@ public sealed partial class Lowering
         int ResultSlot,
         int CurrentTemp,
         int RuntimeManagedResultFlagTemp,
-        TypeRef ResultType);
+        TypeRef ResultType,
+        bool IsDeepCopy = false);
 
     private readonly Dictionary<int, PendingCallResultCopyOut> _pendingCallResultCopyOuts = new();
     private int _nextCallResultCopyOutId;
@@ -11651,6 +11652,11 @@ public sealed partial class Lowering
     private bool EmitDeferredCallResultCopyOut(PendingCallResultCopyOut info)
     {
         TypeRef resultType = Prune(info.ResultType);
+        if (info.IsDeepCopy)
+        {
+            return EmitResolvedDeferredDeepCopy(info, resultType);
+        }
+
         CopyOutKind kind = GetCallCopyOutKind(
             resultType,
             out int copySize,
@@ -11682,6 +11688,48 @@ public sealed partial class Lowering
                 copySize);
         Emit(new IrInst.StoreLocal(info.ResultSlot, copiedTemp));
         return true;
+    }
+
+    // Replaces a deferred Ashes.Internal.deepCopy placeholder now that inference has finished with
+    // the same expansion the call would have received had its type been known. Returns false,
+    // emitting nothing, when the resolved type deep-copies to itself.
+    private bool EmitResolvedDeferredDeepCopy(PendingCallResultCopyOut info, TypeRef resultType)
+    {
+        if (!DeepCopyChangesValue(resultType))
+        {
+            return false;
+        }
+
+        int currentTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(currentTemp, info.ResultSlot));
+        int copiedTemp = EmitDeepCopy(currentTemp, resultType);
+        Emit(new IrInst.StoreLocal(info.ResultSlot, copiedTemp));
+        return true;
+    }
+
+    // Mirrors EmitDeepCopy's shape selection: true for the types whose deep copy produces a new
+    // value; false for scalars, resource ADTs, and a type still unresolved after inference (a
+    // genuinely polymorphic value has a uniform representation with no copyable static shape —
+    // identity, exactly what EmitDeepCopy's default arm gives such a value).
+    private static bool DeepCopyChangesValue(TypeRef resolvedType)
+        => resolvedType is TypeRef.TStr or TypeRef.TBytes or TypeRef.TTuple or TypeRef.TList or TypeRef.TFun
+            || resolvedType is TypeRef.TNamedType named && !BuiltinRegistry.IsResourceTypeName(named.Symbol.Name);
+
+    // Ashes.Internal.deepCopy over a type still holding an inference variable cannot pick its copy
+    // shape yet — EmitDeepCopy's default arm would silently degrade the copy to identity, leaving
+    // the "fresh" value aliasing the original. Route the value through a slot and leave a
+    // placeholder, resolved into the real EmitDeepCopy expansion once inference has finished.
+    private int DeferDeepCopy(int currentTemp, TypeRef valueType)
+    {
+        int resultSlot = NewLocal();
+        Emit(new IrInst.StoreLocal(resultSlot, currentTemp));
+        int pendingId = _nextCallResultCopyOutId++;
+        _pendingCallResultCopyOuts[pendingId] = new PendingCallResultCopyOut(
+            -1, -1, -1, resultSlot, currentTemp, -1, valueType, IsDeepCopy: true);
+        Emit(new IrInst.CallResultCopyOutPending(pendingId, [currentTemp], [resultSlot]));
+        int resultTemp = NewTemp();
+        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
+        return resultTemp;
     }
 
     private (int, TypeRef) LowerExternalCall(
