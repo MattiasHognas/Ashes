@@ -335,10 +335,12 @@ let emitWriteNewlineToFd builder i64 i8 fd =
 // `EmitPrintStringFromTemp(appendNewline: true)` exactly. Stage 0's own `EmitPanic` prints its
 // message through this exact same helper before exiting, not a stderr-specific write.
 let emitPrintStrBytesWithNewline builder i64 i8 ptrType stringRef =
-    let _ =
-        stringRef
-        |> emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(1u64)(false))
-    in emitWriteNewlineToFd(builder)(i64)(i8)(constInt(i64)(1u64)(false))
+    (let _ =
+        emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(1u64)(false))(stringRef)
+    in
+        false
+        |> constInt(i64)(1u64)
+        |> emitWriteNewlineToFd(builder)(i64)(i8))
 
 // The four basic blocks `emitStringEquals`'s three-way branch (lengths differ / lengths match but
 // bytes differ / bytes match) needs, bundled so each phase helper below takes one value instead of
@@ -3645,7 +3647,10 @@ let codegenInstructionKind cx builder kind state =
                                                 in
                                                     let _ =
                                                         if newline
-                                                        then emitWriteNewlineToFd(builder)(i64)(i8)(constInt(i64)(2u64)(false))
+                                                        then
+                                                            false
+                                                            |> constInt(i64)(2u64)
+                                                            |> emitWriteNewlineToFd(builder)(i64)(i8)
                                                         else constInt(i64)(0u64)(false)
                                                     in (tempEnv, false)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
