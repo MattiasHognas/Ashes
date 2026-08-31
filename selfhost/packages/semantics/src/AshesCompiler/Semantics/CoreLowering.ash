@@ -3489,6 +3489,7 @@ let numericDefault semanticType =
         | SemRune -> SemRune
         | SemBigInt -> SemBigInt
         | SemUInt(bits) -> SemUInt(bits)
+        | SemString -> SemString
         | _ -> SemInt
 
 let finishCoreBinaryBinding (binary: LoweredCoreBinary) result =

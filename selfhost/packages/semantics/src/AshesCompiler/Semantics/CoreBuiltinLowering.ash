@@ -490,6 +490,16 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Number.UInt")("toInt")(
             TypeScheme(quantified = [], body = SemFunction(SemUInt(8))(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("unconsText")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Maybe")([SemTuple([SemString, SemString])]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.Rune")("toText")(
+            TypeScheme(quantified = [], body = SemFunction(SemRune)(SemString)(None), constraints = [])
         )
     ]
 
