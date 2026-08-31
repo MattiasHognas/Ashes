@@ -9,6 +9,7 @@
 // - Lifted functions retain generation order, with nested functions preceding their enclosing function.
 
 import Ashes.Collection.List.append
+import Ashes.Collection.List.length
 import Ashes.Collection.List.reverse
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
@@ -4096,11 +4097,11 @@ let recursive parseDecimalDigits remaining value =
         | None -> value
         | Some((digit, rest)) -> parseDecimalDigits(rest)(value * 10 + Ashes.Text.firstByteOf(digit) - 48)
 
-let bigIntFitsLength digits length =
-    if length < 19
+let bigIntFitsLength digits digitCount =
+    if digitCount < 19
     then true
     else
-        if length == 19
+        if digitCount == 19
         then Ashes.Text.compare(digits)("9223372036854775807") <= 0
         else false
 
@@ -4147,8 +4148,8 @@ let finishCoreBigIntHead rest lowered =
                     )
         | LoweredCoreValue { state = state, error = Some(error) } -> failure(state)(error)
 
-let bigIntFirstLength length =
-    match length % 18 with
+let bigIntFirstLength digitCount =
+    match digitCount % 18 with
         | 0 -> 18
         | remainder -> remainder
 
