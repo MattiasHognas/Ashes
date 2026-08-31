@@ -393,6 +393,11 @@ public sealed partial class Lowering
             return (temp, pruned);
         }
 
+        if (pruned is TypeRef.TVar)
+        {
+            return (DeferDeepCopy(temp, pruned), pruned);
+        }
+
         return (EmitDeepCopy(temp, pruned), pruned);
     }
 
