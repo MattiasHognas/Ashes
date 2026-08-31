@@ -2180,10 +2180,18 @@ same public behavior.
   layout and copying the digit buffer's tail in), `Ashes.Text.byteLength`, and `Ashes.Byte.length`
   (both the `len` word every heap `Str`/`Bytes` value starts with, masked free of the bit-63 view
   flag — `LoadStringLength`'s shape). Each has a `standardBuiltinLayouts` scheme; the emission
-  cases already existed. Verified end to end (`-42|0|9007`, `13`). The set `lib/Ashes/Text.ash`'s
-  own body needs before `import Ashes.Text` programs can lower — `Ashes.Byte.fromText`/`length`/
-  `subText`/`get`/`subView`/`indexOf`/`compare`, `Ashes.Text.unconsText`, `Ashes.Rune.toText`, and
-  the `Ashes.Number.UInt` pair — is the natural next slice of this item.
+  cases already existed. Verified end to end (`-42|0|9007`, `13`). The byte-level set followed:
+  `Ashes.Byte.fromText` and `Ashes.Number.UInt.toInt` (both identity emissions — `Bytes` shares
+  `Str`'s layout and every `uN` is stored widened), `Ashes.Byte.get` (bounds-checked, panics with
+  stage 0's message), `indexOf` (the scalar scan; stage 0's memchr/SWAR fast paths are
+  optimizations), `compare` (`memcmp` + the length tiebreak select chain), `subText` (clamped copy
+  into a fresh RC string), and `subView` — which introduces string VIEWS
+  (`{len|VIEW, backingBytesAddr}`), so every consumer of a string's bytes (`ConcatStr` parts,
+  `CmpStrEq`, `PrintStr`, `PanicStr`, the length reads) now goes through one view-aware
+  `emitStringParts` helper mirroring `LoadStringLength`/`GetStringBytesPointer`. Verified:
+  `world/hello` from a subText/subView concat, plus get/indexOf/compare scalars. Remaining before
+  `import Ashes.Text` programs can lower (Text.ash's own body): `Ashes.Text.unconsText` and
+  `Ashes.Rune.toText` — the UTF-8 decode/encode pair.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
