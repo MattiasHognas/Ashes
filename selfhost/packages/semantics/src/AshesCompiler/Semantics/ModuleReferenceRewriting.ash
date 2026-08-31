@@ -10,6 +10,7 @@
 import Ashes.Collection.List.append as appendList
 import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.ModuleSemanticStitching
 export (
     value rewriteStitchedModuleReferences,
@@ -275,13 +276,46 @@ and rewritePattern project moduleName boundary pattern =
             |> PatternOr
         | _ -> pattern
 
+// A bare name unresolved against real stitched bindings may still be an unqualified reference to
+// an intrinsic builtin module's member: language.md's `import M` (no `as`) exposes `M`'s exported
+// names unqualified as well as qualified, and an intrinsic module (`Ashes.IO` and the rest of
+// `coreBuiltinKind`'s modules) contributes no stitched bindings at all for that rule to resolve
+// against directly, so it needs this separate check. Only the FIRST plainly-imported intrinsic
+// module whose `coreBuiltinKind` recognizes `name` is used; two plainly-imported intrinsic modules
+// sharing a member name (none do today) would need the ambiguity diagnostic language.md's
+// unqualified-name section calls for, not implemented here.
+let recursive findIntrinsicMemberModule name candidateModules =
+    match candidateModules with
+        | [] -> None
+        | candidate :: rest ->
+            if isIntrinsicBuiltinModule(candidate)
+            then
+                match coreBuiltinKind(candidate)(name) with
+                    | Some(_kind) ->
+                        candidate
+                        |> deepCopy
+                        |> Some
+                    | None -> findIntrinsicMemberModule(name)(rest)
+            else findIntrinsicMemberModule(name)(rest)
+
+let resolveIntrinsicPlainImportMember project moduleName name =
+    project
+    |> stitchedModulePlainImports(moduleName)
+    |> findIntrinsicMemberModule(name)
+
 let resolveExpressionVariable project moduleName boundary locals name =
     if textExists(name)(locals)
     then ExprVar(name)
     else
-        name
-        |> resolveUnqualifiedCompilerName(project)(moduleName)(boundary)(StitchedValue)
-        |> ExprVar
+        match resolveStitchedUnqualified(moduleName)(boundary)(StitchedValue)(name)(project) with
+            | Some(definition) ->
+                definition
+                |> definitionCompilerName
+                |> ExprVar
+            | None ->
+                match resolveIntrinsicPlainImportMember(project)(moduleName)(name) with
+                    | Some(intrinsicModule) -> ExprQualifiedVar(intrinsicModule)(name)
+                    | None -> ExprVar(name)
 
 let rewriteQualifiedExpression project moduleName boundary qualifier name =
     match resolveStitchedQualified(moduleName)(qualifier)(StitchedValue)(name)(project) with
