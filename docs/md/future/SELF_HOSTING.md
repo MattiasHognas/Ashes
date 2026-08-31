@@ -2319,6 +2319,23 @@ same public behavior.
   all, so this is a pre-existing crash in some shared exit/cleanup path, not a regression; the
   backend and CLI suites, and every `tests/*.ash` survey run, are unaffected. Left for a future
   slice to root-cause.
+  `Ashes.IO.File.exists` followed, the first File builtin and the first real Linux `openat`/`close`
+  syscalls this codegen emits: a new 4-argument syscall helper (`emitLinuxSyscallCall4` — `syscall`'s
+  ABI passes a fourth argument in `r10`, not `rcx`, since `rcx` is clobbered by the `syscall`
+  instruction's own return address) backs `openat(AT_FDCWD, path, O_RDONLY, 0)`, and a new
+  `emitStringToCString` helper (a fresh `malloc`'d, NUL-terminated buffer copied from an Ashes
+  `Str`'s length-prefixed, never-NUL-terminated bytes) supplies the path every syscall needs.
+  `exists` opens the path and closes it again on success, resolving `Ok(true)`/`Ok(false)` through
+  the existing `emitResultAdt` helper `Ashes.Text.parseInt`'s `Ok`/`Error` construction already
+  established — Linux's `open`/`openat` has no failure mode this builtin needs to surface as
+  `Error` (a permission-denied path is simply "not opened," which stage 0's own
+  `EmitLinuxFileExists` also reports as `Ok(false)`), so codegen never takes the `Error` branch.
+  Verified end to end (survey 250 → 251; `fs_exists_missing` — the one File.exists test with no
+  `// file:` fixture requirement — now passes, and both `fs_exists_present`/
+  `std_fs_qualified_names_resolve` were confirmed correct by hand with a real fixture file since the
+  survey harness does not create `// file:` fixtures). `readText`/`readAllBytes`/`writeText`/
+  `writeBytes`/`open`/`readChunk`/`readLine`/`close` remain — each needs a real `read`/`write` loop
+  and, for `open`, a resource-typed handle the lowering side does not model yet.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

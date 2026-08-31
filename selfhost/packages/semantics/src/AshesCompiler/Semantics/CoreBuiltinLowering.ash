@@ -475,6 +475,13 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.IO")("writeErrorLine")(
             TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
         ),
+        standardBuiltinLayout("Ashes.IO.File")("exists")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemBool]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.Text")("fromInt")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
         ),

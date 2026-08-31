@@ -278,6 +278,29 @@ let emitLinuxProcessExit builder i64 =
 let emitLinuxWrite builder i64 fd ptr len =
     emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
 
+// Any linux-x64 4-argument syscall — the same `emitLinuxSyscallCall` mechanism with a fourth input
+// register. `syscall`'s ABI passes a fourth argument in `r10`, NOT `rcx` (the `syscall` instruction
+// itself clobbers `rcx` with the return address), so the constraint string gains `{r10}` as a fifth
+// input alongside the existing three, `rcx`/`r11`/memory still the only clobbers. Needed for
+// `openat` (`AT_FDCWD`, path, flags, mode) — every File builtin that opens a path funnels through it.
+let emitLinuxSyscallCall4 builder i64 nr arg1 arg2 arg3 arg4 name =
+    (let syscallType = functionType(i64)([i64, i64, i64, i64, i64])(5u32)(false)
+    in
+        let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},{r10},~{rcx},~{r11},~{memory}")(true)(false)
+        in buildCall(builder)(syscallType)(syscallAsm)([nr, arg1, arg2, arg3, arg4])(5u32)(name))
+
+// `openat(AT_FDCWD, path, flags, mode)` — stage 0's own `EmitLinuxSyscall` translates a plain
+// `open` request to `openat` with `AT_FDCWD` (`-100`, bit-reinterpreted to its `u64` register value
+// the same way the string-header view-bit sign trick does) the same way, since `open` itself is
+// unavailable on some kernels/architectures and `openat` is the portable primitive.
+let emitLinuxOpenat builder i64 pathAddr flags mode =
+    emitLinuxSyscallCall4(builder)(i64)(constInt(i64)(257u64)(false))(constInt(i64)(Ashes.Number.UInt.fromInt64(-100))(false))(pathAddr)(flags)(mode)("sys_openat")
+
+let emitLinuxClose builder i64 fd =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        emitLinuxSyscallCall(builder)(i64)(constInt(i64)(3u64)(false))(fd)(zero)(zero)("sys_close"))
+
 // A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
 // view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address
 // stored at `ref + 8`) — `LlvmCodegenMemory.cs`'s `LoadStringLength`/`GetStringBytesPointer`
@@ -330,6 +353,29 @@ let emitWriteNewlineToFd builder i64 i8 fd =
                 false
                 |> constInt(i64)(1u64)
                 |> emitLinuxWrite(builder)(i64)(fd)(newlineAddr))
+
+// A fresh, NUL-terminated `malloc` buffer holding `stringRef`'s bytes — every syscall path needs a
+// real C string, but an Ashes `Str`/`Bytes` value is length-prefixed and never NUL-terminated
+// (`emitStringParts`' own contract). Matches `LlvmCodegenMemory.cs`'s `EmitStringToCString` exactly:
+// `len + 1` bytes, the payload copied via `memcpy`, one trailing zero byte written at `[len]`. Never
+// freed — the same leak-not-miscompile trade every other arena stand-in in this file makes.
+let emitStringToCString builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType stringRef name =
+    match emitStringParts(builder)(i64)(ptrType)(stringRef)(name) with
+        | (len, srcAddr) ->
+            let totalSize =
+                buildAdd(builder)(len)(constInt(i64)(1u64)(false))(name + "_size")
+            in
+                let destPtr = buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)(name + "_buf")
+                in
+                    let srcPtr = buildIntToPtr(builder)(srcAddr)(ptrType)(name + "_src_ptr")
+                    in
+                        let _ = buildCall(builder)(memcpyType)(memcpyFn)([destPtr, srcPtr, len])(3u32)(name + "_memcpy")
+                        in
+                            let terminatorPtr = buildGEP(builder)(i8)(destPtr)([len])(1u32)(name + "_nul_ptr")
+                            in
+                                let _ =
+                                    buildStore(builder)(constInt(i8)(0u64)(false))(terminatorPtr)
+                                in destPtr
 
 // `print`/`panic`'s own stdout (fd 1) write-then-newline, matching `LlvmCodegenExpressions.cs`'s
 // `EmitPrintStringFromTemp(appendNewline: true)` exactly. Stage 0's own `EmitPanic` prints its
@@ -3653,6 +3699,53 @@ let codegenInstructionKind cx builder kind state =
                                                             |> emitWriteNewlineToFd(builder)(i64)(i8)
                                                         else constInt(i64)(0u64)(false)
                                                     in (tempEnv, false)
+                        // `Ashes.IO.File.exists` — `openat`, then `close` on success. Linux's
+                        // `open`/`openat` never fails to report existence in a way this builtin
+                        // needs to surface as `Error` (a permission-denied path is simply "not
+                        // opened", which stage 0's own `EmitLinuxFileExists` also reports as
+                        // `Ok(false)`), so this always resolves `Ok(...)`, never `Error(...)`.
+                                        | FileExists(target, path) ->
+                                            let pathCstr =
+                                                emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))("file_exists_path")
+                                            in
+                                                let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("file_exists_path_addr")
+                                                in
+                                                    let resultSlot = buildAlloca(builder)(i64)("file_exists_result")
+                                                    in
+                                                        let foundBlock = appendBasicBlock(context)(function_)("file_exists_found")
+                                                        in
+                                                            let missingBlock = appendBasicBlock(context)(function_)("file_exists_missing")
+                                                            in
+                                                                let continueBlock = appendBasicBlock(context)(function_)("file_exists_continue")
+                                                                in
+                                                                    let fd =
+                                                                        false
+                                                                        |> constInt(i64)(0u64)
+                                                                        |> emitLinuxOpenat(builder)(i64)(pathAddr)(constInt(i64)(0u64)(false))
+                                                                    in
+                                                                        let openFailed =
+                                                                            buildICmp(builder)(intPredicateSlt)(fd)(constInt(i64)(0u64)(false))("file_exists_open_failed")
+                                                                        in
+                                                                            let _ = buildCondBr(builder)(openFailed)(missingBlock)(foundBlock)
+                                                                            in
+                                                                                let _ = positionBuilderAtEnd(builder)(foundBlock)
+                                                                                in
+                                                                                    let _ = emitLinuxClose(builder)(i64)(fd)
+                                                                                    in
+                                                                                        let _ =
+                                                                                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(constInt(i64)(1u64)(false))("file_exists_result"))(resultSlot)
+                                                                                        in
+                                                                                            let _ = buildBr(builder)(continueBlock)
+                                                                                            in
+                                                                                                let _ = positionBuilderAtEnd(builder)(missingBlock)
+                                                                                                in
+                                                                                                    let _ =
+                                                                                                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(constInt(i64)(0u64)(false))("file_exists_result"))(resultSlot)
+                                                                                                    in
+                                                                                                        let _ = buildBr(builder)(continueBlock)
+                                                                                                        in
+                                                                                                            let _ = positionBuilderAtEnd(builder)(continueBlock)
+                                                                                                            in ((target, buildLoad(builder)(i64)(resultSlot)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
