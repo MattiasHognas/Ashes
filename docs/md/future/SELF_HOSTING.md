@@ -2230,11 +2230,29 @@ same public behavior.
   reference rewriter turns a qualified name whose qualifier matches no stitched binding but is a
   known alias back into the full module path (`io.print` → `Ashes.IO.print`), letting the
   no-import-required qualified-access path resolve it — for intrinsic and shipped modules alike.
+  A plain whole-module import (`import Ashes.IO`, no `as`) now ALSO exposes its members
+  unqualified, matching language.md's own "Import and use unqualified names" table (`import M` |
+  "module M (qualified access; exported names also unqualified)") — a bare `print` after `import
+  Ashes.IO` used to fail `UnknownLoweringBinding("print")` even though the qualified `Ashes.IO.print`
+  and the leaf-qualified `IO.print` both already worked. `moduleAliases`' own leaf-qualifier entries
+  can't tell an aliased import (`import Ashes.IO as io`, unqualified-name-exempt per the same table)
+  from a plain one apart — both get a leaf entry — so `StitchedModuleScope` gained a second, narrower
+  field, `plainWholeModuleImports`, tracking only alias-free whole-module imports. The reference
+  rewriter's bare-name path now falls back, after a real stitched binding search comes up empty, to
+  checking whether the name matches a `coreBuiltinKind` member of any of the current module's plain
+  intrinsic imports, rewriting a hit into the same `ExprQualifiedVar` shape the alias path already
+  produces. Verified end to end (survey 253 → 255: `std_import_ashes_io`, `result_stdlib_import`),
+  plus the negative case (`std_implicit_open.ash`: a bare `print` with NO import still fails, just
+  under selfhost's own `UnknownLoweringBinding` wording rather than stage 0's "Undefined variable"
+  text — a separate, pre-existing diagnostic-message-parity gap, not a regression from this fix).
   **Explicitly still open**: a builtin module none of whose members lower yet (`Ashes.Task`,
   `Ashes.Internal`) still errors rather than pretending to exist; selector imports of intrinsic
   members (`import Ashes.IO.print`) find no exported definition in the empty module; bare
   qualified references without an `import`
-  (`Ashes.Text.length(...)` with no header) are not collected, only imported modules are; and
+  (`Ashes.Text.length(...)` with no header) are not collected, only imported modules are; two
+  plainly-imported intrinsic modules sharing a member name would silently pick the first rather than
+  reporting the ambiguity language.md's own unqualified-name section calls for (no current intrinsic
+  module collides with another, so unobserved in practice); and
   the shipped root is still handed in by the caller rather than located from the compiler
   binary (the next item below).
 - [~] `AshesCompiler.Backend.IrCodegen` gained every remaining scalar integer instruction the
