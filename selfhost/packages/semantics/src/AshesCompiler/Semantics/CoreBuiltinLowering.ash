@@ -534,6 +534,59 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Number.UInt")("fromInt64")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemUInt(64))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("empty")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("append")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemBytes)(SemBytes)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("u16Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemUInt(16))(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("u32Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemUInt(32))(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("u64Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemUInt(64))(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("getU16Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemUInt(16))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("getU32Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemUInt(32))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("getU64Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemUInt(64))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("set")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemUInt(8))(SemBytes)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("setU16Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemUInt(16))(SemBytes)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("setU32Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemUInt(32))(SemBytes)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("setU64Le")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemUInt(64))(SemBytes)(None))(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("copyRange")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemInt)(SemBytes)(None))(None))(None))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.Byte")("scanHash")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemBytes)(SemFunction(SemInt)(SemFunction(SemInt)(SemTuple([SemInt, SemInt]))(None))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.Text")("toHex")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
         )
     ]
 
