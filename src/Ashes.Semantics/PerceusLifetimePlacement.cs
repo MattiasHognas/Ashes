@@ -227,7 +227,7 @@ internal static class PerceusLifetimePlacement
                 AddInsertion(insertions, entryIndex, placedDrop);
             }
 
-            AddCallDups(instructions, block, anchor.RuntimeManaged, borrowedArgumentCalls, ref tempCount, insertions);
+            AddCallDups(instructions, block, anchor.RuntimeManaged, anchor.MayBeEmpty, borrowedArgumentCalls, ref tempCount, insertions);
         }
 
         return insertions;
@@ -256,6 +256,7 @@ internal static class PerceusLifetimePlacement
         List<IrInst> instructions,
         Block block,
         bool runtimeManaged,
+        bool mayBeEmpty,
         IReadOnlySet<IrInst.CallClosure>? borrowedArgumentCalls,
         ref int tempCount,
         Dictionary<int, List<IrInst>> insertions)
@@ -270,6 +271,16 @@ internal static class PerceusLifetimePlacement
                 if (instructions[i] is IrInst.Borrow borrow && aliases.Contains(borrow.SourceTemp))
                 {
                     aliases.Add(borrow.Target);
+                    continue;
+                }
+
+                // A record-field store creates a new reference the field's cell owns outright,
+                // while the owner's placed drop still releases the binding's own reference after
+                // its last use. Without a compensating dup the two releases outnumber the two
+                // references and the field is freed out from under the record.
+                if (instructions[i] is IrInst.SetAdtField fieldStore && aliases.Contains(fieldStore.Source))
+                {
+                    AddInsertion(insertions, i, new IrInst.RcDup(tempCount++, fieldStore.Source, runtimeManaged, mayBeEmpty) { Location = fieldStore.Location });
                     continue;
                 }
 

@@ -11052,8 +11052,8 @@ public sealed partial class Lowering
         bool freshRuntimeArgument = argument is not Expr.Var
             && IsRuntimeManagedResultTemp(originalArgumentTemp)
             && !IsBorrowedOwnershipTemp(originalArgumentTemp);
-        bool calleeResultMayReachThisParameter =
-            CalleeResultMayReachParameter(rootExpr, argumentIndex, originalArgumentTemp);
+        bool calleeResultMayReachThisParameter = CalleeResultMayReachOrKeepPatternBinding(
+            rootExpr, argumentIndex, originalArgumentTemp, argument);
         bool transfersFreshRuntimeArgument = TransfersFreshRuntimeArgument(
             rootExpr, argumentIndex, originalArgumentTemp, borrowsOnly, freshRuntimeArgument);
         int runtimeManagedArgumentFlagTemp = PrepareRuntimeManagedCallArgument(
@@ -11129,6 +11129,16 @@ public sealed partial class Lowering
         Emit(new IrInst.AndInt(flagTemp, shiftedFlagTemp, ownershipMaskTemp));
         if (pendingParameterSlot >= 0)
         {
+            // An argument the callee's result may keep must be retained unconditionally once
+            // finalization admits its root parameter to runtime RC — the callee's own normalized
+            // bit says nothing for a callee an ignoring arm disqualified from normalization — so
+            // the retain guard defaults to 1 and finalization zeroes it only for an unadmitted
+            // root, mirroring the constructor-field retain's polarity.
+            if (calleeResultMayReachThisParameter)
+            {
+                flagTemp = EmitForcedRetainFlag();
+            }
+
             _pendingRuntimeArgumentFlags[flagTemp] = pendingParameterSlot;
         }
         if (!transfersFreshRuntimeArgument)
@@ -11152,6 +11162,13 @@ public sealed partial class Lowering
                 : EmitConditionallyRetainedRuntimeArgument(argumentTemp, argumentType, flagTemp);
         }
         return flagTemp;
+    }
+
+    private int EmitForcedRetainFlag()
+    {
+        int forcedFlagTemp = NewTemp();
+        Emit(new IrInst.LoadConstInt(forcedFlagTemp, 1));
+        return forcedFlagTemp;
     }
 
     private int EmitRuntimeManagedArgumentRetain(int argumentTemp, TypeRef argumentType)
@@ -11185,6 +11202,51 @@ public sealed partial class Lowering
         return resultTemp;
     }
 
+    // A pattern binding extracted from a TCO parameter that is (or may yet finalize as)
+    // runtime-managed is an RC value — the parameter's entry normalization copies heads as RC
+    // cells — even when its own load was never marked a runtime-managed result temp, so the
+    // forced call-argument retain is safe for it; a still-pending root defers through the
+    // pending-flag finalization.
+    private bool CalleeResultMayReachOrKeepPatternBinding(
+        Expr rootExpr,
+        int argumentIndex,
+        int originalArgumentTemp,
+        Expr argument)
+        => CalleeResultMayReachParameter(rootExpr, argumentIndex, originalArgumentTemp)
+            || TryGetRuntimeManagedPatternBindingArgument(argument, out _)
+                && GetOwnershipSummaryForCallRoot(rootExpr) is { } patternSummary
+                && argumentIndex < patternSummary.Parameters.Count
+                && patternSummary.ResultReaches(patternSummary.Parameters[argumentIndex]);
+
+    // The pattern-binding shape of TryGetRuntimeManagedCallArgument: a depth-1 pattern binding
+    // classified a plain call borrow is not a tracked owned value, but the callee's result may
+    // still keep it (the classification's safety net — some callee in the chain entry-normalizes
+    // and copies the value — does not hold for a callee an ignoring arm disqualified from
+    // normalization). Route the binding through the same flag machinery as a protected pattern
+    // owner so the caller-side forced retain can fire; a root parameter whose runtime
+    // classification is still pending defers exactly like a protected binding's.
+    private bool TryGetRuntimeManagedPatternBindingArgument(Expr argument, out int pendingParameterSlot)
+    {
+        pendingParameterSlot = -1;
+        if (argument is Expr.Var variable
+            && _tcoCtx is { } tco
+            && Lookup(variable.Name) is Binding.Local local
+            && tco.TryGetPatternBindingOwnership(local.Slot, out PatternBindingOwnershipFact? ownership)
+            && ownership is { RootParameterOrdinal: >= 0 }
+            && ownership.RootParameterOrdinal < tco.ParamSlots.Count)
+        {
+            int rootSlot = tco.ParamSlots[ownership.RootParameterOrdinal];
+            if (!tco.IsRuntimeManagedSlot(rootSlot))
+            {
+                pendingParameterSlot = rootSlot;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     private bool TryGetRuntimeManagedCallArgument(
         Expr argument,
         int argumentTemp,
@@ -11209,6 +11271,12 @@ public sealed partial class Lowering
             }
 
             pendingParameterSlot = patternOwner.PerceusRootParameterSlot;
+            return true;
+        }
+
+        if (TryGetRuntimeManagedPatternBindingArgument(argument, out int patternPendingSlot))
+        {
+            pendingParameterSlot = patternPendingSlot;
             return true;
         }
 
