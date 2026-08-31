@@ -127,6 +127,7 @@ type CoreBuiltinKind =
     | CoreBytesGetU64Le
     | CoreUIntToInt
     | CoreUIntFromInt
+    | CoreUIntFromInt64
     | CoreSpawnProcess
     | CoreProcessWriteStdin
     | CoreProcessReadStdoutLine
@@ -370,6 +371,7 @@ let coreBuiltinKind moduleName memberName =
             match memberName with
                 | "toInt" -> Some(CoreUIntToInt)
                 | "fromInt" -> Some(CoreUIntFromInt)
+                | "fromInt64" -> Some(CoreUIntFromInt64)
                 | _ -> None
         | "Ashes.Net.Http" ->
             match memberName with
@@ -500,6 +502,38 @@ let standardBuiltinLayouts =
         ),
         standardBuiltinLayout("Ashes.Rune")("toText")(
             TypeScheme(quantified = [], body = SemFunction(SemRune)(SemString)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Text")("uncons")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Maybe")([SemTuple([SemRune, SemString])]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.Text")("parseInt")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemInt]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.Byte")("singleton")(
+            TypeScheme(quantified = [], body = SemFunction(SemUInt(8))(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("appendByte")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemFunction(SemUInt(8))(SemBytes)(None))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("allocate")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("fromList")(
+            TypeScheme(quantified = [], body = SemFunction(SemList(SemUInt(8)))(SemBytes)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Byte")("hash")(
+            TypeScheme(quantified = [], body = SemFunction(SemBytes)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.Number.UInt")("fromInt64")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemUInt(64))(None), constraints = [])
         )
     ]
 
@@ -811,6 +845,7 @@ let emitCoreBuiltin kind start arguments argumentTypes =
         | (CoreBytesGetU32Le, value :: offset :: [], _types) -> target2(start)(value)(offset)(BytesGetU32Le)
         | (CoreBytesGetU64Le, value :: offset :: [], _types) -> target2(start)(value)(offset)(BytesGetU64Le)
         | (CoreUIntToInt, value :: [], _types) -> identity(start)(value)
+        | (CoreUIntFromInt64, value :: [], _types) -> identity(start)(value)
         | (CoreUIntFromInt, value :: [], _types) -> uintFromInt(start)(value)
         | (CoreSpawnProcess, executable :: args :: [], _types) -> target2(start)(executable)(args)(SpawnProcess)
         | (CoreProcessWriteStdin, process :: text :: [], _types) -> target2(start)(process)(text)(ProcessWriteStdin)

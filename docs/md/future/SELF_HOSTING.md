@@ -2249,6 +2249,25 @@ same public behavior.
   real Linux process prints `a, b, c`). Separately observed:
   `ShippedParseError` labels a truncated Text.ash's diagnostics with `lib/Ashes/Trait.ash` — the
   error path attributes the wrong module's source path.
+  The parse/build set followed: `Ashes.Text.parseInt` (sign, digit loop, and the div-based overflow
+  thresholds against both Int bounds, producing `Ok(value)`/`Error(message)` with stage 0's exact
+  message strings staged through a stack ASCII buffer into a fresh RC string),
+  `Ashes.Text.uncons` (the fully validated UTF-8 first-scalar decode — continuation ranges,
+  overlong/surrogate/out-of-range boundary checks, U+FFFD at width 1 on invalid input — returning
+  `Some((rune, rest))` with the rest copied like `unconsText`'s tail), `Ashes.Byte.singleton`,
+  `appendByte`, `allocate` (bounds-guarded, zero-filled by a store loop in place of stage 0's
+  memset), `fromList` (the two-pass count/fill over the cons cells), `hash` (the FNV-1a loop and
+  constants), and `Ashes.Number.UInt.fromInt64` (an identity bit-reinterpret). All of these had
+  their instruction constructors, name→kind mappings, and dispatch arms modeled already — the
+  missing pieces were the `standardBuiltinLayouts` schemes (the reachability gate behind their
+  `UnknownLoweringBinding` failures) and the backend emission cases. Verified end to end
+  (survey 210 → 223, the parseInt/uncons/hash/allocate test files pass, `Byte.allocate(-1)` panics
+  with stage 0's message and exit 1). Still open in this area: stage 0's `Text.fromInt` accepts
+  `Int` OR `u8`/`u16`/`u32` through an ad-hoc argument rule the scheme-based selfhost typing cannot
+  express, which keeps `bytes_singleton`-style tests (`fromInt(Byte.get(...))`) blocked;
+  `Ashes.Text.parseFloat` (the phased float parse) and the remaining `Ashes.Byte` members
+  (`empty`, `append`, `u16Le`/`u32Le`/`u64Le`, `getU16Le`..., `setU64Le`..., `copyRange`, `set`)
+  are the next slices.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
