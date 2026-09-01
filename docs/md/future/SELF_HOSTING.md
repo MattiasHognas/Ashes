@@ -2504,6 +2504,49 @@ same public behavior.
   what the phrase suggests. Tested end-to-end against the real filesystem (a scratch directory
   tree, matching `tests/io_directory_operations.ash`'s own pattern) in
   `selfhost/tests/cli/Main.ash`, not just against in-memory strings.
+- [x] **Fixed a stage-0 arena/RC placement bug found through the self-hosted `fmt` command**: a
+  specific 4-nested-`if` source shape, re-formatted by `ashes-selfhost fmt`'s own fixed-point
+  re-parse loop, corrupted one byte of its own output (`0x1F` where a plain space, `0x20`, belongs,
+  on the deepest-nested branch keyword's leading indentation), breaking the re-parse with a
+  misleading cascade of lexer errors. Minimized to a 12-line repro (an outer `if` with a nested `if`
+  in both its `then` and `else` branches, the `else`-side nested `if` itself nesting a third).
+  `--emit-ir lowered` on the real `selfhost/packages/cli` compile traced the corruption to
+  `Formatter.ash`'s mutually-recursive `formatterExpr`/`formatterBranchSuffix` pair (also mutually
+  recursive with `formatterLet`/`formatterCases`/`formatterArms`): the call from `formatterExpr`'s
+  body to `formatterBranchSuffix` — a forward reference compiled while `formatterBranchSuffix`'s own
+  body was still mid-lowering — emitted an unconditional `RestoreArenaState` immediately followed by
+  `ReclaimArenaChunks`, with no `JumpIfFalse`/`CopyOutArena` safety check, reclaiming the arena the
+  call's `Str` result still pointed into before the caller's own `ConcatStr` read it. Root-caused to
+  `Lowering.cs`'s `CalleeCanProvideRuntimeManagedResult`: when the callee's actual compiled result
+  isn't known yet (`TryGetCompiledFunctionResultRuntimeManaged` unresolved — a self-recursive call
+  still mid-compile, or a mutual-recursion sibling referenced before its own turn), it fell back to
+  trusting the callee's whole-program `FunctionOwnershipSummary.ResultFresh`/`RcEligible` estimate
+  unconditionally. That estimate proves only that SOME reachable terminal arm of the mutual-recursion
+  group is independently RC-eligible, not that THIS specific call's own compiled result ends up
+  runtime-managed rather than arena-placed; a large, deeply-interlocking group like this one
+  demonstrated the gap concretely, with the actual compiled result staying arena-placed despite the
+  summary reporting RC-eligible. A narrower fix that trusted the fallback only for a genuine
+  cross-function forward reference (distinguishing it from direct self-recursion via a new
+  `_labelsCurrentlyLowering` in-flight tracking set) still let a different specialization of this
+  same mutual-recursion group reach the corrupted state, proving the summary-trust fallback unsound
+  even for the "sibling forward reference" case the surrounding comment had specifically justified.
+  Fixed by removing the trust-the-summary fallback entirely: an unresolved compiled-result answer now
+  always returns `false`, falling through to the existing dynamic ownership-bit check at the call
+  site instead of being treated as a verified positive, matching the soundness contract
+  `TryGetCompiledFunctionResultRuntimeManaged`'s own doc comment already specified. One C# unit test
+  (`OwnershipProvenanceTests.MutuallyRecursiveFreshBaseResults_ConvergeAcrossTheExactCycle`) encoded
+  the old, now-disproven blind-trust behavior — updated to assert the two call sites it covers
+  resolve to different outcomes (one via the verified compiled-result check, one via the now-correct
+  conservative fallback) rather than converging on the same unconditional `true`. Verified through the
+  full stage-0 gate (`Ashes.Tests` 2461/2461, `Ashes.Lsp.Tests` 72/72, the `tests/*.ash` suite
+  684/684, `dotnet format --verify-no-changes`) and the full selfhost verification loop this fix
+  itself is about: stage 0 rebuilds `selfhost/packages/cli` into `ashes-selfhost`, and that
+  executable's own `fmt` (both preview and `-w`) now formats the minimized repro correctly, byte for
+  byte, with no re-parse cascade. The survey corpus (`tests/*.ash` compiled and run through
+  `ashes-selfhost`) shows zero regressions against the recorded baseline (255 pass vs. 247, from
+  intervening unrelated work; the 2 pre-existing `RUN-MISMATCH` entries — an empty-expected-string
+  survey-script quirk and the already-documented `tco_affine_string_append` timeout — are byte-for-byte
+  identical to the baseline, not new).
 - [~] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
   dependencies, lock files, frozen/offline modes, and the content-addressed source cache. Contract:
   [Projects](../guide/projects.md) and [Package manager](../internals/architecture.md#package-manager); source of truth

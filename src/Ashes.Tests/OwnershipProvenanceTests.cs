@@ -867,15 +867,31 @@ public sealed class OwnershipProvenanceTests
         second.ResultProvenance.RcEligible.ShouldBeTrue();
         second.ResultProvenance.ForwardsTo.ShouldBe("first");
 
-        OwnershipFactConsumption placement = lowering.OwnershipFactConsumptions.Single(
-            consumption =>
-                string.Equals(consumption.Function.SourceName, "first", StringComparison.Ordinal)
-                && consumption.Decision == OwnershipDecisionKind.RuntimeManagedCallResult);
-        placement.EvaluatedFacts.ShouldBe(
-            OwnershipDecisionFact.ResultProvenance
-                | OwnershipDecisionFact.RuntimeManageableResultType);
-        placement.PositiveFacts.ShouldBe(placement.EvaluatedFacts);
-        placement.Outcome.ShouldBeTrue();
+        // Two call sites resolve "first" as callee: the forward reference from inside "second"'s own
+        // body (lowered while "first" is still mid-compile, so its compiled result isn't known yet) and
+        // the top-level "first(4)" call (lowered once "first" is fully compiled). The forward reference
+        // no longer trusts the whole-program summary's ResultFresh/RcEligible estimate for this specific
+        // edge — that estimate proved unsound for an in-flight forward reference within a large,
+        // deeply-interlocking mutual-recursion group in the self-hosted formatter (formatterExpr /
+        // formatterBranchSuffix / formatterLet / formatterCases / formatterArms), where the actual
+        // compiled result was arena-placed despite the summary reporting RC-eligible, and the caller's
+        // unconditional arena reclaim produced a use-after-free read. Only the resolved, fully-compiled
+        // call site is trusted; the in-flight one now falls through to the dynamic ownership-bit check.
+        List<OwnershipFactConsumption> placements = lowering.OwnershipFactConsumptions.Where(
+                consumption =>
+                    string.Equals(consumption.Function.SourceName, "first", StringComparison.Ordinal)
+                    && consumption.Decision == OwnershipDecisionKind.RuntimeManagedCallResult)
+            .ToList();
+        placements.Count.ShouldBe(2);
+        foreach (OwnershipFactConsumption placement in placements)
+        {
+            placement.EvaluatedFacts.ShouldBe(
+                OwnershipDecisionFact.ResultProvenance
+                    | OwnershipDecisionFact.RuntimeManageableResultType);
+            placement.PositiveFacts.ShouldBe(placement.EvaluatedFacts);
+        }
+        placements.Count(placement => placement.Outcome).ShouldBe(1);
+        placements.Count(placement => !placement.Outcome).ShouldBe(1);
     }
 
     [Test]

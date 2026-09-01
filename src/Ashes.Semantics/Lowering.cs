@@ -10648,10 +10648,20 @@ public sealed partial class Lowering
         {
             return compiledRuntimeManaged;
         }
-        // A mutual-recursion sibling can be referenced before its body is lowered. Only bootstrap
-        // that exact forward edge when the whole-program fixpoint proves a fresh, RC-eligible result;
-        // the concrete result-type gate in the caller still has to succeed before this fact is used.
-        return summary.ResultFresh && summary.ResultProvenance.RcEligible;
+        // The callee's body hasn't been lowered yet (a self-recursive call still mid-compile, or a
+        // mutual-recursion sibling referenced before its own turn). The static, pre-lowering
+        // FunctionOwnershipSummary.ResultFresh/RcEligible pair is only meant to prove that SOME
+        // reachable terminal arm of the whole-program SCC is independently RC-eligible; it does not
+        // prove that THIS call's own compiled result — for a specific recursive edge, inside a specific
+        // mutually-recursive group — actually ends up runtime-managed rather than arena-placed. A large,
+        // deeply-interlocking group (formatterExpr/formatterBranchSuffix/formatterLet/formatterCases/
+        // formatterArms in the self-hosted formatter) demonstrated the summary being trusted for a
+        // forward reference whose actual compiled result was arena-placed, letting the caller skip
+        // CopyOutArena, reclaim the arena the result still pointed into, and hand a use-after-free
+        // pointer to the next ConcatStr. Per TryGetCompiledFunctionResultRuntimeManaged's contract
+        // above, an unresolved compiled answer must always fall through to the dynamic ownership-bit
+        // check at the call site instead of being treated as a verified positive.
+        return false;
     }
 
     private bool TryGetCompiledFunctionResultRuntimeManaged(
