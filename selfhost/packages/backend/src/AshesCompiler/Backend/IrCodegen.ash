@@ -3877,6 +3877,14 @@ let codegenInstructionKind cx builder kind state =
                                                     |> lookupIndexed(source)
                                                     |> buildRet(builder)
                                                 in (tempEnv, true)
+                        // `Ashes.IO.exit(code)` — terminates the process immediately with the
+                        // caller-chosen code, unlike `Return`'s always-`0` normal exit.
+                                        | ExitProcess(source) ->
+                                            let _ =
+                                                tempEnv
+                                                |> lookupIndexed(source)
+                                                |> emitLinuxProcessExitWithCode(builder)(i64)
+                                            in (tempEnv, true)
                         // `Ashes.IO.write`/`writeBytes` — a raw `write` syscall to stdout with no
                         // trailing newline. `CoreBuiltinLowering.ash`'s `emitCoreBuiltin` lowers
                         // both `CoreWrite` and `CoreWriteBytes` to this same instruction: a `Bytes`
@@ -3905,6 +3913,30 @@ let codegenInstructionKind cx builder kind state =
                                                             |> emitWriteNewlineToFd(builder)(i64)(i8)
                                                         else constInt(i64)(0u64)(false)
                                                     in (tempEnv, false)
+                        // `Ashes.IO.writeBuffered`/`writeBufferedLine` — the language contract only
+                        // guarantees buffered output becomes visible by the next `flush` or process
+                        // exit, never a stronger ordering; an immediate, unbuffered write to fd 1
+                        // (the same raw-write path `WriteStr` already uses) trivially satisfies that
+                        // — there is nothing left for a real buffer to defer. Trades the syscall
+                        // count a real 64 KiB buffering ring would save for not needing one at all,
+                        // matching this file's other "correct, not yet optimized" stand-ins (readLine
+                        // above). `FlushStdout` below is a no-op for the same reason: an already-
+                        // unbuffered stream has nothing to flush.
+                                        | WriteBufferedStr(source, newline) ->
+                                            let stringRef = lookupIndexed(source)(tempEnv)
+                                            in
+                                                let _ =
+                                                    emitWriteStrBytesToFd(builder)(i64)(ptrType)(constInt(i64)(1u64)(false))(stringRef)
+                                                in
+                                                    let _ =
+                                                        if newline
+                                                        then
+                                                            false
+                                                            |> constInt(i64)(1u64)
+                                                            |> emitWriteNewlineToFd(builder)(i64)(i8)
+                                                        else constInt(i64)(0u64)(false)
+                                                    in (tempEnv, false)
+                                        | FlushStdout -> (tempEnv, false)
                         // `Ashes.IO.File.exists` — `openat`, then `close` on success. Linux's
                         // `open`/`openat` never fails to report existence in a way this builtin
                         // needs to surface as `Error` (a permission-denied path is simply "not

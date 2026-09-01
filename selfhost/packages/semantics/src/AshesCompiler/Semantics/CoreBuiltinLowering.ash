@@ -478,6 +478,15 @@ let standardBuiltinLayouts =
         standardBuiltinLayout("Ashes.IO")("readLine")(
             TypeScheme(quantified = [], body = SemFunction(unitType)(SemNamed(0)("Maybe")([SemString]))(None), constraints = [])
         ),
+        standardBuiltinLayout("Ashes.IO")("writeBuffered")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("writeBufferedLine")(
+            TypeScheme(quantified = [], body = SemFunction(SemString)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO")("flush")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(unitType)(None), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.IO.File")("exists")(
             TypeScheme(
                 quantified = [],

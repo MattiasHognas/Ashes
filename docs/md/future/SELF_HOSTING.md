@@ -2504,6 +2504,34 @@ same public behavior.
   target test moves `COMPILED-BUT-ERROR-EXPECTED` → `COMPILE-ERROR-EXPECTED` in the full survey, the
   only line the diff moves; selfhost backend suite (normal and `--debug-disable-reuse`) and
   semantics suite both pass.
+- [x] `Ashes.IO.writeBuffered`/`writeBufferedLine`/`flush` and `Ashes.IO.exit` land together — the
+  former's own gaps had been masking the latter's. `writeBuffered`'s lowering
+  (`CoreWriteBuffered`, the `WriteBufferedStr` instruction, `emitCoreBuiltin` dispatch) already
+  existed; only the `standardBuiltinLayouts` schemes and backend emission were missing, the same
+  "schemes are the only gap" pattern as `readLine`. Implemented as an immediate, unbuffered write to
+  fd 1 (reusing `emitWriteStrBytesToFd`/`emitWriteNewlineToFd`, the exact codegen `write`/`writeLine`
+  already use) and `flush` as a true no-op — the language contract only guarantees buffered output is
+  visible by the next `flush` or process exit, never a stronger ordering, and an already-unbuffered
+  write trivially satisfies that with nothing left to defer or flush. Deliberately simpler than stage
+  0's own real 64 KiB buffering ring with its flush-on-exit contract wired into every exit path
+  (`Return`, `Ashes.IO.exit`, `Ashes.IO.panic`) — this codegen needs no such wiring at all, since
+  there is no buffer for any exit path to flush. Verified against all three existing tests exercising
+  this exact contract: `io_buffered_stdout` (interleaved `writeBuffered`/`write`/`flush` calls
+  produce the correct interleaved output), and — the two that most directly test the "flush on exit"
+  guarantee an unbuffered implementation sidesteps rather than implements —
+  `io_buffered_stdout_panic` (buffered output must still appear before a `panic`) and
+  `io_stderr_exit` (buffered stdout must still appear before an explicit `Ashes.IO.exit`), both
+  confirmed correct with immediate writes since sequential unbuffered writes to the same fd
+  preserve order by construction. Landing `io_stderr_exit` exposed a second, unrelated, trivially
+  fixable gap it had been masking: `Ashes.IO.exit`'s own `ExitProcess` instruction had no backend
+  codegen at all (`grep` for it: zero hits) despite its scheme already existing — a straight
+  three-line addition reusing the already-existing `emitLinuxProcessExitWithCode` helper (used
+  identically by the entry function's own normal-exit `Return` case and by every panic-message
+  helper already in this file). Verified end to end: full survey shows zero regressions and a clean
+  +3 (`io_buffered_stdout`, `io_buffered_stdout_panic`, `io_stderr_exit` all newly passing, including
+  `io_stderr_exit`'s exit code and separate stdout/stderr streams checked by hand since the survey
+  harness only compares stdout); selfhost backend suite (normal and `--debug-disable-reuse`) and
+  semantics suite both pass.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
