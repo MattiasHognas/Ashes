@@ -183,11 +183,15 @@ Imports are written in source as:
 
 ### 4.2 Module name to relative path mapping
 
-A module name maps to a relative `.ash` file path:
+A module name maps to a relative `.ash` file path. A dotted module name may live either in a
+nested directory or in a dotted **file name** whose trailing segments stay in the file name — the
+same convention the shipped standard library uses (`lib/Ashes/IO.Path.ash` is `Ashes.IO.Path`):
 
 - `Foo` → `Foo.ash`
-- `Foo.Bar` → `Foo/Bar.ash`
+- `Foo.Bar` → `Foo/Bar.ash` or `Foo.Bar.ash`
+- `Foo.Bar.Baz` → `Foo/Bar/Baz.ash`, `Foo/Bar.Baz.ash`, or `Foo.Bar.Baz.ash`
 
+Directory names never contain dots; only the file name may carry the trailing dotted segments.
 Path separators are normalized for the host platform.
 
 ### 4.3 Search order
@@ -197,11 +201,12 @@ To resolve an import, the compiler searches in two stages:
 1. Project-local roots: every directory in `sourceRoots`, then every directory in `include`
 2. Compiler-shipped libraries in the compiler installation `lib/` folder
 
-For each root directory, the compiler checks:
+For each root directory, the compiler checks every candidate from the mapping above (the fully
+nested form and each dotted-file-name form).
 
-- `<root>/<modulePath>.ash`
-
-Project-local resolution must produce exactly one match. If a module exists in multiple project roots, compilation fails with an ambiguity error. If no project-local module exists, the compiler checks the shipped `lib/` folder.
+Project-local resolution must produce exactly one match. If a module exists in multiple project
+roots — or in more than one candidate form — compilation fails with an ambiguity error. If no
+project-local module exists, the compiler checks the shipped `lib/` folder.
 
 ### 4.4 Ambiguity
 
