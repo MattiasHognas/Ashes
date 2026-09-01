@@ -78,6 +78,7 @@ type CoreLoweringError =
     | UnsupportedTypeDeclaration(Str)
     | CoreMatchCoverageError(Str)
     | ReservedTypeName(Str)
+    | PerformTargetNotCapabilityOperation(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -4452,7 +4453,7 @@ let lowerPerform operation lower state =
                                         opName
                                         |> CoreUnhandledCapabilityOperation(capName)
                                         |> failure(state)
-        | _ -> lower(operation)(state)
+        | _ -> failure(state)(PerformTargetNotCapabilityOperation("'perform' must be applied to a capability operation call."))
 
 // An operation arm's body must call `resume` exactly once; only the tail-position form
 // `resume(e)` (the arm body itself, unwrapped of span nodes) is supported so far — it rewrites to
