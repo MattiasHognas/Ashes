@@ -2432,6 +2432,24 @@ same public behavior.
   survey harness's own `// stdin:` limitation, not a new gap — every one of the six was confirmed
   correct by hand above), plus the selfhost backend suite (normal and `--debug-disable-reuse`) and
   the selfhost semantics suite.
+- [x] The `built-in runtime types are reserved` diagnostic (`std_root_module_reserved.ash`, one of
+  the smaller queued diagnostic gaps): a top-level `type` declaration reusing the `Ashes` root
+  module's own name, or one of the compiler's built-in runtime types (the ADTs
+  `BuiltinRegistry.CreateBuiltinTypes` seeds — `Unit`/`List`/`Maybe`/`Result`/`Socket`/`TlsSocket`/
+  `Task`/`JoinHandle`/`Process`/`FileHandle` — plus the primitive names `PrimitiveTypeNames`
+  reserves — `Float`/`Bytes`/`Rune`/`u8`/`u16`/`u32`/`u64`), previously compiled silently instead of
+  being rejected. `registerTopLevelTypeDeclaration` now checks the declared name against that
+  18-name reserved set (a new `isReservedTypeName` predicate, a flat `||` chain — `CoreLowering.ash`
+  has no `List.contains` import yet and the set is small and fixed) before doing anything else, and
+  returns a new `ReservedTypeName(Str)` `CoreLoweringError` carrying stage 0's own exact message
+  text (`'Ashes' and built-in runtime types are reserved`) when it matches. `type alias` declarations
+  are not covered — selfhost's `CoreLowering.ash` doesn't lower type aliases at all yet, so there is
+  nothing to guard on that path. Verified end to end (survey: `std_root_module_reserved` moves from
+  `COMPILED-BUT-ERROR-EXPECTED` to `COMPILE-ERROR-EXPECTED`, the only line the diff moves — 255 pass,
+  293 compile-fail, and every other count identical to the immediately-prior survey), plus a hand
+  check that an ordinary, non-reserved `type` declaration (`type_symbol_registration.ash`) still
+  compiles and runs correctly, and the selfhost backend suite (normal and `--debug-disable-reuse`)
+  and semantics suite.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

@@ -77,6 +77,7 @@ type CoreLoweringError =
     | UnresolvedTraitEvidenceForwarding(TraitEvidenceForwardingError)
     | UnsupportedTypeDeclaration(Str)
     | CoreMatchCoverageError(Str)
+    | ReservedTypeName(Str)
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -5663,33 +5664,43 @@ let recursive namesToTypeParameters (names: List(Str)) =
         | [] -> []
         | head :: tail -> TypeParameter(name = head) :: namesToTypeParameters(tail)
 
+// Whether `name` names the `Ashes` root module or one of the compiler's own built-in runtime types
+// (the ADTs `BuiltinRegistry.CreateBuiltinTypes` seeds — `Unit`/`List`/`Maybe`/`Result`/`Socket`/
+// `TlsSocket`/`Task`/`JoinHandle`/`Process`/`FileHandle` — plus the primitive type names
+// `BuiltinRegistry.PrimitiveTypeNames` reserves — `Float`/`Bytes`/`Rune`/`u8`/`u16`/`u32`/`u64`), so
+// user code may not redeclare it with a top-level `type`.
+let isReservedTypeName name = name == "Ashes" || name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle" || name == "Float" || name == "Bytes" || name == "Rune" || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
         | TypeDecl { name = name, typeParameters = typeParameters, constructors = constructors } ->
-            match state with
-                | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts, externalOpaqueTypes = externalOpaqueTypes } ->
-                    let effectiveTypeParameters =
-                        match typeParameters with
-                            | [] ->
-                                []
-                                |> collectImplicitTypeParametersFromConstructors(constructors)(name)(existingLayouts)(externalOpaqueTypes)
-                                |> namesToTypeParameters
-                            | explicit -> explicit
-                    in
-                        match assignTypeParameterIds(effectiveTypeParameters)(supply) with
-                            | (namedIds, nextSupply) ->
-                                let resultType =
-                                    namedIds
-                                    |> typeParameterSemVars
-                                    |> SemNamed(0)(name)
-                                in
-                                    let quantified = typeParameterQuantified(namedIds)
+            if isReservedTypeName(name)
+            then Error(ReservedTypeName("'Ashes' and built-in runtime types are reserved"))
+            else
+                match state with
+                    | CoreLoweringState { typeSupply = supply, constructorLayouts = existingLayouts, externalOpaqueTypes = externalOpaqueTypes } ->
+                        let effectiveTypeParameters =
+                            match typeParameters with
+                                | [] ->
+                                    []
+                                    |> collectImplicitTypeParametersFromConstructors(constructors)(name)(existingLayouts)(externalOpaqueTypes)
+                                    |> namesToTypeParameters
+                                | explicit -> explicit
+                        in
+                            match assignTypeParameterIds(effectiveTypeParameters)(supply) with
+                                | (namedIds, nextSupply) ->
+                                    let resultType =
+                                        namedIds
+                                        |> typeParameterSemVars
+                                        |> SemNamed(0)(name)
                                     in
-                                        let parameterTypes = typeParameterResolutionTable(namedIds)
+                                        let quantified = typeParameterQuantified(namedIds)
                                         in
-                                            match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
-                                                | Error(error) -> Error(error)
-                                                | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
+                                            let parameterTypes = typeParameterResolutionTable(namedIds)
+                                            in
+                                                match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
+                                                    | Error(error) -> Error(error)
+                                                    | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
