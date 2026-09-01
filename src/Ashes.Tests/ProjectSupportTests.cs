@@ -101,6 +101,55 @@ public sealed class ProjectSupportTests
     }
 
     [Test]
+    public void BuildCompilationPlan_should_resolve_dotted_file_name_modules_as_whole_modules()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
+            Directory.CreateDirectory(Path.Combine(root, "src"));
+            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import Foo\nAshes.IO.print(1)");
+            // `Foo.Bar` lives in a dotted FILE name next to `Foo.ash` (the shipped-library naming
+            // convention, e.g. `IO.Path.ash`). Before dotted-file-name candidates existed, this
+            // import parsed as a type selector of `Foo` — a self-import cycle when written inside
+            // `Foo.ash` itself.
+            File.WriteAllText(Path.Combine(root, "src", "Foo.ash"), "import Foo.Bar\nAshes.IO.print(2)");
+            File.WriteAllText(Path.Combine(root, "src", "Foo.Bar.ash"), "Ashes.IO.print(3)");
+
+            var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
+            var plan = ProjectSupport.BuildCompilationPlan(project);
+
+            plan.OrderedModules.Select(x => x.ModuleName).ShouldBe(["Ashes.Trait", "Foo.Bar", "Foo", "Main"]);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
+    public void BuildCompilationPlan_should_reject_a_module_present_in_both_nested_and_dotted_forms()
+    {
+        var root = CreateTempDirectory();
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "ashes.json"), """{"entry":"src/Main.ash","sourceRoots":["src"]}""");
+            Directory.CreateDirectory(Path.Combine(root, "src", "Foo"));
+            File.WriteAllText(Path.Combine(root, "src", "Main.ash"), "import Foo.Bar\nAshes.IO.print(1)");
+            File.WriteAllText(Path.Combine(root, "src", "Foo", "Bar.ash"), "Ashes.IO.print(2)");
+            File.WriteAllText(Path.Combine(root, "src", "Foo.Bar.ash"), "Ashes.IO.print(3)");
+
+            var project = ProjectSupport.LoadProject(Path.Combine(root, "ashes.json"));
+            var ex = Should.Throw<InvalidOperationException>(() => ProjectSupport.BuildCompilationPlan(project));
+            ex.Message.ShouldContain("Ambiguous module resolution for 'Foo.Bar'");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Test]
     public void BuildCompilationPlan_should_report_attempted_paths_for_missing_module()
     {
         var root = CreateTempDirectory();

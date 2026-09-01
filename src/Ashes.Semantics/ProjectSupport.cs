@@ -1219,8 +1219,7 @@ public static class ProjectSupport
             return existing;
         }
 
-        var moduleRelativePath = GetModuleRelativePath(moduleName);
-        var projectMatches = GetExistingModuleCandidates(searchRoots, moduleRelativePath);
+        var projectMatches = GetExistingModuleCandidatesByName(searchRoots, moduleName);
         if (projectMatches.Count > 1)
         {
             throw new InvalidOperationException(
@@ -1236,7 +1235,7 @@ public static class ProjectSupport
             return module;
         }
 
-        var shippedLibraryPath = GetShippedLibraryModulePath(moduleRelativePath);
+        var shippedLibraryPath = GetShippedLibraryModulePathByName(moduleName);
         if (shippedLibraryPath is not null)
         {
             var module = LoadProjectModule(
@@ -1255,7 +1254,7 @@ public static class ProjectSupport
             return inlineResolved;
         }
 
-        throw new InvalidOperationException(BuildMissingModuleMessage(moduleName, searchRoots, moduleRelativePath));
+        throw new InvalidOperationException(BuildMissingModuleMessage(moduleName, searchRoots, GetModuleRelativePath(moduleName)));
     }
 
     private static ProjectModule? TryResolveInlineSubmodule(
@@ -1269,7 +1268,7 @@ public static class ProjectSupport
         for (var dot = moduleName.LastIndexOf('.'); dot > 0; dot = moduleName.LastIndexOf('.', dot - 1))
         {
             var enclosing = moduleName[..dot];
-            var enclosingMatches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
+            var enclosingMatches = GetExistingModuleCandidatesByName(searchRoots, enclosing);
             if (enclosingMatches.Count == 1)
             {
                 LoadProjectModule(
@@ -1342,7 +1341,7 @@ public static class ProjectSupport
                     $"[ASH023] Inline module '{inline.ModuleName}' shadows a reserved 'Ashes.*' path ({fullPath}).");
             }
 
-            var candidates = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(inline.ModuleName));
+            var candidates = GetExistingModuleCandidatesByName(searchRoots, inline.ModuleName);
             if (candidates.Count > 0)
             {
                 throw new InvalidOperationException(
@@ -1378,9 +1377,8 @@ public static class ProjectSupport
             return false;
         }
 
-        var relativePath = GetModuleRelativePath(name);
-        if (GetExistingModuleCandidates(searchRoots, relativePath).Count > 0
-            || GetShippedLibraryModulePath(relativePath) is not null)
+        if (GetExistingModuleCandidatesByName(searchRoots, name).Count > 0
+            || GetShippedLibraryModulePathByName(name) is not null)
         {
             return true;
         }
@@ -1401,7 +1399,7 @@ public static class ProjectSupport
         for (var dot = name.LastIndexOf('.'); dot > 0; dot = name.LastIndexOf('.', dot - 1))
         {
             var enclosing = name[..dot];
-            var matches = GetExistingModuleCandidates(searchRoots, GetModuleRelativePath(enclosing));
+            var matches = GetExistingModuleCandidatesByName(searchRoots, enclosing);
             if (matches.Count != 1)
             {
                 continue;
@@ -4600,6 +4598,24 @@ public static class ProjectSupport
         return moduleName.Replace('.', Path.DirectorySeparatorChar) + ".ash";
     }
 
+    /// <summary>
+    /// Every relative path a module name may live at: the fully nested directory form plus each
+    /// dotted-file-name form where the trailing segments stay in the file name (the shipped
+    /// standard library's own convention, e.g. <c>Ashes.IO.Path</c> as <c>IO.Path.ash</c>).
+    /// Directory names never carry dots — only the file name does — so for a name with N dots
+    /// there are N+1 candidates, from all-separators to all-dots.
+    /// </summary>
+    private static IEnumerable<string> GetModuleRelativePathCandidates(string moduleName)
+    {
+        var segments = moduleName.Split('.');
+        for (var directorySegments = segments.Length - 1; directorySegments >= 0; directorySegments--)
+        {
+            var directory = string.Join(Path.DirectorySeparatorChar, segments[..directorySegments]);
+            var fileName = string.Join('.', segments[directorySegments..]) + ".ash";
+            yield return directorySegments == 0 ? fileName : Path.Combine(directory, fileName);
+        }
+    }
+
     private static List<string> GetExistingModuleCandidates(IReadOnlyList<string> roots, string moduleRelativePath)
     {
         var matches = new List<string>();
@@ -4615,6 +4631,49 @@ public static class ProjectSupport
         }
 
         return matches;
+    }
+
+    /// <summary>
+    /// <see cref="GetExistingModuleCandidates(System.Collections.Generic.IReadOnlyList{string}, string)"/>
+    /// over every path form of <paramref name="moduleName"/> per
+    /// <see cref="GetModuleRelativePathCandidates"/> — more than one existing form is a genuine
+    /// ambiguity the caller's exactly-one-match rule reports.
+    /// </summary>
+    private static List<string> GetExistingModuleCandidatesByName(IReadOnlyList<string> roots, string moduleName)
+    {
+        var matches = new List<string>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var relativePath in GetModuleRelativePathCandidates(moduleName))
+        {
+            foreach (var match in GetExistingModuleCandidates(roots, relativePath))
+            {
+                if (seenPaths.Add(match))
+                {
+                    matches.Add(match);
+                }
+            }
+        }
+
+        return matches;
+    }
+
+    /// <summary>
+    /// <see cref="GetShippedLibraryModulePath"/> over every path form of
+    /// <paramref name="moduleName"/> per <see cref="GetModuleRelativePathCandidates"/>,
+    /// first existing form wins (the shipped tree uses one form per module).
+    /// </summary>
+    private static string? GetShippedLibraryModulePathByName(string moduleName)
+    {
+        foreach (var relativePath in GetModuleRelativePathCandidates(moduleName))
+        {
+            if (GetShippedLibraryModulePath(relativePath) is { } match)
+            {
+                return match;
+            }
+        }
+
+        return null;
     }
 
     private static string? GetShippedLibraryModulePath(string moduleRelativePath)
