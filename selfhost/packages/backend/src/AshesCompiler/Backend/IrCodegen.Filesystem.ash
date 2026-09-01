@@ -6,8 +6,9 @@
 // the libc dynamic-import surface
 // (`DirectoryExternals`, declared once per module; the per-occurrence internal-linkage
 // name-append/comparator/`nftw`-visitor helper functions), the whole-buffer UTF-8 validator, and
-// the shared `Ok(Unit)`/`Error(message)` status-result builder. Depends only on the LLVM bindings
-// and `IrCodegen.Support`.
+// the shared `Ok(Unit)`/`Error(message)` status-result builder. `DirectoryExternals` also carries
+// the `getenv`/`getcwd`/`readlink` rows `IrCodegen.Environment` calls through. Depends only on
+// the LLVM bindings and `IrCodegen.Support`.
 
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
@@ -109,6 +110,12 @@ type DirectoryExternals =
     | nftwType: LLVMTypeRef
     | removeFn: LLVMValueRef
     | removeType: LLVMTypeRef
+    | getenvFn: LLVMValueRef
+    | getenvType: LLVMTypeRef
+    | getcwdFn: LLVMValueRef
+    | getcwdType: LLVMTypeRef
+    | readlinkFn: LLVMValueRef
+    | readlinkType: LLVMTypeRef
 
 let declareDirectoryExternalFunctions module_ context types =
     (let strlenType = functionType(types.i64)([types.ptrType])(1u32)(false)
@@ -136,32 +143,44 @@ let declareDirectoryExternalFunctions module_ context types =
                                             in
                                                 let removeType = functionType(types.i32)([types.ptrType])(1u32)(false)
                                                 in
-                                                    DirectoryExternals(
-                                                        strlenFn = addFunction(module_)("strlen")(strlenType),
-                                                        strlenType = strlenType,
-                                                        reallocFn = addFunction(module_)("realloc")(reallocType),
-                                                        reallocType = reallocType,
-                                                        memmoveFn = addFunction(module_)("memmove")(memmoveType),
-                                                        memmoveType = memmoveType,
-                                                        qsortFn = addFunction(module_)("qsort")(qsortType),
-                                                        qsortType = qsortType,
-                                                        strcmpFn = addFunction(module_)("strcmp")(strcmpType),
-                                                        strcmpType = strcmpType,
-                                                        fdopendirFn = addFunction(module_)("fdopendir")(fdopendirType),
-                                                        fdopendirType = fdopendirType,
-                                                        readdirFn = addFunction(module_)("readdir")(readdirType),
-                                                        readdirType = readdirType,
-                                                        closedirFn = addFunction(module_)("closedir")(closedirType),
-                                                        closedirType = closedirType,
-                                                        errnoLocationFn = addFunction(module_)("__errno_location")(errnoLocationType),
-                                                        errnoLocationType = errnoLocationType,
-                                                        lstatFn = addFunction(module_)("lstat")(lstatType),
-                                                        lstatType = lstatType,
-                                                        nftwFn = addFunction(module_)("nftw")(nftwType),
-                                                        nftwType = nftwType,
-                                                        removeFn = addFunction(module_)("remove")(removeType),
-                                                        removeType = removeType
-                                                    ))
+                                                    let getenvType = functionType(types.ptrType)([types.ptrType])(1u32)(false)
+                                                    in
+                                                        let getcwdType = functionType(types.ptrType)([types.ptrType, types.i64])(2u32)(false)
+                                                        in
+                                                            let readlinkType = functionType(types.i64)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
+                                                            in
+                                                                DirectoryExternals(
+                                                                    strlenFn = addFunction(module_)("strlen")(strlenType),
+                                                                    strlenType = strlenType,
+                                                                    reallocFn = addFunction(module_)("realloc")(reallocType),
+                                                                    reallocType = reallocType,
+                                                                    memmoveFn = addFunction(module_)("memmove")(memmoveType),
+                                                                    memmoveType = memmoveType,
+                                                                    qsortFn = addFunction(module_)("qsort")(qsortType),
+                                                                    qsortType = qsortType,
+                                                                    strcmpFn = addFunction(module_)("strcmp")(strcmpType),
+                                                                    strcmpType = strcmpType,
+                                                                    fdopendirFn = addFunction(module_)("fdopendir")(fdopendirType),
+                                                                    fdopendirType = fdopendirType,
+                                                                    readdirFn = addFunction(module_)("readdir")(readdirType),
+                                                                    readdirType = readdirType,
+                                                                    closedirFn = addFunction(module_)("closedir")(closedirType),
+                                                                    closedirType = closedirType,
+                                                                    errnoLocationFn = addFunction(module_)("__errno_location")(errnoLocationType),
+                                                                    errnoLocationType = errnoLocationType,
+                                                                    lstatFn = addFunction(module_)("lstat")(lstatType),
+                                                                    lstatType = lstatType,
+                                                                    nftwFn = addFunction(module_)("nftw")(nftwType),
+                                                                    nftwType = nftwType,
+                                                                    removeFn = addFunction(module_)("remove")(removeType),
+                                                                    removeType = removeType,
+                                                                    getenvFn = addFunction(module_)("getenv")(getenvType),
+                                                                    getenvType = getenvType,
+                                                                    getcwdFn = addFunction(module_)("getcwd")(getcwdType),
+                                                                    getcwdType = getcwdType,
+                                                                    readlinkFn = addFunction(module_)("readlink")(readlinkType),
+                                                                    readlinkType = readlinkType
+                                                                ))
 
 // `readLine`'s overflow exit: a line longer than the fixed 64 KiB scratch buffer — the same
 // fixed-ASCII-line-then-exit-1 shape as `emitBytesGetPanicMessage`, matching stage 0's own

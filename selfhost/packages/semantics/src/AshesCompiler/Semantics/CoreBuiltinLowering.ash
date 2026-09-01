@@ -577,6 +577,41 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.IO.Environment")("currentDirectory")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(unitType)(SemNamed(0)("Result")([SemString, SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Environment")("executableDirectory")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(unitType)(SemNamed(0)("Result")([SemString, SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Environment")("temporaryDirectory")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(unitType)(SemNamed(0)("Result")([SemString, SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Environment")("cacheDirectory")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(unitType)(SemNamed(0)("Result")([SemString, SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Environment")("get")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemNamed(0)("Maybe")([SemString])]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.IO.Directory")("createAll")(
             TypeScheme(
                 quantified = [],

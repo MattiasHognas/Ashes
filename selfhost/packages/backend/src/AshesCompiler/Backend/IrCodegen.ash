@@ -107,6 +107,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Filesystem
+import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.TextBytes
 import Ashes.Number.UInt
 export (
@@ -1010,6 +1011,20 @@ let codegenInstructionKind cx builder kind state =
                                                 tempEnv
                                                 |> lookupIndexed(path)
                                                 |> emitFileMakeExecutable(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | EnvironmentDirectory(target, directoryKind) ->
+                                            let resultValue =
+                                                match directoryKind with
+                                                    | CurrentDirectory -> emitEnvironmentCurrentDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | ExecutableDirectory -> emitEnvironmentExecutableDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | TemporaryDirectory -> emitEnvironmentTemporaryDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                    | CacheDirectory -> emitEnvironmentCacheDirectory(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | EnvironmentGet(target, name) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(name)
+                                                |> emitEnvironmentGet(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
