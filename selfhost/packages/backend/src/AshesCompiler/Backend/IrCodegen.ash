@@ -278,6 +278,12 @@ let emitLinuxProcessExit builder i64 =
 let emitLinuxWrite builder i64 fd ptr len =
     emitLinuxSyscallCall(builder)(i64)(constInt(i64)(1u64)(false))(fd)(ptr)(len)("sys_write")
 
+// `read(fd, ptr, len)` — the syscall number 0 twin of `emitLinuxWrite`, needed by `readLine`. The
+// return value is bytes read, `0` at EOF, or a negative errno on failure — `readLine`'s own loop
+// treats "not strictly positive" as "stop reading" either way, matching stage 0's own refill check.
+let emitLinuxRead builder i64 fd ptr len =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(0u64)(false))(fd)(ptr)(len)("sys_read")
+
 // Any linux-x64 4-argument syscall — the same `emitLinuxSyscallCall` mechanism with a fourth input
 // register. `syscall`'s ABI passes a fourth argument in `r10`, NOT `rcx` (the `syscall` instruction
 // itself clobbers `rcx` with the return address), so the constraint string gains `{r10}` as a fifth
@@ -1097,6 +1103,27 @@ let emitBytesGetPanicMessage builder i64 i8 =
                         |> constInt(i64)(1u64)
                         |> emitLinuxProcessExitWithCode(builder)(i64))
 
+// `readLine`'s overflow exit: a line longer than the fixed 64 KiB scratch buffer — the same
+// fixed-ASCII-line-then-exit-1 shape as `emitBytesGetPanicMessage`, matching stage 0's own
+// `EmitReadLineFinish` overflow message text exactly ("readLine input too long").
+let emitReadLinePanicMessage builder i64 i8 =
+    (let bufferType = arrayType(i8)(24u64)
+    in
+        let buffer = buildAlloca(builder)(bufferType)("read_line_panic_msg")
+        in
+            let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)([114, 101, 97, 100, 76, 105, 110, 101, 32, 105, 110, 112, 117, 116, 32, 116, 111, 111, 32, 108, 111, 110, 103, 10])
+            in
+                let addr = buildPtrToInt(builder)(buffer)(i64)("read_line_panic_addr")
+                in
+                    let _ =
+                        false
+                        |> constInt(i64)(24u64)
+                        |> emitLinuxWrite(builder)(i64)(constInt(i64)(1u64)(false))(addr)
+                    in
+                        false
+                        |> constInt(i64)(1u64)
+                        |> emitLinuxProcessExitWithCode(builder)(i64))
+
 // `Bytes.get(bytes)(index)`: bounds-checked single-byte read, zero-extended to the universal `i64`
 // word — `EmitBytesGet`'s exact panic-or-load shape.
 let emitBytesGet context function_ i64 i8 ptrType builder bytesRef indexVal =
@@ -1353,6 +1380,144 @@ let emitHeapStringFromBytesAddr builder i64 i8 ptrType mallocFn mallocType memcp
                                     in
                                         let _ = buildCall(builder)(memcpyType)(memcpyFn)([destBytesPtr, srcPtr, len])(3u32)(name + "_memcpy")
                                         in buildPtrToInt(builder)(payloadPtr)(i64)(name + "_result"))
+
+// `Ashes.IO.readLine`: one line from stdin as `Option(Str)`, `None` only at EOF with nothing left
+// unread. Bytes are read one at a time via a raw `read` syscall (no read-ahead buffering — stage
+// 0's own `EmitReadLine` batches reads through a persistent module-global ring for throughput; this
+// codegen has no equivalent module-global-state mechanism yet, so it trades syscall count for
+// simplicity, matching this file's other "correct, not yet optimized" stand-ins). `\n` ends the
+// line (not included); a `\r` immediately before it is dropped; every other byte accumulates into a
+// fixed 64 KiB stack buffer — safe even inside a `musttail`-driven loop, since each call's frame
+// (and its alloca) is reused by the very next tail call rather than piling up. A line at or past
+// that capacity panics rather than silently truncating, matching stage 0's own overflow contract.
+let emitReadLine context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType =
+    (let bufferType = arrayType(i8)(65536u64)
+    in
+        let buffer = buildAlloca(builder)(bufferType)("read_line_buf")
+        in
+            let bufferAddr = buildPtrToInt(builder)(buffer)(i64)("read_line_buf_addr")
+            in
+                let lenSlot = buildAlloca(builder)(i64)("read_line_len")
+                in
+                    let byteSlot = buildAlloca(builder)(i8)("read_line_byte")
+                    in
+                        let byteAddr = buildPtrToInt(builder)(byteSlot)(i64)("read_line_byte_addr")
+                        in
+                            let resultSlot = buildAlloca(builder)(i64)("read_line_result")
+                            in
+                                let loopBlock = appendBasicBlock(context)(function_)("read_line_loop")
+                                in
+                                    let inspectBlock = appendBasicBlock(context)(function_)("read_line_inspect")
+                                    in
+                                        let skipCrBlock = appendBasicBlock(context)(function_)("read_line_skip_cr")
+                                        in
+                                            let storeByteBlock = appendBasicBlock(context)(function_)("read_line_store_byte")
+                                            in
+                                                let appendByteBlock = appendBasicBlock(context)(function_)("read_line_append_byte")
+                                                in
+                                                    let eofBlock = appendBasicBlock(context)(function_)("read_line_eof")
+                                                    in
+                                                        let finishSomeBlock = appendBasicBlock(context)(function_)("read_line_finish_some")
+                                                        in
+                                                            let returnNoneBlock = appendBasicBlock(context)(function_)("read_line_return_none")
+                                                            in
+                                                                let overflowBlock = appendBasicBlock(context)(function_)("read_line_overflow")
+                                                                in
+                                                                    let continueBlock = appendBasicBlock(context)(function_)("read_line_continue")
+                                                                    in
+                                                                        let _ =
+                                                                            buildStore(builder)(constInt(i64)(0u64)(false))(lenSlot)
+                                                                        in
+                                                                            let _ = buildBr(builder)(loopBlock)
+                                                                            in
+                                                                                let _ = positionBuilderAtEnd(builder)(loopBlock)
+                                                                                in
+                                                                                    let n =
+                                                                                        false
+                                                                                        |> constInt(i64)(1u64)
+                                                                                        |> emitLinuxRead(builder)(i64)(constInt(i64)(0u64)(false))(byteAddr)
+                                                                                    in
+                                                                                        let atEof =
+                                                                                            buildICmp(builder)(intPredicateSle)(n)(constInt(i64)(0u64)(false))("read_line_at_eof")
+                                                                                        in
+                                                                                            let _ = buildCondBr(builder)(atEof)(eofBlock)(inspectBlock)
+                                                                                            in
+                                                                                                let _ = positionBuilderAtEnd(builder)(inspectBlock)
+                                                                                                in
+                                                                                                    let currentByte = buildLoad(builder)(i8)(byteSlot)("read_line_current_byte")
+                                                                                                    in
+                                                                                                        let isLf =
+                                                                                                            buildICmp(builder)(intPredicateEq)(currentByte)(constInt(i8)(10u64)(false))("read_line_is_lf")
+                                                                                                        in
+                                                                                                            let _ = buildCondBr(builder)(isLf)(finishSomeBlock)(skipCrBlock)
+                                                                                                            in
+                                                                                                                let _ = positionBuilderAtEnd(builder)(skipCrBlock)
+                                                                                                                in
+                                                                                                                    let isCr =
+                                                                                                                        buildICmp(builder)(intPredicateEq)(currentByte)(constInt(i8)(13u64)(false))("read_line_is_cr")
+                                                                                                                    in
+                                                                                                                        let _ = buildCondBr(builder)(isCr)(loopBlock)(storeByteBlock)
+                                                                                                                        in
+                                                                                                                            let _ = positionBuilderAtEnd(builder)(storeByteBlock)
+                                                                                                                            in
+                                                                                                                                let currentLen = buildLoad(builder)(i64)(lenSlot)("read_line_len_value")
+                                                                                                                                in
+                                                                                                                                    let atCapacity =
+                                                                                                                                        buildICmp(builder)(intPredicateUge)(currentLen)(constInt(i64)(65536u64)(false))("read_line_at_capacity")
+                                                                                                                                    in
+                                                                                                                                        let _ = buildCondBr(builder)(atCapacity)(overflowBlock)(appendByteBlock)
+                                                                                                                                        in
+                                                                                                                                            let _ = positionBuilderAtEnd(builder)(appendByteBlock)
+                                                                                                                                            in
+                                                                                                                                                let destPtr = buildGEP(builder)(i8)(buffer)([currentLen])(1u32)("read_line_dest_ptr")
+                                                                                                                                                in
+                                                                                                                                                    let _ = buildStore(builder)(currentByte)(destPtr)
+                                                                                                                                                    in
+                                                                                                                                                        let _ =
+                                                                                                                                                            buildStore(builder)(buildAdd(builder)(currentLen)(constInt(i64)(1u64)(false))("read_line_len_next"))(lenSlot)
+                                                                                                                                                        in
+                                                                                                                                                            let _ = buildBr(builder)(loopBlock)
+                                                                                                                                                            in
+                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(eofBlock)
+                                                                                                                                                                in
+                                                                                                                                                                    let lenAtEof = buildLoad(builder)(i64)(lenSlot)("read_line_len_at_eof")
+                                                                                                                                                                    in
+                                                                                                                                                                        let isEmpty =
+                                                                                                                                                                            buildICmp(builder)(intPredicateEq)(lenAtEof)(constInt(i64)(0u64)(false))("read_line_is_empty")
+                                                                                                                                                                        in
+                                                                                                                                                                            let _ = buildCondBr(builder)(isEmpty)(returnNoneBlock)(finishSomeBlock)
+                                                                                                                                                                            in
+                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(finishSomeBlock)
+                                                                                                                                                                                in
+                                                                                                                                                                                    let finalLen = buildLoad(builder)(i64)(lenSlot)("read_line_final_len")
+                                                                                                                                                                                    in
+                                                                                                                                                                                        let stringRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(finalLen)("read_line_string")
+                                                                                                                                                                                        in
+                                                                                                                                                                                            let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("read_line_some")
+                                                                                                                                                                                            in
+                                                                                                                                                                                                let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("read_line_some_ptr")
+                                                                                                                                                                                                in
+                                                                                                                                                                                                    let someFieldPtr = gepBytes(builder)(i64)(i8)(somePtr)(8)("read_line_some_field_ptr")
+                                                                                                                                                                                                    in
+                                                                                                                                                                                                        let _ = buildStore(builder)(stringRef)(someFieldPtr)
+                                                                                                                                                                                                        in
+                                                                                                                                                                                                            let _ = buildStore(builder)(someValue)(resultSlot)
+                                                                                                                                                                                                            in
+                                                                                                                                                                                                                let _ = buildBr(builder)(continueBlock)
+                                                                                                                                                                                                                in
+                                                                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(returnNoneBlock)
+                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                        let _ =
+                                                                                                                                                                                                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("read_line_none"))(resultSlot)
+                                                                                                                                                                                                                        in
+                                                                                                                                                                                                                            let _ = buildBr(builder)(continueBlock)
+                                                                                                                                                                                                                            in
+                                                                                                                                                                                                                                let _ = positionBuilderAtEnd(builder)(overflowBlock)
+                                                                                                                                                                                                                                in
+                                                                                                                                                                                                                                    let _ = emitReadLinePanicMessage(builder)(i64)(i8)
+                                                                                                                                                                                                                                    in
+                                                                                                                                                                                                                                        let _ = positionBuilderAtEnd(builder)(continueBlock)
+                                                                                                                                                                                                                                        in buildLoad(builder)(i64)(resultSlot)("read_line_result_value"))
 
 // `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
 // `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped
@@ -3746,6 +3911,11 @@ let codegenInstructionKind cx builder kind state =
                                                                                                         in
                                                                                                             let _ = positionBuilderAtEnd(builder)(continueBlock)
                                                                                                             in ((target, buildLoad(builder)(i64)(resultSlot)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // `Ashes.IO.readLine` — one line from stdin as `Option(Str)`, `None` only
+                        // at EOF with nothing left unread.
+                                        | ReadLine(target) ->
+                                            let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot

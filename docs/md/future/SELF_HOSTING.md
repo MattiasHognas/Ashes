@@ -2398,6 +2398,40 @@ same public behavior.
   survey harness does not create `// file:` fixtures). `readText`/`readAllBytes`/`writeText`/
   `writeBytes`/`open`/`readChunk`/`readLine`/`close` remain — each needs a real `read`/`write` loop
   and, for `open`, a resource-typed handle the lowering side does not model yet.
+- [~] `Ashes.IO.readLine` (stdin, `Option(Str)` — distinct from the `Ashes.IO.File.readLine` handle
+  variant noted as still open above) reads one line at a time via a raw `read` syscall, one byte per
+  call, into a fixed 64 KiB stack buffer: `\n` ends the line (excluded from the result), an
+  immediately-preceding `\r` is dropped, EOF with nothing accumulated yields `None`, EOF with a
+  partial line yields that line's `Some`, and a line at or past the buffer's capacity panics with
+  stage 0's own wording ("readLine input too long") rather than silently truncating. The lowering
+  side (`CoreReadLine`, `ReadLine` instruction, `emitCoreBuiltin` dispatch) already existed from an
+  earlier slice; only the `standardBuiltinLayouts` scheme (`Unit -> Maybe(Str)`, matching
+  `unconsText`/`uncons`'s existing `Maybe` naming) and the backend emission were missing — without
+  the scheme, a bare `Ashes.IO.readLine(Unit)` call failed type resolution with
+  `UnknownLoweringBinding("Ashes.IO.readLine")` before codegen was ever reached. Deliberately simpler
+  than stage 0's own `EmitReadLine`: stage 0 batches stdin through a persistent buffered-read-ahead
+  ring backed by module-global scratch (`ReadLineScratchGlobal`), needed because ITS OWN TCO
+  mechanism reuses one never-returning stack frame across loop iterations, so a per-call `alloca`
+  there would grow the stack by one line's worth on every iteration. This codegen's TCO is a genuine
+  native `musttail` sibling call instead (see the musttail slice above) — each iteration gets a
+  fresh call frame that reuses the caller's stack space rather than growing it — so a fixed
+  per-call `alloca` for the line buffer is safe without any persistent global state, at the cost of
+  one `read` syscall per byte instead of stage 0's batched reads (an explicit, acceptable trade
+  matching this file's other "correct, not yet optimized" stand-ins, e.g. the affine-append
+  ConcatStrTip growth gap). Verified against every existing `readLine` fixture by hand (the survey
+  harness classifies a `// stdin:` test as a skipped fixture rather than actually feeding it stdin):
+  `io_read_line_echo`, `io_read_line_eof_none`, `io_read_line_empty_line`, and
+  `io_read_line_two_lines` all match their `// expect:` text exactly, `std_io_read_line_match_typechecks`
+  confirms both `Option` arms still type-check, and — the one this simplification most needed to
+  prove — `regress_readline_loop_depth` (5000 lines through a `readLine`-driven recursive loop, a
+  regression fixture written specifically because stage 0's OWN unbatched per-call alloca once
+  overflowed the stack after a few hundred lines) prints `5000` with no crash, confirming the
+  `musttail`-frame-reuse safety argument above empirically rather than just by inspection. Full
+  survey (`tests/*.ash` through the rebuilt `ashes-selfhost`) shows zero regressions and all six
+  `readLine`-touching tests above moving from `COMPILE-FAIL` to the skipped-fixture bucket (the
+  survey harness's own `// stdin:` limitation, not a new gap — every one of the six was confirmed
+  correct by hand above), plus the selfhost backend suite (normal and `--debug-disable-reuse`) and
+  the selfhost semantics suite.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
