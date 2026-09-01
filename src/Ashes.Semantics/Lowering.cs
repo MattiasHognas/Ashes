@@ -10439,7 +10439,10 @@ public sealed partial class Lowering
 
         UnifyExpectedType(currentType, request.ExpectedType);
         var callResultType = Prune(currentType);
-        LowerCallDropConsumedRuntimeArguments(callResultType, consumedRuntimeArguments);
+        LowerCallDropConsumedRuntimeArguments(
+            callResultType,
+            consumedRuntimeArguments,
+            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count));
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
@@ -11315,9 +11318,24 @@ public sealed partial class Lowering
         return true;
     }
 
+    /// <summary>
+    /// Whether the saturated call rooted at <paramref name="rootExpr"/> is VERIFIED, from its
+    /// callee's actual compiled body, to produce a runtime-managed result. A runtime-managed
+    /// result's construction paths copy or retain every consumed-argument part they keep, so the
+    /// caller may deep-release its consumed argument; only an arena-placed (or unresolved) result
+    /// can carry raw, unretained references into the caller and needs the child-preserving
+    /// release. Follows <see cref="TryGetCompiledFunctionResultRuntimeManaged"/>'s contract: an
+    /// unresolved answer is never treated as a verified positive.
+    /// </summary>
+    private bool CalleeCompiledResultVerifiedRuntimeManaged(Expr rootExpr, int argumentCount)
+        => TryResolveKnownFunctionLabel(rootExpr, out string label)
+            && TryGetCompiledFunctionResultRuntimeManaged(label, argumentCount, out bool runtimeManaged)
+            && runtimeManaged;
+
     private void LowerCallDropConsumedRuntimeArguments(
         TypeRef resultType,
-        IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments)
+        IReadOnlyList<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        bool calleeCompiledResultVerifiedRuntimeManaged)
     {
         if (Prune(resultType) is TypeRef.TFun)
         {
@@ -11338,8 +11356,14 @@ public sealed partial class Lowering
                 Emit(new IrInst.CleanupResource(temp, "Function"));
                 Emit(new IrInst.RcDrop(temp, "Function", RuntimeManaged: true));
             }
-            else if (preserveEscapedChildren)
+            else if (preserveEscapedChildren && !calleeCompiledResultVerifiedRuntimeManaged)
             {
+                // The callee's result is arena-placed (or unresolved): it may carry raw,
+                // unretained references to this argument's parts, so give up only the references
+                // the caller still owns. A verified runtime-managed result copied or retained
+                // whatever it kept, so the plain deep release below is both safe and required —
+                // skipping head drops there leaks one reference per kept part (caught by the
+                // consumed-tuple-head RSS plateau test).
                 EmitRuntimeManagedChildPreservingDrop(temp, valueType);
             }
             else
