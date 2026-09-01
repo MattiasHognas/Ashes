@@ -209,7 +209,8 @@ let recursive findSymbolByName bytes symtabOffset symbolCount strtabOffset name 
 // byte-payload comparison; `memcpy` for `ConcatStr`/`ConcatStrN`'s payload-copy into a freshly
 // `malloc`'d result; `realloc`/`memmove`/`strlen`/`qsort`/`strcmp` for `Directory.entries`'
 // deterministically-sorted name collection; `fdopendir`/`readdir`/`closedir` for the same builtin's
-// directory stream; `lstat`/`nftw`/`remove` for `Directory.removeTree`'s recursive walk — stage 0's
+// directory stream; `lstat`/`nftw`/`remove` for `Directory.removeTree`'s recursive walk;
+// `getenv`/`getcwd`/`readlink` for the `Environment` directory/variable builtins — stage 0's
 // own `EmitLinuxDirectoryEntriesCore`/`EmitLinuxDirectoryRemoveTree` reach for the identical set,
 // since neither `nftw`'s recursive walk nor `readdir`'s stream have a raw-syscall equivalent worth
 // reinventing here). Grown alongside `IrCodegen`'s own external-call coverage, the same "cover
@@ -233,7 +234,10 @@ let linuxDynamicImportLibraries =
         ("lstat", "libc.so.6"),
         ("nftw", "libc.so.6"),
         ("remove", "libc.so.6"),
-        ("__errno_location", "libc.so.6")
+        ("__errno_location", "libc.so.6"),
+        ("getenv", "libc.so.6"),
+        ("getcwd", "libc.so.6"),
+        ("readlink", "libc.so.6")
     ]
 
 let recursive lookupImportLibrary symbolName knownLibraries =

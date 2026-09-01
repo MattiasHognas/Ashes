@@ -141,7 +141,8 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    cleanup stage 0 already proves; it unblocks `File.open`/`readChunk`/`readLine`/`close` and the
    resource-alias diagnostics at once), then the File read family (landed:
    `readText`/`readAllBytes`/`mmap`/`writeBytes`/`makeExecutable` over the proven raw-syscall
-   helpers), `Environment`/`Console` basics, the real buffered-stdout ring with
+   helpers), `Environment` (landed: all five members over libc imports), `Console` basics, the
+   real buffered-stdout ring with
    flush-on-exit (`writeBuffered`/`flush` currently write immediately — sound but unbatched), and
    `Process.*` over the now-proven libc dynamic-import route (`fork`/`execve`/`waitpid`/`pipe`/
    `dup2` rows in the linker whitelist, the same shape `nftw` just landed with). `Process` is what
@@ -880,6 +881,11 @@ same public behavior.
   stage 0's exact message constants. Open: SEM-14's resource-ownership half (automatic close at
   scope exit, use-after-close/double-close diagnostics — an unclosed handle currently leaks its
   fd), and a real buffered-stdout ring only if immediate writes ever regress measured throughput.
+  `Ashes.IO.Environment` is fully ported (`IrCodegen.Environment.ash`): `currentDirectory`/
+  `executableDirectory` over libc `getcwd`/`readlink` with the parent-path trim,
+  `temporaryDirectory`/`cacheDirectory` with stage 0's env-fallback chains, and `get` over
+  `getenv` — libc rows ride the shared `DirectoryExternals`. Note: a driver-spawned child sees an
+  empty environment until stage 0's `Process.spawn` null-`envp` execve is fixed.
 - [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
   reserved built-in runtime type names rejected in top-level `type` declarations, explicit
   lambda-parameter type annotations enforced (previously silently discarded), and a `perform`
