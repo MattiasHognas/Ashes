@@ -748,7 +748,10 @@ same public behavior.
   and `LlvmCodegenMemory.cs`; layout contracts in
   [Backend Architecture](../internals/architecture.md#backend-architecture), the
   [IR reference](../internals/ir.md), and the [Memory Model](../internals/architecture.md#memory-model).
-  `AshesCompiler.Backend.IrCodegen` walks REAL `IrFunction`s (produced by the self-hosted
+  `AshesCompiler.Backend.IrCodegen` — split into dotted-filename slices (`IrCodegen.Support`,
+  `IrCodegen.Filesystem`, `IrCodegen.TextBytes`, plus the core dispatcher/driver file), the
+  stage-0-partial-style layout the dotted-filename module resolution enables —
+  walks REAL `IrFunction`s (produced by the self-hosted
   frontend/semantics pipeline) and covers: scalars and locals (every value an `i64` word, one
   entry-block slot per temp/local), control flow with pre-created label blocks and terminator
   tracking, whole-program compilation of every lifted function under stage 0's exact
