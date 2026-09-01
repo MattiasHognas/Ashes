@@ -124,6 +124,70 @@ flowchart TD
    surfaced four real stage-0 memory bugs in one week of use, and a crashing corpus file it finds is a
    bug to record, not a file to quietly exclude.
 
+### Current execution roadmap (compiler only)
+
+The six phases above remain the dependency frame; this is the concrete, ordered work plan from
+today's state to a complete self-hosted **compiler** — frontend, semantics, backend, linker, CLI,
+and TestRunner through bootstrap. LSP, DAP, the registry client commands, and the fuzzing runner
+are deliberately out of scope here; they follow the compiler and are tracked only by the checklist
+below. Milestones are ordered by dependency, each one landable as its own short series of PRs, and
+each closes with the standing gate: the affected test surface green, the phase benchmark run, and
+no compile-time or RSS regression.
+
+1. **Finish the file-system and process builtin surface.** Resource-typed handles in the
+   self-hosted lowering first (the compiler-provided-handle classification and deterministic
+   cleanup stage 0 already proves; it unblocks `File.open`/`readChunk`/`readLine`/`close` and the
+   resource-alias diagnostics at once), then the File read family
+   (`readText`/`readAllBytes`/`mmap`/`writeBytes`/`makeExecutable` — read loops over the proven
+   raw-syscall helpers), `Environment`/`Console` basics, the real buffered-stdout ring with
+   flush-on-exit (`writeBuffered`/`flush` currently write immediately — sound but unbatched), and
+   `Process.*` over the now-proven libc dynamic-import route (`fork`/`execve`/`waitpid`/`pipe`/
+   `dup2` rows in the linker whitelist, the same shape `nftw` just landed with). `Process` is what
+   later lets the TestRunner spawn compiled tests at all.
+2. **Memory-model correctness.** The backend's RC/arena stand-ins deliberately leak today; this
+   milestone retires that debt in phase 3's own internal order: complete heap-layout
+   classification, then ownership/move analysis, then Perceus duplication/drop insertion (leading
+   with the three named highest-value bug-class ports), then real scoped arenas in place of the
+   `malloc` stand-ins, reuse, `--debug-disable-reuse` parity, and the four explain snapshots.
+   Gate hard on the challenge benchmarks: this is where compile-time and RSS regressions would
+   first appear.
+3. **Trait and capability physical lowering.** The one keystone decision — call-site dictionary
+   forwarding via constraint-aware local type reconstruction, or a merged type-variable space —
+   then dictionary construction/dispatch lowering, the standard trait ABI, `deriving`'s physical
+   lowering, and capability handler/provider/static-provider dictionary lowering (which also
+   unblocks the remaining provider diagnostics). Independent enough of milestone 2 that the
+   keystone decision can be made in parallel; the physical lowering itself wants milestone 2's
+   ownership shape settled.
+4. **The async/Task arc.** Coroutine-frame ownership (decided in milestone 2), the
+   `StateMachineTransform` port completion, and the run-queue scheduler/task runtime codegen —
+   the single largest remaining corpus block (~65 test files).
+5. **Optimizer and performance parity.** Optimization-level selection (`-O0`..`-O3`), the
+   remaining `IrOptimizer` passes, and the `musttail` upgrade item, benchmarked against stage 0 on
+   the standing phase benchmark and the challenge programs.
+6. **Net and vendored bitcode.** Sockets/TLS/HTTP builtins, Mbed TLS/openlibm/PCRE2 bitcode
+   selection and linking, `Ashes.Number.Math` transcendentals, BigInt, and Regex — the remaining
+   builtin families, all behind the same declare-per-module/import-whitelist mechanism already in
+   place.
+7. **TestRunner port and full-corpus parity.** Discovery, the directive surface, isolation,
+   timeouts, and reporting (needs milestone 1's `Process` and File surface), then the full
+   `tests/` corpus and `examples/` run through BOTH toolchains with every difference classified —
+   the first honest parity signal for the whole port.
+8. **CLI completion.** `compile`/`run` option parity (`--target`, `-O`, `--debug`, `--emit-ir`,
+   `--explain`, `--project` compile), the `test` command over the ported TestRunner, `install`,
+   and the stateful `repl`.
+9. **Targets beyond linux-x64 and debug information.** Object-parsing generalization, then the
+   three remaining image layouts in the documented order (linux-arm64 ELF, win-x64 PE with the
+   Windows runtime builtins, win-arm64 PE structurally), plus DWARF debug information — kept in
+   the compiler scope even though its main consumer (DAP) is out of scope here.
+10. **Bootstrap and retirement.** Stage 1 (built by stage 0) builds stage 2; compare deterministic
+    artifacts or normalized output; compile and run the compiler, standard library, examples, and
+    corpus with the bootstrapped compiler; wire the reproducible bootstrap/packaging jobs; and
+    only then retire the .NET toolchain from the default path.
+
+Continuous residue alongside every milestone, not a milestone of its own: the remaining
+diagnostics and namespace/inference gap items, cross-implementation parity fixtures as phases
+stabilize, and the phase benchmark after every landed slice.
+
 ### Toolchain implementation checklist
 
 This is the authoritative feature inventory for the self-hosted toolchain. It tracks observable
