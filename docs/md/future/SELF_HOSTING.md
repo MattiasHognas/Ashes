@@ -2482,6 +2482,28 @@ same public behavior.
   definition time, plausibly over-generalizing in a way this fix also happens to close); the selfhost
   backend suite (normal and `--debug-disable-reuse`) and semantics suite both pass, including the
   semantics suite's own "annotation-aware inference" group specifically.
+- [x] `perform` now rejects a non-capability-operation target
+  (`capability_perform_non_operation.ash`, `// expect-compile-error: 'perform' must be applied to a
+  capability operation call.`). `lowerPerform`'s call-spine match only had a case for a root that
+  resolves to `ExprQualifiedVar(capName, opName)` (`perform Clock.now()`, the legitimate shape); its
+  fallback silently lowered the ENTIRE `perform` expression as if the keyword weren't there
+  (`| _ -> lower(operation)(state)`), so `perform double(21)` — `double` an ordinary local function,
+  not a capability operation — compiled and ran identically to bare `double(21)`. Replaced the
+  fallback with a real error (`failure(state)(PerformTargetNotCapabilityOperation(...))`, a new
+  `CoreLoweringError` variant carrying stage 0's own message text verbatim). **Naming gotcha**: the
+  first attempt named the new variant `PerformRequiresCapabilityOperation`, which collided with an
+  already-existing, unrelated 0-argument constructor of the same name in `TypeInference.ash`'s own
+  error type — the type checker caught the arity mismatch immediately (`grep -rn` before picking a
+  name would have caught it sooner). Renamed to `PerformTargetNotCapabilityOperation`. Safe by
+  construction, not just by testing: the change touches only the negative/fallback arm, so a
+  legitimate `perform Module.op(...)` call — matching the `ExprQualifiedVar` arm — is untouched;
+  confirmed no currently-passing survey test exercises the positive `perform` path at all yet (every
+  capability/perform test still fails for other, unrelated, already-documented reasons — the static
+  `provide` capability-resolution pipeline and full `let`-binding signature/`needs`-row checking are
+  both still unported, separate, larger gaps noted for a future slice). Verified end to end: the
+  target test moves `COMPILED-BUT-ERROR-EXPECTED` → `COMPILE-ERROR-EXPECTED` in the full survey, the
+  only line the diff moves; selfhost backend suite (normal and `--debug-disable-reuse`) and
+  semantics suite both pass.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
