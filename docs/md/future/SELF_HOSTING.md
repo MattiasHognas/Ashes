@@ -662,7 +662,11 @@ same public behavior.
 - [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
-  `tests/aggregate_result_retains_runtime_managed_children.ash`.
+  `tests/aggregate_result_retains_runtime_managed_children.ash`. Related interim narrowing: the
+  consumed-call-argument child-preserving release now applies only when the callee's VERIFIED
+  compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
+  retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
+  kept part, 507 MB → 8.2 MB on the consumed-tuple-head plateau workload).
 - [x] **OPT-31** Keep a heap aggregate alive when stored through a generic parameter of a function neither
   inlined nor specialized: both call-lowering paths copy the argument into the persistent to-space
   region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
