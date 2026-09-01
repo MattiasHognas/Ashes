@@ -2418,11 +2418,39 @@ same public behavior.
   program that creates a nested-free directory, writes two files into it, replaces one with the
   other, and confirms the resulting existence of each via the already-shipped `File.exists` prints
   the expected `true`/`false`, with the destination file's on-disk contents matching the replaced
-  source's. `Ashes.IO.Directory.entries`/`removeTree` and `File.open`/`readChunk`/`readLine`/`close`
-  remain open — `entries` additionally needs a UTF-8 validator and list-cons construction this
-  codegen doesn't have yet, `removeTree` needs a recursive directory walk (stage 0 uses libc's
-  `nftw`, which has no raw-syscall equivalent), and `open` needs the resource-typed handle lowering
-  doesn't model yet.
+  source's.
+  `Ashes.IO.Directory.entries` and `Ashes.IO.Directory.removeTree` followed, closing out the
+  Directory surface — and, unlike the slice above, deliberately NOT on the raw-syscall path:
+  stage 0's own emitters reach for libc here (`fdopendir`/`readdir`/`closedir` for the stream,
+  `qsort`/`strcmp` for the deterministic name sort, `strlen`/`realloc`/`memmove` for the growable
+  name array, `lstat`/`nftw`/`remove` for the recursive walk, `__errno_location` for `readdir`'s
+  end-vs-error disambiguation), `nftw` has no raw-syscall equivalent at all, and
+  `AshesCompiler.Backend.ElfLinker`'s dynamic-import machinery turned out to be fully general
+  already — its per-symbol whitelist (`linuxDynamicImportLibraries`) just grew twelve
+  `libc.so.6` rows, with no new linker mechanism. The libc functions are declared once per module
+  (a `DirectoryExternals` bundle alongside `malloc`/`free`/`memcmp`/`memcpy`; an unreferenced
+  declaration never reaches the emitted object, so untouched programs still link statically). Three
+  helper functions are DEFINED per instruction occurrence, uniquely suffixed by the target temp
+  (`LLVMGetNamedFunction` has no binding here, and `addFunction` on a taken name silently renames):
+  the name-append trampoline (strdup + realloc-grown pointer array), the `strcmp` comparator whose
+  address `qsort` receives (internal linkage, load-bearing for the same `dso_local` address-taking
+  reason lifted functions document), and `removeTree`'s `remove`-everything `nftw` visitor
+  (`FTW_DEPTH|FTW_PHYS`, post-order). `entries` validates every name with a new whole-buffer UTF-8
+  validator (`emitValidateUtf8`, stage 0's exact lead-byte range table, though with flat AND-chains
+  over the continuation bytes once the bounds check has run instead of stage 0's block-per-byte) and
+  builds the result list back-to-front so `array[0]` lands at the head — each cons cell a fresh
+  RC-managed 16-byte `[head][tail]` payload matching `BytesFromList`'s reading side. `removeTree`
+  reports a missing path as `Ok(Unit)` only on `ENOENT`. Building the validator surfaced a real
+  lesson: seeding its AND-chain with an `i64` constant against `i1` comparison results produced
+  invalid IR that LLVM's instruction selector only reported as `Cannot emit physreg copy
+  instruction` at emission time — nothing verifies the module between build and emit, so operand
+  TYPES have to be right by construction. Verified end to end against the real self-hosted
+  pipeline: a program that creates a directory with a subdirectory, writes two files, pattern-matches
+  `entries`' exact sorted `Ok(["a.txt", "b.txt", "sub"])` shape, `removeTree`s the whole thing, and
+  confirms via `File.exists` prints exactly the sorted names then `false`, with the tree gone from
+  disk. `File.open`/`readChunk`/`readLine`/`close` remain open on the resource-typed handle the
+  lowering side does not model yet, and `readText`/`readAllBytes`/`writeBytes`/`mmap`/
+  `makeExecutable` on their read loops.
 - [~] `Ashes.IO.readLine` (stdin, `Option(Str)` — distinct from the `Ashes.IO.File.readLine` handle
   variant noted as still open above) reads one line at a time via a raw `read` syscall, one byte per
   call, into a fixed 64 KiB stack buffer: `\n` ends the line (excluded from the result), an

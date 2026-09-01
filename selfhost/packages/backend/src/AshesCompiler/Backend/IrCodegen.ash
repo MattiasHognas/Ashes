@@ -123,10 +123,45 @@ let coreLlvmTypes context =
         ptrType = pointerType(context)(0u32)
     )
 
+// The libc surface `Directory.entries`/`Directory.removeTree` need beyond the core four below:
+// the directory stream (`fdopendir`/`readdir`/`closedir` — `readdir` has no raw-syscall
+// equivalent worth reinventing), the deterministic name sort (`qsort`/`strcmp`), the growable
+// name array (`strlen`/`realloc`/`memmove`), and the recursive walk (`lstat`/`nftw`/`remove` —
+// `nftw` is a libc userspace algorithm with no syscall equivalent at all), plus `__errno_location`
+// for `readdir`'s end-vs-error disambiguation. Declared once per module alongside the core set;
+// an unreferenced declaration never reaches the emitted object's symbol table, so a program that
+// never touches these builtins links exactly as before.
+type DirectoryExternals =
+    | strlenFn: LLVMValueRef
+    | strlenType: LLVMTypeRef
+    | reallocFn: LLVMValueRef
+    | reallocType: LLVMTypeRef
+    | memmoveFn: LLVMValueRef
+    | memmoveType: LLVMTypeRef
+    | qsortFn: LLVMValueRef
+    | qsortType: LLVMTypeRef
+    | strcmpFn: LLVMValueRef
+    | strcmpType: LLVMTypeRef
+    | fdopendirFn: LLVMValueRef
+    | fdopendirType: LLVMTypeRef
+    | readdirFn: LLVMValueRef
+    | readdirType: LLVMTypeRef
+    | closedirFn: LLVMValueRef
+    | closedirType: LLVMTypeRef
+    | errnoLocationFn: LLVMValueRef
+    | errnoLocationType: LLVMTypeRef
+    | lstatFn: LLVMValueRef
+    | lstatType: LLVMTypeRef
+    | nftwFn: LLVMValueRef
+    | nftwType: LLVMTypeRef
+    | removeFn: LLVMValueRef
+    | removeType: LLVMTypeRef
+
 // The narrow set of libc entry points this codegen can call — `malloc`/`free` for RC-managed
-// `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN` —
-// declared once per module, matching `AshesCompiler.Backend.ElfLinker`'s own recognized-symbol
-// table (any new entry here needs a matching one-line addition there).
+// `AllocAdt`/`RcDrop`, `memcmp` for `CmpStrEq`/`CmpStrNe`, `memcpy` for `ConcatStr`/`ConcatStrN`,
+// plus the `DirectoryExternals` bundle above — declared once per module, matching
+// `AshesCompiler.Backend.ElfLinker`'s own recognized-symbol table (any new entry here needs a
+// matching one-line addition there).
 type ExternalFunctions =
     | mallocFn: LLVMValueRef
     | mallocType: LLVMTypeRef
@@ -136,6 +171,60 @@ type ExternalFunctions =
     | memcmpType: LLVMTypeRef
     | memcpyFn: LLVMValueRef
     | memcpyType: LLVMTypeRef
+    | directoryExternals: DirectoryExternals
+
+let declareDirectoryExternalFunctions module_ context types =
+    (let strlenType = functionType(types.i64)([types.ptrType])(1u32)(false)
+    in
+        let reallocType = functionType(types.ptrType)([types.ptrType, types.i64])(2u32)(false)
+        in
+            let memmoveType = functionType(types.ptrType)([types.ptrType, types.ptrType, types.i64])(3u32)(false)
+            in
+                let qsortType =
+                    functionType(voidType(context))([types.ptrType, types.i64, types.i64, types.ptrType])(4u32)(false)
+                in
+                    let strcmpType = functionType(types.i32)([types.ptrType, types.ptrType])(2u32)(false)
+                    in
+                        let fdopendirType = functionType(types.ptrType)([types.i32])(1u32)(false)
+                        in
+                            let readdirType = functionType(types.ptrType)([types.ptrType])(1u32)(false)
+                            in
+                                let closedirType = functionType(types.i32)([types.ptrType])(1u32)(false)
+                                in
+                                    let errnoLocationType = functionType(types.ptrType)([])(0u32)(false)
+                                    in
+                                        let lstatType = functionType(types.i32)([types.ptrType, types.ptrType])(2u32)(false)
+                                        in
+                                            let nftwType = functionType(types.i32)([types.ptrType, types.ptrType, types.i32, types.i32])(4u32)(false)
+                                            in
+                                                let removeType = functionType(types.i32)([types.ptrType])(1u32)(false)
+                                                in
+                                                    DirectoryExternals(
+                                                        strlenFn = addFunction(module_)("strlen")(strlenType),
+                                                        strlenType = strlenType,
+                                                        reallocFn = addFunction(module_)("realloc")(reallocType),
+                                                        reallocType = reallocType,
+                                                        memmoveFn = addFunction(module_)("memmove")(memmoveType),
+                                                        memmoveType = memmoveType,
+                                                        qsortFn = addFunction(module_)("qsort")(qsortType),
+                                                        qsortType = qsortType,
+                                                        strcmpFn = addFunction(module_)("strcmp")(strcmpType),
+                                                        strcmpType = strcmpType,
+                                                        fdopendirFn = addFunction(module_)("fdopendir")(fdopendirType),
+                                                        fdopendirType = fdopendirType,
+                                                        readdirFn = addFunction(module_)("readdir")(readdirType),
+                                                        readdirType = readdirType,
+                                                        closedirFn = addFunction(module_)("closedir")(closedirType),
+                                                        closedirType = closedirType,
+                                                        errnoLocationFn = addFunction(module_)("__errno_location")(errnoLocationType),
+                                                        errnoLocationType = errnoLocationType,
+                                                        lstatFn = addFunction(module_)("lstat")(lstatType),
+                                                        lstatType = lstatType,
+                                                        nftwFn = addFunction(module_)("nftw")(nftwType),
+                                                        nftwType = nftwType,
+                                                        removeFn = addFunction(module_)("remove")(removeType),
+                                                        removeType = removeType
+                                                    ))
 
 let declareExternalFunctions module_ context types =
     (let mallocType = functionType(types.ptrType)([types.i64])(1u32)(false)
@@ -155,7 +244,8 @@ let declareExternalFunctions module_ context types =
                         memcmpFn = addFunction(module_)("memcmp")(memcmpType),
                         memcmpType = memcmpType,
                         memcpyFn = addFunction(module_)("memcpy")(memcpyType),
-                        memcpyType = memcpyType
+                        memcpyType = memcpyType,
+                        directoryExternals = declareDirectoryExternalFunctions(module_)(context)(types)
                     ))
 
 // Bundles everything that stays fixed for a whole function so it threads through as one value
@@ -163,6 +253,7 @@ let declareExternalFunctions module_ context types =
 // fold state) actually grows instruction by instruction.
 type CodegenContext =
     | context: LLVMContextRef
+    | moduleRef: LLVMModuleRef
     | function_: LLVMValueRef
     | types: CoreLlvmTypes
     | externals: ExternalFunctions
@@ -1689,6 +1780,161 @@ let emitResultAdt builder i64 i8 ptrType mallocFn mallocType tag fieldValue name
                 let _ = buildStore(builder)(fieldValue)(fieldPtr)
                 in adtValue)
 
+// The byte at dynamic `index`, zero-extended to the universal `i64` word.
+let emitLoadByteAtI64 builder i64 i8 bytesPtr index name =
+    (let pointer = buildGEP(builder)(i8)(bytesPtr)([index])(1u32)(name + "_ptr")
+    in
+        buildZExt(builder)(buildLoad(builder)(i8)(pointer)(name))(i64)(name + "_i64"))
+
+let emitUtf8ByteInRange builder i64 byteVal minVal maxVal name =
+    buildAnd(builder)(buildICmp(builder)(intPredicateUge)(byteVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(minVal))(false))(name + "_ge"))(buildICmp(builder)(intPredicateUle)(byteVal)(constInt(i64)(Ashes.Number.UInt.fromInt64(maxVal))(false))(name + "_le"))(name)
+
+// Every continuation byte a multi-byte UTF-8 sequence still needs, checked once the caller has
+// already confirmed enough bytes remain — safe to load unconditionally (no separate per-byte block,
+// unlike stage 0's own `EmitUtf8SequenceValidation`) precisely because that bounds check already ran.
+let recursive emitUtf8ContinuationChain builder i64 i8 bytesPtr index checks acc =
+    match checks with
+        | [] -> acc
+        | (offset, minVal, maxVal) :: rest ->
+            "utf8_cont_idx"
+            |> buildAdd(builder)(index)(constInt(i64)(Ashes.Number.UInt.fromInt64(offset))(false))
+            |> (given (byteAddr) -> emitLoadByteAtI64(builder)(i64)(i8)(bytesPtr)(byteAddr)("utf8_cont_byte"))
+            |> (given (byteVal) -> emitUtf8ByteInRange(builder)(i64)(byteVal)(minVal)(maxVal)("utf8_cont_range"))
+            |> (given (inRange) ->
+                "utf8_cont_and"
+                |> buildAnd(builder)(acc)(inRange)
+                |> emitUtf8ContinuationChain(builder)(i64)(i8)(bytesPtr)(index)(rest))
+
+// One UTF-8 lead-byte classification: `sequenceLength` total bytes (the lead byte plus every entry
+// in `checks`, each an `(offset, min, max)` continuation-byte range relative to the lead byte's own
+// index), matching one call site of stage 0's own `EmitUtf8SequenceValidation`. Positions the
+// builder at `entryBlock`, checks enough bytes remain (`invalidBlock` otherwise), validates every
+// continuation byte's range, advances `indexSlot` by `sequenceLength` and jumps to `loopBlock` on
+// success, `invalidBlock` otherwise.
+let emitUtf8ValidateSequence context function_ i64 i8 builder bytesPtr len indexSlot sequenceLength checks entryBlock loopBlock invalidBlock =
+    (let bodyBlock = appendBasicBlock(context)(function_)("utf8_seq_body")
+    in
+        let advanceBlock = appendBasicBlock(context)(function_)("utf8_seq_advance")
+        in
+            let index =
+                entryBlock
+                |> positionBuilderAtEnd(builder)
+                |> (given (_) -> buildLoad(builder)(i64)(indexSlot)("utf8_seq_index"))
+            in
+                "utf8_seq_enough"
+                |> buildICmp(builder)(intPredicateUge)(buildSub(builder)(len)(index)("utf8_seq_remaining"))(constInt(i64)(Ashes.Number.UInt.fromInt64(sequenceLength))(false))
+                |> (given (enough) -> buildCondBr(builder)(enough)(bodyBlock)(invalidBlock))
+                |> (given (_) -> positionBuilderAtEnd(builder)(bodyBlock))
+                |> (given (_) ->
+                    false
+                    |> constInt(int1Type(context))(1u64)
+                    |> emitUtf8ContinuationChain(builder)(i64)(i8)(bytesPtr)(index)(checks))
+                |> (given (bytesOk) -> buildCondBr(builder)(bytesOk)(advanceBlock)(invalidBlock))
+                |> (given (_) -> positionBuilderAtEnd(builder)(advanceBlock))
+                |> (given (_) ->
+                    buildStore(builder)(buildAdd(builder)(index)(constInt(i64)(Ashes.Number.UInt.fromInt64(sequenceLength))(false))("utf8_seq_next"))(indexSlot))
+                |> (given (_) -> buildBr(builder)(loopBlock)))
+
+// One step of the lead-byte classification chain: if `leadByte` matches (`predicate` against
+// `boundary`), validate a `sequenceLength`-byte sequence with `checks`' continuation ranges;
+// otherwise fall through to the next step's block, where the builder is left positioned.
+let emitUtf8ClassifyStep context function_ i64 i8 builder bytesPtr len indexSlot loopBlock invalidBlock leadByte predicate boundary sequenceLength checks name =
+    (let matchBlock = appendBasicBlock(context)(function_)(name)
+    in
+        let afterBlock = appendBasicBlock(context)(function_)(name + "_after")
+        in
+            afterBlock
+            |> buildCondBr(builder)(buildICmp(builder)(predicate)(leadByte)(constInt(i64)(boundary)(false))(name + "_check"))(matchBlock)
+            |> (given (_) -> emitUtf8ValidateSequence(context)(function_)(i64)(i8)(builder)(bytesPtr)(len)(indexSlot)(sequenceLength)(checks)(matchBlock)(loopBlock)(invalidBlock))
+            |> (given (_) -> positionBuilderAtEnd(builder)(afterBlock)))
+
+// Lead-byte classification chain: dispatches a non-ASCII lead byte to the matching
+// `emitUtf8ValidateSequence` call (or straight to `invalidBlock`), matching stage 0's own
+// `EmitValidateUtf8ClassifyNonAscii` range table exactly (`0xC2`-`0xDF` two-byte; `0xE0`/`0xED`
+// three-byte with a narrowed second-byte range for the two overlong/surrogate-adjacent leads,
+// `0xE1`-`0xEC`/`0xEE`-`0xEF` the standard `0x80`-`0xBF` range; `0xF0`/`0xF4` four-byte with a
+// narrowed second-byte range, `0xF1`-`0xF3` the standard range; everything past `0xF4` invalid).
+let emitUtf8ClassifyLeadByte context function_ i64 i8 builder bytesPtr len indexSlot leadByte loopBlock invalidBlock =
+    (let step = emitUtf8ClassifyStep(context)(function_)(i64)(i8)(builder)(bytesPtr)(len)(indexSlot)(loopBlock)(invalidBlock)(leadByte)
+    in
+        let inspectBlock = appendBasicBlock(context)(function_)("utf8_inspect")
+        in
+            inspectBlock
+            |> buildCondBr(builder)(buildICmp(builder)(intPredicateUlt)(leadByte)(constInt(i64)(194u64)(false))("utf8_lt_c2"))(invalidBlock)
+            |> (given (_) -> positionBuilderAtEnd(builder)(inspectBlock))
+            |> (given (_) -> step(intPredicateUle)(223u64)(2)([(1, 128, 191)])("utf8_two"))
+            |> (given (_) -> step(intPredicateEq)(224u64)(3)([(1, 160, 191), (2, 128, 191)])("utf8_e0"))
+            |> (given (_) -> step(intPredicateUle)(236u64)(3)([(1, 128, 191), (2, 128, 191)])("utf8_three_a"))
+            |> (given (_) -> step(intPredicateEq)(237u64)(3)([(1, 128, 159), (2, 128, 191)])("utf8_ed"))
+            |> (given (_) -> step(intPredicateUle)(239u64)(3)([(1, 128, 191), (2, 128, 191)])("utf8_three_b"))
+            |> (given (_) -> step(intPredicateEq)(240u64)(4)([(1, 144, 191), (2, 128, 191), (3, 128, 191)])("utf8_f0"))
+            |> (given (_) -> step(intPredicateUle)(243u64)(4)([(1, 128, 191), (2, 128, 191), (3, 128, 191)])("utf8_four"))
+            |> (given (_) -> step(intPredicateEq)(244u64)(4)([(1, 128, 143), (2, 128, 191), (3, 128, 191)])("utf8_f4"))
+            |> (given (_) -> buildBr(builder)(invalidBlock)))
+
+// Loop head of `emitValidateUtf8`: end-of-input check, lead-byte load, and the ASCII/non-ASCII
+// branch. Leaves the builder positioned in the fresh non-ASCII block and returns the lead byte.
+let emitValidateUtf8LoopHead context function_ i64 i8 builder bytesPtr len indexSlot loopBlock asciiBlock validBlock prefix =
+    (let inspectBlock = appendBasicBlock(context)(function_)(prefix + "_inspect")
+    in
+        let nonAsciiBlock = appendBasicBlock(context)(function_)(prefix + "_non_ascii")
+        in
+            let leadByte =
+                loopBlock
+                |> positionBuilderAtEnd(builder)
+                |> (given (_) -> buildLoad(builder)(i64)(indexSlot)(prefix + "_index_value"))
+                |> (given (index) ->
+                    buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(index)(len)(prefix + "_done"))(validBlock)(inspectBlock))
+                |> (given (_) -> positionBuilderAtEnd(builder)(inspectBlock))
+                |> (given (_) -> buildLoad(builder)(i64)(indexSlot)(prefix + "_lead_index"))
+                |> (given (index) -> emitLoadByteAtI64(builder)(i64)(i8)(bytesPtr)(index)(prefix + "_lead"))
+            in
+                nonAsciiBlock
+                |> buildCondBr(builder)(buildICmp(builder)(intPredicateUlt)(leadByte)(constInt(i64)(128u64)(false))(prefix + "_is_ascii"))(asciiBlock)
+                |> (given (_) -> positionBuilderAtEnd(builder)(nonAsciiBlock))
+                |> (given (_) -> leadByte))
+
+// Whole-buffer UTF-8 validity (`1` valid, `0` invalid), matching stage 0's own `EmitValidateUtf8`
+// exactly — needed by `Directory.entries`, which (unlike `File.readText`'s validated decode, not
+// yet ported here either) must reject a non-UTF-8 directory entry name rather than propagate it.
+let emitValidateUtf8 context function_ i64 i8 builder bytesPtr len prefix =
+    (let indexSlot = buildAlloca(builder)(i64)(prefix + "_index")
+    in
+        let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+        in
+            let loopBlock = appendBasicBlock(context)(function_)(prefix + "_loop")
+            in
+                let asciiBlock = appendBasicBlock(context)(function_)(prefix + "_ascii")
+                in
+                    let validBlock = appendBasicBlock(context)(function_)(prefix + "_valid")
+                    in
+                        let invalidBlock = appendBasicBlock(context)(function_)(prefix + "_invalid")
+                        in
+                            let continueBlock = appendBasicBlock(context)(function_)(prefix + "_continue")
+                            in
+                                let leadByte =
+                                    indexSlot
+                                    |> buildStore(builder)(constInt(i64)(0u64)(false))
+                                    |> (given (_) -> buildBr(builder)(loopBlock))
+                                    |> (given (_) -> emitValidateUtf8LoopHead(context)(function_)(i64)(i8)(builder)(bytesPtr)(len)(indexSlot)(loopBlock)(asciiBlock)(validBlock)(prefix))
+                                in
+                                    invalidBlock
+                                    |> emitUtf8ClassifyLeadByte(context)(function_)(i64)(i8)(builder)(bytesPtr)(len)(indexSlot)(leadByte)(loopBlock)
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(asciiBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(indexSlot)(prefix + "_ascii_index"))(constInt(i64)(1u64)(false))(prefix + "_ascii_next"))(indexSlot))
+                                    |> (given (_) -> buildBr(builder)(loopBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(validBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(constInt(i64)(1u64)(false))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(continueBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(invalidBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(constInt(i64)(0u64)(false))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(continueBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
+                                    |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
+
 // `Ok(Unit)` if `succeeded`, `Error(message)` (built from `codes`, an ASCII code-point list, via
 // `emitAsciiHeapString`) otherwise — the raw-syscall-convention ("non-negative return means
 // success") counterpart of stage 0's own `EmitFilesystemStatusResult`, shared by every filesystem
@@ -1702,28 +1948,18 @@ let emitFilesystemStatusResult context function_ i64 i8 ptrType builder mallocFn
             in
                 let continueBlock = appendBasicBlock(context)(function_)(prefix + "_status_continue")
                 in
-                    let _ = buildCondBr(builder)(succeeded)(okBlock)(errorBlock)
-                    in
-                        let _ = positionBuilderAtEnd(builder)(okBlock)
-                        in
-                            let unitValue = emitAllocAdtStack(builder)(i64)(0)(prefix + "_unit")
-                            in
-                                let _ =
-                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(unitValue)(prefix + "_ok"))(resultSlot)
-                                in
-                                    let _ = buildBr(builder)(continueBlock)
-                                    in
-                                        let _ = positionBuilderAtEnd(builder)(errorBlock)
-                                        in
-                                            let message = emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(codes)(prefix + "_error_msg")
-                                            in
-                                                let _ =
-                                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(message)(prefix + "_error"))(resultSlot)
-                                                in
-                                                    let _ = buildBr(builder)(continueBlock)
-                                                    in
-                                                        let _ = positionBuilderAtEnd(builder)(continueBlock)
-                                                        in buildLoad(builder)(i64)(resultSlot)(prefix + "_status_value"))
+                    errorBlock
+                    |> buildCondBr(builder)(succeeded)(okBlock)
+                    |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
+                    |> (given (_) ->
+                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitAllocAdtStack(builder)(i64)(0)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
+                    |> (given (_) -> buildBr(builder)(continueBlock))
+                    |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
+                    |> (given (_) ->
+                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(codes)(prefix + "_error_msg"))(prefix + "_error"))(resultSlot))
+                    |> (given (_) -> buildBr(builder)(continueBlock))
+                    |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
+                    |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_status_value")))
 
 let fileWriteTextErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 108, 101, 46, 119, 114, 105, 116, 101, 84, 101, 120, 116, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 119, 114, 105, 116, 101, 32, 102, 105, 108, 101]
 
@@ -1732,87 +1968,76 @@ let fileWriteTextErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 
 // which also assume a single `write` covers the buffer rather than porting stage 0's full
 // partial-write retry loop — then `close`. Only `open` failure is surfaced as `Error`.
 let emitFileWriteText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef textRef =
-    (let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("file_write_text_path")
+    (let writeBlock = appendBasicBlock(context)(function_)("file_write_text_write")
     in
-        let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("file_write_text_path_addr")
+        let joinBlock = appendBasicBlock(context)(function_)("file_write_text_join")
         in
             let fd =
-                false
-                |> constInt(i64)(420u64)
-                |> emitLinuxOpenat(builder)(i64)(pathAddr)(constInt(i64)(577u64)(false))
+                "file_write_text_path"
+                |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)("file_write_text_path_addr"))
+                |> (given (pathAddr) ->
+                    false
+                    |> constInt(i64)(420u64)
+                    |> emitLinuxOpenat(builder)(i64)(pathAddr)(constInt(i64)(577u64)(false)))
             in
                 let openOk =
                     buildICmp(builder)(intPredicateSge)(fd)(constInt(i64)(0u64)(false))("file_write_text_open_ok")
                 in
-                    let writeBlock = appendBasicBlock(context)(function_)("file_write_text_write")
-                    in
-                        let joinBlock = appendBasicBlock(context)(function_)("file_write_text_join")
-                        in
-                            let _ = buildCondBr(builder)(openOk)(writeBlock)(joinBlock)
-                            in
-                                let _ = positionBuilderAtEnd(builder)(writeBlock)
-                                in
-                                    match emitStringParts(builder)(i64)(ptrType)(textRef)("file_write_text_text") with
-                                        | (textLen, textAddr) ->
-                                            let _ = emitLinuxWrite(builder)(i64)(fd)(textAddr)(textLen)
-                                            in
-                                                let _ = emitLinuxClose(builder)(i64)(fd)
-                                                in
-                                                    let _ = buildBr(builder)(joinBlock)
-                                                    in
-                                                        let _ = positionBuilderAtEnd(builder)(joinBlock)
-                                                        in emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(openOk)(fileWriteTextErrorCodes)("file_write_text"))
+                    match emitStringParts(builder)(i64)(ptrType)(textRef)("file_write_text_text") with
+                        | (textLen, textAddr) ->
+                            joinBlock
+                            |> buildCondBr(builder)(openOk)(writeBlock)
+                            |> (given (_) -> positionBuilderAtEnd(builder)(writeBlock))
+                            |> (given (_) -> emitLinuxWrite(builder)(i64)(fd)(textAddr)(textLen))
+                            |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
+                            |> (given (_) -> buildBr(builder)(joinBlock))
+                            |> (given (_) -> positionBuilderAtEnd(builder)(joinBlock))
+                            |> (given (_) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(openOk)(fileWriteTextErrorCodes)("file_write_text")))
 
 let fileReplaceErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 108, 101, 46, 114, 101, 112, 108, 97, 99, 101, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 114, 101, 112, 108, 97, 99, 101, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110]
 
 // `Ashes.IO.File.replace(source, destination)`: rejects a `source` that names a directory (probed
 // via `openat(source, O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, 0)` — the exact flag value stage 0's own
-// `EmitLinuxFileReplace` uses for this probe), otherwise `rename(source, destination)`.
+// `EmitLinuxFileReplace` uses for this probe), otherwise `rename(source, destination)`. The probe
+// fd is closed unconditionally on the join path — closing an invalid fd is a harmless `-EBADF` at
+// the raw-syscall level, so no branch is needed to skip it.
 let emitFileReplace context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType sourceRef destinationRef =
-    (let sourceCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(sourceRef)("file_replace_source")
+    (let renameBlock = appendBasicBlock(context)(function_)("file_replace_rename")
     in
-        let destinationCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destinationRef)("file_replace_destination")
+        let joinBlock = appendBasicBlock(context)(function_)("file_replace_join")
         in
-            let sourceAddr = buildPtrToInt(builder)(sourceCstr)(i64)("file_replace_source_addr")
+            let statusSlot = buildAlloca(builder)(i64)("file_replace_status")
             in
-                let destinationAddr = buildPtrToInt(builder)(destinationCstr)(i64)("file_replace_destination_addr")
+                let sourceAddr =
+                    "file_replace_source"
+                    |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(sourceRef)
+                    |> (given (sourceCstr) -> buildPtrToInt(builder)(sourceCstr)(i64)("file_replace_source_addr"))
                 in
-                    let probeFd =
-                        false
-                        |> constInt(i64)(0u64)
-                        |> emitLinuxOpenat(builder)(i64)(sourceAddr)(constInt(i64)(2293760u64)(false))
+                    let destinationAddr =
+                        "file_replace_destination"
+                        |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(destinationRef)
+                        |> (given (destinationCstr) -> buildPtrToInt(builder)(destinationCstr)(i64)("file_replace_destination_addr"))
                     in
-                        let sourceIsDirectory =
-                            buildICmp(builder)(intPredicateSge)(probeFd)(constInt(i64)(0u64)(false))("file_replace_source_is_directory")
+                        let probeFd =
+                            false
+                            |> constInt(i64)(0u64)
+                            |> emitLinuxOpenat(builder)(i64)(sourceAddr)(constInt(i64)(2293760u64)(false))
                         in
-                            let renameBlock = appendBasicBlock(context)(function_)("file_replace_rename")
-                            in
-                                let joinBlock = appendBasicBlock(context)(function_)("file_replace_join")
-                                in
-                                    let statusSlot = buildAlloca(builder)(i64)("file_replace_status")
-                                    in
-                                        let _ =
-                                            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(statusSlot)
-                                        in
-                                            let _ = buildCondBr(builder)(sourceIsDirectory)(joinBlock)(renameBlock)
-                                            in
-                                                let _ = positionBuilderAtEnd(builder)(renameBlock)
-                                                in
-                                                    let renameStatus = emitLinuxRename(builder)(i64)(sourceAddr)(destinationAddr)
-                                                    in
-                                                        let _ = buildStore(builder)(renameStatus)(statusSlot)
-                                                        in
-                                                            let _ = buildBr(builder)(joinBlock)
-                                                            in
-                                                                let _ = positionBuilderAtEnd(builder)(joinBlock)
-                                                                in
-                                                                    let _ = emitLinuxClose(builder)(i64)(probeFd)
-                                                                    in
-                                                                        let status = buildLoad(builder)(i64)(statusSlot)("file_replace_status_value")
-                                                                        in
-                                                                            let succeeded =
-                                                                                buildICmp(builder)(intPredicateSge)(status)(constInt(i64)(0u64)(false))("file_replace_succeeded")
-                                                                            in emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileReplaceErrorCodes)("file_replace"))
+                            statusSlot
+                            |> buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))
+                            |> (given (_) ->
+                                buildCondBr(builder)(buildICmp(builder)(intPredicateSge)(probeFd)(constInt(i64)(0u64)(false))("file_replace_source_is_directory"))(joinBlock)(renameBlock))
+                            |> (given (_) -> positionBuilderAtEnd(builder)(renameBlock))
+                            |> (given (_) ->
+                                buildStore(builder)(emitLinuxRename(builder)(i64)(sourceAddr)(destinationAddr))(statusSlot))
+                            |> (given (_) -> buildBr(builder)(joinBlock))
+                            |> (given (_) -> positionBuilderAtEnd(builder)(joinBlock))
+                            |> (given (_) -> emitLinuxClose(builder)(i64)(probeFd))
+                            |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("file_replace_status_value"))
+                            |> (given (status) ->
+                                buildICmp(builder)(intPredicateSge)(status)(constInt(i64)(0u64)(false))("file_replace_succeeded"))
+                            |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileReplaceErrorCodes)("file_replace")))
 
 let directoryCreateAllErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 99, 114, 101, 97, 116, 101, 65, 108, 108, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 99, 114, 101, 97, 116, 101, 32, 100, 105, 114, 101, 99, 116, 111, 114, 121]
 
@@ -1834,14 +2059,70 @@ let emitDirectoryMkdirExistingOk builder i64 pathAddr =
             let opened =
                 buildICmp(builder)(intPredicateSge)(openStatus)(constInt(i64)(0u64)(false))("dir_create_opened")
             in
-                let _ = emitLinuxClose(builder)(i64)(openStatus)
-                in
-                    let mkdirSucceeded =
-                        buildICmp(builder)(intPredicateSge)(mkdirStatus)(constInt(i64)(0u64)(false))("dir_create_mkdir_ok")
-                    in
-                        let componentOk = buildOr(builder)(mkdirSucceeded)(opened)("dir_create_component_ok")
-                        in
-                            buildSelect(builder)(componentOk)(constInt(i64)(0u64)(false))(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))("dir_create_component_status"))
+                openStatus
+                |> emitLinuxClose(builder)(i64)
+                |> (given (_) ->
+                    buildOr(builder)(buildICmp(builder)(intPredicateSge)(mkdirStatus)(constInt(i64)(0u64)(false))("dir_create_mkdir_ok"))(opened)("dir_create_component_ok"))
+                |> (given (componentOk) ->
+                    buildSelect(builder)(componentOk)(constInt(i64)(0u64)(false))(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))("dir_create_component_status")))
+
+// `emitDirectoryCreateAll`'s loop head: still-in-range check, dispatching to the byte inspection
+// or the final whole-path `mkdir`.
+let emitDirectoryCreateLoopCheck builder i64 length indexSlot checkBlock byteBlock finalBlock =
+    checkBlock
+    |> positionBuilderAtEnd(builder)
+    |> (given (_) -> buildLoad(builder)(i64)(indexSlot)("dir_create_index_value"))
+    |> (given (index) ->
+        buildCondBr(builder)(buildICmp(builder)(intPredicateUlt)(index)(length)("dir_create_in_range"))(byteBlock)(finalBlock))
+
+// `emitDirectoryCreateAll`'s per-component `mkdir`: NUL-terminate at the current `/`, `mkdir` the
+// prefix, restore the byte, and stop the walk (`joinBlock`) if the component failed. The component
+// status round-trips through `statusSlot` (stored, then reloaded for the failure check) so the
+// join block reads the most recent component's outcome either way.
+let emitDirectoryCreateComponentStep builder i64 i8 pathAddr indexSlot statusSlot bytePtr current componentBlock advanceBlock joinBlock =
+    componentBlock
+    |> positionBuilderAtEnd(builder)
+    |> (given (_) ->
+        buildStore(builder)(constInt(i8)(0u64)(false))(bytePtr))
+    |> (given (_) -> emitDirectoryMkdirExistingOk(builder)(i64)(pathAddr))
+    |> (given (componentStatus) -> buildStore(builder)(componentStatus)(statusSlot))
+    |> (given (_) -> buildStore(builder)(current)(bytePtr))
+    |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("dir_create_component_status_value"))
+    |> (given (componentStatus) ->
+        buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(componentStatus)(constInt(i64)(0u64)(false))("dir_create_component_failed"))(joinBlock)(advanceBlock))
+
+// `emitDirectoryCreateAll`'s byte inspection and advance: read the byte at the walk index, take
+// the component step at each `/`, then advance the index and loop.
+let emitDirectoryCreateByteStep builder i64 i8 pathCstr pathAddr indexSlot statusSlot byteBlock componentBlock advanceBlock joinBlock checkBlock =
+    (let bytePtr =
+        byteBlock
+        |> positionBuilderAtEnd(builder)
+        |> (given (_) -> buildLoad(builder)(i64)(indexSlot)("dir_create_byte_index"))
+        |> (given (index) -> buildGEP(builder)(i8)(pathCstr)([index])(1u32)("dir_create_byte_ptr"))
+    in
+        let current = buildLoad(builder)(i8)(bytePtr)("dir_create_byte_value")
+        in
+            advanceBlock
+            |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(current)(constInt(i8)(47u64)(false))("dir_create_is_slash"))(componentBlock)
+            |> (given (_) -> emitDirectoryCreateComponentStep(builder)(i64)(i8)(pathAddr)(indexSlot)(statusSlot)(bytePtr)(current)(componentBlock)(advanceBlock)(joinBlock))
+            |> (given (_) -> positionBuilderAtEnd(builder)(advanceBlock))
+            |> (given (_) ->
+                buildStore(builder)(buildAdd(builder)(buildLoad(builder)(i64)(indexSlot)("dir_create_advance_index"))(constInt(i64)(1u64)(false))("dir_create_next"))(indexSlot))
+            |> (given (_) -> buildBr(builder)(checkBlock)))
+
+// `emitDirectoryCreateAll`'s finish: one final `mkdir` on the whole path, then the join block turns
+// the stored status into `Ok(Unit)`/`Error(...)`.
+let emitDirectoryCreateFinish context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathAddr statusSlot finalBlock joinBlock =
+    finalBlock
+    |> positionBuilderAtEnd(builder)
+    |> (given (_) ->
+        buildStore(builder)(emitDirectoryMkdirExistingOk(builder)(i64)(pathAddr))(statusSlot))
+    |> (given (_) -> buildBr(builder)(joinBlock))
+    |> (given (_) -> positionBuilderAtEnd(builder)(joinBlock))
+    |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("dir_create_status_value"))
+    |> (given (status) ->
+        buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(0u64)(false))("dir_create_succeeded"))
+    |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(directoryCreateAllErrorCodes)("dir_create"))
 
 // `Ashes.IO.Directory.createAll(path)`: `mkdir`s each path component in turn, temporarily
 // NUL-terminating the C string at each `/` byte (restored immediately after, exactly like stage 0's
@@ -1850,110 +2131,518 @@ let emitDirectoryMkdirExistingOk builder i64 pathAddr =
 // `-1`, so an empty path — which never reaches either the per-component or final call — falls
 // through to `Error` on its own, with no separate empty-path check needed.
 let emitDirectoryCreateAll context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
-    (let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("dir_create_path")
+    (let checkBlock = appendBasicBlock(context)(function_)("dir_create_check")
     in
-        let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("dir_create_path_addr")
+        let byteBlock = appendBasicBlock(context)(function_)("dir_create_byte")
         in
-            match emitStringParts(builder)(i64)(ptrType)(pathRef)("dir_create_len") with
-                | (length, _sourceAddr) ->
-                    let indexSlot = buildAlloca(builder)(i64)("dir_create_index")
+            let componentBlock = appendBasicBlock(context)(function_)("dir_create_component")
+            in
+                let advanceBlock = appendBasicBlock(context)(function_)("dir_create_advance")
+                in
+                    let finalBlock = appendBasicBlock(context)(function_)("dir_create_final")
                     in
-                        let statusSlot = buildAlloca(builder)(i64)("dir_create_status_slot")
+                        let joinBlock = appendBasicBlock(context)(function_)("dir_create_join")
                         in
-                            let _ =
-                                buildStore(builder)(constInt(i64)(1u64)(false))(indexSlot)
+                            let indexSlot = buildAlloca(builder)(i64)("dir_create_index")
                             in
-                                let _ =
-                                    buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(statusSlot)
+                                let statusSlot = buildAlloca(builder)(i64)("dir_create_status_slot")
                                 in
-                                    let checkBlock = appendBasicBlock(context)(function_)("dir_create_check")
+                                    let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("dir_create_path")
                                     in
-                                        let byteBlock = appendBasicBlock(context)(function_)("dir_create_byte")
+                                        let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("dir_create_path_addr")
                                         in
-                                            let componentBlock = appendBasicBlock(context)(function_)("dir_create_component")
+                                            match emitStringParts(builder)(i64)(ptrType)(pathRef)("dir_create_len") with
+                                                | (length, _sourceAddr) ->
+                                                    indexSlot
+                                                    |> buildStore(builder)(constInt(i64)(1u64)(false))
+                                                    |> (given (_) ->
+                                                        buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(statusSlot))
+                                                    |> (given (_) ->
+                                                        buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(length)(constInt(i64)(0u64)(false))("dir_create_nonempty"))(checkBlock)(joinBlock))
+                                                    |> (given (_) -> emitDirectoryCreateLoopCheck(builder)(i64)(length)(indexSlot)(checkBlock)(byteBlock)(finalBlock))
+                                                    |> (given (_) -> emitDirectoryCreateByteStep(builder)(i64)(i8)(pathCstr)(pathAddr)(indexSlot)(statusSlot)(byteBlock)(componentBlock)(advanceBlock)(joinBlock)(checkBlock))
+                                                    |> (given (_) -> emitDirectoryCreateFinish(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathAddr)(statusSlot)(finalBlock)(joinBlock)))
+
+let directoryEntriesFailedCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 101, 110, 116, 114, 105, 101, 115, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 101, 110, 117, 109, 101, 114, 97, 116, 101, 32, 100, 105, 114, 101, 99, 116, 111, 114, 121]
+
+let directoryEntriesInvalidUtf8Codes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 101, 110, 116, 114, 105, 101, 115, 58, 32, 101, 110, 116, 114, 121, 32, 110, 97, 109, 101, 32, 105, 115, 32, 110, 111, 116, 32, 118, 97, 108, 105, 100, 32, 85, 84, 70, 45, 56]
+
+let directoryRemoveTreeErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 114, 101, 109, 111, 118, 101, 84, 114, 101, 101, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 114, 101, 109, 111, 118, 101, 32, 116, 114, 101, 101]
+
+// The grow-and-publish half of the name-append trampoline below: reload the array and count
+// through the caller's stack slots, `realloc` one more pointer slot, and store the fresh copy —
+// or free it and return `-1` if the grow failed.
+let emitDirectoryNameAppendGrow builder i64 i32 ptrType dirExt fn copy reallocFailedBlock successBlock =
+    (let arraySlot = getParam(fn)(0u32)
+    in
+        let countSlot = getParam(fn)(1u32)
+        in
+            let count = buildLoad(builder)(i64)(countSlot)("name_count")
+            in
+                let newArray =
+                    buildCall(builder)(dirExt.reallocType)(dirExt.reallocFn)([buildLoad(builder)(ptrType)(arraySlot)("name_array"), buildMul(builder)(buildAdd(builder)(count)(constInt(i64)(1u64)(false))("name_next_count"))(constInt(i64)(8u64)(false))("name_array_bytes")])(2u32)("name_array_grown")
+                in
+                    successBlock
+                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(buildPtrToInt(builder)(newArray)(i64)("name_array_grown_int"))(constInt(i64)(0u64)(false))("name_realloc_failed"))(reallocFailedBlock)
+                    |> (given (_) -> positionBuilderAtEnd(builder)(successBlock))
+                    |> (given (_) ->
+                        "name_slot"
+                        |> buildGEP(builder)(ptrType)(newArray)([count])(1u32)
+                        |> buildStore(builder)(copy))
+                    |> (given (_) -> buildStore(builder)(newArray)(arraySlot))
+                    |> (given (_) ->
+                        buildStore(builder)(buildAdd(builder)(count)(constInt(i64)(1u64)(false))("stored_count"))(countSlot))
+                    |> (given (_) ->
+                        false
+                        |> constInt(i32)(0u64)
+                        |> buildRet(builder)))
+
+// `<prefix>_append(arraySlot, countSlot, name) -> i32`: the growable-name-array helper
+// `Directory.entries` calls per kept entry — copy the NUL-terminated name into a fresh `malloc`
+// buffer, grow the pointer array by one slot, and publish both through the caller's stack slots,
+// returning `0`/`-1` — stage 0's own `__ashes_directory_name_append` exactly. A fresh
+// internal-linkage copy per instruction occurrence (the `prefix` carries the target temp) stands
+// in for stage 0's get-or-create lookup: `LLVMGetNamedFunction` has no binding here, and
+// `addFunction` on a taken name silently renames, which would orphan a second occurrence's calls.
+// Internal linkage is load-bearing, not tidiness — the same `dso_local` address-taking constraint
+// the lifted-function declaration loop documents applies to `qsort` receiving this function's
+// address below.
+let emitDirectoryNameAppendFunction module_ context builder i64 i8 i32 ptrType mallocFn mallocType freeFn freeType dirExt prefix =
+    (let fnType = functionType(i32)([ptrType, ptrType, ptrType])(3u32)(false)
+    in
+        let fn = addFunction(module_)(prefix + "_append")(fnType)
+        in
+            let allocationFailedBlock =
+                linkageInternal
+                |> setLinkage(fn)
+                |> (given (_) ->
+                    "entry"
+                    |> appendBasicBlock(context)(fn)
+                    |> positionBuilderAtEnd(builder))
+                |> (given (_) -> appendBasicBlock(context)(fn)("allocation_failed"))
+            in
+                let copyBlock = appendBasicBlock(context)(fn)("copy")
+                in
+                    let reallocFailedBlock = appendBasicBlock(context)(fn)("realloc_failed")
+                    in
+                        let successBlock = appendBasicBlock(context)(fn)("success")
+                        in
+                            let name = getParam(fn)(2u32)
+                            in
+                                let nameLen = buildCall(builder)(dirExt.strlenType)(dirExt.strlenFn)([name])(1u32)("name_length")
+                                in
+                                    let copy =
+                                        buildCall(builder)(mallocType)(mallocFn)([buildAdd(builder)(nameLen)(constInt(i64)(1u64)(false))("copy_size")])(1u32)("name_copy")
+                                    in
+                                        copyBlock
+                                        |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(buildPtrToInt(builder)(copy)(i64)("name_copy_int"))(constInt(i64)(0u64)(false))("name_copy_failed"))(allocationFailedBlock)
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(copyBlock))
+                                        |> (given (_) ->
+                                            buildCall(builder)(dirExt.memmoveType)(dirExt.memmoveFn)([copy, name, buildAdd(builder)(nameLen)(constInt(i64)(1u64)(false))("copy_bytes")])(3u32)("copy_name"))
+                                        |> (given (_) -> emitDirectoryNameAppendGrow(builder)(i64)(i32)(ptrType)(dirExt)(fn)(copy)(reallocFailedBlock)(successBlock))
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(reallocFailedBlock))
+                                        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([copy])(1u32)(""))
+                                        |> (given (_) ->
+                                            false
+                                            |> constInt(i32)(Ashes.Number.UInt.fromInt64(-1))
+                                            |> buildRet(builder))
+                                        |> (given (_) -> positionBuilderAtEnd(builder)(allocationFailedBlock))
+                                        |> (given (_) ->
+                                            false
+                                            |> constInt(i32)(Ashes.Number.UInt.fromInt64(-1))
+                                            |> buildRet(builder))
+                                        |> (given (_) -> (fn, fnType)))
+
+// `<prefix>_compare(leftSlot, rightSlot) -> i32`: `qsort`'s element comparator — each argument is
+// a pointer INTO the name array, so one load recovers each `char*` before `strcmp` — stage 0's own
+// `__ashes_directory_name_compare` exactly.
+let emitDirectoryNameCompareFunction module_ context builder i32 ptrType dirExt prefix =
+    (let fnType = functionType(i32)([ptrType, ptrType])(2u32)(false)
+    in
+        let fn = addFunction(module_)(prefix + "_compare")(fnType)
+        in
+            let left =
+                linkageInternal
+                |> setLinkage(fn)
+                |> (given (_) ->
+                    "entry"
+                    |> appendBasicBlock(context)(fn)
+                    |> positionBuilderAtEnd(builder))
+                |> (given (_) ->
+                    buildLoad(builder)(ptrType)(getParam(fn)(0u32))("left"))
+            in
+                "right"
+                |> buildLoad(builder)(ptrType)(getParam(fn)(1u32))
+                |> (given (right) ->
+                    "comparison"
+                    |> buildCall(builder)(dirExt.strcmpType)(dirExt.strcmpFn)([left, right])(2u32)
+                    |> buildRet(builder))
+                |> (given (_) -> fn))
+
+// `<prefix>_visit(path, stat, typeflag, ftwbuf) -> i32`: `nftw`'s per-node callback — `remove`
+// works on files and (post-order, thanks to `FTW_DEPTH` below) freshly-emptied directories alike —
+// stage 0's own `__ashes_remove_tree_visit` exactly.
+let emitRemoveTreeVisitFunction module_ context builder i32 ptrType dirExt prefix =
+    (let fnType = functionType(i32)([ptrType, ptrType, i32, ptrType])(4u32)(false)
+    in
+        let fn = addFunction(module_)(prefix + "_visit")(fnType)
+        in
+            linkageInternal
+            |> setLinkage(fn)
+            |> (given (_) ->
+                "entry"
+                |> appendBasicBlock(context)(fn)
+                |> positionBuilderAtEnd(builder))
+            |> (given (_) ->
+                "remove_tree_entry"
+                |> buildCall(builder)(dirExt.removeType)(dirExt.removeFn)([getParam(fn)(0u32)])(1u32)
+                |> buildRet(builder))
+            |> (given (_) -> fn))
+
+// `openat(path, O_DIRECTORY, 0)` then `fdopendir` — the raw open (the same probe flags
+// `emitDirectoryMkdirExistingOk` uses) hands its fd to libc's stream so `readdir` can walk it.
+// Either failure path lands in `finishBlock` with `statusSlot` still holding its failure
+// initializer. Returns the `DIR*` stream, which dominates every later use (the loop and close
+// blocks are reachable only through the stream block).
+let emitDirectoryEntriesOpenStream context function_ i64 i32 ptrType builder dirExt pathAddr loopBlock finishBlock prefix =
+    (let streamBlock = appendBasicBlock(context)(function_)(prefix + "_stream")
+    in
+        let streamErrorBlock = appendBasicBlock(context)(function_)(prefix + "_stream_error")
+        in
+            let fd =
+                false
+                |> constInt(i64)(0u64)
+                |> emitLinuxOpenat(builder)(i64)(pathAddr)(constInt(i64)(720896u64)(false))
+            in
+                let dir =
+                    streamBlock
+                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(fd)(constInt(i64)(0u64)(false))(prefix + "_open_failed"))(finishBlock)
+                    |> (given (_) -> positionBuilderAtEnd(builder)(streamBlock))
+                    |> (given (_) -> buildCall(builder)(dirExt.fdopendirType)(dirExt.fdopendirFn)([buildTrunc(builder)(fd)(i32)(prefix + "_fd_i32")])(1u32)(prefix + "_fdopendir"))
+                in
+                    loopBlock
+                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(buildPtrToInt(builder)(dir)(i64)(prefix + "_stream_int"))(constInt(i64)(0u64)(false))(prefix + "_stream_failed"))(streamErrorBlock)
+                    |> (given (_) -> positionBuilderAtEnd(builder)(streamErrorBlock))
+                    |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
+                    |> (given (_) -> buildBr(builder)(finishBlock))
+                    |> (given (_) -> dir))
+
+// `readdir` returned NULL: errno still `0` means end-of-stream (status `0`), anything else a real
+// read error (status `1`) — the pre-`readdir` errno reset in the loop head makes this
+// distinguishable at all.
+let emitDirectoryEntriesReadError builder i64 i32 errnoPtr statusSlot endBlock closeBlock prefix =
+    endBlock
+    |> positionBuilderAtEnd(builder)
+    |> (given (_) -> buildLoad(builder)(i32)(errnoPtr)(prefix + "_errno_value"))
+    |> (given (errnoValue) ->
+        buildICmp(builder)(intPredicateNe)(errnoValue)(constInt(i32)(0u64)(false))(prefix + "_read_error"))
+    |> (given (readError) ->
+        buildStore(builder)(buildSelect(builder)(readError)(constInt(i64)(1u64)(false))(constInt(i64)(0u64)(false))(prefix + "_read_status"))(statusSlot))
+    |> (given (_) -> buildBr(builder)(closeBlock))
+
+// `.` or `..` — the two entries every directory reports that the builtin's contract excludes.
+let emitDirectoryEntryIsDot builder i64 i8 namePtr prefix =
+    (let first = buildLoad(builder)(i8)(namePtr)(prefix + "_first")
+    in
+        let second =
+            buildLoad(builder)(i8)(buildGEP(builder)(i8)(namePtr)([constInt(i64)(1u64)(false)])(1u32)(prefix + "_second_ptr"))(prefix + "_second")
+        in
+            let third =
+                buildLoad(builder)(i8)(buildGEP(builder)(i8)(namePtr)([constInt(i64)(2u64)(false)])(1u32)(prefix + "_third_ptr"))(prefix + "_third")
+            in
+                prefix + "_first_dot"
+                |> buildICmp(builder)(intPredicateEq)(first)(constInt(i8)(46u64)(false))
+                |> (given (firstDot) ->
+                    buildAnd(builder)(firstDot)(buildOr(builder)(buildICmp(builder)(intPredicateEq)(second)(constInt(i8)(0u64)(false))(prefix + "_one_dot"))(buildAnd(builder)(buildICmp(builder)(intPredicateEq)(second)(constInt(i8)(46u64)(false))(prefix + "_second_dot"))(buildICmp(builder)(intPredicateEq)(third)(constInt(i8)(0u64)(false))(prefix + "_third_zero"))(prefix + "_two_dots"))(prefix + "_dot_tail"))(prefix + "_is_dot")))
+
+// The `readdir` loop: reset errno, read one entry (NULL ends the loop through the errno check
+// above), skip `.`/`..`, reject a non-UTF-8 name (status `2`), and append everything else through
+// the name-append trampoline (whose failure also stops the walk). The UTF-8 validator allocates
+// two scratch slots at the current position, so a huge directory costs two stack words per kept
+// entry — the same correct-not-yet-optimized trade `readLine`'s per-call buffer makes.
+let emitDirectoryEntriesLoop context function_ i64 i8 i32 ptrType builder dirExt appendFn appendFnType arraySlot countSlot statusSlot dir loopBlock closeBlock prefix =
+    (let direntBlock = appendBasicBlock(context)(function_)(prefix + "_entry")
+    in
+        let nameBlock = appendBasicBlock(context)(function_)(prefix + "_name")
+        in
+            let appendBlock = appendBasicBlock(context)(function_)(prefix + "_append")
+            in
+                let endBlock = appendBasicBlock(context)(function_)(prefix + "_end")
+                in
+                    let invalidBlock = appendBasicBlock(context)(function_)(prefix + "_invalid_utf8")
+                    in
+                        let errnoPtr =
+                            loopBlock
+                            |> positionBuilderAtEnd(builder)
+                            |> (given (_) -> buildCall(builder)(dirExt.errnoLocationType)(dirExt.errnoLocationFn)([])(0u32)(prefix + "_errno"))
+                        in
+                            let entry =
+                                errnoPtr
+                                |> buildStore(builder)(constInt(i32)(0u64)(false))
+                                |> (given (_) -> buildCall(builder)(dirExt.readdirType)(dirExt.readdirFn)([dir])(1u32)(prefix + "_readdir"))
+                            in
+                                let namePtr =
+                                    direntBlock
+                                    |> buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(buildPtrToInt(builder)(entry)(i64)(prefix + "_entry_int"))(constInt(i64)(0u64)(false))(prefix + "_at_end"))(endBlock)
+                                    |> (given (_) -> emitDirectoryEntriesReadError(builder)(i64)(i32)(errnoPtr)(statusSlot)(endBlock)(closeBlock)(prefix))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(direntBlock))
+                                    |> (given (_) -> buildGEP(builder)(i8)(entry)([constInt(i64)(19u64)(false)])(1u32)(prefix + "_name_ptr"))
+                                in
+                                    prefix
+                                    |> emitDirectoryEntryIsDot(builder)(i64)(i8)(namePtr)
+                                    |> (given (isDot) -> buildCondBr(builder)(isDot)(loopBlock)(nameBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(nameBlock))
+                                    |> (given (_) -> buildCall(builder)(dirExt.strlenType)(dirExt.strlenFn)([namePtr])(1u32)(prefix + "_name_length"))
+                                    |> (given (nameLen) -> emitValidateUtf8(context)(function_)(i64)(i8)(builder)(namePtr)(nameLen)(prefix + "_utf8"))
+                                    |> (given (validation) ->
+                                        buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(validation)(constInt(i64)(0u64)(false))(prefix + "_name_valid"))(appendBlock)(invalidBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(appendBlock))
+                                    |> (given (_) -> buildCall(builder)(appendFnType)(appendFn)([arraySlot, countSlot, namePtr])(3u32)(prefix + "_append_call"))
+                                    |> (given (appendStatus) ->
+                                        buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(appendStatus)(constInt(i32)(0u64)(false))(prefix + "_append_failed"))(closeBlock)(loopBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(invalidBlock))
+                                    |> (given (_) ->
+                                        buildStore(builder)(constInt(i64)(2u64)(false))(statusSlot))
+                                    |> (given (_) -> buildBr(builder)(closeBlock)))
+
+// `closedir` regardless of how the loop ended; a close failure overrides an otherwise-clean
+// status with the generic failure `1`.
+let emitDirectoryEntriesClose builder i64 i32 ptrType dirExt dir statusSlot closeBlock finishBlock prefix =
+    closeBlock
+    |> positionBuilderAtEnd(builder)
+    |> (given (_) -> buildCall(builder)(dirExt.closedirType)(dirExt.closedirFn)([dir])(1u32)(prefix + "_closedir"))
+    |> (given (closeStatus) ->
+        buildICmp(builder)(intPredicateEq)(closeStatus)(constInt(i32)(0u64)(false))(prefix + "_close_ok"))
+    |> (given (closeOk) ->
+        buildStore(builder)(buildSelect(builder)(closeOk)(buildLoad(builder)(i64)(statusSlot)(prefix + "_prior_status"))(constInt(i64)(1u64)(false))(prefix + "_final_status"))(statusSlot))
+    |> (given (_) -> buildBr(builder)(finishBlock))
+
+type DirectoryEntriesResultBlocks =
+    | deSortBlock: LLVMBasicBlockRef
+    | deBuildCheckBlock: LLVMBasicBlockRef
+    | deBuildBlock: LLVMBasicBlockRef
+    | deOkBlock: LLVMBasicBlockRef
+    | deCleanupCheckBlock: LLVMBasicBlockRef
+    | deCleanupBlock: LLVMBasicBlockRef
+    | deErrorBlock: LLVMBasicBlockRef
+    | deDoneBlock: LLVMBasicBlockRef
+
+let emitDirectoryEntriesResultBlocks context function_ prefix =
+    DirectoryEntriesResultBlocks(
+        deSortBlock = appendBasicBlock(context)(function_)(prefix + "_sort"),
+        deBuildCheckBlock = appendBasicBlock(context)(function_)(prefix + "_build_check"),
+        deBuildBlock = appendBasicBlock(context)(function_)(prefix + "_build"),
+        deOkBlock = appendBasicBlock(context)(function_)(prefix + "_ok"),
+        deCleanupCheckBlock = appendBasicBlock(context)(function_)(prefix + "_cleanup_check"),
+        deCleanupBlock = appendBasicBlock(context)(function_)(prefix + "_cleanup"),
+        deErrorBlock = appendBasicBlock(context)(function_)(prefix + "_error"),
+        deDoneBlock = appendBasicBlock(context)(function_)(prefix + "_done")
+    )
+
+// The success half of the result build: walk the sorted array from the end so each prepend leaves
+// `array[0]` at the final list's head, copying every C-string name into a fresh RC-managed `Str`
+// and every cons cell into a fresh RC-managed 16-byte `[head][tail]` payload (the same layout
+// `BytesFromList`'s reading side documents: `nil` is `0`, `cons` is head at `+0`/tail at `+8`
+// past an ordinary RC header). Each name copy and finally the array itself go back to `free`.
+let emitDirectoryEntriesBuildList builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt array listSlot indexSlot resultSlot blocks prefix =
+    (let nextIndex =
+        blocks.deBuildCheckBlock
+        |> positionBuilderAtEnd(builder)
+        |> (given (_) -> buildLoad(builder)(i64)(indexSlot)(prefix + "_index"))
+        |> (given (index) ->
+            buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(index)(constInt(i64)(0u64)(false))(prefix + "_has_next"))(blocks.deBuildBlock)(blocks.deOkBlock))
+        |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deBuildBlock))
+        |> (given (_) ->
+            buildSub(builder)(buildLoad(builder)(i64)(indexSlot)(prefix + "_build_index"))(constInt(i64)(1u64)(false))(prefix + "_next_index"))
+    in
+        let namePtr =
+            buildLoad(builder)(ptrType)(buildGEP(builder)(ptrType)(array)([nextIndex])(1u32)(prefix + "_name_slot"))(prefix + "_name_value")
+        in
+            let stringRef =
+                prefix + "_name_len"
+                |> buildCall(builder)(dirExt.strlenType)(dirExt.strlenFn)([namePtr])(1u32)
+                |> (given (nameLen) ->
+                    emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(namePtr)(i64)(prefix + "_name_addr"))(nameLen)(prefix + "_string"))
+            in
+                let consPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(16)(prefix + "_cons")
+                in
+                    consPtr
+                    |> buildStore(builder)(stringRef)
+                    |> (given (_) ->
+                        prefix + "_tail_ptr"
+                        |> gepBytes(builder)(i64)(i8)(consPtr)(8)
+                        |> buildStore(builder)(buildLoad(builder)(i64)(listSlot)(prefix + "_tail")))
+                    |> (given (_) ->
+                        buildStore(builder)(buildPtrToInt(builder)(consPtr)(i64)(prefix + "_cons_value"))(listSlot))
+                    |> (given (_) -> buildCall(builder)(freeType)(freeFn)([namePtr])(1u32)(""))
+                    |> (given (_) -> buildStore(builder)(nextIndex)(indexSlot))
+                    |> (given (_) -> buildBr(builder)(blocks.deBuildCheckBlock))
+                    |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deOkBlock))
+                    |> (given (_) -> buildCall(builder)(freeType)(freeFn)([array])(1u32)(""))
+                    |> (given (_) ->
+                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(buildLoad(builder)(i64)(listSlot)(prefix + "_list"))(prefix + "_ok"))(resultSlot))
+                    |> (given (_) -> buildBr(builder)(blocks.deDoneBlock)))
+
+// The failure half: free every collected name copy and the array, then pick between the two error
+// texts on the stored status (`2` marks the invalid-UTF-8 case).
+let emitDirectoryEntriesCleanup builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType freeFn freeType array status indexSlot resultSlot blocks prefix =
+    (let cleanupNext =
+        blocks.deCleanupCheckBlock
+        |> positionBuilderAtEnd(builder)
+        |> (given (_) -> buildLoad(builder)(i64)(indexSlot)(prefix + "_cleanup_index"))
+        |> (given (cleanupIndex) ->
+            buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(cleanupIndex)(constInt(i64)(0u64)(false))(prefix + "_cleanup_more"))(blocks.deCleanupBlock)(blocks.deErrorBlock))
+        |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deCleanupBlock))
+        |> (given (_) ->
+            buildSub(builder)(buildLoad(builder)(i64)(indexSlot)(prefix + "_cleanup_cur"))(constInt(i64)(1u64)(false))(prefix + "_cleanup_next"))
+    in
+        ""
+        |> buildCall(builder)(freeType)(freeFn)([buildLoad(builder)(ptrType)(buildGEP(builder)(ptrType)(array)([cleanupNext])(1u32)(prefix + "_cleanup_slot"))(prefix + "_cleanup_name")])(1u32)
+        |> (given (_) -> buildStore(builder)(cleanupNext)(indexSlot))
+        |> (given (_) -> buildBr(builder)(blocks.deCleanupCheckBlock))
+        |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deErrorBlock))
+        |> (given (_) -> buildCall(builder)(freeType)(freeFn)([array])(1u32)(""))
+        |> (given (_) ->
+            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(buildSelect(builder)(buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(2u64)(false))(prefix + "_invalid_utf8"))(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryEntriesInvalidUtf8Codes)(prefix + "_invalid_msg"))(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryEntriesFailedCodes)(prefix + "_failed_msg"))(prefix + "_error_text"))(prefix + "_error"))(resultSlot))
+        |> (given (_) -> buildBr(builder)(blocks.deDoneBlock)))
+
+// The result build: sort the collected names deterministically (`qsort` + the `strcmp` comparator
+// trampoline), then either the list build or the cleanup/error path, converging on `deDoneBlock`.
+let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType freeFn freeType dirExt compareFn arraySlot countSlot statusSlot finishBlock prefix =
+    (let blocks = emitDirectoryEntriesResultBlocks(context)(function_)(prefix)
+    in
+        let array =
+            finishBlock
+            |> positionBuilderAtEnd(builder)
+            |> (given (_) -> buildLoad(builder)(ptrType)(arraySlot)(prefix + "_array_value"))
+        in
+            let count = buildLoad(builder)(i64)(countSlot)(prefix + "_count_value")
+            in
+                let status = buildLoad(builder)(i64)(statusSlot)(prefix + "_status_read")
+                in
+                    let resultSlot = buildAlloca(builder)(i64)(prefix + "_result_slot")
+                    in
+                        let listSlot = buildAlloca(builder)(i64)(prefix + "_list_slot")
+                        in
+                            let indexSlot = buildAlloca(builder)(i64)(prefix + "_index_slot")
+                            in
+                                listSlot
+                                |> buildStore(builder)(constInt(i64)(0u64)(false))
+                                |> (given (_) -> buildStore(builder)(count)(indexSlot))
+                                |> (given (_) ->
+                                    buildCondBr(builder)(buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(0u64)(false))(prefix + "_succeeded"))(blocks.deSortBlock)(blocks.deCleanupCheckBlock))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deSortBlock))
+                                |> (given (_) -> buildCall(builder)(dirExt.qsortType)(dirExt.qsortFn)([array, count, constInt(i64)(8u64)(false), compareFn])(4u32)(""))
+                                |> (given (_) -> buildBr(builder)(blocks.deBuildCheckBlock))
+                                |> (given (_) -> emitDirectoryEntriesBuildList(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(array)(listSlot)(indexSlot)(resultSlot)(blocks)(prefix))
+                                |> (given (_) -> emitDirectoryEntriesCleanup(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(array)(status)(indexSlot)(resultSlot)(blocks)(prefix))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(blocks.deDoneBlock))
+                                |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result")))
+
+// `Ashes.IO.Directory.entries(path)`: enumerate one directory (sorted, `.`/`..` excluded) into
+// `Ok(list Str)`, or `Error(...)` on open/read/close failure or a non-UTF-8 entry name — the
+// libc-stream port of stage 0's own `EmitLinuxDirectoryEntriesCore`. The current block is closed
+// with a branch to a fresh resume block first, so the two trampoline function bodies can be built
+// (repositioning the shared builder into them) without a `getInsertBlock` binding to restore from.
+let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder mallocFn mallocType freeFn freeType memcpyFn memcpyType dirExt pathRef prefix =
+    (let resumeBlock = appendBasicBlock(context)(function_)(prefix + "_resume")
+    in
+        let trampolines =
+            resumeBlock
+            |> buildBr(builder)
+            |> (given (_) -> (emitDirectoryNameAppendFunction(moduleRef)(context)(builder)(i64)(i8)(i32)(ptrType)(mallocFn)(mallocType)(freeFn)(freeType)(dirExt)(prefix), emitDirectoryNameCompareFunction(moduleRef)(context)(builder)(i32)(ptrType)(dirExt)(prefix)))
+        in
+            match trampolines with
+                | ((appendFn, appendFnType), compareFn) ->
+                    let loopBlock = appendBasicBlock(context)(function_)(prefix + "_loop")
+                    in
+                        let closeBlock = appendBasicBlock(context)(function_)(prefix + "_close")
+                        in
+                            let finishBlock = appendBasicBlock(context)(function_)(prefix + "_finish")
+                            in
+                                let arraySlot =
+                                    resumeBlock
+                                    |> positionBuilderAtEnd(builder)
+                                    |> (given (_) -> buildAlloca(builder)(ptrType)(prefix + "_array"))
+                                in
+                                    let countSlot = buildAlloca(builder)(i64)(prefix + "_count")
+                                    in
+                                        let statusSlot = buildAlloca(builder)(i64)(prefix + "_status")
+                                        in
+                                            let pathAddr =
+                                                prefix + "_path"
+                                                |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                                                |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)(prefix + "_path_addr"))
                                             in
-                                                let advanceBlock = appendBasicBlock(context)(function_)("dir_create_advance")
+                                                let dir =
+                                                    arraySlot
+                                                    |> buildStore(builder)(buildIntToPtr(builder)(constInt(i64)(0u64)(false))(ptrType)(prefix + "_null_array"))
+                                                    |> (given (_) ->
+                                                        buildStore(builder)(constInt(i64)(0u64)(false))(countSlot))
+                                                    |> (given (_) ->
+                                                        buildStore(builder)(constInt(i64)(1u64)(false))(statusSlot))
+                                                    |> (given (_) -> emitDirectoryEntriesOpenStream(context)(function_)(i64)(i32)(ptrType)(builder)(dirExt)(pathAddr)(loopBlock)(finishBlock)(prefix))
                                                 in
-                                                    let finalBlock = appendBasicBlock(context)(function_)("dir_create_final")
-                                                    in
-                                                        let joinBlock = appendBasicBlock(context)(function_)("dir_create_join")
-                                                        in
-                                                            let nonEmpty =
-                                                                buildICmp(builder)(intPredicateNe)(length)(constInt(i64)(0u64)(false))("dir_create_nonempty")
-                                                            in
-                                                                let _ = buildCondBr(builder)(nonEmpty)(checkBlock)(joinBlock)
-                                                                in
-                                                                    let _ = positionBuilderAtEnd(builder)(checkBlock)
-                                                                    in
-                                                                        let index = buildLoad(builder)(i64)(indexSlot)("dir_create_index_value")
-                                                                        in
-                                                                            let inRange = buildICmp(builder)(intPredicateUlt)(index)(length)("dir_create_in_range")
-                                                                            in
-                                                                                let _ = buildCondBr(builder)(inRange)(byteBlock)(finalBlock)
-                                                                                in
-                                                                                    let _ = positionBuilderAtEnd(builder)(byteBlock)
-                                                                                    in
-                                                                                        let bytePtr = buildGEP(builder)(i8)(pathCstr)([index])(1u32)("dir_create_byte_ptr")
-                                                                                        in
-                                                                                            let current = buildLoad(builder)(i8)(bytePtr)("dir_create_byte_value")
-                                                                                            in
-                                                                                                let isSlash =
-                                                                                                    buildICmp(builder)(intPredicateEq)(current)(constInt(i8)(47u64)(false))("dir_create_is_slash")
-                                                                                                in
-                                                                                                    let _ = buildCondBr(builder)(isSlash)(componentBlock)(advanceBlock)
-                                                                                                    in
-                                                                                                        let _ = positionBuilderAtEnd(builder)(componentBlock)
-                                                                                                        in
-                                                                                                            let _ =
-                                                                                                                buildStore(builder)(constInt(i8)(0u64)(false))(bytePtr)
-                                                                                                            in
-                                                                                                                let componentStatus = emitDirectoryMkdirExistingOk(builder)(i64)(pathAddr)
-                                                                                                                in
-                                                                                                                    let _ = buildStore(builder)(componentStatus)(statusSlot)
-                                                                                                                    in
-                                                                                                                        let _ = buildStore(builder)(current)(bytePtr)
-                                                                                                                        in
-                                                                                                                            let componentFailed =
-                                                                                                                                buildICmp(builder)(intPredicateNe)(componentStatus)(constInt(i64)(0u64)(false))("dir_create_component_failed")
-                                                                                                                            in
-                                                                                                                                let _ = buildCondBr(builder)(componentFailed)(joinBlock)(advanceBlock)
-                                                                                                                                in
-                                                                                                                                    let _ = positionBuilderAtEnd(builder)(advanceBlock)
-                                                                                                                                    in
-                                                                                                                                        let next =
-                                                                                                                                            buildAdd(builder)(buildLoad(builder)(i64)(indexSlot)("dir_create_advance_index"))(constInt(i64)(1u64)(false))("dir_create_next")
-                                                                                                                                        in
-                                                                                                                                            let _ = buildStore(builder)(next)(indexSlot)
-                                                                                                                                            in
-                                                                                                                                                let _ = buildBr(builder)(checkBlock)
-                                                                                                                                                in
-                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(finalBlock)
-                                                                                                                                                    in
-                                                                                                                                                        let finalStatus = emitDirectoryMkdirExistingOk(builder)(i64)(pathAddr)
-                                                                                                                                                        in
-                                                                                                                                                            let _ = buildStore(builder)(finalStatus)(statusSlot)
-                                                                                                                                                            in
-                                                                                                                                                                let _ = buildBr(builder)(joinBlock)
-                                                                                                                                                                in
-                                                                                                                                                                    let _ = positionBuilderAtEnd(builder)(joinBlock)
-                                                                                                                                                                    in
-                                                                                                                                                                        let status = buildLoad(builder)(i64)(statusSlot)("dir_create_status_value")
-                                                                                                                                                                        in
-                                                                                                                                                                            let succeeded =
-                                                                                                                                                                                buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(0u64)(false))("dir_create_succeeded")
-                                                                                                                                                                            in emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(directoryCreateAllErrorCodes)("dir_create"))
+                                                    prefix
+                                                    |> emitDirectoryEntriesLoop(context)(function_)(i64)(i8)(i32)(ptrType)(builder)(dirExt)(appendFn)(appendFnType)(arraySlot)(countSlot)(statusSlot)(dir)(loopBlock)(closeBlock)
+                                                    |> (given (_) -> emitDirectoryEntriesClose(builder)(i64)(i32)(ptrType)(dirExt)(dir)(statusSlot)(closeBlock)(finishBlock)(prefix))
+                                                    |> (given (_) -> emitDirectoryEntriesResult(context)(function_)(i64)(i8)(i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(freeFn)(freeType)(dirExt)(compareFn)(arraySlot)(countSlot)(statusSlot)(finishBlock)(prefix)))
+
+// `Ashes.IO.Directory.removeTree(path)`: `lstat` first — a missing path is `Ok(Unit)` only when
+// `errno` says `ENOENT`, anything else is a real failure — then libc's `nftw` post-order walk
+// (`FTW_DEPTH|FTW_PHYS`, 32 fds) with the `remove`-everything visitor trampoline, exactly stage
+// 0's own `EmitLinuxDirectoryRemoveTree`.
+let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt pathRef prefix =
+    (let resumeBlock = appendBasicBlock(context)(function_)(prefix + "_resume")
+    in
+        let visitFn =
+            resumeBlock
+            |> buildBr(builder)
+            |> (given (_) -> emitRemoveTreeVisitFunction(moduleRef)(context)(builder)(i32)(ptrType)(dirExt)(prefix))
+        in
+            let missingBlock = appendBasicBlock(context)(function_)(prefix + "_missing")
+            in
+                let walkBlock = appendBasicBlock(context)(function_)(prefix + "_walk")
+                in
+                    let doneBlock = appendBasicBlock(context)(function_)(prefix + "_done")
+                    in
+                        let pathCstr =
+                            resumeBlock
+                            |> positionBuilderAtEnd(builder)
+                            |> (given (_) -> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path"))
+                        in
+                            let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+                            in
+                                let statBuffer =
+                                    buildAlloca(builder)(arrayType(i8)(256u64))(prefix + "_stat")
+                                in
+                                    prefix + "_lstat"
+                                    |> buildCall(builder)(dirExt.lstatType)(dirExt.lstatFn)([pathCstr, statBuffer])(2u32)
+                                    |> (given (lstatStatus) ->
+                                        buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(lstatStatus)(constInt(i32)(0u64)(false))(prefix + "_is_missing"))(missingBlock)(walkBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(missingBlock))
+                                    |> (given (_) -> buildCall(builder)(dirExt.errnoLocationType)(dirExt.errnoLocationFn)([])(0u32)(prefix + "_errno"))
+                                    |> (given (errnoPtr) -> buildLoad(builder)(i32)(errnoPtr)(prefix + "_errno_value"))
+                                    |> (given (errnoValue) ->
+                                        buildICmp(builder)(intPredicateEq)(errnoValue)(constInt(i32)(2u64)(false))(prefix + "_enoent"))
+                                    |> (given (isMissing) ->
+                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(isMissing)(directoryRemoveTreeErrorCodes)(prefix + "_probe"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(doneBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(walkBlock))
+                                    |> (given (_) -> buildCall(builder)(dirExt.nftwType)(dirExt.nftwFn)([pathCstr, visitFn, constInt(i32)(32u64)(false), constInt(i32)(9u64)(false)])(4u32)(prefix + "_nftw"))
+                                    |> (given (nftwStatus) ->
+                                        buildICmp(builder)(intPredicateEq)(nftwStatus)(constInt(i32)(0u64)(false))(prefix + "_walk_ok"))
+                                    |> (given (walkOk) ->
+                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(walkOk)(directoryRemoveTreeErrorCodes)(prefix + "_walk"))(resultSlot))
+                                    |> (given (_) -> buildBr(builder)(doneBlock))
+                                    |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
+                                    |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
 
 let emitDecimalDigitCheck builder i64 byteValue name =
     buildAnd(builder)(buildICmp(builder)(intPredicateUge)(byteValue)(constInt(i64)(48u64)(false))(name + "_ge_zero"))(buildICmp(builder)(intPredicateUle)(byteValue)(constInt(i64)(57u64)(false))(name + "_le_nine"))(name)
 
 let emitDecimalDigitValue builder i64 byteValue name =
     buildSub(builder)(byteValue)(constInt(i64)(48u64)(false))(name)
-
-// The byte at dynamic `index`, zero-extended to the universal `i64` word.
-let emitLoadByteAtI64 builder i64 i8 bytesPtr index name =
-    (let pointer = buildGEP(builder)(i8)(bytesPtr)([index])(1u32)(name + "_ptr")
-    in
-        buildZExt(builder)(buildLoad(builder)(i8)(pointer)(name))(i64)(name + "_i64"))
 
 // `Text.parseInt(text)`: sign, decimal digits, and overflow thresholds against the Int bounds,
 // producing `Ok(value)` or `Error(message)` with stage 0's exact message strings and block
@@ -3645,11 +4334,11 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
-                                | ExternalFunctions { mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, memcpyFn = memcpyFn, memcpyType = memcpyType } ->
+                                | ExternalFunctions { mallocFn = mallocFn, mallocType = mallocType, freeFn = freeFn, freeType = freeType, memcmpFn = memcmpFn, memcmpType = memcmpType, memcpyFn = memcpyFn, memcpyType = memcpyType, directoryExternals = directoryExternals } ->
                                     match kind with
                                         | LoadConstInt(target, value) ->
                                             ((target, constInt(i64)(Ashes.Number.UInt.fromInt64(value))(true)) :: tempEnv, terminated)
@@ -4273,6 +4962,14 @@ let codegenInstructionKind cx builder kind state =
                                                 |> lookupIndexed(path)
                                                 |> emitDirectoryCreateAll(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
+                                        | DirectoryEntries(target, path) ->
+                                            let resultValue =
+                                                emitDirectoryEntries(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(freeFn)(freeType)(memcpyFn)(memcpyType)(directoryExternals)(lookupIndexed(path)(tempEnv))("dir_entries_t" + Ashes.Text.fromInt(target))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | DirectoryRemoveTree(target, path) ->
+                                            let resultValue =
+                                                emitDirectoryRemoveTree(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)(lookupIndexed(path)(tempEnv))("dir_remove_t" + Ashes.Text.fromInt(target))
+                                            in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
@@ -4469,6 +5166,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                         let cx =
                                             CodegenContext(
                                                 context = context,
+                                                moduleRef = mc.moduleRef,
                                                 function_ = functionValue,
                                                 types = types,
                                                 externals = externals,

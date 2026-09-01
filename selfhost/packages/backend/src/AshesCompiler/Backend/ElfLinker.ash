@@ -207,11 +207,34 @@ let recursive findSymbolByName bytes symtabOffset symbolCount strtabOffset name 
 // The narrow set of libc entry points `AshesCompiler.Backend.IrCodegen` can actually call today
 // (an RC-managed `AllocAdt`'s `malloc` and its eventual `free`; `memcmp` for `CmpStrEq`/`CmpStrNe`'s
 // byte-payload comparison; `memcpy` for `ConcatStr`/`ConcatStrN`'s payload-copy into a freshly
-// `malloc`'d result). Grown alongside `IrCodegen`'s own external-call coverage, the same "cover
+// `malloc`'d result; `realloc`/`memmove`/`strlen`/`qsort`/`strcmp` for `Directory.entries`'
+// deterministically-sorted name collection; `fdopendir`/`readdir`/`closedir` for the same builtin's
+// directory stream; `lstat`/`nftw`/`remove` for `Directory.removeTree`'s recursive walk — stage 0's
+// own `EmitLinuxDirectoryEntriesCore`/`EmitLinuxDirectoryRemoveTree` reach for the identical set,
+// since neither `nftw`'s recursive walk nor `readdir`'s stream have a raw-syscall equivalent worth
+// reinventing here). Grown alongside `IrCodegen`'s own external-call coverage, the same "cover
 // exactly what's verified, panic/error on anything else" discipline every other slice in this arc
 // uses — an unrecognized external symbol is a linker `Error`, never a silently-ignored or
 // mis-resolved relocation.
-let linuxDynamicImportLibraries = [("malloc", "libc.so.6"), ("free", "libc.so.6"), ("memcmp", "libc.so.6"), ("memcpy", "libc.so.6")]
+let linuxDynamicImportLibraries =
+    [
+        ("malloc", "libc.so.6"),
+        ("free", "libc.so.6"),
+        ("memcmp", "libc.so.6"),
+        ("memcpy", "libc.so.6"),
+        ("realloc", "libc.so.6"),
+        ("memmove", "libc.so.6"),
+        ("strlen", "libc.so.6"),
+        ("qsort", "libc.so.6"),
+        ("strcmp", "libc.so.6"),
+        ("fdopendir", "libc.so.6"),
+        ("readdir", "libc.so.6"),
+        ("closedir", "libc.so.6"),
+        ("lstat", "libc.so.6"),
+        ("nftw", "libc.so.6"),
+        ("remove", "libc.so.6"),
+        ("__errno_location", "libc.so.6")
+    ]
 
 let recursive lookupImportLibrary symbolName knownLibraries =
     match knownLibraries with
