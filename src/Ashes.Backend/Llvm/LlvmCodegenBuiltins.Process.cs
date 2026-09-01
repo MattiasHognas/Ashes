@@ -328,12 +328,14 @@ internal static partial class LlvmCodegen
         EmitLinuxSyscall(state, SyscallClose, stdoutWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stdout_w");
         EmitLinuxSyscall(state, SyscallClose, stderrReadFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_r");
         EmitLinuxSyscall(state, SyscallClose, stderrWriteFd, LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_close_stderr_w");
-        // execve(exe_cstr, argv_ptr, null_envp)
-        LlvmValueHandle envpNull = LlvmApi.ConstInt(state.I64, 0, 0);
+        // execve(exe_cstr, argv_ptr, parent_envp): the entry function captured the initial-stack
+        // envp base into __ashes_envp, so the child inherits the parent environment.
+        LlvmValueHandle envpGlobal = ReadLineScratchGlobal(state, LinuxEnvpGlobalName, state.I64);
+        LlvmValueHandle envp = LlvmApi.BuildLoad2(builder, state.I64, envpGlobal, "spawn_envp");
         EmitLinuxSyscall(state, SyscallExecve,
             LlvmApi.BuildPtrToInt(builder, exeCstr, state.I64, "spawn_exe_int"),
             argvBase,
-            envpNull,
+            envp,
             "spawn_execve");
         // execve failed - _exit(1)
         EmitLinuxSyscall(state, SyscallExit, LlvmApi.ConstInt(state.I64, 1, 0), LlvmApi.ConstInt(state.I64, 0, 0), LlvmApi.ConstInt(state.I64, 0, 0), "spawn_child_exit");
