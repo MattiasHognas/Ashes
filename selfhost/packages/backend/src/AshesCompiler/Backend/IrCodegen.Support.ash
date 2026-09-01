@@ -23,6 +23,10 @@ export (
     value emitLinuxClose,
     value emitLinuxMkdir,
     value emitLinuxRename,
+    value emitLinuxLseek,
+    value emitLinuxChmod,
+    value emitLinuxSyscallCall6,
+    value emitLinuxMmapReadPrivate,
     value emitStringParts,
     value emitWriteStrBytesToFd,
     value emitWriteNewlineToFd,
@@ -177,6 +181,32 @@ let emitLinuxMkdir builder i64 pathAddr mode =
 // `emitLinuxMkdir`.
 let emitLinuxRename builder i64 oldPathAddr newPathAddr =
     emitLinuxSyscallCall(builder)(i64)(constInt(i64)(82u64)(false))(oldPathAddr)(newPathAddr)(constInt(i64)(0u64)(false))("sys_rename")
+
+// `lseek(fd, offset, whence)` — syscall 8; `whence` `2` (`SEEK_END`) measures a file, `0`
+// (`SEEK_SET`) rewinds it before the read loop.
+let emitLinuxLseek builder i64 fd offset whence =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(8u64)(false))(fd)(offset)(whence)("sys_lseek")
+
+// `chmod(path, mode)` — syscall 90, two real arguments, same "harmless extra `0`" shape as
+// `emitLinuxMkdir`.
+let emitLinuxChmod builder i64 pathAddr mode =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(90u64)(false))(pathAddr)(mode)(constInt(i64)(0u64)(false))("sys_chmod")
+
+// Any linux-x64 6-argument syscall — `mmap` takes (addr, len, prot, flags, fd, off); the fifth and
+// sixth arguments ride `r8`/`r9` per the syscall ABI, joining `r10` for the fourth.
+let emitLinuxSyscallCall6 builder i64 nr arg1 arg2 arg3 arg4 arg5 arg6 name =
+    (let syscallType = functionType(i64)([i64, i64, i64, i64, i64, i64, i64])(7u32)(false)
+    in
+        let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}")(true)(false)
+        in buildCall(builder)(syscallType)(syscallAsm)([nr, arg1, arg2, arg3, arg4, arg5, arg6])(7u32)(name))
+
+// `mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0)` — syscall 9, the read-only private mapping
+// `Ashes.IO.File.mmap` builds its zero-copy `Bytes` view over. A failed mapping returns a negative
+// errno encoded in the pointer word: any result above `-4096` as an unsigned value is an error.
+let emitLinuxMmapReadPrivate builder i64 len fd =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        emitLinuxSyscallCall6(builder)(i64)(constInt(i64)(9u64)(false))(zero)(len)(constInt(i64)(1u64)(false))(constInt(i64)(2u64)(false))(fd)(zero)("sys_mmap"))
 
 // A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
 // view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address
