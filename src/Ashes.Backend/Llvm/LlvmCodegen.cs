@@ -1543,8 +1543,23 @@ internal static partial class LlvmCodegen
         };
 
         state = EmitFunctionBodyLinuxArenaSetup(state, flavor, isEntry);
+        EmitFunctionBodyEntryInitialization(state, flavor, isEntry, usesProgramArgs, arm64UsesTlsArena);
+        EmitFunctionBodyInstructionLoop(state, function, debugContext, slots.I64);
+    }
 
-        if (isEntry && arm64UsesTlsArena)
+    private static void EmitFunctionBodyEntryInitialization(
+        LlvmCodegenState state,
+        LlvmCodegenFlavor flavor,
+        bool isEntry,
+        bool usesProgramArgs,
+        bool arm64UsesTlsArena)
+    {
+        if (!isEntry)
+        {
+            return;
+        }
+
+        if (arm64UsesTlsArena)
         {
             // Must run before the first arena access (EmitHeapChunkInit below) so TPIDR_EL0 addresses
             // the thread-local arena. Self-initialises it only when no loader did (static image); a
@@ -1552,17 +1567,17 @@ internal static partial class LlvmCodegen
             EmitArm64MainThreadTlsSetup(state);
         }
 
-        if (isEntry)
-        {
-            EmitHeapChunkInit(state);
-        }
+        EmitHeapChunkInit(state);
 
-        if (isEntry && usesProgramArgs)
+        if (usesProgramArgs)
         {
             EmitEntryProgramArgsInitialization(state);
         }
 
-        EmitFunctionBodyInstructionLoop(state, function, debugContext, slots.I64);
+        if (IsLinuxFlavor(flavor))
+        {
+            EmitLinuxEntryEnvpCapture(state);
+        }
     }
 
     private readonly record struct EmitFunctionBodySlots(

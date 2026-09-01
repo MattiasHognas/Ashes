@@ -222,6 +222,30 @@ internal static partial class LlvmCodegen
         LlvmValueHandle MbedTlsWriteCallback,
         LlvmValueHandle ServerConfigGlobal);
 
+    // The name every Linux consumer of the parent environment loads: the entry function stores the
+    // initial-stack envp base here, so a fork/execve child can inherit the environment without a
+    // libc data import (`__environ` would need GOT-data plumbing neither ELF linker carries).
+    private const string LinuxEnvpGlobalName = "__ashes_envp";
+
+    /// <summary>
+    /// Captures the process environment vector's address from the SysV initial stack
+    /// (<c>[argc][argv...][NULL][envp...]</c>, so <c>envp = sp + 8 * (argc + 2)</c>) into the
+    /// <c>__ashes_envp</c> module global. Runs on every Linux entry: it is four instructions with
+    /// no imports, and <c>Process.spawn</c>'s <c>execve</c> reads it back so spawned children
+    /// inherit the parent environment instead of the empty one a null <c>envp</c> used to hand
+    /// them.
+    /// </summary>
+    private static void EmitLinuxEntryEnvpCapture(LlvmCodegenState state)
+    {
+        LlvmBuilderHandle builder = state.Target.Builder;
+        LlvmValueHandle envpGlobal = ReadLineScratchGlobal(state, LinuxEnvpGlobalName, state.I64);
+        LlvmValueHandle argc = LoadMemory(state, state.EntryStackPointer, 0, "envp_argc");
+        LlvmValueHandle words = LlvmApi.BuildAdd(builder, argc, LlvmApi.ConstInt(state.I64, 2, 0), "envp_words");
+        LlvmValueHandle offset = LlvmApi.BuildMul(builder, words, LlvmApi.ConstInt(state.I64, 8, 0), "envp_offset");
+        LlvmValueHandle envp = LlvmApi.BuildAdd(builder, state.EntryStackPointer, offset, "envp_base");
+        LlvmApi.BuildStore(builder, envp, envpGlobal);
+    }
+
     private static void EmitEntryProgramArgsInitialization(LlvmCodegenState state)
     {
         LlvmApi.BuildStore(state.Target.Builder, LlvmApi.ConstInt(state.I64, 0, 0), state.ProgramArgsSlot);
