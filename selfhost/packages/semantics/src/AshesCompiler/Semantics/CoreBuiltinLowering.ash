@@ -515,6 +515,20 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.IO.Directory")("entries")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemList(SemString)]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Directory")("removeTree")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.Text")("fromInt")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
         ),
