@@ -132,7 +132,9 @@ and TestRunner through bootstrap. LSP, DAP, the registry client commands, and th
 are deliberately out of scope here; they follow the compiler and are tracked only by the checklist
 below. Milestones are ordered by dependency, each one landable as its own short series of PRs, and
 each closes with the standing gate: the affected test surface green, the phase benchmark run, and
-no compile-time or RSS regression.
+no compile-time or RSS regression. Every checklist item below carries a stable ID
+(**`SECTION-N`**, e.g. `OPT-25`); each milestone lists the IDs that gate it — a milestone is done
+when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[~]` item).
 
 1. **Finish the file-system and process builtin surface.** Resource-typed handles in the
    self-hosted lowering first (the compiler-provided-handle classification and deterministic
@@ -144,6 +146,8 @@ no compile-time or RSS regression.
    `Process.*` over the now-proven libc dynamic-import route (`fork`/`execve`/`waitpid`/`pipe`/
    `dup2` rows in the linker whitelist, the same shape `nftw` just landed with). `Process` is what
    later lets the TestRunner spawn compiled tests at all.
+   Gates: SEM-14, LNK-4 (its "Open:" tail), and the files/environment/process/console/
+   buffered-stdout slice of CG-11.
 2. **Memory-model correctness.** The backend's RC/arena stand-ins deliberately leak today; this
    milestone retires that debt in phase 3's own internal order: complete heap-layout
    classification, then ownership/move analysis, then Perceus duplication/drop insertion (leading
@@ -151,6 +155,8 @@ no compile-time or RSS regression.
    `malloc` stand-ins, reuse, `--debug-disable-reuse` parity, and the four explain snapshots.
    Gate hard on the challenge benchmarks: this is where compile-time and RSS regressions would
    first appear.
+   Gates: OPT-22..OPT-27, OPT-29, OPT-30, OPT-32..OPT-36, OPT-38..OPT-42, OPT-44, OPT-45,
+   CG-6, CG-10, and CG-4's arena/drop tail.
 3. **Trait and capability physical lowering.** The one keystone decision — call-site dictionary
    forwarding via constraint-aware local type reconstruction, or a merged type-variable space —
    then dictionary construction/dispatch lowering, the standard trait ABI, `deriving`'s physical
@@ -158,35 +164,45 @@ no compile-time or RSS regression.
    unblocks the remaining provider diagnostics). Independent enough of milestone 2 that the
    keystone decision can be made in parallel; the physical lowering itself wants milestone 2's
    ownership shape settled.
+   Gates: TRT-13..TRT-15, CAP-7, CAP-8, SEM-15, OPT-28, and IR-8's trait/provider tail.
 4. **The async/Task arc.** Coroutine-frame ownership (decided in milestone 2), the
    `StateMachineTransform` port completion, and the run-queue scheduler/task runtime codegen —
    the single largest remaining corpus block (~65 test files).
+   Gates: OPT-43, CG-12.
 5. **Optimizer and performance parity.** Optimization-level selection (`-O0`..`-O3`), the
-   remaining `IrOptimizer` passes, and the `musttail` upgrade item, benchmarked against stage 0 on
-   the standing phase benchmark and the challenge programs.
+   remaining `IrOptimizer` passes, and the mutual-recursion merge widening, benchmarked against
+   stage 0 on the standing phase benchmark and the challenge programs.
+   Gates: OPT-13, OPT-19, OPT-20, and CG-3's optimization-level tail.
 6. **Net and vendored bitcode.** Sockets/TLS/HTTP builtins, Mbed TLS/openlibm/PCRE2 bitcode
    selection and linking, `Ashes.Number.Math` transcendentals, BigInt, and Regex — the remaining
    builtin families, all behind the same declare-per-module/import-whitelist mechanism already in
    place.
+   Gates: CG-13 and the net/clock/entropy/regex/math/BigInt slice of CG-11.
 7. **TestRunner port and full-corpus parity.** Discovery, the directive surface, isolation,
    timeouts, and reporting (needs milestone 1's `Process` and File surface), then the full
    `tests/` corpus and `examples/` run through BOTH toolchains with every difference classified —
    the first honest parity signal for the whole port.
+   Gates: TR-1..TR-6.
 8. **CLI completion.** `compile`/`run` option parity (`--target`, `-O`, `--debug`, `--emit-ir`,
    `--explain`, `--project` compile), the `test` command over the ported TestRunner, `install`,
    and the stateful `repl`.
+   Gates: CLI-4, CLI-9, and the "Open:" tails of CLI-1..CLI-3.
 9. **Targets beyond linux-x64 and debug information.** Object-parsing generalization, then the
    three remaining image layouts in the documented order (linux-arm64 ELF, win-x64 PE with the
    Windows runtime builtins, win-arm64 PE structurally), plus DWARF debug information — kept in
    the compiler scope even though its main consumer (DAP) is out of scope here.
+   Gates: LNK-1, LNK-7..LNK-13, CG-2, CG-8, CG-9, CG-14, CG-15.
 10. **Bootstrap and retirement.** Stage 1 (built by stage 0) builds stage 2; compare deterministic
     artifacts or normalized output; compile and run the compiler, standard library, examples, and
     corpus with the bootstrapped compiler; wire the reproducible bootstrap/packaging jobs; and
     only then retire the .NET toolchain from the default path.
+    Gates: BOOT-1..BOOT-4, BOOT-6..BOOT-11, and BOOT-5's compiler/CLI/TestRunner bundles (its
+    LSP/DAP/fuzzing bundles belong to the out-of-scope tracks).
 
 Continuous residue alongside every milestone, not a milestone of its own: the remaining
-diagnostics and namespace/inference gap items, cross-implementation parity fixtures as phases
-stabilize, and the phase benchmark after every landed slice.
+diagnostics and namespace/inference gap items (SEM-17), cross-implementation parity fixtures as
+phases stabilize (PKG-6), the registry/lock tail of MOD-7 and stitching-origins tail of MOD-8,
+and the phase benchmark after every landed slice (BOOT-8).
 
 ### Toolchain implementation checklist
 
@@ -206,435 +222,203 @@ same public behavior.
 
 #### Package and test foundations
 
-- [x] Define pure-Ashes `frontend`, `formatter`, and `semantics` packages with the required dependency
+- [x] **PKG-1** Define pure-Ashes `frontend`, `formatter`, and `semantics` packages with the required dependency
   direction and no host-language implementation helpers.
-- [x] Keep package tests in separate `devDependency` projects and compile them into standalone native
+- [x] **PKG-2** Keep package tests in separate `devDependency` projects and compile them into standalone native
   executables.
-- [x] Exercise frontend, formatter, and semantics tests with reuse enabled and with
+- [x] **PKG-3** Exercise frontend, formatter, and semantics tests with reuse enabled and with
   `--debug-disable-reuse`.
-- [x] Supply the language, standard-library, host-environment, filesystem, process, byte-buffer, JSON,
+- [x] **PKG-4** Supply the language, standard-library, host-environment, filesystem, process, byte-buffer, JSON,
   regex, and installed-layout capabilities identified by the prerequisite audit below.
-- [x] Document every production module's responsibility and load-bearing invariants, preserving
+- [x] **PKG-5** Document every production module's responsibility and load-bearing invariants, preserving
   behaviorally relevant stage-0 contracts without copying host-language API boilerplate.
-- [~] Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
+- [~] **PKG-6** Add cross-implementation parity fixtures as each self-hosted phase gains a stable serialized
   public result. Versioned token-stream fixtures now compare every public token field between stage 0
   and the pure-Ashes lexer; syntax, formatted source, diagnostics, inferred schemes, IR, and executable
   parity formats remain.
-- [x] Make every self-hosted package buildable from a restored source-only dependency graph without
+- [x] **PKG-7** Make every self-hosted package buildable from a restored source-only dependency graph without
   undeclared checkout-relative inputs.
 
 #### Frontend and source model
 
-- [x] Model tokens, structured diagnostics, and canonical UTF-8 byte spans.
-- [x] Lex identifiers, keywords, operators, comments, whitespace, strings, runes, signed and unsigned
+- [x] **FE-1** Model tokens, structured diagnostics, and canonical UTF-8 byte spans.
+- [x] **FE-2** Lex identifiers, keywords, operators, comments, whitespace, strings, runes, signed and unsigned
   integers, floats, and malformed input, including Unicode scalar validation.
-- [x] Model the complete typed syntax surface for programs, declarations, expressions, patterns, and
+- [x] **FE-3** Model the complete typed syntax surface for programs, declarations, expressions, patterns, and
   type expressions without collapsing those categories.
-- [x] Parse literals, variables, qualified references, calls, tuples, lists, records, record updates,
+- [x] **FE-4** Parse literals, variables, qualified references, calls, tuples, lists, records, record updates,
   unary/binary operators, pipes, and their precedence and associativity.
-- [x] Parse lambdas, conditionals, nested and recursive bindings, `let?`, `let!`, matches, guards,
+- [x] **FE-5** Parse lambdas, conditionals, nested and recursive bindings, `let?`, `let!`, matches, guards,
   handlers, `perform`, and every current pattern form.
-- [x] Parse named, applied, tuple, function, pointer, capability-row, annotated, and constrained type
+- [x] **FE-6** Parse named, applied, tuple, function, pointer, capability-row, annotated, and constrained type
   syntax.
-- [x] Parse exports, aliases, algebraic/record/zero-cost types, flat top-level bindings, recursive
+- [x] **FE-7** Parse exports, aliases, algebraic/record/zero-cost types, flat top-level bindings, recursive
   groups, and optional trailing expressions after the project layer has separated any import header.
-- [x] Parse external functions and types, ownership annotations, resources and destructors, native
+- [x] **FE-8** Parse external functions and types, ownership annotations, resources and destructors, native
   strings, pointers, buffers, out parameters, capability rows, and `symbol@library` aliases.
-- [x] Parse capability declarations, static providers, trait declarations, implementations,
+- [x] **FE-9** Parse capability declarations, static providers, trait declarations, implementations,
   supertraits, requirements, defaults, and deriving clauses.
-- [x] Preserve source-ordered recovery diagnostics and the current declaration-boundary behavior for
+- [x] **FE-10** Preserve source-ordered recovery diagnostics and the current declaration-boundary behavior for
   incomplete editor input and project-stitched programs.
-- [x] Compare the complete frontend diagnostic corpus with the C# frontend by diagnostic code, span,
-  ordering, and recovery result rather than only by accepted syntax. Adds a versioned
-  `ashes-diagnostic-v1` parity fixture format (`DiagnosticSerialization` in both stage 0 and pure
-  Ashes, mirroring the existing `ashes-token-v1` token-parity format) under `parity/frontend/diagnostics`,
-  covering representative lexer and parser malformed-input fixtures — unterminated strings, invalid
-  and out-of-range numeric literals, unexpected characters, missing expressions/patterns, trailing
-  tokens, a refutable let-pattern, `and` without `let recursive`, and a constructor-less type — each
-  serializing the diagnostic code, span, message, and the count of top-level items still recovered
-  despite the error, comparing to stage 0 via `SelfhostDiagnosticParityTests` and to the pure-Ashes
-  parser via `selfhost/tests/frontend-diagnostic-parity`. **Found while porting:** the pure-Ashes
-  lexer picked the wrong one of two distinct unsigned-integer-literal diagnostics for a value that
-  overflows 64 bits (it validated only against the target suffix width, never against whether the
-  value fits an unsigned 64-bit integer at all, which stage 0's `ulong.TryParse` checks first); an
-  unmatched closing paren/bracket/brace in a malformed top-level value drove the declaration-boundary
-  token-splitter's depth counter negative, permanently disabling boundary detection for the rest of
-  the file instead of just the one malformed declaration; `parseProgram`/`parseExpression`/
-  `parseTypeExpression` each invented their own "unexpected token after end of program/expression/type
-  expression" wording where stage 0 reports one generic "...after end of expression" message from a
-  single shared check, now unified the same way (`parserEnsureEndOfInput`); the refutable-let-pattern
-  diagnostic reported a one-token span read from the diagnostic list well after the pattern's own
-  span had been reclaimed by later parsing, rather than the pattern's own span — fixed with the same
-  `Ashes.Internal.deepCopy` idiom already established elsewhere in this port for values that must
-  outlive their enclosing arena scope; and one parser diagnostic (a constructor-less type declaration)
-  always attached the `ASH003` code where stage 0 attaches none. A pre-existing pure-Ashes lexer test
-  asserting the wrong message for a `u64` literal one past its maximum was corrected to match stage 0
-  once the fix above surfaced it.
+- [x] **FE-11** Compare the complete frontend diagnostic corpus with the C# frontend by diagnostic code, span,
+  ordering, and recovery result (the versioned `ashes-diagnostic-v1` parity format under
+  `parity/frontend/diagnostics`, checked from both stage 0 and
+  `selfhost/tests/frontend-diagnostic-parity`). Porting surfaced and fixed: unsigned-literal
+  overflow picking the wrong diagnostic, an unmatched closing bracket permanently disabling
+  declaration-boundary detection, three divergent end-of-input wordings unified behind one shared
+  check, a refutable-let-pattern span read after its arena scope was reclaimed, and a spurious
+  `ASH003` code on the constructor-less-type diagnostic.
 
 #### Formatter
 
-- [x] Canonically format every expression, pattern, and type form while preserving precedence.
-- [x] Canonically format complete programs and every top-level declaration form.
-- [x] Preserve intentional source spellings where the formatter contract requires them and sort only
+- [x] **FMT-1** Canonically format every expression, pattern, and type form while preserving precedence.
+- [x] **FMT-2** Canonically format complete programs and every top-level declaration form.
+- [x] **FMT-3** Preserve intentional source spellings where the formatter contract requires them and sort only
   semantically unordered surfaces such as requirement sets.
-- [x] Cover golden output, parse-format-parse behavior, and formatter idempotence.
-- [x] Preserve written import headers and leading/standalone comments around the formatted AST body.
-  Pure Ashes now formats a whole file the way the `fmt` command does (`formatSource` in
-  `SourceFormatting.ash`): the leading `//` comment block and blank lines are split off verbatim,
-  every `import` line is lifted out and re-rendered canonically (`import Path[.selector][ as Alias]`,
-  with a malformed `import ` line reported as `InvalidImportLine`), the remaining body is parsed and
-  formatted, and each standalone comment line is reinserted before the formatted line whose
-  whitespace-insensitive lexer-token signature (and occurrence number) matches its original next
-  anchor, falling back to after its previous anchor and then to the top of the file, so no comment
-  text is ever dropped. Comment lines keep their written text and indentation; the join uses the
-  requested line ending.
-- [x] Apply formatter options for indentation/newlines and preserve the current pipeline-layout choice
-  made from the source form. Pure Ashes exposes `FormattingOptions` (`indentSize`, `useTabs`,
-  `newLine`), `formattingOptionsDefault`, `formattingOptionsNormalize`, and
-  `formatProgramWithOptions`/`formatExpressionWithOptions`, applied as a post-processing rescale pass
-  (`formatterApplyOptions`) over the formatter's fixed-4-space, `\n`-terminated internal output
-  rather than threading options through every writer, exploiting the invariant that every leading
-  run of spaces in that output is an exact multiple of 4. Pipeline-layout preservation threads a
-  `preferPipelines : Bool` parameter through the whole expression-formatting chain and adds pipeline
-  collection (`formatterTryCollectPipeline`/`formatterCollectPipelineStages`): a nested call chain
-  `g(f(x))` collects into `x |> f |> g` when enabled, all-or-nothing (any non-eligible function
-  anywhere in the chain rejects the whole conversion), requiring at least two stages, and stopping
-  collection at a capitalized constructor call once an outer stage already exists so `h(Some(f(x)))`
-  renders as `h(x |> f |> Some)` rather than absorbing `h` into the chain. **Found while porting:**
-  stage 0's C# formatter (`Formatter.cs`) had a pre-existing double-conversion bug — 6 call sites in
-  `WriteMultilineCall`/`WriteListLiteral`/`WriteRecordLit` appended `options.NewLine` directly instead
-  of the internal `'\n'` convention used everywhere else, so `FinishOutput`'s single blanket
-  `"\n"` → `options.NewLine` pass converted an already-CRLF newline a second time (`\r\r\n`); fixed to
-  match the rest of the file, with a regression test. Also found while porting: the initial selfhost
-  port built pipeline stages by consing each newly discovered outer stage onto the front of the list
-  while walking outer to inner, which already leaves the list in the correct innermost-first render
-  order, then reversed it again before returning — flipping `x |> f |> g` into `x |> g |> f`; fixed by
-  dropping the redundant reversal.
-- [x] Keep the parentheses around a record update used as a record-literal field value: `fmt`
-  rewrote `Value(state = (inner with currentSpan = previous), temp = temp)` to
-  `Value(state = inner with currentSpan = previous, temp = temp)`, where the update absorbs the
-  following fields, so the formatted file no longer compiled (`Missing field 'temp' in record
-  literal`). Formatting must never change what a file parses to. **Found while porting the located
-  core lowering.** Stage 0 now renders record-literal field values (inline and multiline), multiline
-  call arguments, and multiline list elements at the precedence just above `with` whenever their
-  own unparenthesized right edge is a record update (the update itself, or the trailing body of a
-  `let`/lambda/`if`/`match`/`handle` ending in one) **and** another field, argument, or element
-  follows — the last one in the list needs no such protection, since its own closing bracket already
-  ends the update; getting this wrong (parenthesizing every occurrence regardless of position) was
-  caught by reformatting the whole repository and finding spurious new parentheses on already-correct
-  committed code. The rule is written into the formatter reference. Pure Ashes lacked the rule at
-  every one of those sites and now ports it in full (`formatterEndsWithRecordUpdate`,
-  `formatterFieldPrecedence`, gated on a following sibling at each call site), covered by the
-  record-literal (inline, multiline, lambda-bodied, and last-field-needs-no-parens), update-field,
-  call, tuple/list, and scrutinee cases in `selfhost/tests/formatter/Main.ash`.
-- [x] Compare the full formatter corpus and malformed-input behavior with the C# formatter. A first
-  whole-file pass over the self-hosted sources (`formatSource` on `ImportHeader.ash`,
-  `SourceFormatting.ash`, the formatter test entry, and `StandardTraits.ash`) found one crash,
-  root-caused and fixed 2026-08-26. **Minimized repro**: `let dummyPadding = (let fillCases names
-  = names in fillCases(1))` — any nested `let name param = ...` binding — segfaulted reading a
-  corrupted tail from its `sugarParameters: List(Str)` cons cell, reached through `formatProgram`'s
-  deep-copy of the parsed `Expr` tree (or equally through a bare `Ashes.Collection.List.length` on
-  the field with no formatter involved). A hardware watchpoint on the corrupted cell's tail word
-  (`0x7ffff3401910` in one run) caught it initialized correctly to `0` (empty-list) by
-  `parserParameterNames`, then overwritten with garbage by an unrelated allocation inside
-  `parserExprEnd`/`parserExprSpan` — called immediately afterward, in
-  `parserParseTopLevelBinding`'s own `(binding, parserExprEnd(value), ...)` return-tuple
-  construction. The nested let's sugar-parameter list lives arbitrarily deep inside `value` (the
-  parsed value expression of the *outer* binding); the compiler's arena/bracket accounting
-  considered the nested let's parse-local temporaries reclaimable once its own parsing finished,
-  not accounting for this list still being reachable through the still-live `value`, so the very
-  next allocation (`parserExprEnd`'s own span construction) reused and clobbered its memory. Eleven
-  earlier fix attempts targeting the list's own construction/copy-out (deep-copying the extracted
-  name, deep-copying the whole tuple-list, hand-written list copiers, non-tail-recursive rebuilds,
-  reordering double-uses, two C# ownership-analysis fixes) all failed because none of them widened
-  the *scope* of what needed to survive — the list, not `value` as a whole. Fixed in
-  `parserParseTopLevelBinding` (`selfhost/packages/frontend/src/AshesCompiler/Frontend/Parser.ash`)
-  by deep-copying `value` itself immediately after `parserBuildLambdas` builds it, before
-  `parserExprEnd` or anything else runs: `parserBuildLambdas(parameters)(rawValue)(name.position) |>
-  Ashes.Internal.deepCopy`. `Ashes.Internal.deepCopy` on an `Expr` (a recursive, multi-constructor
-  ADT the compiler's `AdtDeepCopier` machinery fully supports) forces every nested arena-placed
-  structure into a fixed-watermark-safe copy while everything is still valid, closing the reuse
-  window. Verified against the minimized repro, the full self-hosted formatter and semantics test
-  suites, and the full C# (`Ashes.Tests`, `Ashes.Cli.Tests`) and end-to-end `.ash` suites — all pass.
-  Ruled out along the way (kept for anyone hitting a similarly-shaped bug): reuse-specialization,
-  the whole IR optimizer, and two confirmed-but-separate instances of a generic-`reverse`-of-
-  heap-composite-accumulator bug (see the item below).
-  The top-level boundary splitter no longer cuts a declaration value at an indented `then`/`else`/
-  `in`/pipe line after a completed call (only a token that can start a whitespace-application
-  argument begins the trailing expression, as in stage 0); that gate was found by the same pass.
+- [x] **FMT-4** Cover golden output, parse-format-parse behavior, and formatter idempotence.
+- [x] **FMT-5** Preserve written import headers and leading/standalone comments around the formatted AST body
+  (`formatSource`): the leading comment block kept verbatim, imports re-rendered canonically,
+  standalone comments reinserted at their whitespace-insensitive token-signature anchors (next
+  anchor, then previous, then top of file — no comment text is ever dropped).
+- [x] **FMT-6** Apply formatter options for indentation/newlines (`FormattingOptions`, applied as a
+  post-processing rescale over the fixed-4-space internal output) and the opt-in pipeline-layout
+  collection (`x |> f |> g` from a nested call chain, all-or-nothing, stopping at a capitalized
+  constructor once an outer stage exists). Porting found and fixed a pre-existing stage-0
+  double-newline-conversion bug (`\r\r\n`) and a stage-order reversal in the first selfhost port.
+- [x] **FMT-7** Keep the parentheses around a record update used as a record-literal field value (and in
+  multiline call arguments and list elements) whenever another sibling follows — dropping them
+  makes the update absorb the following fields, so the formatted file no longer parses the same.
+  The rule is written into the formatter reference; covered by `selfhost/tests/formatter/Main.ash`.
+- [x] **FMT-8** Compare the full formatter corpus and malformed-input behavior with the C# formatter. The
+  whole-file pass found one crash — a nested `let name param = ...` binding's sugar-parameter list
+  clobbered by arena reuse one call after parsing, fixed by deep-copying the built value before
+  span construction in `parserParseTopLevelBinding` — and a boundary-splitter gate (a declaration
+  value is no longer cut at an indented `then`/`else`/`in`/pipe line after a completed call).
 
 #### Semantic foundations and ordinary inference
 
-- [x] Model stable symbols, qualified identities, immutable lexical scopes, and deterministic fresh
+- [x] **SEM-1** Model stable symbols, qualified identities, immutable lexical scopes, and deterministic fresh
   type variables.
-- [x] Model semantic primitive, unsigned, function, tuple, list, pointer, named, capability, and open-row
+- [x] **SEM-2** Model semantic primitive, unsigned, function, tuple, list, pointer, named, capability, and open-row
   types.
-- [x] Compute free variables, substitutions, occurs checks, structural unification, generalization,
+- [x] **SEM-3** Compute free variables, substitutions, occurs checks, structural unification, generalization,
   instantiation, and constrained rank-1 schemes.
-- [x] Unify capability rows independently of declaration order and allow open tails to absorb unmatched
+- [x] **SEM-4** Unify capability rows independently of declaration order and allow open tails to absorb unmatched
   capabilities.
-- [x] Resolve source primitives, parameters, functions, tuples, pointers, aliases, nominal types,
+- [x] **SEM-5** Resolve source primitives, parameters, functions, tuples, pointers, aliases, nominal types,
   zero-cost types, and capability rows.
-- [x] Infer literals, variables, lambdas, calls, tuples, lists, conditionals, ordinary lets, recursive
+- [x] **SEM-6** Infer literals, variables, lambdas, calls, tuples, lists, conditionals, ordinary lets, recursive
   lets, and annotations with let-polymorphism.
-- [x] Infer all operator families while retaining their trait constraints.
-- [x] Infer matches, guards, literal/list/tuple/constructor/record/as/or patterns, and consistent
+- [x] **SEM-7** Infer all operator families while retaining their trait constraints.
+- [x] **SEM-8** Infer matches, guards, literal/list/tuple/constructor/record/as/or patterns, and consistent
   pattern-local bindings.
-- [x] Register algebraic, record, alias, and zero-cost declarations; infer constructors, constructor
+- [x] **SEM-9** Register algebraic, record, alias, and zero-cost declarations; infer constructors, constructor
   patterns, record literals, and record updates.
-- [x] Infer `Result` map/flat-map/error-map pipelines and `let?` propagation.
-- [x] Infer sequential top-level bindings, shared-monomorphic recursive groups, and an optional trailing
+- [x] **SEM-10** Infer `Result` map/flat-map/error-map pipelines and `let?` propagation.
+- [x] **SEM-11** Infer sequential top-level bindings, shared-monomorphic recursive groups, and an optional trailing
   expression.
-- [x] Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs.
-  Pure Ashes now seeds the standard `Task(e, a)` type next to `Maybe` and `Result` and types
-  `await task` as stage 0 does: the operand must unify with `Task(e, a)` for a fresh error/success
-  pair (`ExpectedTaskType` otherwise) and the expression is the `Result(e, a)` the task runs to, so
-  a `let!` binding (the parser's `let x = await e`) exposes that `Result` to its body and the
-  ordinary `let?`/`Result` propagation applies from there. The structured task APIs (`Ashes.Task`)
-  are ordinary standard-library bindings typed through module stitching, and lowering `await` to
-  `RunTask`/`AwaitTask` belongs to the core-lowering coverage of async bodies.
-- [x] Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
-  diagnostic reporting. Pure Ashes now checks every typed match once its arms are inferred
-  (`matchCoverageError`): constructor patterns from two ADTs, unreachable arms (after a catch-all, a
-  repeated literal, constructor, or composite pattern), missing constructors of an ADT scrutinee
-  (with the `Result` wording, the five-constructor listing limit, and the "... and N more"
-  truncation), a list scrutinee missing `[]` or `x :: xs`, half-covered bools, and the per-field
-  missing-pattern search over lists, tuples, constructors, bools, and literals, reported with stage
-  0's message text as `NonExhaustiveMatch`, `UnreachableMatchArm`, and
-  `ConstructorPatternsFromDifferentAdts` inference errors; or-alternatives, as-patterns, and record
-  patterns are expanded to plain positional patterns first, exactly as stage 0's diagnostic
-  pre-pass does. Stable `ASH###` codes for these messages remain uncoded in stage 0 as well.
-  `CoreLowering` now enforces the check during single-file lowering too: `checkCoreMatchCoverage`
-  runs `matchCoverageError` over every lowered match (constructors drawn from the lowering's own
-  registered layouts) and fails the compilation with the stage-0 message as a `CoreMatchCoverageError`,
-  so the eight `tests/pattern_*` diagnostic programs now fail through the self-hosted CLI with stage
-  0's exact wording; a scrutinee still typed as an inference variable at lowering time (a lambda
-  parameter) derives its ADT from the arms' constructor names before the constructor-set check.
-  **Found while porting:** the pure-Ashes parser had no column rule for match/handler arm
-  attachment — any following `|` continued the innermost arm list, so a match nested in an arm body
-  silently swallowed the enclosing match's remaining arms (making the outer match genuinely
-  non-exhaustive, caught only once this coverage check existed); stage 0 records the first arm's
-  `|` column and ends the arm list at any `|` dedented past it, and `parserLeadingPipeColumn` now
-  applies the same rule to both `parserParseMatchCases` and `parserParseHandlerArms`.
-- [ ] Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
+- [x] **SEM-12** Infer async bodies, `await`, `let!`, task result/error propagation, and structured task APIs:
+  the standard `Task(e, a)` type is seeded next to `Maybe`/`Result`, `await task` types as the
+  `Result(e, a)` the task runs to (`ExpectedTaskType` otherwise), and `let!` exposes that `Result`
+  to the ordinary propagation rules; lowering `await` belongs to core lowering.
+- [x] **SEM-13** Perform complete match exhaustiveness, redundancy, large-ADT hardening, and source-compatible
+  diagnostic reporting (`matchCoverageError`, stage 0's message text; also enforced during
+  single-file lowering via `checkCoreMatchCoverage`, so the `tests/pattern_*` diagnostics fail
+  through the self-hosted CLI with stage 0's wording). Porting found the parser had no column rule
+  for match/handler arm attachment — a nested match silently swallowed the enclosing match's
+  remaining arms; `parserLeadingPipeColumn` now ends an arm list at any `|` dedented past the
+  first arm's column, as stage 0 does.
+- [ ] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
   diagnostics at the semantic boundary.
-- [~] Seed the shipped standard trait/type identities and primitive/structural implementation heads so
+- [~] **SEM-15** Seed the shipped standard trait/type identities and primitive/structural implementation heads so
   ordinary evidence resolution no longer depends only on focused test declarations. The remaining
   builtin and standard-library value/type environment must be populated through module stitching.
-- [x] Validate every written binding `requires` clause against the inferred canonical external
+- [x] **SEM-16** Validate every written binding `requires` clause against the inferred canonical external
   requirement set, including recursive groups and ambiguity checks.
-- [~] Port the remaining declaration namespace, duplicate-name, shadowing, annotation, and inference
-  diagnostics with stable codes and source spans. `ASH013` (duplicate top-level binding) shipped
-  with the whole-program lowering entry point (#639). **`ASH014` (forward reference) now also
-  shipped**: `lowerCoreVariable`'s final "name not found anywhere ordinary" fallback checks a new
-  `CoreLoweringState.topLevelNames` (every top-level value-binding name in the whole program,
-  collected once up front by each whole-program entry point) before falling back to the generic
-  `UnknownLoweringBinding` — if the name IS a real top-level binding, just not yet visible under
-  Model A's sequential scoping (declared later in the file, or a plain, non-`recursive` self-
-  reference), reports `ForwardTopLevelReference` instead. Mirrors stage 0's
-  `LowerVarUnbound`/`_topLevelBindingNames` specialization
-  (`Lowering.cs:2844`/`Lowering.TopLevel.cs:377`) closely — same two-set-membership design, ported
-  directly since (unlike the trait-evidence problem above) this needs no external inference data at
-  all, only the `ProgramSyntax` already being lowered. Regressions:
-  `expectForwardReferenceToLaterBindingIsRejected`, `expectSelfReferenceWithoutRecursiveIsRejected`,
-  `expectGenuinelyUnknownNameStillRejectedAsUnknown` (proving the two error paths — forward
-  reference vs. genuinely undefined — stay correctly distinguished). **Correcting an assumption
-  from this same pass**: `ASH016` (conflicting unqualified import selectors) is NOT missing —
-  `ImportResolution.ash`'s `resolveImports`/`ConflictingResolvedImport` already detects exactly this
-  (two selectors resolving to the same local name), is called from the real pipeline
-  (`ModulePlan.ash`), and is tested (`ImportResolutionTests.ash`'s `checkResolvedCollision`); it's
-  covered by the "Resolve whole-module, aliased, value-selector, and type-selector imports..."
-  item's own "post-resolution collision checks" clause, already `[x]` elsewhere in this file — this
-  paragraph should not have called it unported without checking. `ASH015` (`and` without a
-  preceding `let recursive`) genuinely has no stage-0 reference implementation to port at all — no
-  trace of its message or a dedicated check anywhere in `src/Ashes.Semantics`/`src/Ashes.Frontend`;
-  either the parser's own syntax rules already make a bare `and` unreachable, or this is a
-  documented-but-unimplemented-in-stage-0 code, the same "stable codes remain uncoded in stage 0"
-  situation the match-exhaustiveness item above already flags for a different diagnostic family. Not
-  something to port until stage 0 has a real implementation to port from.
+- [~] **SEM-17** Port the remaining declaration namespace, duplicate-name, shadowing, annotation, and inference
+  diagnostics with stable codes and source spans. Done: `ASH013` (duplicate top-level binding) and
+  `ASH014` (forward reference and non-`recursive` self-reference, kept distinct from
+  genuinely-unknown names). `ASH016` was never missing — import-resolution collision checking
+  already covers it. `ASH015` has no stage-0 reference implementation at all — nothing to port
+  until stage 0 implements it.
 
 #### Capabilities and handlers
 
-- [x] Register capability declarations and parameter-sharing operation schemes.
-- [x] Propagate ambient effects through implicit/explicit operations, lambdas, ordinary and
+- [x] **CAP-1** Register capability declarations and parameter-sharing operation schemes.
+- [x] **CAP-2** Propagate ambient effects through implicit/explicit operations, lambdas, ordinary and
   higher-order calls, partial application, and `Result` pipelines.
-- [x] Infer handler operation arms, shared instances, `resume`, return arms, arm effects, and residual
+- [x] **CAP-3** Infer handler operation arms, shared instances, `resume`, return arms, arm effects, and residual
   row discharge.
-- [x] Register complete, coherent, instance-specialized static providers and type-check their operation
+- [x] **CAP-4** Register complete, coherent, instance-specialized static providers and type-check their operation
   implementations.
-- [x] Satisfy exact concrete capability requirements from providers while retaining abstract
+- [x] **CAP-5** Satisfy exact concrete capability requirements from providers while retaining abstract
   requirements and rejecting provider/handler ambiguity.
-- [x] Lower dynamic handler evidence, one-shot continuation state, pre/post handler control flow, and
-  dynamically scoped handler globals into IR. Correcting a stale duplicate of this item: fully done
-  as of #646 — see the "Lower capability handlers/providers and trait evidence" entry below for the
-  detailed history (dynamically scoped handler globals and evidence save/switch/restore: #640/#641;
-  one-shot continuation state, the full `TryRewriteResume` family: #641-#646; pre/post handler
-  control flow, the posts-fold mechanism: #642, exercised end-to-end by every one-shot test since).
-- [~] Lower static-provider dictionaries and generic capability evidence into IR. Static-provider
-  dictionaries: done and tested (`emitStaticProviderCall`, `CoreCapabilityLowering.ash`). Generic
-  capability evidence: **matching logic fixed; whole-program wiring still open.** Stage 0 registers
-  a static provider under a key built from its capability name AND its resolved type arguments
-  (`Lowering.Capabilities.cs`'s `BuildProviderKey`/`_providers`), so `provide Log(Int)` and
-  `provide Log(Str)` in the same program are two distinct, individually valid registrations —
-  inference's own ambiguity rejection (ASH026/ASH027, the item above this section) only fires on
-  two providers sharing the exact same key, never on two providers sharing only a capability name,
-  so it does NOT guarantee `staticProviders` is free of same-named entries the way handler-arm
-  completeness turned out to already be enforced at the inference phase. `findStaticProvider` used
-  to match by `capabilityName` alone, ignoring `CoreStaticProviderLayout.typeArguments` entirely, so
-  it could never distinguish the two. **Fixed**: `findStaticProvider` now also takes the caller's
-  own `requiredTypeArguments : List(SemanticType)`. Given a specific, concrete type argument (the
-  common case — a `provide` declaration's own type arguments are always concrete, no free
-  variables, so structural equality is meaningful regardless of which pass produced either side),
-  it picks the exactly-matching provider regardless of registration order
-  (`expectExactTypeArgumentsSelectTheMatchingProvider`,
-  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`). Given `[]` (the only shape
-  `CoreLowering.ash`'s own call site, `lowerPerform`, can supply today), it matches by name alone
-  only when every candidate for that name shares the same type arguments — including the common
-  case of a non-generic capability — and correctly reports no match (ambiguous) rather than
-  silently picking whichever provider is listed first when they genuinely diverge
-  (`expectAmbiguousProvidersWithoutRequiredTypeArgumentsAreUnresolved`).
-  **Still open, deliberately out of scope for this fix**: unlike the call-site trait-dictionary
-  forwarding gap above (fixed via a pure pre-lowering AST rewrite over the external
-  `TypeEnvironment`), there is no analogous existing whole-program entry point here to extend —
-  `CoreStaticProviderLayout(...)` is still constructed nowhere outside test fixtures, so
-  `lowerPerform`'s static-provider branch remains unreachable from a real compile.
-  `TypeEnvironment.providers : List(CapabilityProviderInferenceDefinition)` carries each provider's
-  resolved `capabilityType`, but `CapabilityProviderOperationInferenceDefinition` only carries an
-  operation's `name`/`semanticType`, not its implementation `Expr` — wiring real provider info needs
-  new infrastructure to also walk the parsed program's own `ProviderDecl` AST nodes for those
-  bodies, not just a `TypeEnvironment` lookup (a bigger, separate slice). Even once that exists,
-  deriving `lowerPerform`'s own `requiredTypeArguments` per call site is not always as simple as
-  reading an argument's type — an operation whose capability type parameter appears in RETURN
-  position (e.g. `State`'s `get : Unit -> a`) has no argument to read it from at all.
-- [ ] Validate capability explanations and observable behavior against normal, optimization-disabled,
+- [x] **CAP-6** Lower dynamic handler evidence, one-shot continuation state, pre/post handler control flow, and
+  dynamically scoped handler globals into IR — the mechanism is described under the
+  "Lower capability handlers/providers and trait evidence" entry in "IR model and lowering".
+- [~] **CAP-7** Lower static-provider dictionaries and generic capability evidence into IR. Done:
+  static-provider dictionary calls (`emitStaticProviderCall`), and `findStaticProvider` matching
+  on capability name AND resolved type arguments (name-only matching cannot distinguish
+  `provide Log(Int)` from `provide Log(Str)`; given no required arguments it matches by name only
+  when every candidate agrees, reporting ambiguity otherwise). Open: the whole-program wiring —
+  `CoreStaticProviderLayout` is constructed nowhere outside test fixtures, since
+  `TypeEnvironment` carries no operation implementation `Expr`s (needs a `ProviderDecl` AST walk),
+  and deriving a call site's required type arguments is nontrivial when the capability parameter
+  appears only in return position (`get : Unit -> a`).
+- [ ] **CAP-8** Validate capability explanations and observable behavior against normal, optimization-disabled,
   and reuse-disabled C# compilation.
 
 #### Traits, implementations, and evidence
 
-- [x] Infer operator constraints and retain them in generalized schemes.
-- [x] Register trait declarations, qualified method schemes, forward supertraits, acyclic supertrait
+- [x] **TRT-1** Infer operator constraints and retain them in generalized schemes.
+- [x] **TRT-2** Register trait declarations, qualified method schemes, forward supertraits, acyclic supertrait
   graphs, and type-checked default bodies.
-- [x] Register ordinary `implement` declarations with resolved rigid heads, requirements, supplied
+- [x] **TRT-3** Register ordinary `implement` declarations with resolved rigid heads, requirements, supplied
   methods, and inherited defaults.
-- [x] Validate implementation trait/arity, method uniqueness and completeness, substituted method
+- [x] **TRT-4** Validate implementation trait/arity, method uniqueness and completeness, substituted method
   signatures, capability rows, and requirement variables.
-- [x] Reject exact duplicate and structurally overlapping implementation heads independently of source
+- [x] **TRT-5** Reject exact duplicate and structurally overlapping implementation heads independently of source
   or traversal order.
-- [x] Track package provenance for traits and nominal head types and enforce the orphan ownership rule.
-- [x] Validate decreasing conditional requirements for generic implementation heads while allowing
+- [x] **TRT-6** Track package provenance for traits and nominal head types and enforce the orphan ownership rule.
+- [x] **TRT-7** Validate decreasing conditional requirements for generic implementation heads while allowing
   fixed requirements on fully concrete heads.
-- [x] Reject dependency cycles among the defaults selected by an implementation while allowing a
+- [x] **TRT-8** Reject dependency cycles among the defaults selected by an implementation while allowing a
   supplied method override to break the cycle.
-- [x] Canonicalize constraints, remove exact duplicates, and remove supertraits implied by stronger
+- [x] **TRT-9** Canonicalize constraints, remove exact duplicates, and remove supertraits implied by stronger
   constraints.
-- [x] Validate written binding `requires` clauses against inferred canonical constraints, including
+- [x] **TRT-10** Validate written binding `requires` clauses against inferred canonical constraints, including
   nested lets, recursive groups, invalid trait heads, and ambiguous requirement variables.
-- [x] Resolve unique concrete instances recursively with cycle/depth guards while preserving abstract
+- [x] **TRT-11** Resolve unique concrete instances recursively with cycle/depth guards while preserving abstract
   constraints as hidden dictionary parameters.
-- [x] Diagnose missing, ambiguous, incoherent, non-terminating, and ambiguous-type-variable goals with
+- [x] **TRT-12** Diagnose missing, ambiguous, incoherent, non-terminating, and ambiguous-type-variable goals with
   canonical requirement traces.
-- [~] Plan hidden trait dictionary parameters, method fields, specialized direct-supertrait fields,
-  concrete-or-parameter call-site evidence arguments in deterministic ABI order, and ordinary
-  arity/remaining-argument evidence capture for constrained partial applications. Plan exact and
-  inherited active-dictionary forwarding across recursive and sibling call edges, including the
-  selected method slot after following a supertrait path. Plan ABI-ordered supplied/default method
-  fields, dependency-aware selected-method build order, and conditional-requirement/supertrait inputs
-  for concrete dictionaries. Plan dictionary transport destinations for direct function parameters,
-  closure captures, nested aggregate locations, and async frames. Rewrite constrained values with
-  hidden dictionary parameters, deterministic dictionary destructuring, and unambiguous qualified
-  method bindings. Rewrite constrained references with ABI-ordered exact or inherited active evidence.
-  Physically thread dictionaries through the corresponding lowered representations. **First real
-  wiring step taken**: `rewriteTraitConstrainedValue`/`rewriteTraitConstrainedReference`
-  (`TraitEvidenceRewriting.ash`) — the elaboration functions this whole plan describes — were fully
-  built and unit-tested in isolation but had ZERO real call sites; `CoreLowering.ash`'s whole-program
-  entry points (`lowerCoreProgram`/`lowerCoreProgramWithSource`) also had no real caller and take
-  only raw `ProgramSyntax`, no inference-result input at all. New `lowerCoreProgramWithEnvironment`
-  takes a real `TypeEnvironment` (the same one `ProgramInferenceResult.environment` produces) and,
-  for a plain (non-recursive) top-level `let` whose own generalized `TypeScheme` carries trait
-  constraints, elaborates its value via `rewriteTraitConstrainedValue` before lowering — proven
-  against genuine `inferProgram` output (not a hand-built fixture, unlike every existing
-  `TraitEvidence*Tests.ash` file) for a user-declared trait, one `implement`, and one `requires`
-  binding whose body calls the trait method. **Deliberately narrow first slice, not the whole
-  epic**: recursive top-level bindings (`TopLevelLet(..., true)`/`TopLevelRecursiveGroup`) are not
-  yet rewritten, and — critically — `rewriteTraitConstrainedReference` (call-site dictionary
-  forwarding) is not wired at all, so a constrained binding now lowers correctly in isolation but
-  any CALLER of it does not: the binding's value gains a hidden leading dictionary parameter that no
-  call site supplies, so `describe(5)` against a `requires {Greet(a)}`-constrained `describe` fails
-  lowering with a type mismatch (the dictionary ends up unified against the real argument). Proven
-  by a regression that asserts exactly this failure mode without the rewrite, and sidesteps it by
-  testing only the binding's own value, not a call site. Wiring `rewriteTraitConstrainedReference`
-  into ordinary call/reference lowering is the natural next slice, and was attempted twice this
-  session — see the two attempts below; both were reverted, but the second surfaced and fixed a
-  real, independently-testable gap along the way. **Fixed: missing inherited-forwarding fallback.**
-  `findTraitEvidenceForwarding`'s exact stable-key matching (`traitConstraintStableKey`, which
-  embeds the raw type-variable id) can never match two independently-generalized schemes' "same"
-  abstract requirement — each carries its own fresh quantified variable, with no reason to share an
-  id. Stage 0 (`Lowering.TraitEvidence.cs`'s `FindActiveTraitDictionaryParameter`) has a fallback
-  selfhost was missing entirely: when there's no exact match and the requirement is still abstract
-  (a free variable, not yet unified with anything concrete), if there is exactly one active
-  dictionary parameter for that trait name, use it — sound only because it's the only option; with
-  two or more, no fallback fires and the ordinary missing-evidence rejection takes over. Added
-  `findTraitEvidenceForwardingWithFallback` to `TraitEvidenceThreading.ash`, mirroring stage 0
-  exactly. Regressions (`TraitEvidenceCallRewritingTests.ash`):
-  `expectSoleActiveParameterFallbackCallRewrite` (the fallback fires correctly),
-  `rejectAmbiguousActiveParametersCallRewrite` (and doesn't over-fire when genuinely ambiguous).
-  This fix is real and shipped, but on its own is inert — nothing calls
-  `rewriteTraitConstrainedReference` from real lowering yet (see the "attempted twice" note below
-  for why not).
-  **Call-site forwarding wired (PR #667), after two earlier attempts this session were reverted —
-  read this before touching the mechanism again.** (1) checked a referenced name's RAW,
-  un-instantiated scheme constraints (`bindingTraitConstraints`, straight from the external
-  `TypeEnvironment`) at `ExprVar`-lowering time — failed even the simplest cases
-  (`MissingActiveTraitEvidence`) because raw constraints from two different bindings' schemes never
-  share a type-variable id, exactly the gap fix above closes. (2) Cross-referenced stage 0's actual
-  solution (`InstantiateScheme` per reference, plus the fallback above) and re-implemented properly:
-  `instantiateReferenceConstraints` (fresh per-reference instantiation via the existing
-  `instantiate` primitive in `TypeSchemes.ash`) plus fixing two `generalize(...)([])` call sites in
-  `CoreLowering.ash` that hardcoded empty constraints. Compiled clean, but a new inherited-forwarding
-  test (`wrapper`, itself `requires {Greet(a)}`, calling `describe(y)`) **segfaulted** —
-  root-caused to a genuine infinite substitution cycle: `generalize`'s `semanticType` argument (from
-  `CoreLowering.ash`'s own LOCAL type reconstruction, its own local `typeSupply` numbering) and its
-  `constraints` argument (from the EXTERNAL real-inference `TypeEnvironment`, a completely separate
-  numbering space) get merged into one `TypeScheme`, but the two type systems share no variable
-  space (unlike stage 0, where inference IS the lowering pass).
-  **What actually shipped (third attempt) sidesteps both failure modes by never touching
-  `CoreLowering.ash`'s local type reconstruction at all**: a pure pre-lowering AST rewrite
-  (`rewriteTraitConstrainedTopLevelValue`/`rewriteTraitCallSiteReferences`,
-  `TraitEvidenceRewriting.ash`) that walks a top-level binding's already-elaborated value using ONLY
-  the external `TypeEnvironment`'s raw scheme constraints — the same un-instantiated constraints
-  attempt (1) used, which is exactly why a naive version of this attempt was ALSO unsound: two
-  bindings' raw scheme constraints for the same trait name are structurally indistinguishable
-  (neither carries per-call-site instantiation), so a version that forwarded at any bare reference
-  to a constrained binding, matched only by trait name, silently forwarded the WRONG evidence for an
-  unrelated concrete call — proven by dumping the lowered IR of a deliberately adversarial test
-  (`describe(5)` called from an unrelated unconstrained binding) and finding the callee's own
-  first-class value had been wrapped into a bogus one-argument closure instead of a plain `Str`.
-  **The fix**: forwarding only fires when the call's argument is syntactically one of the caller's
-  OWN outermost lambda parameters (`outermostLambdaParameterNames`, fixed once per binding, never a
-  literal/local/derived value) — sound because HM unification forces the callee's instantiated
-  constraint variable to equal the caller's own parameter's variable whenever the argument really IS
-  that parameter, so a match by trait name at that specific call site is never coincidental. This
-  compiler's inference independently enforces that any live constraint be explicitly written and
-  justified from the body (`MissingWrittenTraitRequirement`, `UnjustifiedWrittenTraitRequirement` —
-  even `+` desugars through an implicit `Add` requirement), which is why a well-typed integration
-  test for the pre-existing `MissingActiveTraitEvidence` diagnostic proved impractical to construct;
-  that path's coverage remains in `TraitEvidenceForwardingTests.ash`/`TraitEvidenceCallRewritingTests.ash`.
-  New coverage: `CoreProgramLoweringTests.ash`'s `expectCallSiteForwardingLowersWithEnvironment`
-  (the `wrapper`/`describe` success case) and `expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches`
-  (the guard correctly declining a literal argument, leaving the pre-existing type-mismatch
-  behavior intact rather than miscompiling). Full traces of all three attempts are in project memory
-  (`project_selfhost_port_progress_2026_08_26.md`, `project_capability_provider_evidence_gap.md`)
-  for whoever picks up the remaining pieces (recursive-binding value elaboration, concrete/global
-  call-site resolution for an unconstrained caller).
-- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
+- [~] **TRT-13** Plan hidden trait dictionary parameters, method fields, specialized direct-supertrait fields,
+  call-site evidence arguments in deterministic ABI order, constrained-partial-application evidence
+  capture, exact and inherited active-dictionary forwarding across recursive and sibling call
+  edges, ABI-ordered supplied/default method fields with dependency-aware build order, dictionary
+  transport destinations (direct parameters, closure captures, nested aggregates, async frames),
+  and constrained value/reference rewriting; physically thread dictionaries through the lowered
+  representations. Done: every planning layer above, plus the first real lowering wiring —
+  `lowerCoreProgramWithEnvironment` elaborates a plain constrained top-level `let`'s value against
+  genuine `inferProgram` output; the sole-active-parameter inherited-forwarding fallback (stage
+  0's `FindActiveTraitDictionaryParameter` semantics — raw scheme constraints from two bindings
+  never share a type-variable id, so exact stable-key matching alone can never fire); and
+  call-site forwarding as a pure pre-lowering AST rewrite, gated on the call argument being
+  syntactically one of the caller's own outermost lambda parameters (sound via HM unification —
+  an unguarded trait-name-only match forwarded the WRONG evidence for an unrelated concrete call,
+  proven by IR dump). Open: recursive-binding value elaboration, concrete/global call-site
+  resolution for an unconstrained caller, and the phase plan's keystone — constraint-aware local
+  type reconstruction in `CoreLowering.ash`, or one merged type-variable space with inference
+  (the local reconstruction and the external environment share no variable space; merging their
+  outputs into one scheme produced an infinite substitution cycle).- [~] Rewrite concrete dictionary construction into dependency-ordered selected method bindings,
   ABI-ordered fields, and recursively constructed inherited evidence. Lower those values, default
   dispatch, method selection, and safe concrete specialization into IR without changing unoptimized
   behavior.
-- [~] Register the shipped standard trait ABI and primitive/structural implementation heads, including
+- [~] **TRT-14** Register the shipped standard trait ABI and primitive/structural implementation heads, including
   recursive evidence requirements and stable compiler-private implementation references. The stitching
   phase now binds those references to rewritten `Ashes.Trait` source bodies by alpha-normalized
   implementation-head structure; physical dictionary lowering remains.
-- [~] Expand `deriving {Eq, Ord, Show, Hash}` into ordinary implementations before coherence checking.
+- [~] **TRT-15** Expand `deriving {Eq, Ord, Show, Hash}` into ordinary implementations before coherence checking.
   Ordinary and zero-cost nominal declarations now expand in written order, retain only payload-relevant
   type-parameter requirements, generate deterministic method bodies, and participate in ordinary
   coherence and evidence resolution. Function, pointer, task, unbound-variable, and non-regular
@@ -644,32 +428,32 @@ same public behavior.
 
 #### Modules, projects, externals, and whole-program semantics
 
-- [x] Separate and validate leading import headers while preserving their written forms, aliases,
+- [x] **MOD-1** Separate and validate leading import headers while preserving their written forms, aliases,
   selectors, source lines, and imports-stripped UTF-8 body offsets for formatting and diagnostics;
   retain uppercase-final paths for the resolver to disambiguate as modules or type selectors.
-- [x] Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
+- [x] **MOD-2** Resolve whole-module, aliased, value-selector, and type-selector imports using typed module
   interfaces, longest-module-path ambiguity rules, export validation, and post-resolution collision
   checks. Map module names to source paths and select project, include, dependency, or shipped-library
   sources with ambiguity and reserved-namespace checks. Construct deterministic reachable-module plans
   in dependency-first order, reject cycles, and enumerate filesystem-backed sources deterministically.
-- [x] Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
+- [x] **MOD-3** Validate explicit exports and build value/type/constructor/submodule interfaces from parsed
   programs without exporting externals, trailing bodies, private declarations, or imported modules
   implicitly.
-- [x] Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
+- [x] **MOD-4** Enforce sequential visibility, qualification, reserved namespaces, module cycles, and stable
   compiler-private names across stitched modules. Dependency planning, cycle rejection, and
   dependency-ordered semantic scopes assign deterministic definition identities, record ordinary
   versus recursive visibility boundaries, realize resolved selectors and whole-module imports, validate
   full/short qualifiers and collisions, and assign stable public and compiler-private names. Syntax-tree
   rewriting preserves lexical shadows and source spans while replacing declaration, value, constructor,
   type, trait, and capability references with those compiler names.
-- [x] Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
+- [x] **MOD-5** Parse and validate typed `ashes.json` manifests, including entry extensions, package versions,
   defaults, source roots, includes, output settings, registry/path dependencies, dev dependencies,
   root-level local `overrides`, and forward-compatible unknown fields. Filesystem path resolution and
   entry existence checks belong to project discovery.
-- [x] Discover projects upward, honor explicit project selection, load manifests, resolve project
+- [x] **MOD-6** Discover projects upward, honor explicit project selection, load manifests, resolve project
   paths, validate entry existence, and deterministically plan reachable modules from source-only
   packages.
-- [~] Resolve path and registry package graphs, lock files, package identities, one-version-per-package
+- [~] **MOD-7** Resolve path and registry package graphs, lock files, package identities, one-version-per-package
   coherence, and program-global providers/implementations. Recursive path dependency resolution,
   dev-dependency propagation, cycle and namespace validation, diamond deduplication, and compilation
   planning across dependency source roots are complete. The typed versioned lock-file model, strict
@@ -679,7 +463,7 @@ same public behavior.
   overrides are ignored. Registry resolution, cache materialization, and hash verification remain.
   Stitched-project inference now accumulates providers and implementations in one program-global
   environment.
-- [~] Stitch the complete project while preserving original file/module spans, definition identities,
+- [~] **MOD-8** Stitch the complete project while preserving original file/module spans, definition identities,
   package provenance, and source-function origins. Semantic definition plans now retain source spans,
   source paths, module names, package identities, qualified names, and compiler names; rewritten module
   syntax retains its `At` spans. Rewritten modules are now combined in dependency order, compile-time
@@ -689,1551 +473,341 @@ same public behavior.
   module boundary; deriving output stays module-local while eligibility validation shares the stitched
   declaration context, trait orphan checks retain package identity, and implementation coherence is
   program-global. Retaining source-function origins through the future IR remains.
-- [x] Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
+- [x] **MOD-9** Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules. Pure-Ashes lifting covers
   header recognition, indentation and dedenting, nested name composition, child-before-parent order,
   same-scope qualifier rewriting, and restricted-body, reserved-name, and duplicate-name validation.
   Reachable compilation planning now publishes synthetic sources with stable provenance, orders nested
   children before parents, rejects reachable file/inline collisions, honors compatibility and explicit
   parent exports, and resolves cross-file whole-module, alias, value-selector, and uppercase type imports.
-- [x] Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
+- [x] **MOD-10** Type external functions, opaque/declared resource types, ownership modes, native strings, arrays,
   pointers, buffers, out parameters, symbols, libraries, and capability requirements. External opaque
   types are registered before function typing; source-call shapes omit compiler-owned out parameters,
   append their values to results, retain ABI syntax for validation, and keep direct-only contracts out
   of first-class bindings.
-- [x] Validate external ABI combinations and produce the metadata required by lowering, code generation,
+- [x] **MOD-11** Validate external ABI combinations and produce the metadata required by lowering, code generation,
   linking, LSP, and package capability auditing. Pure-Ashes validation resolves transparent aliases and
   zero-cost representations, preserves ordered parameter/source shapes and native ownership, verifies
   resource and owned-string destructors, and publishes canonical function, resource, symbol/library,
   direct-call, and sorted runtime-authority metadata with the inferred program.
-- [x] Match the current compiler's entry-expression rules, project diagnostics, and deterministic
+- [x] **MOD-12** Match the current compiler's entry-expression rules, project diagnostics, and deterministic
   diagnostic ordering across files. Declaration-only entries infer Unit, non-entry trailing bodies
   are ignored, and reachable parse diagnostics retain their structured source/span data in stable
   discovery, span, and emission order.
 
 #### IR model and lowering
 
-- [x] Model the complete `IrProgram`, functions, registers, locals, literals, coroutine metadata,
-  ownership instructions, and stable function-origin lineage. The pure model covers all 229 current
-  instruction variants, source locations, task-frame ABI constants, external/trait metadata, and
-  typed source/generated ownership without depending on emitted-label parsing.
-- [x] Implement the canonical lowered/final IR text format and deterministic function selection used by
-  `--emit-ir` and compiler reports. Pure Ashes now preserves stage-0 function order, source/generated
-  selector behavior, trait-evidence annotations, source locations, operand omission and collection-count
-  rules, label alignment, and the complete 229-instruction textual vocabulary.
-- [x] Lower constants, locals, strict left-to-right evaluation, calls, closures, captures, partial
-  applications, and lifted functions. The pure core lowerer threads inference variables and
-  substitutions through curried applications, generalizes lexical lets, interns strings, assigns
-  independent function temp/local spaces, uses deterministic first-free-use capture layouts, emits
-  stack closures for immediate lambdas, and retains nested lifted-function generation order.
-  `lowerCoreProgram`/`lowerCoreProgramWithSource` now drive a whole `ProgramSyntax` rather than only
-  a single expression — the production entry point stage 0's own `Lower(Program)` has and pure Ashes
-  previously lacked (`CoreLowering` was expression-level only, exercised solely by hand-built ASTs in
-  unit tests). It threads lowering state through each top-level item directly instead of desugaring
-  into one big nested-let expression first: a top-level `let recursive ... and ...` group has no
-  expression-level representation (the language allows `and` groups only as top-level declarations,
-  never nested), so `lowerPreparedRecursiveGroupWith` splits the single `lower` continuation the
-  existing recursive-group lowering used into a member lowerer (the ordinary expression lowerer, for
-  each member's own body) and a continuation lowerer (the rest of the top-level items, supplied as a
-  closure rather than a literal `Expr`); `lowerPreparedRecursiveGroup` is now a same-lowerer
-  convenience wrapper over it. Also reports `ASH013`-equivalent duplicate-top-level-binding rejection
-  (`DuplicateTopLevelBinding`) during the walk. Type, external, capability, provider, trait, and
-  implementation declarations are registered by inference ahead of lowering and are not part of the
-  value chain, so they are skipped rather than lowered — a program using them, or any construct whose
-  IR depends on the not-yet-ported ownership/reuse arena-bracketing pass (`selfhost/parity/semantics/
-  lowered-ir/let_bindings.ir` and its neighbors), is out of scope until those land. Covered by
-  `selfhost/tests/semantics/CoreProgramLoweringTests.ash` (plain/self-recursive/mutually-recursive
-  top-level lets, duplicate-name rejection) and a new whole-program IR parity fixture consumer
-  (`selfhost/tests/ir-program-parity`) comparing byte-for-byte against stage-0's already-recorded
-  `simple_arith` lowered-IR fixture, source locations included.
-- [x] Lower control flow, conditions, matches, guards, recursion, mutual recursion, and tail calls.
-  Conditions and scalar matches preserve strict source order, one-time scrutinee/guard evaluation,
-  branch-result joins, and arm-local bindings. Recursive functions use environment-relative self
-  closures instead of capturing an uninitialized slot; recursive groups predeclare monomorphic member
-  types, retain member order, and reconstruct siblings through one shared environment. Tail-position
-  recursive applications remain strict ordinary calls at this phase; the later optimization milestone
-  owns the specified ordinary and mutual back-edge transformations and their ownership/reset rules.
-- [x] Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field access,
-  patterns, and record updates. The pure core lowerer now emits stage-0-compatible tuple words,
-  two-word list cells, interned string references, tagged constructor/record cells, and erased
-  zero-cost wrappers. Constructor layouts carry stable tags, schemes, and declared field order;
-  first-class and partial constructors use ordinary curried closures. Structural matches cover
-  empty/cons lists, tuples, constructors, records, `as`, and `or` patterns, while field access and
-  immutable record updates use declared indices and evaluate replacement fields once. `Bytes` has
-  no source literal form; byte-producing and byte-consuming intrinsics remain with the builtin
-  operation item immediately below.
-- [x] Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
+- [x] **IR-1** Model the complete `IrProgram` — functions, registers, locals, literals, coroutine metadata,
+  ownership instructions, and stable function-origin lineage — covering all 229 instruction
+  variants, source locations, task-frame ABI constants, and external/trait metadata.
+- [x] **IR-2** The canonical lowered/final IR text format and deterministic function selection used by
+  `--emit-ir` and compiler reports, matching stage 0's ordering, annotations, operand rules, and
+  the complete 229-instruction textual vocabulary.
+- [x] **IR-3** Lower constants, locals, strict left-to-right evaluation, calls, closures, captures, partial
+  applications, and lifted functions, driving a whole `ProgramSyntax` (top-level items threaded
+  directly; `let recursive ... and ...` groups split into member and continuation lowerers;
+  duplicate top-level bindings rejected). Covered by `CoreProgramLoweringTests.ash` and the
+  byte-for-byte `selfhost/tests/ir-program-parity` fixtures.
+- [x] **IR-4** Lower control flow, conditions, matches, guards, recursion, mutual recursion, and tail calls
+  (recursive groups predeclare monomorphic member types and share one environment; tail-position
+  recursive applications stay ordinary calls at this phase — the optimization milestone owns the
+  back-edge transforms).
+- [x] **IR-5** Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field
+  access, patterns, and record updates with stage-0-compatible layouts (tuple words, two-word list
+  cells, interned strings, tagged cells, erased zero-cost wrappers).
+- [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
-- [x] Lower external calls, resources/destructors, native ownership conventions, library/resource
+- [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
   references, and target ABI metadata.
-- [~] Lower capability handlers/providers and trait evidence according to the completed semantic
-  plans. Correcting an earlier over-broad `[x]`: dynamically scoped handler globals (save/switch/
-  restore of the global handler-slot array around a `handle`'s install/uninstall) and static-provider
-  dictionary calls are real, working IR (`CoreCapabilityLowering.ash`'s `emitPerformEvidenceSave`/
-  `Switch`/`Restore`, `StoreCapabilityHandler`/`LoadCapabilityHandler`, `emitStaticProviderCall`), but
-  a `handle` never lowers any operation arm's body into the frame it installs — `lowerHandle` snapshots
-  globals and calls `StoreCapabilityHandler`, then never writes a single arm closure into the frame's
-  operation slots, so `emitDynamicPerform`'s closure read for a handled operation reads uninitialized
-  stack memory. `resume` and pre/post handler control flow (stage 0's CPS-style `TryRewriteResume` +
-  `LowerHandleFoldPosts`/`BuildCapabilityPost`) have no selfhost counterpart at all. **Found and fixed
-  while auditing this gap**: the handler return-arm path referenced an unbound `ExprVar("__body_res")`
-  — the handled body's actual lowered result (`bodyTemp`/`bodyType`) was computed and then discarded
-  instead of bound to that name before the return-arm match ran, so any `handle ... with | return(x)
-  -> ...` failed to lower at all (`UnknownLoweringBinding("__body_res")`). Fixed with the same
-  `finishLetValue` binding path an ordinary `let` already uses. Regression:
-  `selfhost/tests/semantics/CoreCapabilityLoweringTests.ash`'s
-  `testHandleReturnArmLowering`. **Arm-closure installation is now ported** for the tail-position
-  `resume` form: every operation arm's body must call `resume` exactly once, and only the simplest
-  case — `resume(e)` as the whole (unwrapped) arm body — rewrites (to plain `e`) and lowers, wrapped
-  in one lambda per parameter exactly like any other closure, then stored into the handler frame at
-  the same offset `emitDynamicPerform` reads from (`(globalCount + 1 + opIndex) * 8`); an arm calling
-  `resume` anywhere else is rejected with `UnsupportedOperationArmResume` rather than silently
-  producing wrong IR. Regressions: `testHandleExpressionLowering` (now also asserts the closure
-  store), `testHandleArmWithoutResumeIsRejected`. **One-shot `let`-position `resume` is now also
-  ported**: `let x = resume(v) in body` as an arm's whole body lowers by wrapping `body` (renamed to
-  a fresh post closure) as the actual continuation passed to the caller, and pushing that closure
-  onto a per-handle "posts" list at the `perform` call site (`collectCapabilityPost`, a 16-byte cons
-  cell allocated the same way list cells already are) rather than running it inline — the operation
-  arm itself still only ever returns the resume value `v`, matching `emitDynamicPerform`'s existing
-  call convention. `lowerHandle`'s exit path now folds that posts list against the handled body's
-  result before returning (`foldCapabilityPosts`/`foldCapabilityPostsLoop`/
-  `finishCapabilityPostsFold`, a hand-rolled loop over the list using `CallClosure`), so the post
-  closure actually runs and its result — not the raw handled-body value — becomes the `handle`
-  expression's value when no posts were queued (an unset post register is `0` and the fold is a
-  no-op passthrough). Non-variable patterns in a one-shot arm's parameters are rejected with
-  `UnsupportedOperationArmResume` — unlike the bare-tail-`resume(e)` case, which still supports them
-  via a synthetic parameter name plus `match` (`buildArmParameterExpr`). Regressions:
-  `testHandleOneShotResumeLowering` (arm closure + fold-loop shape, no `perform` in the handled
-  body), `testHandleOneShotResumeWithPerformLowering` (a real `perform` inside the handled body,
-  proving `collectCapabilityPost`'s cons-cell push fires at the call site, not just the arm-closure
-  and fold-loop halves). **A non-resuming `let`/`let recursive` prefix before either resume shape is
-  now also supported** — an ordinary arm body like `let y = f(x) in resume(y)` (do some work, then
-  resume) previously fell through to `UnsupportedOperationArmResume` even though it should lower
-  fine, since the old shape check only matched a bare tail `resume(e)` or a `let` whose value was
-  *directly* the resume call, not a `let` wrapping either shape one layer down.
-  `resolveOperationArmBody` now recurses through any prefix `ExprLet`/`ExprLetRecursive` whose own
-  value doesn't reference `resume` (rejected otherwise), lowering the prefix through the ordinary
-  `finishLetValue`/`lowerPreparedRecursiveGroupWith` paths with the recursive search for the
-  eventual resume shape supplied as the continuation — mirrors stage 0's
-  `TryRewriteResumeLet`/`TryRewriteResumeLetRecursive`, interleaved with real lowering rather than
-  rewriting the Expr tree first (selfhost's closed `Expr` type has no synthetic node to rewrite a
-  resume site into). Regressions: `testHandleLetPrefixBeforeTailResumeLowering`,
-  `testHandleLetRecursivePrefixBeforeOneShotResumeLowering`. **`if` branches resuming
-  independently are now also supported**: `if cond then <resume-shape> else <resume-shape>`, where
-  `cond` must not reference `resume` (rejected otherwise, same rule stage 0's
-  `TryRewriteResumeIf` applies — there is no one-shot if-condition-resume shape, unlike match's
-  scrutinee, not yet ported) and each branch is independently resolved by the same
-  `resolveOperationArmBody` recursion, so one branch can resume in tail position while the other
-  resumes one-shot. This reused the *existing* if/branching lowering machinery unchanged
-  (`prepareIfPlan`/`lowerIfThenBranch`/`finishIfElseBranch`, already `lower`-parameterized) rather
-  than adding any new control-flow emission — `resolveOperationArmBody` just supplies a small
-  `given (branchBody) -> given (s) -> resolveOperationArmBody(branchBody)(...)` wrapper as the
-  `lower` those functions call per branch, so the pre-existing result-slot/label/join logic (a
-  `StoreLocal`/`Jump`/`Label`/`LoadLocal` join, the same shape any ordinary `if` compiles to)
-  handles the merge for free. Regressions: `testHandleIfBranchesWithDifferentResumeShapesLowering`
-  (mixed tail/one-shot branches), `testHandleIfConditionResumeIsRejected`. **`match` case bodies
-  resuming independently are now also supported** (mirrors stage 0's
-  `TryRewriteResumeMatchCases`): when the scrutinee is NOT itself a resume call, it and every
-  case's guard must not reference `resume` at all (rejected otherwise), and each case body is
-  independently resolved by the same `resolveOperationArmBody` recursion — one case can resume in
-  tail position while another resumes one-shot, same independence as `if`'s two branches. New
-  `resolveOperationArmMatchArm`/`resolveOperationArmMatchArms` mirror `lowerMatchArm`/
-  `lowerMatchArms` exactly, splitting the guard (still lowered through the arm's own ordinary
-  `lower`) from the body (routed through `resolveOperationArmBody`) across the two separate pipe
-  stages those functions already call `lower` from (`lowerMatchGuard` then `finishMatchArm`),
-  rather than needing one `lower` to distinguish the two — simpler than the `if` case's
-  `branchLower` wrapper needed to be. Always dispatches through the plain linear arm-by-arm path,
-  never `lowerMatch`'s own tag-group dispatch optimization (`lowerMatchArmsViaTagGroups`) for
-  constructor-pattern matches — correct but potentially slower IR for a resume-containing match on
-  constructor patterns, acceptable since operation arms aren't a hot path the way ordinary pattern
-  matching is. Regressions: `testHandleMatchCasesWithDifferentResumeShapesLowering`,
-  `testHandleMatchScrutineeIndirectResumeIsRejected`, `testHandleMatchGuardResumeIsRejected`.
-  **The one-shot match-scrutinee shape is now also ported**: a scrutinee that IS directly a resume
-  call (`match resume(v) with | pat1 -> body1 | ...`, stage 0's `TryRewriteResumeOneShotMatch`) —
-  `v` returns to the perform site immediately, and the WHOLE match, re-run against the resumed
-  value via a fresh synthetic parameter, becomes the single post continuation, reusing
-  `lowerOneShotPost` completely unchanged (it already accepts an arbitrary `postBody` Expr, and an
-  ordinary reconstructed `ExprMatch` needs no `resolveOperationArmBody` routing once none of its
-  cases resume again). Since the whole match becomes one post body, there is no further per-case
-  independent resolution the way ordinary case-body recursion allows — every case's body and guard
-  must NOT reference `resume` a second time (multi-shot rejected, `matchCasesReferenceResume`).
-  Regressions: `testHandleOneShotMatchScrutineeResumeLowering`,
-  `testHandleOneShotMatchScrutineeMultiShotIsRejected`. **This closes stage 0's entire
-  `TryRewriteResume` family** — a handler whose arms use tail-position, one-shot-`let`-position, or
-  one-shot-match-scrutinee `resume`, optionally behind a non-resuming `let`/`let recursive` prefix,
-  an `if` with independently-resolved branches, or a `match` with independently-resolved case
-  bodies, now lowers correctly; a `resume` call in any other position (a match/if condition that
-  isn't itself the resume call, a second resume on a path that already resumed once) is rejected
-  rather than silently producing wrong IR. **Gotcha hit while implementing**: `||` is not a valid
-  Ashes infix operator (`&&`/`||` don't exist in the language — see
-  [reference/language.md](../reference/language.md)); a first draft used
-  `exprReferencesResume(caseBody) || guardReferencesResume` inside `matchCasesReferenceResume` and
-  produced an opaque, unlocated `ASH003 Expected expression but found Pipe` from the whole-file
-  parse, requiring bisection (deleting recently-added functions one at a time) to isolate — a
-  chained `if ... then true else if ... then true else ...` is the idiom this codebase already uses
-  elsewhere for combining booleans.
-- [x] Retain source maps, definition/hover identities, diagnostic locations, function origins, and
-  explanation metadata through generated helper functions. Pure Ashes source contexts resolve single-file
-  and multi-file combined offsets to UTF-8 line/column coordinates and filter out internal runtime machinery.
-  Function origins maintain structured provenance across entry, source functions, lambdas, specializations,
-  wrappers, coroutines, normalizers, droppers, and copiers. Hover and public authority collectors index
-  inferred types and capability requirements, and compilation decision snapshots capture function ownership,
-  value placements, and external authority records.
-- [x] Resolve a dependency module's combined-source positions through the stitcher's fragment line
-  anchors rather than by counting lines inside the module's rendered region. A stitched module region
-  is a re-rendering (export block and header gone, declarations hoisted, binding values rendered with
-  renamed identifiers), so region-relative lines are wrong for every module but the entry; stage 0
-  now records a `SourceLineAnchor` (combined range, file line and column where the fragment's text
-  starts) for each rendered binding value and hoisted declaration and maps a position by line delta
-  from its anchor, leaving glue between anchors unlocated. Without this, breakpoints cannot be set in
-  dependency modules of a program compiled by the self-hosted compiler. The self-hosted stitcher
-  combines syntax trees rather than re-rendered text, so a module's spans stay offsets into its own
-  file and need no anchors: pure Ashes resolves a span through the combined item it belongs to
-  (`StitchedItemRegion`, `createStitchedSourceContext`, `resolveItemSpanLocation` in
-  `SourceContext.ash`), using the item's module region to name the file and that file's own line
-  index for the line and column, and leaves an item outside every region unlocated as stitching
-  glue. The core lowerer now carries the innermost enclosing `ExprAt` span in its state (restored
-  when the node is left) and tags every emitted instruction through the item-aware context
-  (`lowerCoreExpressionLocated`), so a dependency item's instructions carry that module's file and
-  lines; covered by `selfhost/tests/semantics/MetadataAndOriginsTests.ash`.
-- [x] Validate lowered IR invariants and compare normalized IR fixtures with the C# compiler. Pure Ashes
-  IR validation enforces program-level invariants (entry label and non-closure contract, unique function
-  and string literal labels, non-negative capability globals), function-level invariants (non-negative
-  local and temp index bounds, intra-function label uniqueness, branch target resolution to defined
-  labels, referenced string literals, non-negative coroutine metadata, and local debug metadata bounds).
-  Shared normalized lowered IR fixtures in `selfhost/parity/semantics/lowered-ir/` compare stage-0 lowering
-  and formatting with pure-Ashes output across arithmetic, let bindings, closures/captures, pattern matching,
-  and mutual recursion.
+- [~] **IR-8** Lower capability handlers/providers and trait evidence according to the completed semantic
+  plans. Done: dynamically scoped handler globals (save/switch/restore around a `handle`),
+  static-provider dictionary calls, operation-arm closure installation, and stage 0's entire
+  `TryRewriteResume` family — tail-position `resume(e)`, one-shot `let x = resume(v) in body`
+  (post closures queued at the `perform` site and folded at `handle` exit), the one-shot
+  match-scrutinee shape, non-resuming `let`/`let recursive` prefixes, and `if`/`match` branches
+  resuming independently; a `resume` in any other position is rejected
+  (`UnsupportedOperationArmResume`) rather than lowering wrong. Covered by
+  `CoreCapabilityLoweringTests.ash`. Open: trait-evidence physical lowering (tracked under the
+  traits section) and the static `provide` capability-resolution pipeline.
+- [x] **IR-9** Retain source maps, definition/hover identities, diagnostic locations, function origins, and
+  explanation metadata through generated helper functions (single- and multi-file source contexts,
+  structured provenance, hover/public-authority collectors, compilation decision snapshots).
+- [x] **IR-10** Resolve a dependency module's combined-source positions through stitched item regions — the
+  self-hosted stitcher combines syntax trees, so a module's spans stay offsets into its own file,
+  and every emitted instruction carries the innermost enclosing `ExprAt` span. Covered by
+  `MetadataAndOriginsTests.ash`. (Stage 0's re-rendered text regions needed `SourceLineAnchor`
+  fragment anchors instead — recorded there.)
+- [x] **IR-11** Validate lowered IR invariants (program- and function-level) and compare normalized
+  lowered-IR fixtures byte-for-byte with the C# compiler
+  (`selfhost/parity/semantics/lowered-ir/`).
 
 #### Optimization, ownership, and reuse
 
-- [x] Port compile-time evaluation and the current deterministic IR optimization pipeline, including
-  constant simplification, dead-code cleanup, inlining/specialization, and metadata preservation.
-  Pure Ashes compile-time evaluation evaluates pure constant-argument calls with bounded step (50,000)
-  and depth (1,000) budgets, with full scalar call folding into constants. The deterministic optimization
-  pipeline implements trivial ownership-copy elision (erased RcDup and single-use/copy-type Borrow remap),
-  runtime RcDup sinking into branch diamonds, adjacent runtime RcDup/RcDrop fusion, known closure
-  devirtualization (CallClosure -> CallKnown), constant propagation and folding with single-predecessor
-  label flow, identity elimination and strength reduction, unreachable code elimination, dead code
-  elimination, erased RcDrop marker cleanup, and interprocedural redundant arena bracket stripping.
-- [x] Extend constant propagation to compute a true meet-over-paths at multi-predecessor labels (a fact
-  survives only if every incoming edge agrees on it), not just single-predecessor label flow, and to
-  local-slot state (StoreLocal/LoadLocal), not just raw temps. Pure Ashes now records one fact
-  snapshot per predecessor edge (each `Jump`/`JumpIfFalse` target, each `SwitchTag` case and default)
-  keyed by target label, intersects them with the fall-through state at the label once every counted
-  edge has been observed, clears every fact at a label with an unobserved backward edge, tracks
-  `StoreLocal`/`LoadLocal` slot facts that a store of an unknown value kills, and folds a load of a
-  known slot into a literal; covered by `selfhost/tests/semantics/IrOptimizerTests.ash`, which this
-  milestone also wires into the semantics test entry along with `IrValidationTests.ash`. The C# optimizer computes the meet by
-  accumulating a state snapshot per predecessor edge (explicit branches, plus one edge per `SwitchTag`
-  case/default, plus fall-through) and, once every edge into a label has been observed, intersecting
-  them; a label with an edge not yet observed at that point in a forward scan (e.g. a loop back-edge)
-  still conservatively clears all knowledge, matching the historical behavior for loop headers. Local-slot
-  tracking is not a side detail: every `let`-bound value and if/match join result in Ashes IR is lowered
-  through a mutable local slot (a StoreLocal in each producing arm, a LoadLocal at the point of use),
-  never through direct temp reuse across a label — so temp-only meet-over-paths, alone, folds nothing in
-  real compiled programs (verified: it only ever fires on synthetic hand-built IR with raw temps reused
-  directly across a branch, a shape that doesn't occur in real lowered output). A slot holds at most one
-  of Int/Float/Bool at a time; a store of an unknown or non-scalar value kills stale knowledge for that
-  slot, since a slot is ordinary mutable storage, not single-assignment like a temp.
-- [x] Fold a conditional branch whose condition is statically known (via the constant propagation above):
-  rewrite `JumpIfFalse` to an unconditional jump when the condition is known false, or drop it entirely
-  when known true, leaving execution to fall through to the surviving arm. Recompute predecessor edges
-  fresh from the post-fold instruction list (not reused from before folding) when deciding whether a label
-  still re-establishes reachability after a terminator, so a branch whose only remaining edge was just
-  folded away is recognized as genuinely dead — including the label instruction itself and its body —
-  rather than only losing its guarding jump while its now-unreachable body silently survives. Pure
-  Ashes now folds a `JumpIfFalse` on a known condition (dropped when true, so no edge snapshot is
-  recorded for the never-taken target; an unconditional `Jump` carrying its snapshot when false), folds
-  a `SwitchTag` on a known tag to a `Jump` to the first case carrying that tag or the default, and
-  rebuilds branch-reference counts inside unreachable-code elimination so a label with no remaining
-  reference inside an unreachable region is dropped together with its body; covered by
-  `selfhost/tests/semantics/IrOptimizerTests.ash`.
-- [x] Re-run ownership-copy elision after identity elimination/strength reduction within the same
-  optimization invocation: identity reduction (`x+0`, `0+x`, `x-0` -> `x`) rewrites the identity into a
-  copy instruction rather than retargeting downstream uses directly, and — because a single-pass pipeline
-  runs each stage once — that new copy is never revisited by the copy-elision stage that already ran
-  earlier and would otherwise erase it (an erasable copy is one whose source is a constant producer, or
-  whose target has exactly one remaining use). Ownership-copy elision must be a pure function of its
-  input (recomputing its use-def facts fresh each call) for a second call to be safe and effective.
-  Pure Ashes now runs `elideTrivialOwnershipCopies` a second time directly on the output of
-  `reduceIdentitiesAndStrength` (its copy-type producers and use counts are recomputed on every call,
-  so the second run needs no shared state), erasing the `Borrow` copies the identity rewrites
-  introduce; covered by `selfhost/tests/semantics/IrOptimizerTests.ash`.
-- [x] Extend closure devirtualization (`CallClosure -> CallKnown`) past a single `MakeClosure`
-  definition: a curried call's second and later applications (`add(10)(32)`) never devirtualize
-  today because the closure temp being called is defined by a `CallKnown` (the first application),
-  not a `MakeClosure`, so the existing single-definition-count test never fires past the first
-  argument. Compute, per function, via a whole-program least fixpoint (the same "repeat one pass
-  until nothing changes" control structure the non-allocating-function summary already uses,
-  generalized from a shrinking candidate set to a growing known-label map), whether every `Return`
-  in a function's body is provably the same closure label — directly from a *heap* `MakeClosure`, or
-  transitively through a `CallKnown` to another function already proven, earlier in the fixpoint, to
-  return that same label. **Deliberately excludes a stack-allocated closure as a "known returned
-  label" source, reasoned through before writing any code, not found by a wrong answer**: a stack
-  closure's environment lives in its defining function's own native stack frame, gone the instant
-  that function returns, so treating one as a function's known return value would let a later caller
-  extract and dereference a dangling pointer once devirtualized. At a `CallClosure` site whose
-  closure temp reaches such a `CallKnown`, rewrite to an explicit environment-field extraction
-  (a plain read of the closure object's fixed env offset, matching the ordinary closure-call code
-  generator's own field layout) immediately followed by a direct `CallKnown` — a plain field read
-  neither consumes nor extends the closure object's lifetime, so it does not disturb whatever
-  ownership/RC placement already exists for that temp. Iterate the rewrite per function to its own
-  local fixed point so a curry deeper than two arguments fully resolves in one optimization pass, not
-  just its first newly-direct hop. A two-to-four-label lambda-set-specialization dispatch (emitting a
-  small direct-call-per-arm dispatch when a closure temp's reaching definitions disagree across a
-  small closed set, rather than declining outright) was scoped as a stretch extension to this same
-  capability and was not implemented in the C# compiler either — treat it as a separate, larger unit
-  of work, not something this checklist item's own `[x]` should imply. Pure Ashes now computes the
-  known-returned-label map as a whole-program least fixpoint over every function's `Return` sources
-  (a single-defined heap `MakeClosure`, or a `CallKnown` to a function already in the map; a
-  `MakeClosureStack` never qualifies), then rewrites each `CallClosure` whose closure temp is such a
-  `CallKnown` result into a `LoadMemOffset` of the closure object's environment word at offset 8
-  plus a direct `CallKnown`, iterating every function to its own local fixed point after the
-  per-function pipeline and before arena-bracket elimination; covered by
-  `selfhost/tests/semantics/IrOptimizerTests.ash` (direct, transitive, and stack-closure-declined).
-- [x] Add a local common-subexpression elimination pass, scoped to a single straight-line block (reset
-  at every label, never across control flow): forward a duplicate `GetAdtField` read or a duplicate
-  `CallKnown` call to a function proven pure by the compile-time-evaluation purity oracle (reused, not
-  reimplemented) to the first occurrence's result. Operands must be canonicalized through a
-  LoadLocal/StoreLocal/Borrow/RcDup alias map before keying the cache — the same lesson meet-over-paths
-  above already learned: real Ashes IR round-trips almost every value through a local slot, so
-  raw-temp-identity-only keying folds nothing in real compiled programs (the ubiquitous `let x = p.x in
-  let y = p.x` shape never matches without it). A function's own env/arg slots (0/1) additionally need
-  a seeded identity: the backend's entry prologue populates them with a native store the IR-level
-  optimizer never sees as an explicit `StoreLocal`, so without seeding, every read of a function's own
-  argument looks like an unknown value. The cache must be invalidated on any instruction that could
-  write through an aliased pointer (`SetAdtField`, any allocation/reuse variant, a non-pure call) but
-  explicitly NOT on arena/stack bookkeeping (`SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks`/
-  `SaveStackPointer`/`RestoreStackPointer`) — those move an allocator cursor, never write through an
-  existing pointer, and every `let` binding gets its own such bracket in practice, so treating them as
-  aliasing would silence this pass almost everywhere. Separately, note that `CallKnown`-based merging is
-  currently reachable only when the closure was already devirtualized from `CallClosure`, which itself
-  requires the closure temp to trace directly to a `MakeClosure`/`MakeClosureStack` with no intervening
-  local-slot round-trip — a condition essentially no `let`-bound function call satisfies today, a
-  separate, pre-existing devirtualization gap this task did not attempt to fix. Pure Ashes now
-  ports the block-local pass with the alias map, the seeded env/arg slot identities, the
-  deny-by-default invalidation list with the arena/stack bookkeeping exemption, and the
-  `computeEvaluableFunctions` oracle reused for known-call merging; the fresh-allocation
-  store-to-load forwarding is the next item.
-- [x] Extend the local common-subexpression pass above with store-to-load/projection forwarding:
-  when a `SetAdtField` writes through a pointer proven fresh in the same block (an `AllocAdt`/
-  `AllocAdtStack` target — nothing that existed before it could hold or derive a reference to memory
-  that didn't exist yet), record the field cache entry directly from the write instead of only from a
-  subsequent read, so an immediately-following `GetAdtField` of the same (pointer, field) forwards the
-  stored value without round-tripping through memory (the `Point(p.y, p.x)`-style construct-then-
-  destructure shape, matching Ashes' allocation-tier recognition for the same pattern). A write
-  through a not-known-fresh pointer keeps the existing fully-conservative invalidate-everything
-  behavior, since it could alias any entry already cached. **Sharp edge, found only by compiling and
-  running real `.ash` source, not by hand-built raw-IR unit tests**: the cached value must be the
-  write's raw, unresolved source temp, never its alias-canonicalized identity — canonicalization can
-  resolve down to a synthetic, negative sentinel (the seeded identity for a function's own env/arg
-  slot with no real defining instruction visible to this pass), and a sentinel is only ever safe as a
-  cache *key* for matching two operands as the same value, never as a forwarded, *emitted* value —
-  emitting one produces an out-of-range temp reference that crashes at codegen. This pattern (a fresh
-  record's field set from a value that itself traces back to the enclosing function's own argument)
-  is completely ordinary real code and was not exercised by any of this pass's own unit tests, only by
-  compiling actual source and running the result. Pure Ashes now tracks `AllocAdt`/`AllocAdtStack`
-  targets as fresh per block, populates the field cache from a `SetAdtField` through one with the
-  write's raw source temp, and its test covers the sentinel edge directly (a fresh record's field
-  set from the function's own argument, read back and added).
-- [x] Add closure environment scalarization for a single scalar capture: when a stack-allocated
-  closure's environment holds exactly one 8-byte value and its only use is already a devirtualized
-  `CallKnown`, skip the environment allocation entirely and pass the captured value directly as the
-  call's existing "env" argument, generating a scalar-reading callee variant (memoized per target
-  label, original left untouched) rather than rewriting the callee in place. **Sharp edge, found only
-  by compiling and running real `.ash` source, not by this pass's own hand-built raw-IR unit tests**:
-  a real (non-coroutine) lowered closure reads a capture via the dedicated `LoadEnv(Target, Index)`
-  instruction, which dereferences local slot 0 implicitly inside its own codegen — never via an
-  explicit `LoadLocal(_, 0)` + `LoadMemOffset` pair, the shape a hand-built raw-IR test naturally
-  produces and this pass was originally built around, and which essentially never occurs in real
-  lowered output. Scope stays to exactly one capture: every Ashes-callable function shares one fixed
-  3-word LLVM call signature so `CallClosure`'s indirect dispatch stays uniform regardless of capture
-  count; an N-ary direct-call-only variant would need a new calling convention and a new IR
-  call-instruction shape, out of scope here. Also excludes a coroutine callee (its state-machine
-  transform rewrites `LoadEnv` into a `LoadMemOffset` against its own frame/state-struct temp instead
-  — materially different and riskier) and a callee that reads the env slot as a raw value anywhere
-  outside of `LoadEnv`. Removing the environment allocation lets the existing arena-bracket-stripping
-  pass also strip the now-redundant bracket around the call as a free consequence, not something this
-  pass touches directly — measured **1.51x faster at `-O0` and 2.65x faster at `-O2`** on a
-  20,000,000-iteration hot loop building and calling a single-capture closure per iteration; unlike
-  most passes in this pipeline, the `-O2` win is real (not subsumed by LLVM) because it comes from
-  removing genuine arena-cursor runtime bookkeeping, not the allocation itself. Pure Ashes now
-  ports the one-capture form: the caller-side gate (single-definition 8-byte `AllocStack`, one
-  store at offset 0, two uses), the `LoadEnv`-only callee gate with the coroutine and raw-slot-0
-  exclusions, the memoized `__scalarenvN` variant that reads slot 0 directly, and the original
-  callee left untouched; the two-capture extension is the next item.
-- [x] Extend closure environment scalarization to two scalar captures, and reach let-bound local
-  helpers with it. A second capture travels in the call's ownership-flag word, which is free
-  whenever the `CallKnown` passes no flag and the callee's body never reads one: the variant reads
-  it through `LoadArgumentOwnership` (a raw read of that same parameter), the caller-side gate
-  accepts a 16-byte `AllocStack` filled by exactly one store per 8-byte capture and used nowhere
-  else, and three or more captures still keep their environment (the shared 3-word signature has
-  no further free word). `LoadArgumentOwnership` counts as non-allocating so the scalarized call's
-  arena bracket is stripped. Closure devirtualization resolves a call's closure temp through a local
-  slot written by exactly one `StoreLocal` (lowering only reads a binding's slot inside the
-  binding's own scope, after the store), removes the load it made dead, and removes the scope-exit
-  `CleanupResource(Function)` of a stack closure that never received a dropper (no store to the
-  closure object's dropper word at offset 24 — a runtime no-op), so the slot, the closure
-  construction, and the environment die and a `let step = given x -> ...` helper scalarizes like an
-  immediately-applied lambda. Measured **2.76x at `-O2` / 1.57x at `-O0`** on a 20,000,000-iteration
-  loop building and calling a two-capture let-bound helper per iteration; the already-scalarized
-  single-capture immediately-applied shape is unchanged. Pure Ashes now ports both halves: the
-  16-byte site gate with the free-flag-word condition, the `LoadArgumentOwnership` variant read
-  and its callee exclusion, `LoadArgumentOwnership` as non-allocating, and slot-resolved
-  devirtualization with dead-load and dropper-free cleanup removal.
-- [x] Prune a closure capture the lowered body never reads via `LoadEnv` (a lowering-stage change,
-  not part of the `IrOptimizer` pipeline above, since a capture's environment is built at the
-  creation site *before* the body is lowered and its used-set is known): record each capture's fill
-  instruction range at construction time, then once the body's own instructions are available, delete
-  the fills for indices with no corresponding `LoadEnv` read, renumber the survivors to a compact
-  `0..k-1` range in both the fill offsets and the body's `LoadEnv` indices, and shrink the environment
-  allocation's size to match — so every downstream consumer that recomputes its own offsets from the
-  capture list's enumeration order (resource-capture tracking, the runtime-managed-closure dropper and
-  normalizer) needs no separate patching. A capture that required retaining an owned outer value has
-  that retain's accounting explicitly undone when its fill is deleted, not just the instruction
-  removed. Declines a self-referential lambda (it reconstructs a closure over this same environment
-  from inside its own body using a size recorded before pruning could run) and a mutual-recursion
-  group (the environment is shared and filled once at the group site, not per member); a coroutine
-  body is unaffected by construction, since it never goes through this capture/environment path at
-  all. Composes with, but is a separate capability from, the single-scalar-capture environment
-  scalarization above — a two-capture closure with one dead capture becomes eligible for that
-  optimization only once this pass has pruned it down to one. **Measured**: pruning a mutual-recursion
-  dispatch closure's env from two captures (16 bytes) to one (8 bytes) also unlocked the
-  runtime-managed-closure normalizer above as a purely emergent side effect (that pass had been
-  blocked only because the *other*, now-pruned capture wasn't itself runtime-normalizable). A
-  200,000,000-iteration driver repeatedly entering the same mutual-recursion group ran **14% faster at
-  the CLI's default `-O2`** — unlike most passes in this pipeline, this `-O2` win is real because it
-  removes an allocation LLVM has no way to reconstruct once Ashes has already chosen to omit it.
-  Pure Ashes now lowers a plain lambda's body before building its environment, so the pruning is a
-  filter over the capture list plus a `LoadEnv` renumbering of the finished body rather than a
-  deletion of already-emitted fills (`pruneDeadCaptures`, with the self-referential and group paths
-  untouched); its free-variable analysis is shadowing-exact, so no current lowering path produces a
-  dead capture and the mechanism is covered by direct tests over hand-built bodies.
-- [x] Fold a left-nested chain of string-concatenation calls with single-use intermediates into one
-  N-ary concatenation that allocates once for the sum of every part's length and copies each part
-  directly into its final position, instead of paying one allocation and one growing copy per link
-  (`n-1` allocations, `O(n^2)` bytes copied, for `n` parts). Run this as the very last step of the
-  optimization pipeline, after every other pass, so no earlier pass needs to know about the new
-  instruction shape — only code generation does. **A single-use/def-count safety check is necessary
-  but not sufficient, found only by running the compiled output of a realistic chain, not by
-  hand-built unit tests**: folding delays reading an *earlier* part's string until the new
-  instruction's position, at the end of the chain: if a *later* part's own computation reclaims a
-  bump-allocator cursor back past where the earlier part was allocated (e.g. each part is an inlined
-  helper call, each with its own arena save/restore/reclaim bracket), the later part's own
-  allocation can land at the same address the earlier part still needs to read from — invisible to a
-  pure single-use analysis, since each temp genuinely is used exactly once; the hazard is *when* it's
-  read relative to a reclaim, not how many times. Fix: before committing to a fold, scan every
-  instruction from the innermost part's own definition through the fold point for any arena
-  save/restore/reclaim bracket, stack-pointer save/restore, or branch/label instruction, and decline
-  the whole chain if any appear — conservative on purpose (it does not attempt to prove a *specific*
-  reclaim's range excludes a *specific* part's address). This materially narrows how often the fold
-  fires: any part computed via a real function call typically carries its own arena bracket, so in
-  practice this applies mainly to chains built from literals and other allocation-free intermediate
-  values, not general "each part is an arbitrary expression" chains — a correctness-motivated
-  narrowing, not a missed opportunity to relax later without more analysis work. **Measured**: a
-  5-part literal chain (`"user " + "has " + "42 " + "items " + "today"`) inside a
-  20,000,000-iteration loop ran **~2.25x faster at `-O0`** and **~15-17x faster at the CLI's default
-  `-O2`** — unlike most passes in this pipeline, the `-O2` win dominates, since LLVM cannot invent
-  away a real allocator call with observable side effects that the unfolded chain pays every
-  iteration. Pure Ashes now carries `ConcatStrN` through its IR model, text dump, validation, and
-  temp scans, and folds as the last program-level step with the same single-use chain walk, the
-  runtime-managed flag agreement, and the bracket/branch decline over the innermost-part-to-root span.
-- [x] Port the two whole-program closure-environment passes that run between the per-function
-  pipeline and scalarization in the C# optimizer (`IrOptimizer.ClosureEnvironments.cs`).
-  `DevirtualizeCapturedClosureCalls` resolves a `CallClosure` through a `LoadEnv` slot when every
-  creation site of the enclosing function's environment stores the same closure label into that
-  slot — a creation site being a `MakeClosure`/`MakeClosureStack` over a fresh single-store
-  environment or the `CallKnown` the per-function devirtualization already produced for an
-  immediately-called closure, and a stored value resolving directly, through a single-store local
-  slot, through a captured slot of the creating function (a whole-program fixpoint over the capture
-  graph), or through a call with a known returned label; any disagreement leaves the call indirect.
-  `InlineCurryingStages` recognizes a stage function that only copies its captures and argument
-  into a fresh environment and returns a closure over the next stage, and rewrites a caller that
-  calls the stage, extracts the closure's environment, and calls the next stage into a caller-frame
-  `AllocStack` environment filled directly, iterated to a fixpoint per function. Motivation: a
-  stitched module's functions call each other through captured alias bindings, so the self-hosted
-  packages were almost entirely `CallClosure` (9,894 against 542 `CallKnown` in the stage-1 phase
-  benchmark) and every saturated curried call paid a heap environment per stage; the passes took
-  the benchmark's lexer row from 7.6x to 3.1x of the .NET lexer and the parser row from 2.9x to
-  1.4x. Both keep every rewritten instruction at the original call's position so the ownership
-  placement of the extracted environment stays valid. Pure Ashes now ports both passes in the
-  stage-0 order (captured devirtualization, returned devirtualization, stage inlining,
-  scalarization, returned devirtualization again): capture sites are collected per environment
-  word from every `MakeClosure`/`MakeClosureStack`/`CallKnown` over a single fresh allocation,
-  grouped by (label, word), and settled by a whole-program fixpoint whose resolution follows the
-  same single-definition, single-store-slot, `Borrow`, `LoadEnv`, and known-returned paths; a
-  stage shape is matched instruction by instruction and the chain rewrite is keyed by body
-  position so the environment-word load is dropped and the next call retargeted in place;
-  covered by `selfhost/tests/semantics/IrOptimizerTests.ash` (captured call devirtualized,
-  disagreeing sites declined, pure stage inlined into a caller-frame environment, retaining
-  stage declined).
-- [ ] Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound
-  accumulator form `let acc2 = acc + rhs in loop(...)(acc2)`, as the C# compiler now does. Four
-  coordinated pieces, three of them in the not-yet-ported move-analysis/ownership side (see the
-  reuse/move-analysis section below): the affine-self-append analysis follows a *single-use* `let`
-  alias of a candidate parameter (a fail-closed occurrence counter — any unrecognized expression
-  shape counts as a second use — gates eligibility, because the whole transform is sound only for a
-  binding consumed exactly once); the in-place append is armed while lowering that `let`'s value
-  rather than at the tail-call argument; and loads of the armed binding carry the append result's
-  producer fact so the tail-call back edge recognizes the argument as the in-place-grown accumulator
-  (whose append already consumed the old parameter's reference) and skips the predecessor release —
-  without that skip the accumulator is freed while live, a crash once it outgrows its first chunk.
-  Porting note: the C# reset resolution replays each function's instructions with all per-temp facts
-  cleared and re-derived from the instructions alone, so this fact must be recoverable from durable
-  per-function state (keyed by function and local slot), not only stamped once at initial lowering.
-- [x] Add a control-flow simplification pass: jump threading (redirect a branch through a chain of
-  empty labels — a label immediately followed by nothing but an unconditional jump — straight to the
-  chain's final destination), unreferenced-label removal, and elision of a Jump immediately followed
-  by its own target label (a redundant fallthrough). Every rewrite is locally safe without reachability
-  analysis: redirecting a branch aims it at the same eventual destination; dropping a label with zero
-  remaining references removes only a marker, never the code around it; and a redundant fallthrough
-  Jump is a pure no-op (nothing can jump directly to a Jump instruction itself, only to a label, so it's
-  reached solely by fallthrough, which reaches the label just as well without it). **Requires iterating
-  jump-chain redirection together with unreachable-code elimination to a true fixed point, not a single
-  pass**: redirecting several distinct branches to the same final label, once the now-unreferenced
-  labels that used to separate them are dropped, stacks multiple unconditional Jumps directly
-  back-to-back — every one after the first is newly unreachable code, and removing it can in turn bring
-  a surviving Jump directly adjacent to its own target label, exposing a further redundant-fallthrough
-  opportunity. A single application of "simplify, then sweep unreachable code" is not enough to fully
-  collapse a real multi-arm `match` cascade (verified: a real compiled 4-constructor match left one
-  redundant Jump/Label pair per arm after one pass, cleared only once the pair is iterated to a fixed
-  point — the instruction count strictly decreasing each iteration bounds the loop). Primarily valuable
-  at `-O0`/`--debug` (LLVM's own `simplifycfg` already performs this at `-O1`+) and for
-  `--emit-ir`/`--explain` output quality; measured no meaningful hot-loop speed change at either `-O0`
-  or `-O2` on a representative match-heavy benchmark (within measurement noise at both), consistent with
-  removing well-predicted branches rather than real work. Pure Ashes now ports the three rewrites
-  (`simplifyControlFlow`) and iterates them with unreachable-code elimination until the instruction
-  count stops decreasing (`simplifyControlFlowToFixedPoint`).
-- [x] Extend match compilation to group arms by their outer constructor tag (not just emit one tag
-  switch for an already-fully-trivial flat match): more than one arm may share a tag, sharing one tag
-  test across all of them, with a group of more than one case (or a single non-trivial nested
-  sub-pattern) falling back to linear per-case testing scoped to that group only — never reordering or
-  duplicating an arm across leaves, so this stays a pure grouping decision layered on top of already-
-  correct per-arm testing/binding/reuse-token logic rather than a new pattern-matching engine. Also
-  eliminate a redundant top-level-constructor-tag-only "exhaustive" check for dead-arm elimination in
-  favor of a fully recursive, per-field-position coverage query (`Ok(true) | Ok(false) | Error(_)` must
-  be provably exhaustive without needing a trailing wildcard, unlike naive tag-set coverage, which
-  wrongly treats it as exhaustive after just two arms and can silently drop a live arm). **Sharp edge,
-  confirmed twice**: the scrutinee's type can still be an unresolved type variable at the point this
-  decision must be made — not just for a recursive function's own parameter, but for any function's own
-  parameter whose type is pinned down only by unifying it against this same match's own patterns, which
-  has not happened yet this early. The fix is not to decline until some later point (arm emission itself
-  needs the trimmed case list first) but to perform that unification explicitly, one pattern at a time,
-  before deciding — unification is idempotent, so doing it slightly earlier than it would otherwise
-  happen adds no new constraint a correct program would not already require. Measured on two
-  representative shapes against a temporary pre-task baseline: a repeated-tag match with two genuinely
-  divergent nested cases (the outer tag shared, but each case still needing its own test) ran **~1.06x
-  faster at `-O0`, ~1.04x faster at `-O2`**; five distinct-tag arms where only one has a non-trivial
-  nested sub-pattern (previously disqualifying the *entire* match from tag-switch dispatch, not just
-  that one arm) ran **~1.46x faster at `-O0`, ~1.03x faster at `-O2`** — the more representative,
-  larger win, since disqualifying an entire match over one nested arm was the dominant real-world cost.
-  Not yet closed: a multi-case group's own cases still each re-test the already-proven-by-the-outer-
-  switch tag via general pattern testing, rather than a tag-already-known field-extraction variant;
-  column reordering and cross-arm frequency heuristics remain unexplored. **Third confirmed sharp
-  edge**: a group's last case's failure target must be the group's own trailing default arm's label
-  whenever one exists in the match, not the match's overall exhaustiveness-failure label — a case
-  whose outer tag matches but whose nested sub-pattern then fails (`Some(('>', _))` failing its
-  character literal test) is exactly the situation a trailing `_` arm exists to cover, and routing it
-  to the failure path instead produces a null result (segfault) or, when the failure path itself
-  falls through by construction, silently skips the case entirely. Confirmed by a real regression:
-  `reverse-complement` printed only its first FASTA header on every input because this exact shape
-  (`Some(('>', _)) -> ... | _ -> ...`) misrouted on every line after the first. Pure Ashes now ports
-  the tag-group dispatch (`planTagGroups`/`lowerMatchArmsViaTagGroups`): first-seen groups, one
-  trailing catch-all as the switch default and every group's fail target, trivial single-case groups
-  binding their payload with no tag re-test, linear testing within any other group, stage 0's
-  four-arm linear threshold for an all-trivial match, and a decline for guards, zero-cost
-  constructors, or a second ADT. Dead-arm elimination and its recursive coverage query are carried
-  by the next item, which the pure-Ashes lowering does not have yet. A bare `None`/`NoVal` arm is a
-  variable pattern in the syntax tree (the parser cannot tell a binder from a nullary constructor);
-  pure-Ashes inference, pattern-binding preparation, lowering, and the group planner now resolve such
-  a name against the constructor table exactly as stage 0 does, so it is a tag test rather than a
-  catch-all binder that silently absorbed every later arm.
-- [x] Gate the dead-arm trim above to pattern shapes the coverage engine analyzes exactly. The
-  "Missing case" engine is a deliberate under-approximation of what is missing — correct for a
-  diagnostic, which must never report a false "Missing case", and unsound as a proof that a trailing
-  arm is unreachable: constructor argument positions are checked independently of one another
-  (`(true, false) | (false, true)` covers both columns while `(false, false)` is unmatched), and a
-  record sub-pattern contributes no field constraints at all, so `None | Some(Def { body = None })` is
-  judged exhaustive and the live `Some(Def { body = Some(b) })` arm is deleted before lowering.
-  **Found only by compiling and running the self-hosted semantics package itself**: that arm was
-  `findInferenceTraitMethod`'s default-body case, so every default-method dependency check fell off
-  the end of its match (a segfault at first; a silently wrong `error = None` once the default-arm
-  routing fix above changed what a fallen-off match yields), and the same trim fired at four more
-  sites. The prefix stops growing the moment a pattern enters it that is not a catch-all, a bool
-  literal, the empty list, or a constructor/cons/tuple whose every child is a catch-all — for those,
-  coverage reduces to the constructor set the engine enumerates completely; record patterns,
-  int/string/rune literals, and any nested non-catch-all structure decline. The dead `_` after a
-  complete set of catch-all-argument constructor arms is still trimmed.
-- [x] Port ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
-  signals without changing strict evaluation order. Pure Ashes TCO analysis identifies tail positions
-  across expressions and match arms, detects direct self-recursive tail calls for loop conversion, and
-  decomposes mutual recursion groups into SCCs with tag-based dispatch trampoline plans. Profitability
-  and cost signals analyze parameter RC-eligibility, allocation and borrow blockers, and threshold-based
-  profitability verdicts without violating strict evaluation semantics. Fully validated with pure-Ashes
-  test suite in `selfhost/tests/semantics/TcoTests.ash`.
-  Pure Ashes now ports the trim with the gate built in (`trimProvablyUnreachableTrailingCases`):
-  the prefix grows one guard-free arm at a time only while every arm is a catch-all, a bool literal,
-  the empty list, or a cons/tuple/constructor whose children are all catch-alls, and for those shapes
-  its coverage verdict is exactly the constructor set (from the layouts of the arms' ADT), the bool
-  pair, or the two list shapes, so it needs no per-field engine; a literal, record, or nested
-  constructor sub-pattern stops the prefix, and the trailing arms after a covering prefix are dropped
-  before planning or lowering.
-- [x] Upgrade LLVM's advisory `tail` marker to the hard-guarantee `musttail` marker for a non-loop tail
-  call already proven `CanEmitNativeTailCall`-eligible, gated by a whole-function scan for any native
-  stack allocation (closure environments and capability/effect-handler frames both use the same
-  stack-allocation mechanism, and a handler frame's pointer can outlive a tail call later in the same
-  function via a dynamically-scoped global). `IrCodegen.ash` fuses three shapes into a `musttail`
-  call followed by `ret`: `CallKnown` immediately followed by the matching `Return`, and a
-  `CallKnown` whose result is stored to a tail-join slot followed by either a `Jump` or direct
-  fallthrough into the join label. Joins are recognized by `computeTailJoins`, a backward walk over
-  the copy-forwarding suffix (`LoadLocal(x, s); Return(x)` returns slot `s`; each
-  `LoadLocal(t, s2); StoreLocal(s, t)` pair above forwards `s2` into `s`; every label passed maps
-  to the slot current at that point), so arbitrarily deep match/if join chains fuse — a
-  `match ... with Continue(m, r) -> loop(m - 1)(acc + r)` back edge two joins from the return
-  included. When the function stack-allocates, the call keeps the advisory `tail` marker instead;
-  correspondingly, `IrOptimizer.ash`'s currying-stage inlining now allocates a chain's environment
-  on the HEAP (the stand-in allocator's leak-not-miscompile trade) instead of `AllocStack` when the
-  chain's final call re-enters the enclosing function itself, so a recursive back edge through an
-  inlined stage stays `musttail`-fusable rather than growing the frame per iteration until the
-  stack guard. This makes deep self-recursion, mutual recursion, closure-helper loops, and
-  fannkuch-shaped Step/State loops run in constant stack without loop conversion.
-- [ ] Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups with the
-  dispatch slot layout: one dispatch slot per parameter position where every member's (structurally
-  compared) parameter type agrees, and one slot per distinct type where they differ or where only some
-  members have that position at all, so members of differing arity merge too. A tail call or wrapper
-  entry fills the callee's slots with its arguments and every other slot with that slot type's default
-  literal (`0`, `false`, `0.0`, `""`, the zero rune, the zero fixed-width unsigned, `[]`); a non-shared
-  slot whose type has no constructible default (a user-declared type, tuple, function, or unresolved
-  type variable) declines the group, and so do members whose result types differ (every member body
-  becomes one arm of the dispatch match). Groups that merged under the old gate must lower to the
-  identical shared-slot layout.
-- [ ] Resolve a member body's **non-tail** sibling references inside the merged dispatch: only tail
-  in-group calls are rewritten into dispatch calls, so a call whose result the member inspects
-  (`match findCycle(name)(decls)(path) with ...` before its own tail call), a partial application,
-  or a reference from a nested lambda stays a plain reference to the sibling. The closure-lowered
-  member bodies resolve those by symbol through the group context, but the dispatch lambda is a
-  fresh synthesized function; lowering it with only the dispatch's own name in scope makes the
-  reference fall through to the forward-reference diagnostic (`ASH014 Binding 'findCycle' is not
-  yet declared at this point.`) on a well-formed program. Bind every member name to its
-  already-emitted closure slot (monomorphic at this point — schemes are generalized only after the
-  transform) while lowering the dispatch body, exactly as the continuation scope later binds the
-  names to the wrapper slots. The gap predates the shape widening above, but that widening made the
-  self-hosted `findSupertraitCycleInRequirements`/`findSupertraitCycle` group eligible for merging
-  and broke the `selfhost/tests/semantics` build.
-- [x] Infer parameter/capture ownership, result reachability and freshness, moves, borrows, forwarding,
-  and whole-program SCC provenance summaries.
-- [ ] Prove open-world inspect-only parameters so in-place reuse borrowing survives a hand-off to
-  another function: the same `BorrowInspectExpression`/`BorrowInspectOnly` walk that lets a TCO loop
-  borrow its own tail parameter across match/head/tail uses and its own tail self-call is computed
-  for every parameter of every registered function as a monotone least fixpoint (a hand-off to a
-  callee already proven inspect-only in the previous pass is approved, so a chain of self-contained
-  helpers converges while a genuine mutual cycle never does), and `BorrowInspectCall` consults that
-  table for a call to a statically-resolved callee other than the function itself (a partial
-  self-application is a separate question). Note that `FunctionOwnershipSummary.ParameterOwnership`
-  cannot answer this — its walk is scoped to resource borrow-read builtins and classifies a plain
-  inspecting helper's parameter as consumed. Every consumer of the consumed-tail gate
-  (`ComputeTcoParamFacts`, `IsBorrowableInspectOnlyList`) sees through a proven callee unchanged, so
-  a traversal that hands its tail to a read-only helper no longer takes the defensive
-  `CopyOutArena` normalization path.
-- [~] Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts with
-  constructor-specific child/drop information. `HeapLayoutClassification.ash` now ports the
-  foundational slice of stage-0's `OrdinaryHeapLayoutCapability`/`Lowering.LayoutCapability.cs`:
-  given a resolved `SemanticType` and the real `TypeEnvironment`, `classifyHeapLayout` reports
-  whether the value transitively contains a declared resource type (walking `ExternalTypeDefinition`
-  destructors, cycle-guarded by named-type symbol id, matching `IsResourceBearing`'s own cycle
-  default of "not found on this path") or an unresolved type variable (`SemVariable`/`SemParameter`,
-  cycle-guarded the same way, matching `ContainsUnresolvedLayoutType`), and — for list, tuple, and
-  named-ADT shapes — each child's type and `HeapChildDropKind` (`DropString`/`DropBytes`/
-  `DropBigInt`/`DropList`/`DropTuple`/`DropAdt`/`UnsupportedChildDrop`, mirroring `DropKindForType`).
-  A named type's constructor fields are instantiated against its own concrete type arguments via
-  the existing `applySubstitution`, keyed on the ordinary fresh `SemVariable`s
-  `ProgramInference.ash`'s `registerTypeParameters` actually assigns a `TypeDecl`'s own parameters
-  (not a separate rigid-parameter shape, corrected mid-implementation after a first attempt keyed on
-  `SemParameter` silently produced unsubstituted fields — caught by a generic-ADT-at-two-instantiations
-  test, not by inspection). **Deliberately deferred to a follow-up**, since it belongs to reuse
-  specialization rather than the ownership/move-analysis foundation this item is a prerequisite for
-  (the roadmap's own phase-3 ordering): `OrdinaryHeapStructuralCopyKind` (arena inline/shallow/deep
-  copy eligibility) and every `Runtime*Supported` reuse-eligibility flag
-  (`RuntimeOuterCellReuseSupported` and friends) — both are backend/reuse-specific concerns with no
-  consumer yet in the self-hosted toolchain (no Perceus lifetime placement or reuse pass exists to
-  need them), unlike child/drop classification, which the very next item in this list (Perceus
-  duplication/drop insertion) needs immediately. A single-constructor tagless-ADT layout (the next
-  checklist item) and the `region` placement family (a per-value ownership-inference decision, not a
-  type-level fact even in stage-0) remain out of this item's scope for the same reason.
-- [ ] Lay out a single-constructor ADT (one non-nullary constructor; not a builtin, zero-cost newtype,
-  resource, or resource-bearing type) without a tag word: payload at offset 0, one word smaller per
-  cell, with every ADT instruction that allocates, reads or writes such a cell carrying its tagless
-  flag so the backend never consults the type for an offset; skip the tag test in a match against
-  such a type and load its constructor tag as a literal in synthesized droppers and copiers; and
-  keep reuse tokens layout-exact (a tagless token never satisfies a tagged constructor of the same
-  field count, nor the reverse). Build the classifier with this layout from the start rather than
-  porting the uniform tagged layout and unboxing it afterwards.
-- [~] Insert Perceus duplication/drop operations and deterministic resource cleanup across ordinary,
-  exceptional, handler, and coroutine control flow. **First slice landed**: `CoreLowering.ash` now
-  brackets a `let` scope with the arena save/restore/reclaim triple stage 0 always emits
-  (`SaveArenaState` before the value, `RestoreArenaState` + `ReclaimArenaChunks` after the body),
-  for the flat top-level `let`/trailing-expression sequence `lowerCoreProgramItems` walks (Model A).
-  Gated by `isProvablyArenaSafeExpr`/`topLevelItemsProvablyArenaSafe`, a conservative purely
-  syntactic whitelist (scalar literals, scalar operators, a reference to an already-proven-scalar
-  name, a nested `let` whose own value and body both pass the same check) proven true for the whole
-  remaining chain *before* any lowering happens, so a program outside the whitelist lowers exactly
-  as before — no waste, no shifted local-slot numbers for anything not bracketed. Landed this way
-  specifically to avoid the general case's `CopyOutArena` requirement (an escaping heap-typed
-  result crossing the reclaim boundary needs a copy the arena reset would otherwise invalidate),
-  not yet ported. Makes the `let_bindings` whole-program IR parity fixture
-  (`selfhost/parity/semantics/lowered-ir/let_bindings.ir`) match stage-0 byte-for-byte, the first of
-  the four fixtures excluded by that suite's own note to do so.
-  **Explicitly still out of scope**: a *nested* `ExprLet` (inside an arbitrary expression, as opposed
-  to a flat top-level `let`) is not bracketed — `lowerLet` is unchanged, and only participates in the
-  top-level safety check as a recognized (but not separately bracketed) shape, which is sound (a
-  smaller, correct subset) but not yet as thorough as stage-0. `CopyOutArena` itself; the general
-  heap-escaping case; `SaveArenaState.CoroutineLoop`/async back-edges; and everything else this
-  checklist item's own text below still describes (entry normalization for a runtime-managed
-  parameter, the owner-alias walk, the actual `RcDup`/`RcDrop` operations themselves — no
-  `IrInstructionKind.RcDup`/`RcDrop` is emitted anywhere in `CoreLowering.ash` yet) remain unported.
-  The `closure_capture`, `mutual_recursion`, and `pattern_match` parity fixtures stay excluded:
-  closures need `CleanupResource`-style cleanup, `let recursive`/`and` groups lower through a
-  different path (`lowerPreparedRecursiveGroupWith`, deliberately excluded from the safety check),
-  and pattern matches need constructor-layout registration — none of which this slice touches.
-  Include the entry normalization of a parameter
-  that always reaches the function's result: such a function advertises that it accepts a
-  runtime-managed argument and, at entry, keeps an owned reference or copies a borrowed one, for
-  `Str` and for every record/ADT type the runtime RC layer can copy out or deep-copy (stage 0
-  first limited this to `Str`; a curried stage capturing a reference-counted ADT argument for the
-  closure it returns then held a pointer its caller freed, which is why the self-hosted lexer
-  deep-copied every token until the fix). Include, in lifetime placement, the owner-alias walk that
-  keeps an owned binding live across a curried call chain: an alias reaches the first stage's
-  environment, every later stage copies it into the closure it returns, so applying an
-  alias-holding closure (or a devirtualized stage over an alias-holding environment) yields an
-  alias while that result is applied again; and treat a borrowed read of an owned binding passed as
-  a call argument (a byte view of it taken at the call site) as the binding's reference, never as a
-  consumed fresh result to release after the call.
-- [ ] Retain a runtime-managed owned binding that a tail self-call argument carries out of its scope:
-  `let label = helper(...) in loop(n - 1)(Wrapped(instruction = Jump(label), ...) :: acc)` stores the
-  let-bound RC call result into the constructor field, and the binding's own scope-exit release
-  still fires at the back edge, so without a retain the next iteration's parameter holds a freed
-  reference (silently wrong values when the callee returned a literal, a heap-allocation failure
-  when it returned an RC string). A tail self-call argument escapes every binding scope of the
-  iteration exactly like a function result escapes its callee, so it must request the same
-  transfer treatment (`TransfersRuntimeManagedChildren`) and the constructor-argument path must
-  honor that request even without an owning consumer of the aggregate itself, leaving the Perceus
-  pattern-owner duplicate gated as before. **Found only by compiling and running the self-hosted
-  optimizer's own switch-fold test**; the bug predates the recent optimizer arc. Regression:
-  `tests/tco_let_call_result_in_accumulator_record.ash`.
-- [ ] Decide a `let`'s runtime-RC ownership from what its value temp *is*, not how it is represented:
-  only a fresh producer (call result, constructor, concatenation) or a transferred value confers a
-  reference the binding may release at scope exit. A plain read of an RC-normalized slot — a TCO
-  loop parameter that the back edge's flag-gated parameter releases already own, an env capture, a
-  pattern field — is a borrowed read that never retained, so `let r = acc in … loop(n - 1)(r + h)`
-  must not register `r` as a runtime-managed owner: with both the back-edge parameter drop and an
-  owning scope-exit drop for `r`, every iteration releases the same reference twice (and the
-  `then r` return path drops the value before the exit transfer hands it out). **Found only by
-  compiling and running the self-hosted projects package**: the heterogeneous mutual-recursion
-  merge synthesizes exactly this alias (`let result = __recgroup_arg2`) in every member arm, and the
-  merged `pascalCaseCharacters`/`continuePascalCase` group crashed the `selfhost/tests/projects`
-  binary with a bus error; a plain single-function alias loop double-dropped silently on every
-  earlier compiler. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
-- [ ] Supply the evidence for a trait requirement inside a constrained function from the
-  requirement's own instantiated type, never by trait name alone: a function that carries an `Eq(a)`
-  dictionary and, in its body, calls another `Eq`-constrained function at a *concrete* type
-  (`lookup(fnLabel)(knownLabels)` with `fnLabel: Str` inside a function polymorphic in the temp it
-  looked up first) must resolve `Eq(Str)` statically, not thread its own `Eq(a)` dictionary through
-  — with the caller's `Eq(Int)` that is a pointer comparison of strings (right for two interned
-  literals, silently `None` for any computed string), and with the roles reversed it compares
-  integers as strings and faults. A syntax-only pre-pass that threads evidence by trait name can
-  only be a hint; the call lowering must unify the real arguments first and keep the hint solely
-  for a requirement that is still a bare type variable, and the active-dictionary fallback must
-  never serve a concrete or structured requirement. **Found only by compiling and running the
-  self-hosted optimizer's returned-closure devirtualization**, whose label lookup passed on
-  hand-built fixtures (interned labels) and failed on collector-built ones. Regression:
+- [x] **OPT-1** Port compile-time evaluation (bounded step/depth budgets, scalar call folding) and the
+  deterministic IR optimization pipeline: ownership-copy elision, RcDup sinking and RcDup/RcDrop
+  fusion, known-closure devirtualization, constant propagation/folding, identity elimination and
+  strength reduction, unreachable/dead-code elimination, and redundant arena-bracket stripping.
+- [x] **OPT-2** Constant propagation computes a true meet-over-paths at multi-predecessor labels (one fact
+  snapshot per incoming edge, intersected once all are observed; unobserved back edges clear) and
+  tracks local-slot state — essential, since real lowered IR routes every `let` and join through a
+  slot, so temp-only facts fold nothing. Covered by `selfhost/tests/semantics/IrOptimizerTests.ash`.
+- [x] **OPT-3** Fold statically-known conditional branches and `SwitchTag`s, recomputing predecessor edges
+  from the post-fold instruction list so a newly-unreferenced label dies with its body.
+- [x] **OPT-4** Re-run ownership-copy elision after identity elimination/strength reduction (the identity
+  rewrite introduces copies the earlier elision pass never revisits; the pass recomputes its facts
+  per call, so a second run is safe).
+- [x] **OPT-5** Devirtualization reaches a curried call's later applications via a whole-program
+  known-returned-label fixpoint (`CallKnown` to a function proven to return one heap `MakeClosure`
+  label rewrites to an env-word load plus direct `CallKnown`, iterated to a local fixed point).
+  A stack closure never qualifies as a known returned label — its environment dies with the frame.
+- [x] **OPT-6** Block-local common-subexpression elimination over duplicate `GetAdtField` reads and pure
+  `CallKnown` calls, keyed through a LoadLocal/StoreLocal/Borrow/RcDup alias map with seeded
+  env/arg-slot identities; invalidated by potential aliased writes but NOT by arena/stack
+  bookkeeping (cursor moves, not writes).
+- [x] **OPT-7** Store-to-load forwarding through provably-fresh allocation targets. The cached value must be
+  the write's raw source temp, never its alias-canonicalized identity — a canonicalized sentinel is
+  a valid cache key but crashes codegen if emitted as a value.
+- [x] **OPT-8** Closure environment scalarization for one scalar capture (the captured value rides the env
+  argument of a memoized `__scalarenvN` callee variant; `LoadEnv`-only callees, coroutines
+  excluded), and
+- [x] **OPT-9** for two captures (the second rides the free ownership-flag word), reaching let-bound local
+  helpers via slot-resolved devirtualization with dead-load and dropper-free cleanup removal.
+- [x] **OPT-10** Prune closure captures the lowered body never reads (`pruneDeadCaptures`): fills deleted,
+  survivors renumbered compactly, environment shrunk; self-referential lambdas and
+  mutual-recursion groups decline.
+- [x] **OPT-11** Fold left-nested single-use string-concatenation chains into one N-ary `ConcatStrN` as the
+  pipeline's last step. Single-use analysis alone is insufficient: the fold delays reads across the
+  chain, so any arena save/restore/reclaim, stack-pointer bracket, or branch between the innermost
+  part and the fold point declines the whole chain (a reclaim can reuse an earlier part's address).
+- [x] **OPT-12** The two whole-program closure-environment passes between the per-function pipeline and
+  scalarization: captured-closure-call devirtualization (every creation site stores the same label,
+  settled by a fixpoint over the capture graph) and currying-stage inlining (a copy-only stage's
+  chain rewritten to a caller-frame environment). These took the stitched packages from
+  almost-all-`CallClosure` to mostly-direct calls.
+- [ ] **OPT-13** Widen the affine-accumulator in-place-append (`ConcatStrTip`) arming to the `let`-bound form
+  `let acc2 = acc + rhs in loop(...)(acc2)`, as stage 0 now does: a fail-closed single-use counter
+  gates eligibility, the append arms at the `let`'s value, and loads of the armed binding carry the
+  producer fact so the back edge skips the predecessor release (without the skip the accumulator is
+  freed while live). The fact must be re-derivable from durable per-function state — stage 0's
+  reset resolution replays instructions with per-temp facts cleared.
+- [x] **OPT-14** Control-flow simplification (jump threading, unreferenced-label removal, redundant
+  fallthrough elision), iterated with unreachable-code elimination to a true fixed point — one pass
+  cannot fully collapse a real multi-arm match cascade.
+- [x] **OPT-15** Tag-grouped match compilation (`planTagGroups`/`lowerMatchArmsViaTagGroups`): arms grouped by
+  outer tag, one switch, linear testing scoped inside a group. Sharp edges, each confirmed by a
+  real failure: unify the scrutinee against the patterns BEFORE deciding (its type can still be a
+  variable that only these patterns pin down); a group's fail target is the match's trailing
+  default arm when one exists, never the exhaustiveness-failure label; and a bare `None`-style arm
+  is a variable pattern syntactically — it must resolve against the constructor table or it becomes
+  a catch-all that absorbs every later arm.
+- [x] **OPT-16** Gate the dead-arm trim to shapes the coverage engine analyzes exactly (catch-alls, bool
+  literals, empty list, constructors whose children are all catch-alls). The "Missing case" engine
+  under-approximates by design — correct for a diagnostic, unsound as an unreachability proof
+  (record sub-patterns contribute no constraints; per-column independence misses cross-column
+  gaps), and the unsound trim deleted live arms in the semantics package itself.
+- [x] **OPT-17** Ordinary and mutual tail-call optimization, stack-safety rules, and profitability/cost
+  signals, with SCC decomposition and tag-based dispatch trampoline plans. Covered by
+  `selfhost/tests/semantics/TcoTests.ash`.
+- [x] **OPT-18** Upgrade the advisory `tail` marker to `musttail` for proven-eligible non-loop tail calls,
+  gated on a whole-function scan for native stack allocations; `IrCodegen.ash` fuses direct,
+  stored-to-join-slot, and fallthrough-into-join shapes through arbitrarily deep copy-forwarding
+  chains (`computeTailJoins`), and currying-stage inlining heap-allocates a self-re-entering
+  chain's environment so recursive back edges stay fusable.
+- [ ] **OPT-19** Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups: one
+  dispatch slot per agreeing parameter position plus one per distinct type elsewhere, non-callee
+  slots filled with the slot type's default literal; a slot type with no constructible default, or
+  differing result types, declines the group.
+- [ ] **OPT-20** Resolve a member body's **non-tail** sibling references inside the merged dispatch: bind
+  every member name to its already-emitted closure slot while lowering the synthesized dispatch
+  body, or a well-formed program hits the forward-reference diagnostic (`ASH014`).
+- [x] **OPT-21** Infer parameter/capture ownership, result reachability and freshness, moves, borrows,
+  forwarding, and whole-program SCC provenance summaries.
+- [ ] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
+  function, so in-place reuse borrowing survives a hand-off to a proven read-only helper
+  (`FunctionOwnershipSummary.ParameterOwnership` cannot answer this — it classifies a plain
+  inspecting helper's parameter as consumed).
+- [~] **OPT-23** Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts.
+  Done (`HeapLayoutClassification.ash`): resource-bearing and unresolved-type detection
+  (cycle-guarded) and per-child drop kinds for list/tuple/ADT shapes, with constructor fields
+  instantiated against concrete type arguments. Deferred to reuse specialization: structural copy
+  kinds and the `Runtime*Supported` reuse-eligibility flags (no consumer exists yet).
+- [ ] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
+  carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
+  synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
+  layout from the start rather than unboxing the tagged layout later.
+- [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
+  ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
+  brackets around flat top-level `let` scopes, gated by a conservative syntactic
+  provably-arena-safe whitelist (the `let_bindings` IR parity fixture now matches stage 0
+  byte-for-byte). Open: nested `let` bracketing, `CopyOutArena` and the general heap-escaping
+  case, coroutine/async back edges, entry normalization of a parameter reaching the result, the
+  owner-alias walk across curried chains, borrowed reads of owned bindings at call sites, and the
+  actual `RcDup`/`RcDrop` emission itself (none is emitted from `CoreLowering.ash` yet).
+- [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
+  scope (the argument escapes the iteration like a result escapes its callee — request
+  `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
+  owning aggregate consumer). Regression: `tests/tco_let_call_result_in_accumulator_record.ash`.
+- [ ] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
+  represented: only a fresh producer or a transferred value confers a releasable reference; a
+  plain read of an RC-normalized slot is a borrowed read, and registering it as an owner
+  double-releases every iteration. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
+- [ ] **OPT-28** Supply the evidence for a trait requirement inside a constrained function from the
+  requirement's own instantiated type, never by trait name alone — the call lowering must unify
+  the real arguments first, keep any name-threaded hint only for a still-bare type variable, and
+  never serve a concrete requirement from the active dictionary. Regression:
   `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
-- [ ] Keep every operator operand out of tail position: in a function that is a TCO loop because
-  some branch ends in a genuine tail self-call, a self-call that is an operand of `+`, `-`, a
-  comparison, a negation, or a pipe in another branch (`then 1 + count(tail) else count(tail)`)
-  is an ordinary call whose result the operator consumes, never a back-edge jump. Tail position
-  is a property the lowering must clear at every operand boundary, not only at call arguments,
-  `let` values, and scrutinees; a function with no genuine tail call never exposes the gap, which
-  is why a plain `n + sumTo(n - 1)` never caught it. **Found only by compiling and running the
-  self-hosted optimizer's own tests**, whose `1 + count(tail)` / `count(tail)` list walk returned
-  0. Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
-- [ ] Retain every runtime-managed child an escaping or owning aggregate stores, whatever the
-  aggregate: the ADT constructor path retains owned bindings and loop parameters it stores, and
-  tuples, list literals, and cons cells must do exactly the same — a runtime-RC tuple owns its
-  children, and an escaping arena tuple or cell carries them out of the scopes that own them (a
-  `let`'s scope exit, a TCO loop's exit drop, which recognizes only a parameter that *is* the
-  result). A loop parameter's placement is decided after its body is lowered, so the retain is a
-  marker upgraded at finalization when the placement is runtime-RC, and never inside a tail
-  self-call's arguments where the back edge moves the parameter into the successor. `(xs, ys)`
-  from a two-accumulator loop, `(ys, zs)` of two let-bound lists, `[xs, ys]`, and
-  `(left :: rights, absorbed)` all read back freed cells once later allocations reused them.
-  **Found only by compiling and running the self-hosted optimizer's concatenation-chain walk.**
-  Regression: `tests/aggregate_result_retains_runtime_managed_children.ash`.
-- [x] Keep a heap aggregate alive when it is stored through a generic parameter of a function that
-  is neither inlined nor persistently specialized: `HashMap.set(key)([text])(map)` (a tuple, record,
-  or `Some(text)` value behaves the same) and a user `setTree key value tree` storing `value` into
-  an RC node both used to end up holding a dangling pointer. Small programs read back correctly; a
-  string-allocating churn loop between the inserts and the reads exposed it. **Found by the
-  self-hosted formatter's comment reinsertion, which stored `List(Str)` insertion texts and
-  `List(Int)` anchor indices in `HashMap` values.** Fixed 2026-08-26 by copying the argument into the
-  persistent to-space/blob region at each of the two call-lowering paths that reach a generic
-  parameter: the ordinary curried path (`LowerCallApplyOneArgument`, gated on the callee's own
-  pre-instantiation type scheme leaving the parameter position quantified, via
-  `IsCalleeParameterQuantifiedInScheme`) and the in-place reuse specialization's field
-  materialization (`MaterializeSpecializationField`, extended with a `List(Str)` branch alongside its
-  existing `Str`/`Bytes`/copy-tuple coverage). Both share a new to-space list copier
-  (`SynthesizeListToSpaceCopier`/`EmitListToSpaceCopy`), a to-space analogue of the existing
-  arena/RC-heap list deep-copier. An earlier attempt that forced the argument onto the ordinary RC
-  heap instead eliminated the crash but produced *silently wrong output* — RC allocations share the
-  main arena's reclaimable bump-pointer cursor, so they are just as vulnerable to a
-  `RestoreArenaState` reset as a plain arena value; only the persistent to-space region is actually
-  immune. Currently covers `Str` and `List(Str)` argument types; extend if a new failing shape turns
-  up. Regression: `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
-- [ ] Retain the record elements that `Ashes.Collection.List.reverse` (or any generic function
-  moving type-variable elements from a consumed list into the cells it builds) carries out of a
-  loop's accumulator: a tail-recursive loop that conses a callee's record result (a record holding a
-  `Str` and a `List(Int)` built by another loop) onto its accumulator and finishes with
-  `reverse(acc)` reads the records back clobbered once a string-allocating churn loop has run
-  (line-start counts `9 5` expected, `1 12` observed), at `-O2` and with `--debug` alike, while
-  dropping the `reverse`, collecting the records by ordinary recursion, or reversing through a
-  monomorphic local `reverseIndexes (xs: List(TextIndex))` is correct. The generic
-  `go(head :: acc)` allocates a plain arena cell around the type-variable `head` with no retain, so
-  the records survive only while nothing reclaims them; the same family as the generic-parameter
-  item above. Twelve-line repro: build two such records in a loop, `reverse` the accumulator, churn
-  20,000 string concatenations, print the list lengths. **Found by the self-hosted stitched source
-  context (`buildItemIndexes`)**, whose pre-existing `buildModuleIndexes` had the same latent shape;
-  both now collect their indexes by ordinary recursion. **Two more confirmed instances**, found
-  2026-08-26 while root-causing the `StandardTraits.ash` formatter crash below: the frontend
-  parser's `parserParseSugarParameters`/`parserBuildLambdas` (`List((Str, Maybe(TypeExpr)))`,
-  sugar-parameter name/annotation pairs — exercised by every `let name param = ...` binding in the
-  self-hosted sources) and `parserParseProgramItems`/`parserParseProgramBody`
-  (`List(TopLevelItem)`, the parsed program's top-level declarations); both fixed the same way
-  (monomorphic reverse over the concrete type). Neither instance was the cause of the
-  `StandardTraits.ash` crash — that crash's actual root cause (a different arena-reuse shape, one
-  call frame away from the sugar-parameter list itself) is documented and fixed under the
-  formatter-corpus item below.
-- [ ] Check an inlined helper's references transitively before inlining it inside a reuse arm or a
-  reuse specialization: an inlinable free name only proves resolvable when that helper's own body
-  resolves in the isolated scope too (a stitched stdlib helper calling a module sibling through the
-  stitcher's alias name does not), and a helper already visited on the walk counts as resolved. Stage
-  0 otherwise inlined the outer helper, declined the inner call, and reported the stdlib name as not
-  yet declared. **Found by the `Ashes.Text.split` rewrite the phase benchmark motivated.** Regression:
-  `ReuseInlineResolutionTests`.
-- [ ] Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
-  rather than clone the string elements of an escaping arena tuple: a requested RC tuple falls back
-  to an arena shell when an element is not runtime-manageable (`List(Token)`, a list of records,
-  is not), and `MaterializeEscapingArenaTupleElements` then deep-copies every `Str` element whose
-  provenance is unknown. The self-hosted parser's state `(List(Token), List(DiagnosticEntry), Str)`
-  was rebuilt by `parserAdvance` on every token, so each token cloned the entire source into the
-  arena (4,182-line `TypeInference.ash`: 24k clones of 233 KB per parse, ~1,400 four-MiB chunk
-  map/unmap cycles, 382 ms). The parser now carries the source as its `Bytes` view, which that
-  path leaves alone (29 ms); the general cost remains for any program threading a large string
-  through an escaping tuple next to a list of records. **Found by the phase benchmark's parse row.**
-- [ ] Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
-  caller can prove the aggregate is reference-counted: an accessor such as
-  `parserStateSource (state) = match state with (_, _, source) -> source` lowers to
-  `Borrow` + `CopyOutArena RcNormalization`, a copy of the whole string per call, because the
-  callee cannot tell an arena string from an RC one. The self-hosted parser no longer extracts the
-  source (it scans the bytes in place); the item stays for the compiler.
-- [ ] Keep a large string alive when a tail-recursive loop moves it from the list it consumes into
-  its accumulator: `walk(Ashes.Text.split(source)("\n"))([])`, where `walk` matches `line :: rest`
-  and conses `line` onto its accumulator, releases the line string with the consumed cell, so the
-  later `join` over the accumulator reads freed memory for any line longer than roughly 4 KB (one
-  arena chunk); lines under 3 KB only appear to work because the reclaimed chunk is still mapped.
-  Binding the `split` result at top level makes the program correct (the list is then a global,
-  never consumed), a `let` inside the function does not, and an inspecting call on the line
-  before the cons (`Ashes.Text.trimStart(line) == ""`) also hides it, so the release decision
-  depends on the element's ownership classification at the move. The self-hosted
-  `parseImportHeader` hits it on `tests/regress_readline_loop_depth.ash` (a 15 KB `// stdin:`
-  directive line) inside `finishHeader`'s join. **Found by the self-hosting phase benchmark's
-  corpus run**, which now bisects and excludes crashing files per phase and reports their count.
-  Twelve-line repro: build a 15 KB line with an affine-string loop, split it, walk it inline,
-  join the result. The same release shows up without any list: a loop rebuilding a tuple state
-  `walk((rest, source))(count + 1)` from its own pattern-bound elements reads a freed `source` at
-  the end for any string over the chunk size (the fresh tuple is an arena `Alloc` whose children are
-  neither retained nor copied), so the parser-state shape above is only fast, not yet proven safe,
-  for strings the arena reclaim actually unmaps.
-- [x] Release a TCO loop's aggregate result in its caller: a call to a loop whose exit arm builds
-  an ADT directly from the loop's own runtime-managed accumulator parameters (`walk(50)([])([])`
-  returning `Pair(xs, ys)`) leaked one RC reference per field per call (peak RSS grew linearly with
-  the call count: 8 MB at 1,000 calls, 630 MB at 200,000). Root cause: the constructor's own field
-  retain (`RcDup` on the accumulator arguments) always fires, but the eligibility check deciding
-  whether the constructed shell itself becomes runtime-managed
-  (`CanRuntimeManageFreshHeapChildAdtConstructorApplication`'s `List` field case, and its
-  type-parameter-payload sibling `IsRuntimeManageableFreshGenericPayload`) only recognized an
-  inline fresh list literal, not a reference to an existing binding — so the shell stayed arena,
-  the retain was never balanced by a drop, and the reference leaked. Fixed by recognizing a
-  reference to the *enclosing TCO loop's own parameter slot* as droppable too (the same structural
-  fact the constructor's own retain was already keyed on), narrowly — not any arbitrary outer-scope
-  variable, which would fabricate ownership over a value nothing actually retains (see
-  `Directly_escaping_adt_with_borrowed_list_child_remains_arena_managed`). The tuple analogue of
-  this shape (`(xs, ys)`) was already correct (fixed by the child-retain PR above); this closes the
-  ADT gap. Regression coverage:
-  `Linux_backend_llvm_tco_exit_adt_constructor_shell_is_runtime_managed` (mechanism) and
-  `Linux_backend_llvm_tco_exit_adt_constructor_memory_should_plateau` (behavior), both in
-  `LinuxBackendCoverageTests.cs`.
-- [ ] Release a plain runtime-RC value extracted by a match pattern and passed **by name** as a TCO
-  back-edge argument (e.g. `match advance(k)(st) with | Continue(next, r) -> loop(k - 1)(next)`):
-  argument evaluation retains `next` for the successor parameter, so the back-edge's drop bookkeeping
-  must also release the pattern-bound owner's own reference once the successor is established — it is
-  not a moved value and must not follow the moved-argument rule written for resources and
-  closures-with-droppers, which excludes an argument from the back-edge drop set. Getting this wrong
-  leaks one reference per iteration with no observable failure until the retained graph itself grows
-  unboundedly (confirmed via `fannkuch-redux`: 2.4 GB peak RSS at N=10, 27 GB at N=11, both flat at
-  8.2 MB once fixed) — a plateau-over-iterations regression test, not a single-shot correctness test,
-  is the only kind that catches this class of bug.
-- [ ] Release the RC-managed result of a call consumed only by a read-only builtin
-  (`Ashes.Text.byteLength`, `print`, `write`) once nothing else owns it: a fresh, unowned,
-  RC-normalized call result (from `CopyOutArena`/`CopyOutList` normalization, or an RC-returning
-  callee on both branches of a conditional return) has no natural release site, because lifetime
-  placement only moves drops anchored to an existing owner and never invents one for an anonymous
-  temporary. Three propagation facts must stay consistent together, since dropping any one silently
-  reopens the leak one layer up: (1) a read-only builtin argument release must fire whenever the
-  argument was itself freshly produced (a general "newly produced" ownership fact, not builtin-specific
-  analysis) and must decline for a borrowed binding or literal; (2) an if/match join keeps a merged
-  value's "newly produced" fact only when *every* arm was itself freshly produced — one borrowed or
-  owned arm (including a runtime-managed but caller-owned TCO parameter) poisons the merge, since
-  releasing a merged owned value would free memory still in use elsewhere; (3) a let-scope's
-  save/reload around its own exit drops must preserve the same "newly produced" fact across the reload,
-  since the reloaded temp names the same fresh object the pre-reload analysis already classified.
-  Measured: an unfixed loop consuming `byteLength(f(i))` from a closure call each iteration grew to
-  163 MB over 5,000,000 iterations against an 8.2 MB floor, at both `-O0` and `-O2`; a regression test
-  for this class needs a long-running plateau check (a single-shot output comparison cannot see a
-  32-bytes-per-iteration leak).
-- [ ] Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
+- [ ] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
+  an operand of an operator in another branch is an ordinary call, never a back-edge jump.
+  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
+- [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
+  literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
+  marker upgraded at finalization when its placement is runtime-RC. Regression:
+  `tests/aggregate_result_retains_runtime_managed_children.ash`.
+- [x] **OPT-31** Keep a heap aggregate alive when stored through a generic parameter of a function neither
+  inlined nor specialized: both call-lowering paths copy the argument into the persistent to-space
+  region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
+  `List(Str)`; extend on new failing shapes. Regression:
+  `src/Ashes.Tests/GenericParameterHeapValueUafTests.cs`.
+- [ ] **OPT-32** Retain the elements a generic function (`Ashes.Collection.List.reverse`) moves from a
+  consumed list into cells it builds — the generic cons allocates an arena cell around a
+  type-variable head with no retain. The known self-hosted instances work around it with
+  monomorphic reverses; the compiler item stays open.
+- [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
+  specialization (a helper's own body must resolve in the isolated scope too; an already-visited
+  helper counts as resolved). Regression: `ReuseInlineResolutionTests`.
+- [ ] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
+  rather than clone the string elements of an escaping arena tuple — threading a large string
+  through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
+  `Bytes` view to sidestep this; the general cost remains).
+- [ ] **OPT-35** Retain, rather than copy, a borrowed string returned out of an aggregate parameter when the
+  caller can prove the aggregate is reference-counted (accessor shape:
+  `Borrow` + `CopyOutArena RcNormalization` copies the whole string per call).
+- [ ] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
+  it consumes into its accumulator — the consumed cell's release frees the moved element, read
+  back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline
+  consing the lines, join the result.
+- [x] **OPT-37** Release a TCO loop's aggregate result in its caller when the exit arm builds an ADT from the
+  loop's own runtime-managed accumulators — the shell is recognized as runtime-manageable when its
+  field is the enclosing loop's own parameter slot (narrowly — not any outer variable).
+  Regression: `LinuxBackendCoverageTests.cs` (mechanism + RSS-plateau behavior tests).
+- [ ] **OPT-38** Release a plain runtime-RC value extracted by a match pattern and passed by name as a TCO
+  back-edge argument: argument evaluation retains it for the successor, so the back edge must also
+  release the pattern-bound owner's reference — it is not a moved value and must not follow the
+  moved-argument rule written for resources. Only a plateau-over-iterations test catches this
+  class (confirmed 2.4 GB → 8.2 MB on fannkuch-redux).
+- [ ] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
+  else owns it. Three facts must stay consistent: the release fires only for freshly-produced
+  arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's
+  save/reload preserves the fact across the reload. Needs a long-running plateau test.
+- [ ] **OPT-40** Place stack, scoped-region, task/capability-region, persistent-region, RC, special-resource, global,
   and OS-backed allocations under the current no-GC contract.
-- [ ] Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
+- [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them.
-- [ ] Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
+- [ ] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
   allocation reuse for tuples, ADTs, closures, and tail-recursive paths.
-- [ ] Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
+- [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
-- [ ] Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
+- [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
   changes, and explanation/report instrumentation.
-- [ ] Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
+- [ ] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
   current public reports.
 
 #### LLVM code generation and runtime integration
 
-- [~] Define pure-Ashes bindings to the required LLVM C API and load the installed-layout host
+- [~] **CG-1** Define pure-Ashes bindings to the required LLVM C API and load the installed-layout host
   `libLLVM` without checkout-relative assumptions. Source of truth:
   `src/Ashes.Backend/Llvm/Interop/LlvmApi.cs` — its `LibraryImport` surface is the complete list of
   entry points the backend needs (no more are exposed on purpose; there is no `phi` binding, values
   that merge across branches go through a slot allocated before the branch), and
-  `LlvmTargetSetup.cs` initializes the targets. `selfhost/packages/backend`'s
-  `AshesCompiler.Backend.Llvm` binds a growing subset covering module/type/value/function/global
-  creation, scalar/pointer/array/struct types, arithmetic/comparison/control-flow instructions with
-  the no-`phi` alloca/store/load slot pattern, a real multi-arm `switch`/`addCase` dispatch (not
-  just chained conditional branches), aggregate field and array element addressing (`buildGEP`),
-  calls to both module-local and genuinely external (declaration-only) functions, string/byte
-  array constants, and host-CPU-tuned target machine creation and object/assembly
-  emission — see the file itself for the exact current surface, since restating it here every PR
-  has proven unmaintainable. `selfhost/tests/backend` proves each addition end to end by building,
-  verifying, and emitting a small real function to genuine linux-x64 ELF objects and assembly
-  listings, checked with `readelf` and, independently, exact-instruction assembly dumps for each
-  (not just a byte-length assertion in the test itself) — the exact proof-point list has needed
-  re-condensing here three times now as unmaintainable, so it stops here for good: see the test
-  file itself for the current set. As of this writing it covers every instruction category above
-  plus a tagged-union ADT `match`, closures over both a stack and a heap-allocated struct (single
-  and multi-capture) calling through a loaded function pointer, and RC fully demonstrated —
-  alloc/retain/release matching this doc's own header layout below, cascading and tag-directed
-  child drop (including a multi-field arm and a genuine 3-arm `switch`-dispatched ADT), the
-  Perceus reuse token handoff, and a closure whose one capture is itself RC-managed, composing the
-  closure and RC mechanisms together. The bindings resolve a bare `libLLVM.so`/`.dll` via the
-  executable's own `$ORIGIN`
-  RUNPATH (Linux) or default DLL search order (Windows) rather than a checkout path,
-  but the rest of `LlvmApi.cs`'s surface remains unbound, and the next checklist item (locating the
-  installed layout itself) is still unstarted.
-- [ ] Locate the installed layout from the compiler binary itself: the shipped standard-library copies
+  `LlvmTargetSetup.cs` initializes the targets. `AshesCompiler.Backend.Llvm` binds the growing
+  subset the backend actually uses (see the file itself for the exact surface), each addition
+  proven end to end by `selfhost/tests/backend` against real emitted objects and
+  exact-instruction assembly dumps. The bindings resolve a bare `libLLVM.so`/`.dll` via the
+  executable's own `$ORIGIN` RUNPATH (Linux) or default DLL search order (Windows). Open: the rest
+  of `LlvmApi.cs`'s surface as later slices need it.
+- [ ] **CG-2** Locate the installed layout from the compiler binary itself: the shipped standard-library copies
   (`dist/` per target, `lib/Ashes/` in a checkout), the vendored bitcode payloads under
   `runtimes/<rid>/` with their `.version` markers (`HermeticRuntimeAssets.cs` validates them against
   the version the compiler was built for and fails fast on a mismatch), and the native `libLLVM`
   next to the executable — resolved relative to the running binary, never to a checkout or a working
   directory, so a stage-1 compiler works from the release bundle layout the .NET one ships in (see
   [Local CI/CD](../guide/local-ci.md) for the bundle shapes).
-- [~] Select target triples, data layouts, CPUs, optimization levels, verification, object emission,
+- [~] **CG-3** Select target triples, data layouts, CPUs, optimization levels, verification, object emission,
   and host/target-independent compile options. Source of truth: `LlvmTargetSetup.cs`,
   `LlvmCodegenPlatform.cs`, and the `Backends/` classes; contract in
-  [How to Add a New Target](../internals/architecture.md#how-to-add-a-new-target). `--target-cpu`, `--parallel-workers`,
-  and `--parallel-stack-size` reach codegen as compile options and must keep their documented
-  defaults ([CLI reference](../reference/cli.md)). `selfhost/packages/backend` selects the
-  `x86_64-unknown-linux-gnu` triple, creates a target machine using detected host CPU name/features
-  (`hostCpuName`/`hostCpuFeatures`), applies the target machine's data layout to the module
-  (`applyDataLayout`, mirroring `LlvmTargetSetup.cs`'s own helper), and emits an object file to a
-  memory buffer — but has no optimization-level selection beyond a hardcoded `None` and binds none
-  of the other three target RIDs.
-- [~] Emit LLVM for the complete IR: primitives, control flow, locals, closures, ADTs, strings, bytes,
-  allocations, RC/drop/reuse, globals, and calls. Source of truth: `LlvmCodegen.cs`,
-  `LlvmCodegenExpressions.cs`, and `LlvmCodegenMemory.cs` (allocation, RC headers and free-list bins,
-  copy-out, string operations); the layout contracts are in
+  [How to Add a New Target](../internals/architecture.md#how-to-add-a-new-target). Done: the
+  `x86_64-unknown-linux-gnu` triple, detected host CPU name/features, the target machine's data
+  layout applied to the module, and object emission to a memory buffer. Open: optimization-level
+  selection (hardcoded `None`), module verification between build and emit (an operand-type
+  mistake currently surfaces only as an ISel crash at emission), and the other three target RIDs.
+- [~] **CG-4** Emit LLVM for the complete IR. Source of truth: `LlvmCodegen.cs`, `LlvmCodegenExpressions.cs`,
+  and `LlvmCodegenMemory.cs`; layout contracts in
   [Backend Architecture](../internals/architecture.md#backend-architecture), the
-  [IR reference](../internals/ir.md), and the [Memory Model](../internals/architecture.md#memory-model) sections on RC
-  allocation and layout, scoped arenas, runtime payload layouts, and stacks. Every value is an `i64`
-  word (pointers included) and every temp and local is an entry-block slot; the closure object layout
-  `{code, env, packed size and flag bits, dropper}` is read by both codegen and the optimizer.
-  `selfhost/packages/backend`'s `AshesCompiler.Backend.IrCodegen` is the first genuinely IR-driven
-  slice: it walks a REAL `IrFunction` (produced by running actual source through
-  `AshesCompiler.Frontend.Parser.parseProgram` + `AshesCompiler.Semantics.CoreLowering.lowerCoreProgramWithSource`
-  — the same pipeline `selfhost/tests/ir-program-parity` already trusts against stage 0's own IR
-  text for its `simple_arith`/`let_bindings` fixtures, plus a plain `if`/`then`/`else` confirmed
-  directly against real self-hosted lowering) and drives `AshesCompiler.Backend.Llvm` from its
-  actual instructions, not a human hand-simulating what codegen should produce (every earlier
-  `selfhost/tests/backend` proof point did exactly that). Covers `LoadConstInt`/`MulInt`/`AddInt`/
-  `CmpIntGt`/`StoreLocal`/`LoadLocal`/`Label`/`Jump`/`JumpIfFalse`/`Return` — panics on anything
-  else. Locals get one `buildAlloca`d `i64` slot each from `IrFunction`'s own `localCount`;
-  `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` are genuine no-ops — real scoped-arena
-  codegen is a separate, much bigger slice not attempted here. Labels are pre-created in one pass
-  (a `Jump`/`JumpIfFalse` can name a label appearing later in the instruction stream) and the fold
-  tracks a `terminated` flag exactly like `LlvmCodegen.cs`'s own, since the IR itself can rely on
-  implicit fallthrough at a label boundary that LLVM basic blocks have no concept of — `if`'s own
-  lowered IR turned out to need this fix (an untracked fallthrough segfaulted
-  `LLVMTargetMachineEmitToMemoryBuffer` outright rather than failing cleanly) and otherwise matches
-  the same no-`phi` alloca/store/load slot pattern this arc's earlier hand-built tests already used
-  for branching (`buildMaxModule` et al.) — the real compiler's own control-flow strategy matches
-  this package's LLVM codegen model exactly. Closures, ADTs, strings, RC, and every other
-  instruction kind remain unstarted follow-up slices. Uncovered a genuine, separate compiler gap
-  along the way: Ashes had no `Int -> u64` bit-reinterpret anywhere (`Ashes.Number.UInt.fromInt`'s
-  only narrows to `u8`), needed to turn an IR constant's `Int` payload into `constInt`'s `u64`
-  parameter — fixed as `Ashes.Number.UInt.fromInt64` (see the [standard library reference](../reference/standard-library.md#ashes-number-uint)).
-  `codegenEntryFunction`'s `Return` now matches `LlvmCodegenExpressions.cs`'s `EmitReturn` entry-path
-  exactly instead of a plain `buildRet`: the real linker (`LlvmImageLinkerElf.cs`'s
-  `WriteElf64Header`) sets `e_entry` to the raw virtual address of the START of `.text`, not a symbol
-  lookup — the entry function's machine code IS the OS process entry point, with no return address on
-  the stack, so it can never `ret`. `Return`'s source value is computed but discarded (normal
-  completion always exits `0`; a different code needs the separate, unported `Ashes.IO.exit` IR
-  instruction) and the function is built `void` end to end, lowering unconditionally to the Linux
-  `exit` syscall (`60`, not `exit_group`) via inline assembly matching `EmitSyscallX86`'s exact
-  register-constraint string, followed by `buildUnreachable`. `AshesCompiler.Backend.Llvm` gained
-  `getInlineAsm`/`buildUnreachable` bindings for this (plus `LLVMInitializeX86AsmParser`, needed
-  alongside the already-bound `AsmPrinter` — emitting a module containing inline assembly to textual
-  form re-validates it through the target's asm *parser*, not just its printer, and silently omitting
-  this produces a fatal, non-diagnostic LLVM error at emission time rather than a compile failure).
-  Verified past the automated test (which only checks for `"syscall"` and the absence of `"retq"` in
-  the disassembly) by hand-disassembling a real `1 + 2 * 3` program compiled through this path and
-  confirming zero `ret` occurrences anywhere in the output.
-- [~] Link the emitted object into a real executable. Source of truth: `LlvmImageLinkerElf.cs`
-  (linux-x64; `LlvmImageLinkerElfArm64.cs` and `LlvmImageLinkerPe.cs` cover the other three targets
-  and are unstarted). `AshesCompiler.Backend.ElfLinker`: a linux-x64 ELF64 linker in pure Ashes
-  byte manipulation (`Ashes.Byte`), no LLVM calls and no external `ld`/`lld` invoked. Parses the
-  relocatable object `targetMachineEmitToMemoryBuffer` emits (section headers, `.symtab`/`.strtab`,
-  the named entry symbol — skipping any symbol not `STT_FUNC`, since an object's `FILE` symbol can
-  share the entry function's own name when a test names its LLVM module after its one function),
-  writes a minimal ELF header + the raw `.text` bytes, with `e_entry` set to the entry symbol's own
-  address (not merely the start of `.text`, matching `ParseElfObject`'s own symbol-table-driven
-  lookup) placed one page after `ElfBaseVa` (`0x400000`), the same base the real linker uses. Two
-  paths, chosen automatically from what `.text`'s relocations need: no relocations links a fully
-  static, non-PIE executable (one `R+X` `PT_LOAD` segment); `R_X86_64_PLT32` relocations against a
-  symbol in `linuxDynamicImportLibraries` (the narrow set `AshesCompiler.Backend.IrCodegen` can
-  actually call today — `malloc`/`free`) link eager (non-lazy) dynamic linking instead — a
-  `jmp`-through-GOT stub per import, a second `R+W` `PT_LOAD` data segment, `PT_INTERP`/
-  `PT_DYNAMIC`, and the ELF hash/`.dynstr`/`.dynsym`/`.rela.dyn` machinery the dynamic loader needs
-  to resolve them. Any relocation neither path can resolve correctly (an unrecognized type, or an
-  unrecognized external symbol) is an `Error`, never a silently wrong link. Deliberately narrow,
-  matching what `AshesCompiler.Backend.IrCodegen` can produce today: the real linker's argv-passing
-  trampoline, TLS sections, and a much larger recognized-library table remain unimplemented
-  follow-up slices.
-  Verified past the automated test (which only checks the ELF header fields) by writing a linked
-  binary to disk, `chmod +x`ing it, and running it directly under `strace`: the kernel loads and
-  executes it with no `ld.so` involved (`statically linked, no section header`), and it makes
-  exactly one syscall, `exit(0)`. Also compiled and ran a real `.ash` **file** (not an embedded
-  string literal) through the complete self-hosted pipeline — parse, lower, codegen, LLVM object
-  emission, link — for the first time in this arc; timing the self-hosted pipeline's own stages
-  (excluding the stage-0 compile of the pipeline's own Ashes source, a separate and much larger
-  number) on a trivial `let`/`if` program: all five stages combined in ~2ms.
-- [~] `PrintInt` is `AshesCompiler.Backend.IrCodegen`'s first genuinely user-observable instruction:
-  ports `LlvmCodegenPlatform.cs`'s own `EmitPrintInt` (decimal-ASCII conversion into a 32-byte stack
-  buffer, sign handled last) and writes it via the raw, unbuffered Linux `write` syscall (`1`) —
-  `emitLinuxSyscallCall` generalizes the entry function's own inline-assembly `syscall` mechanism
-  (previously `exit`-only) to any 3-argument syscall. Entirely stack-local, so it needed nothing new
-  from `AshesCompiler.Backend.ElfLinker`'s relocation-free scope. `AllocAdt` is now supported for
-  the zero-field, non-RC-managed case (a plain stack `alloca` standing in for a real arena bump
-  allocation — correct only because today's program shapes never loop around a top-level
-  `AllocAdt`; real scoped-arena codegen remains a separate, bigger slice). Driving this through a
-  real `.ash` file surfaced a genuinely separate, deeper gap: nothing in self-hosted
-  `AshesCompiler.Semantics.CoreLowering` ever populated `CoreLoweringState.builtinLayouts` from a
-  program's imports — every qualified builtin call (not just `print`) failed with
-  `UnknownLoweringBinding`, and `ProgramSyntax` itself carries no import information at all (imports
-  are a project/multi-file-stitching concept, handled entirely outside this single-file pipeline).
-  First fixed by adding `lowerCoreProgramWithSourceAndContext`, threading caller-supplied
-  `constructorLayouts`/`builtinLayouts` the way `lowerCoreExpressionWithContext` already does for a
-  bare expression — but per language.md's own "qualified access (no import required)" section, a
-  real Ashes program never needs an `import` before calling `Ashes.IO.print`, so gating builtin
-  resolution on caller-supplied (or import-derived) context would have been a regression from real
-  semantics, not a fix. Replaced with `CoreBuiltinLowering.ash`'s `standardBuiltinLayouts` and
-  `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`/`panic`/`exit`/`writeLine`,
-  plus `"Unit"` — grown incrementally, matching real stage-0 schemes from `Lowering.Builtins.cs`
-  exactly): `initialState` (and therefore `lowerCoreProgram`/`lowerCoreProgramWithSource`) seeds
-  these automatically, so a qualified builtin call resolves with zero caller-supplied glue, exactly
-  like the real compiler. **Found a genuine infinite-recursion crash via gdb while wiring
-  `print`'s real polymorphic scheme** (`forall a. a -> Unit`): its quantified variable used id `0`,
-  the SAME id `TypeVariableSupply`'s own fresh-variable counter always mints first, so instantiating
-  the scheme built the self-referential substitution `(0, SemVariable(0))` —
-  `TypeSchemes.ash`'s `applySubstitution` recurses on that forever (2000+ identical stack frames
-  confirmed via `gdb bt` before the native stack overflowed as a segfault). Fixed by reserving
-  `[0, reservedBuiltinTypeVariableCount)` permanently for these statically-embedded schemes:
-  `initialState`'s `TypeVariableSupply` now starts past that range instead of at `0`.
-  Verified end to end: a real `.ash` file (`Ashes.IO.print(42 - 84)`) compiled through the complete
-  self-hosted pipeline, linked by `ElfLinker`, written to disk, `chmod +x`'d, and spawned — real
-  stdout `-42` (exercising the sign-handling path) and exit code `0`, checked by the automated test
-  suite itself via `Ashes.IO.Process.spawn`, not just a scratch verification outside it. Also
-  confirmed `panic`/`exit`/`writeLine` all type-check and lower cleanly in the same process,
-  proving the mechanism generalizes past a single hand-wired builtin.
-- [x] `CoreLowering.ash`'s `standardConstructorLayouts` grew past `Unit` to cover `Maybe`'s
-  `None`/`Some` and `Result`'s `Ok`/`Error`: language.md states both "`Maybe` is always available;
-  no import is required" and "`Result` is always available; no import is required", so — same
-  reasoning as `standardBuiltinLayouts` above — these have to be intrinsic constructors, not
-  something a caller supplies. Tags/field counts were pulled from stage-0's own `--emit-ir` dump
-  (`let x = Some(42)` / `None` / `Ok(1)` / `Error("e")`, `x` trailing): `None` is `AllocAdt Tag=0
-  FieldCount=0`, `Some` is `AllocAdt Tag=1 FieldCount=1` (+ `SetAdtField`), `Ok` is `AllocAdt Tag=0
-  FieldCount=1`, `Error` is `AllocAdt Tag=1 FieldCount=1` — each type numbers its own tags from `0`.
-  `reservedBuiltinTypeVariableCount` grew from `1` to `4` for the new quantified ids this
-  introduces (`Maybe`'s shared `a`, `Result`'s `e`/`a`); reusing one reserved id across two
-  different static schemes (`None` and `Some` both use the same `a`) is safe, since `instantiate`
-  mints an independent substitution per call — only a *live* supply value colliding with a
-  *reserved* id was ever the hazard (see the `print` bullet above). This was surfaced while probing
-  what self-hosted's own `CoreLowering` produces for a genuinely RC-managed value (`Some(42)`) in
-  preparation for wiring `IrCodegen`'s RC-managed `AllocAdt`/`SetAdtField`/`Borrow`/`RcDrop` support
-  — that probe failed outright with `UnknownLoweringBinding("Some")` before this fix, since
-  `Maybe`'s constructors weren't resolvable at all.
-- [~] `AshesCompiler.Backend.ElfLinker` gained dynamic linking: `.text` relocations against a
-  known external symbol (`malloc`/`free`, matching `LlvmImageLinkerElf.cs`'s own
-  `CollectLinuxDynamicImports`/`BuildLinuxDynamicImportLayout`/`BuildLinuxElfHash` port-for-port)
-  now produce a real dynamically-linked executable instead of an `Error`. Verified via a hand-built
-  entry-shaped module (`void`, ends in the exit syscall, calling `malloc`/`free` — matching
-  `AshesCompiler.Backend.IrCodegen`'s own entry contract, not a `ret`-based leaf function): the
-  produced binary reports `dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2` under
-  `file`, `readelf -d` shows a well-formed `.dynamic` section (`NEEDED libc.so.6`, `RUNPATH
-  $ORIGIN`, `HASH`/`STRTAB`/`SYMTAB`/`RELA`), and — checked via `strace` — the kernel loads the
-  real dynamic loader, which loads real glibc and calls its actual `malloc` (observable as a
-  genuine `brk` syscall extending the heap) before this program's own `exit(0)` fires. This is the
-  first Linux `ld.so`-loaded, real-libc-calling executable this self-hosted compiler has produced.
-  `AshesCompiler.Backend.IrCodegen` does not call `malloc`/`free` from real IR yet (an RC-managed
-  `AllocAdt` remains the follow-up slice this unblocks) — this proves the linker mechanism alone,
-  via a hand-built module, matching every earlier `ElfLinker`/`Llvm.ash` capability's own
-  verification precedent in this arc. The linker also applies relocations whose patch site lies
-  inside `.rodata` itself (`collectRodataPatches`): a six-plus-constructor `match` lowers to one
-  `SwitchTag` that LLVM turns into a `.rodata` jump table of absolute `.text` block addresses
-  carried by `.rela.rodata` entries, which the earlier `.text`-only pass left zeroed — the
-  dispatch jumped to address 0 (found running `tests/pattern_large_adt_dispatch.ash` through the
-  self-hosted CLI; covered by the suite's jump-table dispatch test).
-- [~] `AshesCompiler.Backend.IrCodegen`'s `AllocAdt` gained real `malloc`-backed codegen for the
-  RC-managed (field-carrying) case, closing the gap the previous item left open. Investigating what
-  self-hosted's own lowering produces for a genuinely RC-managed value found the actual blocker was
-  upstream of codegen: `CoreLowering.ash`'s one `AllocAdt` construction site hardcoded
-  `runtimeManaged = false` unconditionally, so nothing self-hosted lowers was EVER marked RC-managed
-  regardless of what real ownership/escape analysis would decide — a bigger, more foundational gap
-  than the malloc-wiring task itself. Scoped down (via AskUserQuestion, "smallest safe RC slice"
-  over pivoting away or starting the full Perceus arc unscoped) to a conservative, always-safe
-  classification: `runtimeManaged = fieldCount > 0` (a zero-field constructor like `Unit`/`None`
-  carries no payload to leak or double-free, so it stays arena-shaped as before; architecture.md
-  calls RC "the general lifetime substrate ... region[s] remain for compiler-proven scoped values",
-  so defaulting any field-carrying allocation to RC is never unsafe — only ever a missed
-  arena-placement optimization a real per-value escape analysis would someday recover). `AllocAdt`
-  now `malloc`s the real 16-byte `{i64 reference_count, i64 allocation_size}` header from
-  architecture.md plus one `i64` word per tag/field, matching its `[tag][field0]...[fieldN-1]`
-  layout row, writes `count = 1` and the payload size, and returns the post-header payload pointer —
-  the same "public pointer never carries the header" contract
-  `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction` established by hand. `SetAdtField`
-  (previously entirely unimplemented in `IrCodegen`) now stores into that same payload region at
-  word `1 + fieldIndex`. New `Llvm.ash` binding: `buildIntToPtr` (`LLVMBuildIntToPtr`), the missing
-  half of the already-bound `buildPtrToInt` — needed to round-trip an ADT pointer back out of this
-  codegen's universal `i64` temp representation before a field-store GEP. Verified two ways: a new
-  real-IR test (`buildRealIrSomeConstructorModule`/`testRunStaticExecutableForRealIrSomeConstructorModule`,
-  `let x = Some(42)` then an independent `Ashes.IO.print(1)`, since no `match`/field-read codegen
-  exists yet to observably read `x` back through real IR) proves the path codegens, links
-  (dynamically — a real `call malloc@PLT` relocation makes `linkLinuxExecutable` choose that path
-  automatically), and runs without crashing; a manual assembly-text dump of the same module
-  confirmed byte-exact correctness independently of that test — `malloc(32)` (`16 + 2*8` for
-  `Some`'s one field), `count=1` at offset `0`, `allocation_size=16` at offset `8`, tag `1` (Some's
-  real tag) at payload offset `0`, field value `42` at payload offset `8`.
-  **Explicitly, deliberately still open**: nothing drops this allocation — `CoreLowering.ash` emits
-  no `RcDrop`/`RcDup` anywhere (confirmed: zero construction sites in the whole file), so every
-  RC-managed value from this path leaks today, an explicit, temporary limitation matching every
-  other stand-in in this arc. Real Perceus lifetime placement (liveness-based `RcDrop`/`RcDup`
-  insertion, owner-alias tracking, borrow-vs-owned rules — stage 0's `Lowering.Ownership.cs` +
-  `PerceusLifetimePlacement.cs` combined are ~4,400 lines; self-hosted's analysis-only partial port,
-  `OwnershipInference.ash`/`OwnershipProvenance.ash`/`OwnershipSummary.ash`, is ~1,600 lines and
-  wires into neither `AllocAdt` nor drop insertion) is a substantially larger, correctness-critical
-  subsystem, not a same-day slice like the rest of this arc — the next task is the smallest safe cut
-  into it: a conservative, exhaustively-matched "is this top-level RC binding provably dead" check
-  (deliberately NOT reusing `OwnershipInference.ash`'s existing `mentionsVar`, which has a confirmed
-  gap — no `ExprHandle` case, falling through its catch-all `false` — unsafe for a drop decision,
-  where a false "dead" verdict is a use-after-free, not just a missed optimization) plus a single
-  non-cascading leaf `RcDrop`, mirroring how the RC-primitives arc itself started leaf-only
-  (`defineRcAllocFunction`'s lifecycle test) before cascading/tag-directed drops.
-- [~] `CoreLowering.ash` emits a single, non-cascading `RcDrop` for a top-level `let` whose value is
-  a direct, fully-saturating call to a field-carrying constructor (`Ctor(arg)` — every constructor
-  `standardConstructorLayouts` registers is exactly this shape) and whose name is never referenced
-  again by the rest of the program. `exprMayReferenceName` matches every `Expr` constructor
-  explicitly with no wildcard case, so a new AST variant left unhandled is a compile error rather
-  than a silent gap; it does not reason about name shadowing, which only ever makes it miss a
-  droppable binding, never mistake a live one for dead. `directSingleArgRcConstructorLayout` rejects
-  a zero-cost constructor, a multi-argument constructor, and a partial application (a closure value,
-  not an allocated cell) — only a fully-saturated, single-argument, field-carrying call qualifies.
-  `AshesCompiler.Backend.IrCodegen`'s `RcDrop` case walks back to the RC header with a negative
-  byte-offset GEP, decrements the count, and calls `free` only once it reaches zero; it panics on
-  `mayBeEmpty` or a non-`None` `structuralDropperLabel` (cascading release) rather than dropping the
-  wrong thing.
-  Verified both automatically and manually: the existing real-IR end-to-end test
-  (`let x = Some(42)` then `Ashes.IO.print(1)`) now also exercises this drop, since `x` is provably
-  dead there, and still runs correctly; a manual assembly dump of that module confirmed a byte-exact
-  `malloc`→header/tag/field-write→negative-GEP→decrement→`free` sequence, the first fully real
-  alloc/use/drop cycle produced by this pipeline; a second manual check
-  (`let x = Some(42)\nlet y = x\n...`, where `x` is referenced) confirmed no `free` call appears —
-  the reference correctly suppresses the drop.
-  **Explicitly still open**: cascading drops (a field that is itself RC-managed), multi-argument/
-  curried constructors, shadowing-aware liveness, and every other Perceus-placement concern named in
-  the previous item remain unimplemented — this covers exactly one narrow, always-safe case.
-- [~] `AshesCompiler.Backend.IrCodegen` gained `GetAdtField`/`GetAdtTag` — the read half of
-  `SetAdtField`/`AllocAdt`'s tag write, at the same word offsets. A cascading `RcDrop` needs these
-  to read a child field out before releasing it, and real `match`/pattern field extraction needs
-  them for any constructor. Neither consumer is wired up yet: a real `match` on `Maybe`/`Result`
-  (the only constructors `standardConstructorLayouts` registers) also needs a null-representable-
-  type check and per-arm RC cleanup around each arm's own arena/RC state (confirmed via a stage-0
-  `--emit-ir` dump of a real `match` on `Some`/`None`), and a user-defined record type has no
-  lowering path at all yet (`CoreLowering.ash` never processes a top-level `type` declaration into a
-  constructor layout — confirmed no second `CoreConstructorLayout` construction site exists anywhere
-  in the package). With no real source able to drive either instruction yet, this is verified via a
-  hand-built `IrFunction` (allocate a 2-field cell, set both fields, read field 0 and the tag back,
-  add them, print the sum) run end to end on a real Linux process — the one exception to this
-  package's real-lowering-only testing rule, matching the same "prove the primitive first" precedent
-  `AshesCompiler.Backend.ElfLinker`'s dynamic-linking mechanism used before real IR could reach it.
-- [~] `CoreLowering.ash` lowers a top-level `type` declaration, including a generic one, into one
-  `CoreConstructorLayout` per constructor (`registerTopLevelTypeDeclaration`), appended to
-  `state.constructorLayouts` — the same live list `standardConstructorLayouts` seeds intrinsically —
-  so a later `TopLevelLet` referencing the type's constructors resolves normally with no further
-  wiring: `lowerRecord`, `lowerConstructor`, and `emitRecordFieldLoad` already handle any registered
-  layout uniformly, whether intrinsic, user-defined, or genuinely polymorphic. Each of a type's own
-  type parameters gets a fresh id minted from the LIVE, per-lowering `typeSupply` (no permanent
-  reservation needed, unlike the intrinsic schemes — this layout is built fresh during lowering with
-  direct access to the supply, not statically embedded ahead of it) and is quantified in every one of
-  its constructors' schemes, the exact same `TypeScheme`/`instantiate` mechanism `print`'s
-  `forall a. a -> Unit` and `Some`'s `forall a. a -> Maybe(a)` already prove works at every call
-  site. A constructor field's `TypeExpr` resolves against a small hand-written primitive map
-  (`Int`/`Str`/`Bool`/`Float`/`BigInt`/`Rune`/`Bytes`/`Unit`) plus the type's own parameter names —
-  not `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment` this
-  single-file pipeline does not build — and now also another named type (including the declaring
-  type itself, so a recursive `Tree = Leaf(Int) | Node(Tree, Tree)` classifies), a generic
-  application mapped to `SemNamed` over its mapped arguments, `List(...)` mapped to `SemList`, and
-  tuples mapped to `SemTuple`: every such field is one pointer word at runtime, the exact path
-  `Str` fields already proved, so recursive ADTs, list-valued fields, and tuple fields compile and
-  run end to end (a recursive tree sum prints `6`; a constructor holding a `List(Int)`, a
-  `(Str, Int)` tuple, and a `Maybe(Int)` prints through all three). A bare reference to a
-  PARAMETERIZED type without its arguments now diagnoses rather than silently accepting a
-  zero-argument `SemNamed` — closing `adt_field_parameterized_needs_args`, the last of the
-  missing-diagnostics set that lived in this single-file pipeline rather than in `TypeResolution.ash`
-  proper. Fixing it exposed a bigger, genuinely separate gap along the way: language.md's own
-  migration-compatibility rule ("when type parameters are omitted, a payload name is an implicit
-  type parameter only when it denotes no known type") was entirely unimplemented here — `type Inner
-  = | Inner(a)` (no explicit `(a)` after the type name) resolved `a` as a bogus concrete
-  zero-argument type `SemNamed(0, "a", [])` rather than a fresh type variable, so ordinary omitted-
-  parameter ADTs (`adt_constructor_multi_arg_run`, `adt_pair_match`) failed to type-check their own
-  constructors at all — not just the arity diagnostic this item was scoped to add. `registerTopLevelTypeDeclaration`
-  now walks every constructor's payload types when the type's own `typeParameters` list is empty,
-  collecting each name that denotes no known type (not the declaring type's own name, not a
-  primitive, not an external opaque type, not an already-registered type — the same
-  `findDeclaredTypeArity` lookup the arity check itself uses) into an implicit parameter list in
-  first-occurrence order, and quantifies those the same way an explicit `(a)` would. The arity
-  check (`typeExprArityErrorsList`, run before `constructorFieldSemanticTypes`) then finds `Inner`'s
-  now-correct arity of `1` and reports `Type 'Inner' expects 1 type argument(s) but got 0.` for
-  `Outer(Inner)`'s bare field. Verified end to end (survey 251 → 253, plus the diagnostic itself
-  closing `adt_field_parameterized_needs_args`: three tests, not one). **Found while landing this,
-  fixed as its own follow-up**: importing `Ashes.Collection.List.length` into `CoreLowering.ash`
-  specifically (every other file in the package already imported it fine) corrupted stage 0's own
-  project-mode module-stitching badly enough to fail the PARSE stage with a cascade of unrelated
-  `ASH003` errors — root-caused to two unrelated pre-existing local function parameters in this same
-  file, `bigIntFitsLength`/`bigIntFirstLength`, each named `length`, colliding with the
-  newly-imported top-level binding of the same name. `ProjectSupport.cs`'s `ApplyAliasesByRenaming`
-  (the flat-module import-alias path, used because wrapping a value in `let alias = ... in body`
-  would change an exported function's identity) renames every source token matching an import alias
-  key with no scope awareness at all, so a same-named parameter's own declaration and every
-  legitimate use of it inside its function body were being rewritten into references to the outer
-  import instead of staying shadowed — sometimes producing invalid syntax outright when the
-  replacement text landed in a position (like a parameter list) that can't contain it. Fixed by
-  collecting the binding's own leading `given (name) -> ...` parameter chain (the exact shape
-  `TryExtractFlatBindingValue` desugars a flat binding's curried parameters into) before renaming,
-  and excluding any alias whose key matches one of those parameter names — parameter shadowing wins
-  for the whole definition, matching ordinary lexical scoping. `bigIntFitsLength`/`bigIntFirstLength`
-  keep their `digitCount` rename regardless (a real naming improvement, not a revert), but `length`
-  now imports and resolves correctly wherever it collides with a local parameter. Verified with a
-  minimized two-file reproduction outside `CoreLowering.ash` (a package importing
-  `Ashes.Collection.List.length` where the importing module also has a same-named parameter),
-  confirmed against the original real trigger by temporarily restoring `CoreLowering.ash`'s
-  pre-`digitCount` text, and validated through the full selfhost verification loop this fix itself
-  motivates: stage 0 rebuilds `selfhost/packages/cli` into a real `ashes-selfhost` executable, and
-  that executable then compiles and correctly runs a `.ash` file exercising the same
-  parameter-shadowing shape end to end. Full stage-0 gate (`Ashes.Tests`, `Ashes.Lsp.Tests`, the
-  `tests/*.ash` suite, `dotnet format --verify-no-changes`) passes clean, since this touches shared
-  C# compiler infrastructure every project-mode compile goes through, not just selfhost's own build.
-  Function-typed fields (`TypeArrow`) still refuse cleanly
-  with `UnsupportedTypeDeclaration` rather than registering an incorrect layout. `isZeroCost` is
-  always `false` — no real self-hosted example of `true` exists yet to model against. Verified end
-  to end: `type Point = | x: Int | y: Int` constructed with named fields (`Point(x = 3, y = 4)`) and
-  read back (`p.x`) compiles through the complete self-hosted pipeline and runs on a real Linux
-  process, printing `3` — the first user-defined type this compiler has ever taken from source to a
-  running executable. Multiple constructors sharing a type are also verified: `type Shape = Circle(Int)
-  | Square(Int)` tags `Circle` `0` and `Square` `1` (declaration order, the same convention `Maybe`/
-  `Result` use) with no constructor-specific code, and each dead binding drops independently — a
-  program constructing both compiles and runs without crashing. Positional constructor fields (as
-  opposed to a record's named fields) cannot be read back without `match`, which this item does not
-  cover, so that case is verified structurally rather than by observing a printed value. Generics are
-  verified too: `type Box(a) = | value: a` instantiates `a` as `Int` (`Box(value = 5)`, printing `5`
-  read back through `GetAdtField`) and, in a separate probe, as `Str` in the same program — genuine
-  polymorphism, not an accidentally-monomorphic scheme. Multiple type parameters are also verified:
-  `type Pair(a, b) = | first: a | second: b` (`Pair(first = 5, second = 7)`, printing `p.second = 7`
-  — field index `1`, not `0`, confirming the second parameter's field lands at its own correctly-
-  ordered offset). **Found and worked around, not fixed, while probing this**: `Pair`'s first attempt
-  used `second: Str` to prove the two parameters resolve independently; this hit a real, separate,
-  already-known gap instead — `IrCodegen.ash` has no `LoadConstStr` case at all (its own header
-  comment already names "strings" as unimplemented), so any real string LITERAL still panics
-  codegen with "unsupported IrInstructionKind" regardless of whether it reaches the string through a
-  generic field or a plain `let`. The test was changed to two `Int` fields instead, deliberately
-  staying within already-covered instruction territory. **Explicitly still open**: `deriving`,
-  non-primitive (nested-ADT, function, tuple) field types, and — confirmed above, not a projection —
-  string literal codegen for any purpose, generic or otherwise.
-  **Known, currently harmless inaccuracy**: `lowerDeadRcTopLevelLet`'s `RcDrop`
-  carries the CONSTRUCTOR's own name in its `typeName` field (e.g. `Circle`/`Square`) rather than the
-  DECLARING TYPE's name (`Shape`) stage-0's real semantics use — confirmed via `--emit-ir` that
-  stage-0 reports `TypeName=Maybe` for a `Some` drop, not `TypeName=Some`. `IrCodegen`'s `RcDrop`
-  case ignores `typeName` entirely today (it is purely diagnostic metadata), so this has no runtime
-  effect; fixing it properly needs a new field on `CoreConstructorLayout` for the owning type's name,
-  a larger change than this item's own scope justifies today.
-- [~] `AshesCompiler.Backend.IrCodegen` gained `LoadConstStr`/`PrintStr` — the string-literal gap the
-  previous item's `Pair` probe worked around — closing the last blocker on `Ashes.IO.print`'s own
-  existing `SemString` dispatch (`CoreBuiltinLowering.ash`'s `printValue` already routed to `PrintStr`
-  for a string argument; only its codegen was missing). Matches `LlvmCodegenMemory.cs`'s real layout
-  exactly: a string literal's static storage is a `{i64 immortalRefCount, i64 unusedAllocSize, i64
-  len, [N x i8] data}` global constant — the same 16-byte RC header as any `AllocAdt` cell, so
-  `LoadConstStr` (GEP past the header, `ptrtoint`) and `RcDrop` need no string-specific case at all;
-  `RuntimeRcImmortalSentinel = 1 << 62` makes an ordinary decrement-based drop naturally never reach
-  zero and never free static storage. `PrintStr` reads the length word, writes the following bytes via
-  the same raw `write` syscall path `PrintInt` uses, then a trailing newline byte.
-  This surfaced a genuinely new `AshesCompiler.Backend.ElfLinker` gap: `.text`'s `R_X86_64_32`/
-  `R_X86_64_32S` absolute references into a string literal's `.rodata` storage (`S + A`, no
-  patch-site subtraction — confirmed against a real emitted object with `readelf -r`) were a
-  relocation shape the linker had never needed to resolve, since every prior instruction only ever
-  called external functions (`R_X86_64_PLT32`). Fixed by teaching `linkLinuxExecutable` to find an
-  object's own `.rodata` section (if any) and, when present, add a second read-only `PT_LOAD` segment
-  page-aligned after `.text`, patching each absolute reference to the section's final address;
-  `rodataBytes = None` reproduces the prior single-segment output byte-for-byte.
-  Verified end to end: `Ashes.IO.print("hello")` compiles through the complete self-hosted pipeline —
-  parse, lower, codegen, LLVM object emission, the new `.rodata`-aware link — to a running Linux
-  executable that prints `hello` and exits `0`, the first real string literal this compiler has ever
-  taken from source to output. **Explicitly still open**: `Ashes.IO.print` dispatch on a call whose
-  own argument type is never independently pinned to a concrete type at the call site (a generic
-  function's own parameter, e.g. `let greet s = Ashes.IO.print(s)` — a real, reproducible
-  `UnsupportedCoreBuiltinLowering("print does not support ?N")`, unrelated to strings specifically
-  and unrelated to anything fixed below).
-  **The malloc/free-plus-`.rodata` combination named above is now fixed.** Any program that both
-  allocates a heap record and prints a string literal (an entirely ordinary combination, not a corner
-  case) hit this: `linkLinuxExecutable` refused to link an object needing both the dynamic-import path
-  and a `.rodata` segment together at all. Fixing it surfaced a second, genuinely new gap along the
-  way, found only by building and disassembling a real combined object rather than reasoning about it
-  in the abstract: `Ashes.IO.print("hello")` alone loads the string's `len` field through an absolute
-  `R_X86_64_32S` reference (`mov reg, [disp32]`, no RIP — confirmed via `objdump -dr`), but the exact
-  same load, in a function that also calls `malloc`/`free` (`let x = Some(42)` before the print),
-  compiles instead to a PC-relative `R_X86_64_PC32` (`mov reg, [rip+disp32]`) — the same kind of
-  access, two different relocation shapes, depending on what else is in the function. The precise
-  LLVM instruction-selection trigger was not pinned down (plausibly register-allocation pressure from
-  the extra external calls); what matters is both shapes are legitimate output and the linker must
-  patch either correctly rather than assume away the one it hadn't seen yet. Fixed in three parts:
-  `DataRelocationPatch` now carries a `dataPatchPcRelative : Bool` (`isRodataRelocationType` accepts
-  type `2`/`R_X86_64_PC32` alongside `10`/`11`), `applyDataPatches` computes `S + A - P` for a
-  PC-relative patch and `S + A` otherwise (`P` the patch site's own final virtual address, matching
-  the formula `applyTextPatches` already used for call/jump stubs), and `linkWithDynamicImports` gained
-  a third, page-aligned, read-only `PT_LOAD` segment placed right after the dynamic-linking data blob,
-  patching `.text`'s rodata references into it exactly like the static-only path already did.
-  `rodataBytes = None` reproduces the prior dynamic-imports-only layout byte-for-byte. Verified end to
-  end: `let x = Some(42)\nAshes.IO.print("hello")` — a real `AllocAdt`/`SetAdtField`/`RcDrop` calling
-  genuine `malloc`/`free`, together with a real `LoadConstStr`/`PrintStr` string literal in the same
-  object — compiles through the complete self-hosted pipeline and runs on a real Linux process,
-  printing `hello`.
-  **Multi-string-literal objects and non-print-argument string usage, probed directly rather than
-  assumed.** Two distinct string literals in one object, each printed by its own `Ashes.IO.print`
-  call, already worked with no further change: `buildStringLiteralGlobalsFromIndex` already builds
-  one `.rodata` global per entry in the whole `stringLiterals` list, `LoadConstStr` already looks
-  its own global up by `label`, and the collected relocations already carry a distinct byte-offset
-  addend per literal against the shared `.rodata` SECTION symbol — copying the whole section and
-  patching every offset independently already generalized past one literal. A string stored in a
-  user-defined record field, read back through `match` (`type Box = | value: Str`), also already
-  worked: a `Str` value shares the exact same 16-byte-RC-header layout as any other runtime-managed
-  value, so the `SetAdtField`/`GetAdtField`/`match` codegen already proven for `Int` fields needed
-  nothing string-specific. A string reached through a plain `let` binding (`let s = "hello"\n
-  Ashes.IO.print(s)`), by contrast, did NOT already work: `objdump -dr` showed a THIRD relocation
-  shape neither prior fix produced — an 8-byte absolute `R_X86_64_64` (`movabs $imm64, reg`, addend
-  `0`, the header's own address, with `+16` to the payload computed by a separate runtime `add`
-  rather than folded into the addend the way an immediately-used literal's load does). Fixed the
-  same way as the PC32 gap: `DataRelocationPatch` gained `dataPatchWidth : Int` (`isRodataRelocationType`
-  now accepts type `1`/`R_X86_64_64` alongside `2`/`10`/`11`), and `applyDataPatches` writes the full
-  64-bit virtual address (`putU64`) for an 8-byte patch rather than truncating to 32 bits
-  (`putU32FromInt`) the way every other type does. Verified end to end for all three shapes (two
-  literals printing `hello`/`world`; the let-bound literal printing `hello`; the record-field
-  literal printing `hello`), full `selfhost/tests/backend` suite green with and without
-  `--debug-disable-reuse`. Passing a string as an ordinary generic function's own parameter
-  (`let greet s = Ashes.IO.print(s)`) hits the SEPARATE, unrelated builtin-dispatch gap now called
-  out above, not a linker or `Str`-representation issue — probed and intentionally left there rather
-  than folded into this fix, since it needs call-site-aware builtin dispatch or monomorphization,
-  not another relocation shape.
-  **`PanicStr` codegen added** (`Ashes.IO.panic` was already an intrinsic builtin — `CoreBuiltinLowering.ash`'s
-  `standardBuiltinLayout` already lowers it to the `PanicStr` IR instruction via `CorePanic`; only
-  codegen was missing). Matches `LlvmCodegenExpressions.cs`'s own `EmitPanic` exactly: the message
-  prints through the SAME helper `PrintStr` uses — a panic's message goes to stdout, not a
-  stderr-specific path — then the process exits `1` instead of `0`. `IrCodegen.ash`'s `PrintStr`
-  case was itself extracted into a shared `emitPrintStrBytesWithNewline` helper (write the `[len]
-  [bytes]` payload via the raw `write` syscall, then a trailing newline) so `PanicStr` reuses it
-  rather than duplicating the byte-writing logic; `emitLinuxProcessExit` (previously hardcoded to
-  exit code `0`, the entry function's only prior caller) is now `emitLinuxProcessExitWithCode` with
-  an explicit code argument, so `PanicStr` can supply `1`. `Ashes.IO.panic("boom")` now compiles
-  through the complete self-hosted pipeline and runs on a real Linux process, printing `boom` and
-  exiting `1`.
-  **`CmpStrEq`/`CmpStrNe` codegen added** (`==`/`!=` on `Str` — `CoreLowering.ash`'s
-  `emitResolvedCoreEquality` was already lowering both to these instructions; the SAME instructions
-  also drive string-literal pattern comparison inside `match`, via `finishPatternComparison`, so
-  this closes the "compared" half of the still-open string-generality gap above and also unblocks
-  matching against a string literal pattern). Matches `LlvmCodegenMemory.cs`'s own
-  `EmitStringComparison`: a length check first (two `Str` values of different length can never be
-  equal, so the byte comparison is skipped entirely when lengths differ), then a real libc `memcmp`
-  call over the raw payload bytes once lengths match — the exact same declare-and-call pattern
-  `malloc`/`free` already established for an external symbol this codegen needs, so
-  `AshesCompiler.Backend.ElfLinker` needed only a one-line addition to its own
-  `linuxDynamicImportLibraries` table (`memcmp`, `libc.so.6`) and no new linker mechanism at all —
-  every other part of the dynamic-import machinery (hash table, `.dynstr`/`.dynsym`, GOT, import
-  stubs) already generalizes to any number of recognized symbols. `CmpStrNe` reuses the same
-  `emitStringEquals` helper and inverts its always-`0`-or-`1` result arithmetically (`1 - result`)
-  rather than re-deriving the comparison. Verified end to end:
-  `Ashes.IO.print(if "hello" == "hello" && "hello" != "world" && "ab" != "abc" then 1 else 0)` —
-  exercising the equal-via-`memcmp` path, the not-equal-same-length-via-`memcmp` path, and the
-  not-equal-different-length fast path all in one program — compiles through the complete
-  self-hosted pipeline and prints `1`.
-  **`ConcatStr`/`ConcatStrN` codegen added, closing the concatenation gap named above.** `+` on two
-  `Str` operands (`CoreLowering.ash`'s `emitResolvedCoreAdd` dispatches `SemString`/`SemString` to
-  `emitCoreConcat` -> `ConcatStr`) now works; `IrOptimizer.ash`'s `foldConcatStrChains` runs as the
-  very last optimization pass and folds any safely-foldable chain into one `ConcatStrN` before
-  codegen ever sees it, so real source almost always presents as the N-ary form, not the bare
-  two-operand one — both are implemented, sharing one helper. Allocates a single real `malloc`'d
-  RC-managed `Str` for the sum of every part's length (matching `AllocAdt`'s own header layout and
-  conventions exactly), then copies each part's payload bytes into position via a real libc
-  `memcpy` per part — a third libc symbol (`memcpy`, alongside `malloc`/`free`/`memcmp`) needing only
-  a one-line addition to `ElfLinker.ash`'s `linuxDynamicImportLibraries` table. Ignores
-  `ConcatStr`/`ConcatStrN`'s own `runtimeManaged` flag rather than branching on it, for the same
-  reason `AllocAdt`'s runtime-managed branch already does: `CoreLowering.ash` always constructs it
-  `false` (no ownership-placement pass exists yet to ever set it `true`), and this codegen has no
-  real scoped-arena allocator to fall back to for the `false` case either, so the result is never
-  freed — a leak, not a correctness bug for the short-lived programs this backend currently
-  produces. **Found while implementing, not assumed**: a self-recursive (or even a locally-nested,
-  or standard-library-`map`-mediated) helper that both calls `lookupIndexed` (needs `ConsoleIO`,
-  from its own `Ashes.IO.panic` fallback) and makes an LLVM binding call (needs `UnsafeFfi`) hits a
-  real capability-row inference limitation in this compiler — a spurious `ASH018 Capability ... is
-  not permitted by the closed row`, confirmed unrelated to string concatenation specifically by
-  extensive bisection (reported separately). Every part's `IrTemp` is therefore resolved via
-  `lookupIndexed` directly at `codegenInstructionKind`'s own `ConcatStr`/`ConcatStrN` call site
-  instead — exactly where every other case in that whole match already resolves a temp alongside
-  its own FFI calls — before ever reaching the (`UnsafeFfi`-only, `ConsoleIO`-free) allocation and
-  copy helpers. Verified end to end: `Ashes.IO.print("hel" + "lo " + "world")` — a three-literal
-  chain, folded to one `ConcatStrN` by the optimizer before codegen ever runs — compiles through the
-  complete self-hosted pipeline and prints `hello world`.
-- [~] Real `match`/pattern-compilation support: `IrCodegen.ash` gained `CmpIntEq`/`CmpIntNe` and
-  the `Borrow`/`CopyOutArena` instruction cases (both plain SSA-value aliases — no real
-  reference-count tracking or scope-local arena exists yet for either to do anything with). This
-  turned out to be the ENTIRE gap: `AshesCompiler.Semantics.CoreLowering.ash` already emits a
-  complete, working `match` compilation for any constructor in `standardConstructorLayouts` or a
-  user's own registered type — a null-pointer guard before each arm's `GetAdtTag` (`CmpIntNe`
-  against `0`, confirmed via `--emit-ir` to be a uniform part of `match`'s lowering strategy, not
-  specific to a null-representable type — even `None`, itself a real non-null zero-field
-  `AllocAdt`, gets one), a `CmpIntEq` tag comparison per arm, `GetAdtField` to bind the arm's
-  pattern variables, a per-arm `RcDrop` of the scrutinee, and arena-bracketing/`Borrow`/
-  `CopyOutArena` bookkeeping around the whole expression — confirmed identical in shape whether
-  matching the intrinsic `Maybe` or a user-defined multi-constructor type. Verified end to end:
-  `match x with | Some(v) -> print(v) | None -> print(0)` on `x = Some(42)` compiles through the
-  complete self-hosted pipeline and prints `42`; the same on a user-defined `type Shape = Circle(Int)
-  | Square(Int)` matching `Circle(7)` prints `7` — pattern field extraction working for the first
-  time, closing the exact gap `buildRealIrMultiConstructorModule`'s own entry named ("cannot be read
-  back without `match`"). Guard clauses (`| Some(v) when v > 0 -> ...`, both the guard-true and
-  guard-fails-falls-through-to-next-arm paths) and or-patterns (`| Circle(n) | Square(n) -> ...`)
-  were verified separately and ALSO need zero further codegen — they compile to the exact same
-  `CmpIntGt`/`JumpIfFalse`/`GetAdtField` instructions already covered, confirming the "the lowering
-  was already done, only codegen was missing" pattern holds more broadly than just the two-arm case.
-  **Explicitly still open**: matching a scrutinee whose type is never otherwise pinned to a concrete
-  type by the surrounding program (hit incidentally while testing the `None` arm alone —
-  `Ashes.IO.print`'s builtin dispatch needs a concrete argument type and this minimal pipeline's
-  `None` literal has nothing to unify it with absent another concrete use of the same value, an
-  inference-completeness gap unrelated to `match` itself), and any arm whose bound field is itself
-  RC-managed (this item's own scrutinee drop is a leaf `RcDrop`, not a cascading one — see the
-  still-open cascading-`RcDrop` item elsewhere in this checklist).
-  A tag-GROUPED match (3+ arms where multiple share a constructor tag, compiled via
-  `lowerMatchArmsViaTagGroups`/`CoreTagGroup` into a `SwitchTag`/`IrSwitchCase` instruction) now
-  also works: `IrCodegen.ash` gained `SwitchTag` support (`resolveSwitchCases`/
-  `addResolvedSwitchCases`, plus `buildSwitch`/`addCase`, both already-bound LLVM bindings from
-  PR #706's hand-built RC work). A first attempt corrupted memory — real, reproducible, and
-  root-caused by direct experiment rather than guessing: `addSwitchCases`'s original single-pass
-  implementation interleaved a `labelBlocks` lookup with the `LLVMAddCase` FFI call for each case;
-  a `labelBlocks` lookup performed AFTER an `addCase` FFI call reliably read back wrong data for
-  later entries in the same list (reproduced in a minimal hand-built `IrFunction` with static
-  string literals, no `CoreLowering.ash` lowering involved at all — ruling out the semantics
-  package entirely). The fix resolves every case's block to a real `LLVMBasicBlockRef` FIRST, in a
-  pass with no FFI calls at all, then calls `addCase` for each already-resolved pair in a second
-  pass — no lookup ever follows an FFI call. Verified end to end, both via the isolated hand-built
-  test (all four branches — three explicit cases plus the default — dispatch correctly), and
-  through real lowering: `match x with | Some(Some(v)) -> print(v) | Some(None) -> print(-1) |
-  None -> print(0)` on `x = Some(Some(7))` compiles through the complete self-hosted pipeline and
-  prints `7`, confirmed stable across repeated runs of both the isolated and real-lowering tests.
-- [~] `AshesCompiler.Backend.IrCodegen` now compiles a whole `IrProgram` (`codegenProgram`), not
-  just its entry function: every lifted function in `IrProgram.functions` — every top-level
-  `let f x = ...`, lambda, and curried partial application — becomes a real
-  `i64 label(i64 env, i64 arg, i64 flag)` LLVM function with the exact calling convention
-  `LlvmCodegenExpressions.cs`'s `EmitCallClosure`/`EmitCallKnown` use (`hasEnvAndArgParams`
-  stores the two incoming words into local slots `0`/`1`, a lifted `Return` is an ordinary
-  `ret`), all declared before any body is emitted so forward and self references resolve. The
-  instruction cases this needed: `MakeClosure`/`MakeClosureStack` (the real 32-byte
-  `{code, env, packedEnvironmentSize, dropper}` object, `1 << 63`/`1 << 62` ownership bits
-  included), `CallClosure` (indirect through the `code` word), `CallKnown` (direct by label — what
-  `IrOptimizer.ash`'s known-closure devirtualization and environment scalarization produce),
-  `LoadFuncAddr`, `LoadEnv` (through local slot `0`), `LoadArgumentOwnership`, `Alloc`/
-  `AllocStack`, and `StoreMemOffset`/`LoadMemOffset` (a captured environment's own block).
-  `AshesCompiler.Backend.ElfLinker` gained the relocation shapes a multi-function object has —
-  a `call` to a locally-defined `.text` symbol (`R_X86_64_PLT32` against a symbol whose section
-  is `.text`, previously an explicit `Error`) and the absolute/PC-relative forms taking that
-  symbol's address for a closure's code word — resolved against `.text`'s own final base address
-  with the symbol's section offset folded into the addend (`textTargetedPatch`), on both the
-  static and dynamic-import paths. Verified end to end through the complete self-hosted pipeline
-  on a real Linux process: `let inc x = x + 1` / `print(inc(41))` prints `42` (`MakeClosure` +
-  `CallClosure`), the curried `let add x y = x + y` / `print(add(40)(2))` prints `42` (an
-  `Alloc`'d environment, `StoreMemOffset`, `LoadEnv`, a closure returned out of the function that
-  built it), `let recursive fact n = ...` / `print(fact(5))` prints `120` (self-recursion through
-  the env word), and the optimizer-rewritten shapes of the last two (`CallKnown` of a
-  `__scalarenv0` clone, direct recursive `CallKnown`) print the same. **Explicitly still open**:
-  every non-RC-managed `Alloc`/`MakeClosure` is a bare `malloc` standing in for stage 0's
-  scoped-arena bump allocation and is never freed (a closure and its environment routinely
-  outlive the frame that built them, so a stack slot would be wrong — the leak is the same
-  deliberate trade every other arena stand-in in this codegen makes); native tail calls
-  (`LlvmCodegen.cs`'s `DetermineTailCallKind`) are not ported, so a deep non-TCO'd recursion
-  grows the native stack; and the RC-managed closure form gets its header but no drop path yet.
-- [ ] Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
+  [IR reference](../internals/ir.md), and the [Memory Model](../internals/architecture.md#memory-model).
+  `AshesCompiler.Backend.IrCodegen` walks REAL `IrFunction`s (produced by the self-hosted
+  frontend/semantics pipeline) and covers: scalars and locals (every value an `i64` word, one
+  entry-block slot per temp/local), control flow with pre-created label blocks and terminator
+  tracking, whole-program compilation of every lifted function under stage 0's exact
+  `i64 f(env, arg, flag)` convention (`MakeClosure`/`MakeClosureStack`, `CallClosure`,
+  `CallKnown`, `LoadFuncAddr`, `LoadEnv`, `LoadArgumentOwnership`, `Alloc`/`AllocStack`,
+  memory-offset ops), real `match`/pattern compilation (null guard, tag compare, field
+  extraction, guards, or-patterns, and tag-grouped `SwitchTag` dispatch), native `musttail`
+  tail calls fused through join chains, string literals/printing/equality/concatenation
+  (`.rodata`-backed immortal-header globals; length-check-then-`memcmp`; one `malloc`'d result
+  with per-part `memcpy`), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
+  the builtin surface tracked under "Object parsing and executable linking". The entry function
+  lowers `Return` to the raw `exit` syscall plus `unreachable` (`e_entry` contract — the process
+  entry can never `ret`). Open: real scoped-arena codegen (arena instructions are explicit
+  no-ops; every non-RC allocation is a `malloc` stand-in that leaks by design), the rest of
+  Perceus placement (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and
+  the async/parallel/net/FFI instruction families.
+- [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
+  `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
+  "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
+  reserved for the embedded schemes' quantified ids (a live supply value colliding with a reserved
+  id is an infinite `applySubstitution` loop, found via gdb). Top-level `type` declarations lower
+  to real constructor layouts: generics, recursive ADTs, `List`/tuple/named-type fields, implicit
+  omitted type parameters per language.md's migration rule, and parameterized-type arity
+  diagnostics. Open: `deriving`, function-typed fields, real zero-cost classification, and
+  `RcDrop.typeName` carrying the constructor rather than the declaring type (harmless — codegen
+  ignores the field).
+- [~] **CG-6** RC status: a field-carrying `AllocAdt` is conservatively RC-classified (`fieldCount > 0`),
+  `malloc`s the real 16-byte `{count, size}` header, and returns the post-header payload pointer;
+  a single non-cascading `RcDrop` is emitted for a provably-dead top-level constructor binding
+  (negative-GEP header walk, decrement, `free` at zero); string literals carry the immortal
+  sentinel so the same drop path never frees static storage. Open: everything else in Perceus
+  placement — cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup
+  insertion, and reuse.
+- [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
+  byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
+  eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve
+  over a per-symbol `libc.so.6` whitelist (`jmp`-through-GOT stubs, ELF hash/`.dynstr`/`.dynsym`/
+  `.rela.dyn`, `PT_INTERP`/`PT_DYNAMIC`, `$ORIGIN` RUNPATH); a concatenated multi-`.rodata*`
+  read-only image supports absolute 32/64-bit and PC-relative data patches plus inside-rodata
+  (`.rela.rodata` jump-table) patches; local `.text` calls and address-taking resolve against the
+  final text base. An unrecognized relocation type or external symbol is an `Error`, never a
+  silently wrong link. Open: TLS sections, program arguments, and growing the recognized-symbol
+  surface alongside codegen.
+- [ ] **CG-8** Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
   rules live in the [Linking](../internals/architecture.md#linking) sections (Linux syscalls go through
   `ResolveSyscallNr`, with the AArch64 `clone`/`wait4` quirks recorded there; Windows `HANDLE`
   values stay `i64` end to end).
-- [ ] Implement the Windows runtime side of the builtins: console handles and modes, `WSAPoll`-based
+- [ ] **CG-9** Implement the Windows runtime side of the builtins: console handles and modes, `WSAPoll`-based
   socket readiness, `CreateProcessA`/pipes for subprocesses, the certificate store for TLS, and the
   KERNEL32/WS2_32/SHELL32/CRYPT32 import surface the PE linker must provide (an import is added in
   three places of `LlvmImageLinkerPe.cs`, see [Linking](../internals/architecture.md#windows-pe32)). Source of truth:
   the `Windows` branches of `LlvmCodegenBuiltins.*.cs` and `LlvmCodegenBuiltins.Directory.Windows.cs`.
-- [ ] Emit every fixed-size runtime-helper scratch `alloca` (RC-block acquisition, free-list bin
+- [ ] **CG-10** Emit every fixed-size runtime-helper scratch `alloca` (RC-block acquisition, free-list bin
   lookup, dynamic allocation, copy-out/reclaim, BigInt formatting, and any future helper with the same
   shape) positioned in the function's **entry block**, never at the current insertion point inside a
-  loop body — LLVM's canonical rule is that a fixed-size alloca belongs in the entry block as one
-  frame slot allocated once; a fixed-size alloca emitted elsewhere is lowered at `-O0` as a runtime
-  stack-pointer adjustment that only function return or `llvm.stackrestore` reclaims, so one inside a
-  TCO loop body leaks native stack every iteration. `-O2` hides this completely (`mem2reg`/SROA
-  promotes the scratch alloca away), so does every `-O2`-compiled test — an `.ash` test cannot guard
-  this at all, since the end-to-end runner defaults to `-O2`; only a C# test that compiles at `-O0`
-  explicitly can. Confirmed with a TCO loop allocating one fresh heap cell per iteration: `rsp`
-  dropped exactly 112 bytes per iteration and never recovered, segfaulting a 1,000,000-element build
-  at `-O0`. The genuine `AllocStack` path (managed by its own `SaveStackPointer`/`RestoreStackPointer`
-  bracket, not a fixed helper slot) is a different mechanism and correctly stays a loop-body alloca —
-  do not route it through the same entry-block hoist.
-- [ ] Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
+  loop body — a fixed-size alloca emitted elsewhere is lowered at `-O0` as a runtime stack-pointer
+  adjustment that only function return reclaims, so one inside a TCO loop body leaks native stack
+  every iteration, and `-O2` (the test default) hides this completely — only an explicit `-O0` C#
+  test can guard it. The genuine `AllocStack` path (managed by its own save/restore bracket)
+  correctly stays a loop-body alloca — do not route it through the same hoist.
+- [ ] **CG-11** Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
   terminal raw/poll operations, files/directories/memory maps, subprocesses, clocks/entropy, sockets,
   HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
@@ -2242,16 +816,16 @@ same public behavior.
   [external dependencies](../internals/architecture.md#external-dependencies), buffered standard output, the math runtime,
   and BigInt. Each builtin's capability marker (§20.8 of the language reference) is part of its
   contract.
-- [ ] Emit scheduler, task, async I/O, structured-parallelism, worker-stack, cancellation, and graceful
+- [ ] **CG-12** Emit scheduler, task, async I/O, structured-parallelism, worker-stack, cancellation, and graceful
   shutdown runtime support. Source of truth: `LlvmCodegenBuiltins.Async.cs` and
   `LlvmCodegenParallel.cs`; contract in [Async & TLS runtime model](../internals/architecture.md#async-tls-runtime-model)
   and the Memory Model sections on task and capability regions, threads and structured parallelism
   (the per-thread arena behind the `%gs`/`%fs` thread control block), and stacks.
-- [ ] Select and link the shipped Mbed TLS, openlibm, and PCRE2 bitcode and any external library/resource
+- [ ] **CG-13** Select and link the shipped Mbed TLS, openlibm, and PCRE2 bitcode and any external library/resource
   payloads hermetically. Source of truth: `HermeticRuntimeAssets.cs` (a payload is linked only when the
   program uses its ABI, after the program's own optimization so the pre-optimized bitcode is not
   re-optimized); the `scripts/download-*.sh` provisioning stays shell and is not an implementation step.
-- [ ] Emit source-level debug information and preserve valid DWARF/target debug sections through every
+- [ ] **CG-14** Emit source-level debug information and preserve valid DWARF/target debug sections through every
   supported optimization level. Set each instruction's location from its IR source location before
   emitting it, give arena/ownership machinery the artificial line-0 location, and keep the current
   location across any builder repositioning: LLVM's `SetInsertPoint(Instruction*)` adopts that
@@ -2259,423 +833,63 @@ same public behavior.
   none) must save the location first, emit the `alloca` unlocated, and restore it — otherwise every
   instruction emitted afterwards for the same IR instruction loses its line, and a match arm whose
   whole body is one reference-counted allocation gets no line-table row (stage 0 had exactly this).
-- [ ] Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
+- [ ] **CG-15** Generate verified object files for `linux-x64`, `linux-arm64`, `win-x64`, and `win-arm64` from the
   corresponding native host compiler bundle (`LlvmTargetSetup.EnsureInitialized` per target,
   `VerifyModule` before emission; `ASH_DBG_DUMP_IR` dumps the module text on a verifier failure).
-
 #### Object parsing and executable linking
 
-- [ ] Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
+- [ ] **LNK-1** Parse LLVM-emitted ELF and COFF objects, sections, symbols, string tables, data/BSS, and relocation
   addends using immutable byte buffers. Source of truth: `LlvmImageLinker.cs` (`ParseElfObject`,
   `ParseCoffObject`); the image constants (base, alignment) are in
   [Linking → Constants](../internals/architecture.md#constants).
-- [~] `AshesCompiler.Semantics.ShippedModuleStitching` gives the self-hosted pipeline its first
-  standard-library modules: `stitchWithShippedModules` takes an entry program's source plus the
-  shipped module texts (`lib/Ashes/<Module.Path>.ash`, supplied by the caller — the semantics
-  package reads nothing from disk here), splits each header (`parseImportHeader`), parses the
-  body, builds the module interface, loads the transitive `import Ashes.*` closure each once,
-  orders it with the frontend's `buildModulePlan`, and stitches it through the same
-  `stitchProjectSyntax` a multi-module project uses, so the combined program lowers like any
-  single program. `selfhost/tests/backend` now takes the shipped root as its one argument and
-  compiles `import Ashes.Collection.List` / `print(Ashes.Collection.List.length([1, 2, 3]))`
-  (prints `3`) and the selector form `import Ashes.Collection.List.length as len` (prints `4`)
-  through the complete self-hosted pipeline on a real Linux process — the first stdlib source
-  (not intrinsic) functions this compiler has taken from `lib/Ashes` to output. Stitching
-  `Collection.List` exposed a real stage-0 ownership bug (a fresh call argument the callee's
-  result keeps whole was released after the call — the crash behind the 2026-08-26 parser
-  `deepCopy` workaround), fixed at the root first. An import of an intrinsic-only module
-  (`Ashes.IO`, `Ashes.Byte`, and the rest of `coreBuiltinKind`'s modules — no shipped file) now
-  resolves to a synthesized empty module instead of erroring, leaving its members to the
-  no-import-required qualified-access path, so entry programs and stdlib modules that import
-  those are reachable (`import Ashes.IO` / `Ashes.IO.print(42)` runs end to end in
-  `selfhost/tests/backend`). Whole-module import shorthands now resolve too: each stitched module
-  scope carries a `moduleAliases` map (the explicit alias and the module-path leaf, each to the
-  full module name, strings deep-copied out of the borrowed resolved-import list), and the
-  reference rewriter turns a qualified name whose qualifier matches no stitched binding but is a
-  known alias back into the full module path (`io.print` → `Ashes.IO.print`), letting the
-  no-import-required qualified-access path resolve it — for intrinsic and shipped modules alike.
-  A plain whole-module import (`import Ashes.IO`, no `as`) now ALSO exposes its members
-  unqualified, matching language.md's own "Import and use unqualified names" table (`import M` |
-  "module M (qualified access; exported names also unqualified)") — a bare `print` after `import
-  Ashes.IO` used to fail `UnknownLoweringBinding("print")` even though the qualified `Ashes.IO.print`
-  and the leaf-qualified `IO.print` both already worked. `moduleAliases`' own leaf-qualifier entries
-  can't tell an aliased import (`import Ashes.IO as io`, unqualified-name-exempt per the same table)
-  from a plain one apart — both get a leaf entry — so `StitchedModuleScope` gained a second, narrower
-  field, `plainWholeModuleImports`, tracking only alias-free whole-module imports. The reference
-  rewriter's bare-name path now falls back, after a real stitched binding search comes up empty, to
-  checking whether the name matches a `coreBuiltinKind` member of any of the current module's plain
-  intrinsic imports, rewriting a hit into the same `ExprQualifiedVar` shape the alias path already
-  produces. Verified end to end (survey 253 → 255: `std_import_ashes_io`, `result_stdlib_import`),
-  plus the negative case (`std_implicit_open.ash`: a bare `print` with NO import still fails, just
-  under selfhost's own `UnknownLoweringBinding` wording rather than stage 0's "Undefined variable"
-  text — a separate, pre-existing diagnostic-message-parity gap, not a regression from this fix).
-  **Explicitly still open**: a builtin module none of whose members lower yet (`Ashes.Task`,
-  `Ashes.Internal`) still errors rather than pretending to exist; selector imports of intrinsic
-  members (`import Ashes.IO.print`) find no exported definition in the empty module; bare
-  qualified references without an `import`
-  (`Ashes.Text.length(...)` with no header) are not collected, only imported modules are; two
-  plainly-imported intrinsic modules sharing a member name would silently pick the first rather than
-  reporting the ambiguity language.md's own unqualified-name section calls for (no current intrinsic
-  module collides with another, so unobserved in practice); and
-  the shipped root is still handed in by the caller rather than located from the compiler
-  binary (the next item below).
-- [~] `AshesCompiler.Backend.IrCodegen` gained every remaining scalar integer instruction the
-  self-hosted lowering already emits for ordinary source: `DivInt`/`DivUInt` (`sdiv`/`udiv`),
-  `AndInt`/`OrInt`/`XorInt`, `ShlInt`/`ShrInt` (amount masked to `0..63`, logical right shift —
-  `LlvmCodegenExpressions.cs`'s `EmitShiftInt` exactly), the seven comparison predicates that had
-  no case (`CmpIntGe`/`Lt`/`Le` and `CmpUIntGt`/`Ge`/`Lt`/`Le`, each a zero-extended `icmp`
-  like the existing three), and `PrintBool` (`icmp ne 0` selecting `true`/`false` written from a
-  stack buffer via the raw `write` syscall, the shape of stage 0's `EmitPrintBool`/
-  `EmitConditionalWrite`). `AshesCompiler.Backend.Llvm` grew the matching bindings
-  (`LLVMBuildShl`/`LShr`/`And`/`Or`/`Xor` and the `sge`/`sle`/`ugt`/`uge`/`ult`/`ule` predicate
-  codes). Verified end to end through the complete self-hosted pipeline on a real Linux process:
-  `(1 << 4) + (256 >> 2) + (10 / 3) + (6 & 3) + (6 | 1) + (6 ^ 3)` prints `97`, a `&&`-chain of
-  `>=`/`<`/`<=`/`>` and a `u64` `<` prints `1`, and `print(true)`/`print(1 > 2)` print `true`/
-  `false`. Chosen by probing what real source lowers to rather than by the instruction list:
-  lists, tuples, list recursion, and lambda arguments already lowered to instructions codegen
-  covered, and these were the only scalar cases still panicking. Float scalars followed:
-  `LoadConstFloat` (`LLVMConstReal` — the FFI passes `Float` as a real `f64` argument), the four
-  arithmetic forms, and all six ordered comparisons, with every Float value travelling through the
-  uniform `i64` word as its raw `f64` bits (bitcast to `double` around each operation and back,
-  `LoadTempAsFloat`'s shape; `fcmp` zero-extends to the canonical 0/1 word). Float FORMATTING is
-  still unported — the float tests all print `Int`s, which is exactly what they need.
-- [~] The first qualified builtin members beyond the original `Ashes.IO` set are lowerable and
-  codegen end to end: `Ashes.Text.fromInt` (the `PrintInt` prologue/zero/digit/sign phases with the
-  write-syscall phase replaced by allocating a fresh RC heap string in `emitStringConcatN`'s exact
-  layout and copying the digit buffer's tail in), `Ashes.Text.byteLength`, and `Ashes.Byte.length`
-  (both the `len` word every heap `Str`/`Bytes` value starts with, masked free of the bit-63 view
-  flag — `LoadStringLength`'s shape). Each has a `standardBuiltinLayouts` scheme; the emission
-  cases already existed. Verified end to end (`-42|0|9007`, `13`). The byte-level set followed:
-  `Ashes.Byte.fromText` and `Ashes.Number.UInt.toInt` (both identity emissions — `Bytes` shares
-  `Str`'s layout and every `uN` is stored widened), `Ashes.Byte.get` (bounds-checked, panics with
-  stage 0's message), `indexOf` (the scalar scan; stage 0's memchr/SWAR fast paths are
-  optimizations), `compare` (`memcmp` + the length tiebreak select chain), `subText` (clamped copy
-  into a fresh RC string), and `subView` — which introduces string VIEWS
-  (`{len|VIEW, backingBytesAddr}`), so every consumer of a string's bytes (`ConcatStr` parts,
-  `CmpStrEq`, `PrintStr`, `PanicStr`, the length reads) now goes through one view-aware
-  `emitStringParts` helper mirroring `LoadStringLength`/`GetStringBytesPointer`. Verified:
-  `world/hello` from a subText/subView concat, plus get/indexOf/compare scalars. The UTF-8 pair
-  followed: `Ashes.Text.unconsText` (`None` for empty, else `Some((head, rest))` with the head's
-  width classed from the lead byte, head and rest copied into fresh RC strings) and
-  `Ashes.Rune.toText` (the width select chain and lead/continuation-byte encodes into a fresh RC
-  string with a reserved four-byte payload). Getting Text.ash to lower also exposed and fixed a
-  real lowering bug: `numericDefault` mapped `SemString` to `SemInt` through its catch-all, so a
-  recursive accumulator parameter meeting `acc + "x"` was bound to `Int` and every
-  string-accumulator function failed with `CoreOperatorTypeMismatch("+", SemInt, SemString)`.
-  The both-operands-unresolved case (`join`'s `first + second` in a nested recursive group, where
-  full inference only later learns `Str` from `reduce`'s `""`) is handled by deferred operator
-  typing: the operands are unified with each other, an `AddInt` is emitted speculatively and
-  recorded under its target temp (temps survive `pruneDeadCaptures`, positions do not), pendings
-  seal per function label at `finishLiftedFunction`, the pending variables are excluded from
-  generalization (bundled into one unquantified scheme treated as environment, so the first
-  concrete use binds them for the whole group instead of every call site getting a fresh
-  instantiation), and `buildProgram` swaps each recorded instruction for the resolved type's real
-  form — `ConcatStr`, `AddFloat`, BigInt add, or the `Int` default — once the substitution is
-  final. `import Ashes.Text` programs now compile and run end to end (`Ashes.Text.join(", ")` on a
-  real Linux process prints `a, b, c`). Separately observed:
-  `ShippedParseError` labels a truncated Text.ash's diagnostics with `lib/Ashes/Trait.ash` — the
-  error path attributes the wrong module's source path.
-  The parse/build set followed: `Ashes.Text.parseInt` (sign, digit loop, and the div-based overflow
-  thresholds against both Int bounds, producing `Ok(value)`/`Error(message)` with stage 0's exact
-  message strings staged through a stack ASCII buffer into a fresh RC string),
-  `Ashes.Text.uncons` (the fully validated UTF-8 first-scalar decode — continuation ranges,
-  overlong/surrogate/out-of-range boundary checks, U+FFFD at width 1 on invalid input — returning
-  `Some((rune, rest))` with the rest copied like `unconsText`'s tail), `Ashes.Byte.singleton`,
-  `appendByte`, `allocate` (bounds-guarded, zero-filled by a store loop in place of stage 0's
-  memset), `fromList` (the two-pass count/fill over the cons cells), `hash` (the FNV-1a loop and
-  constants), and `Ashes.Number.UInt.fromInt64` (an identity bit-reinterpret). All of these had
-  their instruction constructors, name→kind mappings, and dispatch arms modeled already — the
-  missing pieces were the `standardBuiltinLayouts` schemes (the reachability gate behind their
-  `UnknownLoweringBinding` failures) and the backend emission cases. Verified end to end
-  (survey 210 → 223, the parseInt/uncons/hash/allocate test files pass, `Byte.allocate(-1)` panics
-  with stage 0's message and exit 1). Stage 0's `Text.fromInt` additionally accepts a
-  `u8`/`u16`/`u32` argument through an ad-hoc rule in `LowerTextFromInt` rather than unification
-  (every `uN` is stored widened, so the digit phases read the word directly); the scheme-based
-  selfhost typing mirrors it with `acceptBuiltinArgumentWidths`, which lets a matching
-  small-unsigned actual stand in for the scheme's `Int` parameter before `bindCoreValueTypes`
-  runs, unblocking the `fromInt(Byte.get(...))` shape the byte test files use.
-  The remaining `Ashes.Byte` members followed in the same schemes-plus-emission pattern: `empty`,
-  `append` (the shared string-concat layout), the little-endian encoders `u16Le`/`u32Le`/`u64Le`
-  and bounds-checked decoders `getU16Le`/`getU32Le`/`getU64Le`, the pure updates
-  `set`/`setU16Le`/`setU32Le`/`setU64Le` and `copyRange` (both range-checked with stage 0's panic
-  messages, writing into a fresh copy — the copy never aliases the source, so stage 0's
-  same-buffer scratch path is unreachable), and `scanHash` (the stop-at-needle FNV-1a pass
-  returning `(index, hash)`); `Ashes.Text.toHex` came along for the decode test's `u64` printing
-  (the 32-byte back-to-front digit buffer, `0x` prefix, and sign), with
-  `acceptBuiltinArgumentWidths` extended so `toHex` and `Ashes.Number.UInt.toInt` accept any
-  unsigned width the way stage 0's ad-hoc rules do (stage 0's `toInt` defaults an unconstrained
-  argument to `u8`, which the scheme's own unification already provides). `Ashes.Text.parseFloat`
-  landed last: the full phased parse — sign, integer digits, optional fraction, optional `e`/`E`
-  exponent with its own sign and overflow thresholds, and the multiply/divide-by-ten scaling
-  loops — with every phase a block, the value carried through `f64` slots (`LLVMBuildSIToFP` for
-  digits), and `Ok(bits)`/`Error(message)` Results carrying stage 0's exact message strings. Every
-  `f64` constant (0.0, 0.1, 10.0, the maximum finite double for the range checks) is built from its
-  exact bit pattern through an `i64` bitcast, and the final sign is applied as a sign-bit XOR in
-  the integer domain rather than an `fsub` from zero — keeping this hand-written hot path free of
-  constant pools. Landing it still surfaced the general linker gap: real `double` constants (and
-  `fneg`'s `xorps` mask) make LLVM emit `.rodata.cst8`/`.rodata.cst16` constant-pool loads as
-  PC-relative relocations into sections the single-`.rodata` model rejected, so
-  `AshesCompiler.Backend.ElfLinker` now collects every PROGBITS section whose name starts with
-  `.rodata` into one concatenated read-only image (each section at a 16-byte-aligned layout
-  offset; plain `.rodata` alone stays byte-identical to the old model), resolves rodata-targeted
-  relocations by folding the target section's layout offset into the symbol value, and applies
-  inside-rodata relocation patches (`.rela.rodata.*`) at their section's layout offset. With it the whole non-async `Ashes.Text`/`Ashes.Byte`/`Ashes.Rune`/
-  `Ashes.Number.UInt` builtin surface the test corpus uses lowers and codegens end to end.
-  The `Ashes.IO` write family followed the same schemes-plus-emission pattern: `write`/`writeBytes`
-  (`Str`/`Bytes` share one `[len:i64][bytes...]` header layout, so both lower to the same `WriteStr`
-  instruction stage 0's own `CoreWrite`/`CoreWriteBytes` already shared) and `writeError`/
-  `writeErrorLine` (`WriteErrorStr`, fd 2 instead of fd 1, with the trailing newline gated on the
-  instruction's own `Bool`). All four had their instruction constructors, name→kind mappings, and
-  `emitCoreBuiltin` dispatch arms already in place from an earlier slice — only the
-  `standardBuiltinLayouts` schemes and the backend emission cases were missing. The raw-write
-  codegen itself is a direct reuse of `PrintStr`'s own `write`-syscall machinery, factored out into
-  two fd-parametrized helpers (`emitWriteStrBytesToFd`, `emitWriteNewlineToFd`) that
-  `emitPrintStrBytesWithNewline` (stdout, fd 1, always newlined) now calls into rather than
-  duplicating; `print`/`panic`'s own codegen is unchanged byte-for-byte. Verified end to end
-  (survey 247 → 250: `io_write`, `io_write_bytes`, `io_write_then_write_line` now pass; a scratch
-  `writeError`/`writeErrorLine` program confirmed stdout stays empty while stderr receives
-  `err-line\n`), plus the selfhost backend suite (normal and `--debug-disable-reuse`) and the
-  selfhost semantics suite. `writeBuffered`/`writeBufferedLine`/`flush` are deliberately excluded
-  from this slice — they need a real process-wide stdout ring and a flush-on-exit contract wired
-  into every `Return`, a separate, bigger piece of work the existing `emitLinuxWrite` comment
-  already called out as unattempted. **Found while verifying, not caused by this change**: the
-  selfhost semantics test binary (`selfhost/tests/semantics`) segfaults on exit immediately after
-  its last suite ("all self-hosted IR optimizer tests passed") prints — reproduced identically on
-  an unmodified `origin/main` build (commit 1f99da92) with no write-family code in the picture at
-  all, so this is a pre-existing crash in some shared exit/cleanup path, not a regression; the
-  backend and CLI suites, and every `tests/*.ash` survey run, are unaffected. Left for a future
-  slice to root-cause.
-  `Ashes.IO.File.exists` followed, the first File builtin and the first real Linux `openat`/`close`
-  syscalls this codegen emits: a new 4-argument syscall helper (`emitLinuxSyscallCall4` — `syscall`'s
-  ABI passes a fourth argument in `r10`, not `rcx`, since `rcx` is clobbered by the `syscall`
-  instruction's own return address) backs `openat(AT_FDCWD, path, O_RDONLY, 0)`, and a new
-  `emitStringToCString` helper (a fresh `malloc`'d, NUL-terminated buffer copied from an Ashes
-  `Str`'s length-prefixed, never-NUL-terminated bytes) supplies the path every syscall needs.
-  `exists` opens the path and closes it again on success, resolving `Ok(true)`/`Ok(false)` through
-  the existing `emitResultAdt` helper `Ashes.Text.parseInt`'s `Ok`/`Error` construction already
-  established — Linux's `open`/`openat` has no failure mode this builtin needs to surface as
-  `Error` (a permission-denied path is simply "not opened," which stage 0's own
-  `EmitLinuxFileExists` also reports as `Ok(false)`), so codegen never takes the `Error` branch.
-  Verified end to end (survey 250 → 251; `fs_exists_missing` — the one File.exists test with no
-  `// file:` fixture requirement — now passes, and both `fs_exists_present`/
-  `std_fs_qualified_names_resolve` were confirmed correct by hand with a real fixture file since the
-  survey harness does not create `// file:` fixtures). `readText`/`readAllBytes`/`writeBytes`/
-  `open`/`readChunk`/`readLine`/`close` remain — each needs a real `read`/`write` loop and, for
-  `open`, a resource-typed handle the lowering side does not model yet.
-  `Ashes.IO.File.writeText`, `Ashes.IO.File.replace`, and `Ashes.IO.Directory.createAll` followed:
-  `writeText` is `openat(O_WRONLY|O_CREAT|O_TRUNC, 0644)` plus one `write` syscall for the whole
-  payload (this codegen's other direct-write paths already assume a single `write` covers the
-  buffer rather than retrying a short one, so `writeText` matches rather than porting stage 0's
-  fuller retry loop) then `close`; `replace` rejects a `source` that names a directory (the same
-  `openat(..., O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, 0)` probe-flag value stage 0's own
-  `EmitLinuxFileReplace` uses) and otherwise calls the raw `rename` syscall rather than stage 0's
-  libc import, since renaming has a direct syscall equivalent and this slice's whole point was
-  staying on the no-libc-linking raw-syscall path; `createAll` walks the path byte by byte,
-  temporarily NUL-terminating the C string at each `/` (restored immediately after) to `mkdir` one
-  component at a time, tolerating an already-existing directory via an `openat(path, O_DIRECTORY, 0)`
-  probe closed unconditionally afterward (closing an invalid fd is a harmless `-EBADF` at the raw
-  syscall level, so no branch is needed to skip it). Two new raw-syscall helpers
-  (`emitLinuxMkdir`/`emitLinuxRename`, syscalls 83/82) and a shared `emitFilesystemStatusResult`
-  (the raw-syscall-convention, "non-negative return means success" counterpart of stage 0's own
-  `EmitFilesystemStatusResult`) back all three. Verified end to end against the real self-hosted
-  pipeline (`AshesCompiler.Cli.Compile.runRun`, not just the backend/semantics test suites): a
-  program that creates a nested-free directory, writes two files into it, replaces one with the
-  other, and confirms the resulting existence of each via the already-shipped `File.exists` prints
-  the expected `true`/`false`, with the destination file's on-disk contents matching the replaced
-  source's.
-  `Ashes.IO.Directory.entries` and `Ashes.IO.Directory.removeTree` followed, closing out the
-  Directory surface — and, unlike the slice above, deliberately NOT on the raw-syscall path:
-  stage 0's own emitters reach for libc here (`fdopendir`/`readdir`/`closedir` for the stream,
-  `qsort`/`strcmp` for the deterministic name sort, `strlen`/`realloc`/`memmove` for the growable
-  name array, `lstat`/`nftw`/`remove` for the recursive walk, `__errno_location` for `readdir`'s
-  end-vs-error disambiguation), `nftw` has no raw-syscall equivalent at all, and
-  `AshesCompiler.Backend.ElfLinker`'s dynamic-import machinery turned out to be fully general
-  already — its per-symbol whitelist (`linuxDynamicImportLibraries`) just grew twelve
-  `libc.so.6` rows, with no new linker mechanism. The libc functions are declared once per module
-  (a `DirectoryExternals` bundle alongside `malloc`/`free`/`memcmp`/`memcpy`; an unreferenced
-  declaration never reaches the emitted object, so untouched programs still link statically). Three
-  helper functions are DEFINED per instruction occurrence, uniquely suffixed by the target temp
-  (`LLVMGetNamedFunction` has no binding here, and `addFunction` on a taken name silently renames):
-  the name-append trampoline (strdup + realloc-grown pointer array), the `strcmp` comparator whose
-  address `qsort` receives (internal linkage, load-bearing for the same `dso_local` address-taking
-  reason lifted functions document), and `removeTree`'s `remove`-everything `nftw` visitor
-  (`FTW_DEPTH|FTW_PHYS`, post-order). `entries` validates every name with a new whole-buffer UTF-8
-  validator (`emitValidateUtf8`, stage 0's exact lead-byte range table, though with flat AND-chains
-  over the continuation bytes once the bounds check has run instead of stage 0's block-per-byte) and
-  builds the result list back-to-front so `array[0]` lands at the head — each cons cell a fresh
-  RC-managed 16-byte `[head][tail]` payload matching `BytesFromList`'s reading side. `removeTree`
-  reports a missing path as `Ok(Unit)` only on `ENOENT`. Building the validator surfaced a real
-  lesson: seeding its AND-chain with an `i64` constant against `i1` comparison results produced
-  invalid IR that LLVM's instruction selector only reported as `Cannot emit physreg copy
-  instruction` at emission time — nothing verifies the module between build and emit, so operand
-  TYPES have to be right by construction. Verified end to end against the real self-hosted
-  pipeline: a program that creates a directory with a subdirectory, writes two files, pattern-matches
-  `entries`' exact sorted `Ok(["a.txt", "b.txt", "sub"])` shape, `removeTree`s the whole thing, and
-  confirms via `File.exists` prints exactly the sorted names then `false`, with the tree gone from
-  disk. `File.open`/`readChunk`/`readLine`/`close` remain open on the resource-typed handle the
-  lowering side does not model yet, and `readText`/`readAllBytes`/`writeBytes`/`mmap`/
-  `makeExecutable` on their read loops.
-- [~] `Ashes.IO.readLine` (stdin, `Option(Str)` — distinct from the `Ashes.IO.File.readLine` handle
-  variant noted as still open above) reads one line at a time via a raw `read` syscall, one byte per
-  call, into a fixed 64 KiB stack buffer: `\n` ends the line (excluded from the result), an
-  immediately-preceding `\r` is dropped, EOF with nothing accumulated yields `None`, EOF with a
-  partial line yields that line's `Some`, and a line at or past the buffer's capacity panics with
-  stage 0's own wording ("readLine input too long") rather than silently truncating. The lowering
-  side (`CoreReadLine`, `ReadLine` instruction, `emitCoreBuiltin` dispatch) already existed from an
-  earlier slice; only the `standardBuiltinLayouts` scheme (`Unit -> Maybe(Str)`, matching
-  `unconsText`/`uncons`'s existing `Maybe` naming) and the backend emission were missing — without
-  the scheme, a bare `Ashes.IO.readLine(Unit)` call failed type resolution with
-  `UnknownLoweringBinding("Ashes.IO.readLine")` before codegen was ever reached. Deliberately simpler
-  than stage 0's own `EmitReadLine`: stage 0 batches stdin through a persistent buffered-read-ahead
-  ring backed by module-global scratch (`ReadLineScratchGlobal`), needed because ITS OWN TCO
-  mechanism reuses one never-returning stack frame across loop iterations, so a per-call `alloca`
-  there would grow the stack by one line's worth on every iteration. This codegen's TCO is a genuine
-  native `musttail` sibling call instead (see the musttail slice above) — each iteration gets a
-  fresh call frame that reuses the caller's stack space rather than growing it — so a fixed
-  per-call `alloca` for the line buffer is safe without any persistent global state, at the cost of
-  one `read` syscall per byte instead of stage 0's batched reads (an explicit, acceptable trade
-  matching this file's other "correct, not yet optimized" stand-ins, e.g. the affine-append
-  ConcatStrTip growth gap). Verified against every existing `readLine` fixture by hand (the survey
-  harness classifies a `// stdin:` test as a skipped fixture rather than actually feeding it stdin):
-  `io_read_line_echo`, `io_read_line_eof_none`, `io_read_line_empty_line`, and
-  `io_read_line_two_lines` all match their `// expect:` text exactly, `std_io_read_line_match_typechecks`
-  confirms both `Option` arms still type-check, and — the one this simplification most needed to
-  prove — `regress_readline_loop_depth` (5000 lines through a `readLine`-driven recursive loop, a
-  regression fixture written specifically because stage 0's OWN unbatched per-call alloca once
-  overflowed the stack after a few hundred lines) prints `5000` with no crash, confirming the
-  `musttail`-frame-reuse safety argument above empirically rather than just by inspection. Full
-  survey (`tests/*.ash` through the rebuilt `ashes-selfhost`) shows zero regressions and all six
-  `readLine`-touching tests above moving from `COMPILE-FAIL` to the skipped-fixture bucket (the
-  survey harness's own `// stdin:` limitation, not a new gap — every one of the six was confirmed
-  correct by hand above), plus the selfhost backend suite (normal and `--debug-disable-reuse`) and
-  the selfhost semantics suite.
-- [x] The `built-in runtime types are reserved` diagnostic (`std_root_module_reserved.ash`, one of
-  the smaller queued diagnostic gaps): a top-level `type` declaration reusing the `Ashes` root
-  module's own name, or one of the compiler's built-in runtime types (the ADTs
-  `BuiltinRegistry.CreateBuiltinTypes` seeds — `Unit`/`List`/`Maybe`/`Result`/`Socket`/`TlsSocket`/
-  `Task`/`JoinHandle`/`Process`/`FileHandle` — plus the primitive names `PrimitiveTypeNames`
-  reserves — `Float`/`Bytes`/`Rune`/`u8`/`u16`/`u32`/`u64`), previously compiled silently instead of
-  being rejected. `registerTopLevelTypeDeclaration` now checks the declared name against that
-  18-name reserved set (a new `isReservedTypeName` predicate, a flat `||` chain — `CoreLowering.ash`
-  has no `List.contains` import yet and the set is small and fixed) before doing anything else, and
-  returns a new `ReservedTypeName(Str)` `CoreLoweringError` carrying stage 0's own exact message
-  text (`'Ashes' and built-in runtime types are reserved`) when it matches. `type alias` declarations
-  are not covered — selfhost's `CoreLowering.ash` doesn't lower type aliases at all yet, so there is
-  nothing to guard on that path. Verified end to end (survey: `std_root_module_reserved` moves from
-  `COMPILED-BUT-ERROR-EXPECTED` to `COMPILE-ERROR-EXPECTED`, the only line the diff moves — 255 pass,
-  293 compile-fail, and every other count identical to the immediately-prior survey), plus a hand
-  check that an ordinary, non-reserved `type` declaration (`type_symbol_registration.ash`) still
-  compiles and runs correctly, and the selfhost backend suite (normal and `--debug-disable-reuse`)
-  and semantics suite.
-- [x] **Explicit lambda-parameter type annotations are now enforced.** Investigating
-  `type_zero_cost_nominality.ash` (`// expect-compile-error: ASH002` — a zero-cost nominal type
-  `type UserId = UserId(Int)` should not unify with its underlying `Int`) found a much larger gap
-  than the test's own name suggested: `given (x: T) -> ...` and `let f (x: T) = ...` (the parser
-  desugars both into the same `ExprLambda(parameter, body, annotation)` node) had their `annotation`
-  discarded everywhere in `CoreLowering.ash` — `ExprLambda(parameter, body, _annotation) ->
-  lowerLambda(...)`, the leading underscore marking it intentionally unused. A minimal probe with no
-  zero-cost types at all, `(given (value: Bool) -> value)(42)`, compiled and ran cleanly; stage 0
-  correctly rejects it ("Type mismatch: Bool vs Int"). `lowerLambda` now takes the annotation as a
-  new parameter: when present, it's resolved via `typeExprToSemanticType` (an existing resolver,
-  previously used only for ADT constructor field types — relocated earlier in the file, since Model
-  A sequential scoping requires it be defined before `lowerLambda` can call it) and the lambda's
-  fresh parameter type is bound against it via `bindType` (the same unify-and-record-error primitive
-  already used ~20 other places in this file), reporting a real `CoreLoweringError` on mismatch.
-  When the annotation is a form this resolver can't yet handle (a function type, a resource, a
-  capability row), it is left unchecked rather than rejected — an unproven "can't check this" is not
-  proof the annotation is wrong, matching the resolver's existing constructor-field contract. Missed
-  two call sites on the first pass (`lowerOneShotPost`'s synthetic post-resume closure,
-  `lowerOperationArmParameters`'s synthetic per-parameter closure — both compiler-internal, always
-  annotation-free) since they use different local variable names than the two ordinary `ExprLambda`
-  match arms a narrow grep initially covered; the type checker's own arity/argument-type errors on
-  the now-6-argument `lowerLambda` caught both immediately. Verified end to end: all three probes
-  (`let`-sugar, explicit `given`, and inline lambda application) now correctly reject
-  `Bool` vs `Int`; `type_zero_cost_nominality.ash` itself now fails to compile
-  (`CoreCallTypeMismatch(TypeMismatch(SemNamed(0, "UserId", []), SemInt))`); full survey shows zero
-  regressions and TWO net improvements, not one — `type_zero_cost_nominality` moving from
-  `COMPILED-BUT-ERROR-EXPECTED` to `COMPILE-ERROR-EXPECTED` as expected, plus
-  `logical_and_or_short_circuit` newly passing as an unplanned side effect (its `sideEffect (n: Int)`
-  helper's parameter was previously left fully polymorphic instead of monomorphized to `Int` at
-  definition time, plausibly over-generalizing in a way this fix also happens to close); the selfhost
-  backend suite (normal and `--debug-disable-reuse`) and semantics suite both pass, including the
-  semantics suite's own "annotation-aware inference" group specifically.
-- [x] `perform` now rejects a non-capability-operation target
-  (`capability_perform_non_operation.ash`, `// expect-compile-error: 'perform' must be applied to a
-  capability operation call.`). `lowerPerform`'s call-spine match only had a case for a root that
-  resolves to `ExprQualifiedVar(capName, opName)` (`perform Clock.now()`, the legitimate shape); its
-  fallback silently lowered the ENTIRE `perform` expression as if the keyword weren't there
-  (`| _ -> lower(operation)(state)`), so `perform double(21)` — `double` an ordinary local function,
-  not a capability operation — compiled and ran identically to bare `double(21)`. Replaced the
-  fallback with a real error (`failure(state)(PerformTargetNotCapabilityOperation(...))`, a new
-  `CoreLoweringError` variant carrying stage 0's own message text verbatim). **Naming gotcha**: the
-  first attempt named the new variant `PerformRequiresCapabilityOperation`, which collided with an
-  already-existing, unrelated 0-argument constructor of the same name in `TypeInference.ash`'s own
-  error type — the type checker caught the arity mismatch immediately (`grep -rn` before picking a
-  name would have caught it sooner). Renamed to `PerformTargetNotCapabilityOperation`. Safe by
-  construction, not just by testing: the change touches only the negative/fallback arm, so a
-  legitimate `perform Module.op(...)` call — matching the `ExprQualifiedVar` arm — is untouched;
-  confirmed no currently-passing survey test exercises the positive `perform` path at all yet (every
-  capability/perform test still fails for other, unrelated, already-documented reasons — the static
-  `provide` capability-resolution pipeline and full `let`-binding signature/`needs`-row checking are
-  both still unported, separate, larger gaps noted for a future slice). Verified end to end: the
-  target test moves `COMPILED-BUT-ERROR-EXPECTED` → `COMPILE-ERROR-EXPECTED` in the full survey, the
-  only line the diff moves; selfhost backend suite (normal and `--debug-disable-reuse`) and
-  semantics suite both pass.
-- [x] `Ashes.IO.writeBuffered`/`writeBufferedLine`/`flush` and `Ashes.IO.exit` land together — the
-  former's own gaps had been masking the latter's. `writeBuffered`'s lowering
-  (`CoreWriteBuffered`, the `WriteBufferedStr` instruction, `emitCoreBuiltin` dispatch) already
-  existed; only the `standardBuiltinLayouts` schemes and backend emission were missing, the same
-  "schemes are the only gap" pattern as `readLine`. Implemented as an immediate, unbuffered write to
-  fd 1 (reusing `emitWriteStrBytesToFd`/`emitWriteNewlineToFd`, the exact codegen `write`/`writeLine`
-  already use) and `flush` as a true no-op — the language contract only guarantees buffered output is
-  visible by the next `flush` or process exit, never a stronger ordering, and an already-unbuffered
-  write trivially satisfies that with nothing left to defer or flush. Deliberately simpler than stage
-  0's own real 64 KiB buffering ring with its flush-on-exit contract wired into every exit path
-  (`Return`, `Ashes.IO.exit`, `Ashes.IO.panic`) — this codegen needs no such wiring at all, since
-  there is no buffer for any exit path to flush. Verified against all three existing tests exercising
-  this exact contract: `io_buffered_stdout` (interleaved `writeBuffered`/`write`/`flush` calls
-  produce the correct interleaved output), and — the two that most directly test the "flush on exit"
-  guarantee an unbuffered implementation sidesteps rather than implements —
-  `io_buffered_stdout_panic` (buffered output must still appear before a `panic`) and
-  `io_stderr_exit` (buffered stdout must still appear before an explicit `Ashes.IO.exit`), both
-  confirmed correct with immediate writes since sequential unbuffered writes to the same fd
-  preserve order by construction. Landing `io_stderr_exit` exposed a second, unrelated, trivially
-  fixable gap it had been masking: `Ashes.IO.exit`'s own `ExitProcess` instruction had no backend
-  codegen at all (`grep` for it: zero hits) despite its scheme already existing — a straight
-  three-line addition reusing the already-existing `emitLinuxProcessExitWithCode` helper (used
-  identically by the entry function's own normal-exit `Return` case and by every panic-message
-  helper already in this file). Verified end to end: full survey shows zero regressions and a clean
-  +3 (`io_buffered_stdout`, `io_buffered_stdout_panic`, `io_stderr_exit` all newly passing, including
-  `io_stderr_exit`'s exit code and separate stdout/stderr streams checked by hand since the survey
-  harness only compares stdout); selfhost backend suite (normal and `--debug-disable-reuse`) and
-  semantics suite both pass.
-- [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
-  `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
-  static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at
-  `textVa + 20`, and every text/rodata/import patch resolves against that shifted base). Found
-  while adding lifted-function codegen: the linker used to set `e_entry` straight to the entry
-  function, so the process started with the kernel's 16-byte-aligned `rsp` where LLVM-compiled
-  code assumes the post-`call` `rsp ≡ 8 mod 16` — every frame and every libc call in the program
-  was misaligned by 8, a latent ABI violation glibc's `malloc`/`memcmp`/`memcpy` merely happened
-  to tolerate. The trampoline's `call` restores the contract exactly as stage 0 does (and passes
-  the initial stack pointer in `rdi`, which this entry function does not yet read — program
-  arguments remain unported).
-- [ ] Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
+- [~] **LNK-2** Shipped-module stitching (`stitchWithShippedModules`): the transitive `import Ashes.*` closure
+  over the shipped `lib/Ashes` texts, intrinsic-only modules synthesized empty, whole-module alias
+  shorthands and plain-import unqualified access resolved. Open: builtin modules with no lowerable
+  members (`Ashes.Task`, `Ashes.Internal`), selector imports of intrinsic members, bare qualified
+  references without an import, ambiguity reporting for colliding plain imports, and locating the
+  shipped root from the compiler binary.
+- [~] **LNK-3** Scalar and float instruction coverage: every integer arithmetic/bitwise/shift/comparison form,
+  `PrintBool`, and float constants/arithmetic/ordered comparisons (each `f64` travels through the
+  uniform `i64` word with bitcasts around every operation). Open: float formatting.
+- [~] **LNK-4** Builtin member coverage beyond the original `Ashes.IO` set: the full non-async `Ashes.Text`/
+  `Ashes.Byte`/`Ashes.Rune`/`Ashes.Number.UInt` surface the corpus uses (parse/format/uncons/toHex/
+  parseFloat, byte builders/encoders/decoders/hash, string views through one view-aware
+  `emitStringParts`, deferred operator typing for both-operands-unresolved `+`), the `Ashes.IO`
+  write family, `readLine` (per-byte reads into a `musttail`-frame-safe per-call buffer),
+  `writeBuffered`/`writeBufferedLine`/`flush` (immediate writes — with nothing deferred, the
+  flush-on-exit contract holds by construction), `exit`, and the complete File/Directory filesystem
+  surface: `File.exists`/`writeText`/`replace` and `Directory.createAll` on raw syscalls
+  (`openat`/`write`/`close`/`mkdir`/`rename`), and `Directory.entries`/`removeTree` via libc
+  dynamic imports (`fdopendir`/`readdir`/`closedir`, `qsort`/`strcmp`, `strlen`/`realloc`/
+  `memmove`, `lstat`/`nftw`/`remove`, `__errno_location`) with per-occurrence internal-linkage
+  helper functions, a whole-buffer UTF-8 validator, and hand-built RC-managed list cons cells.
+  Open: `File.open`/`readChunk`/`readLine`/`close` (need the resource-typed handle lowering does
+  not model yet), `readText`/`readAllBytes`/`writeBytes`/`mmap`/`makeExecutable` (read/write
+  loops), and a real buffered-stdout ring only if immediate writes ever regress measured
+  throughput.
+- [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
+  reserved built-in runtime type names rejected in top-level `type` declarations, explicit
+  lambda-parameter type annotations enforced (previously silently discarded), and a `perform`
+  whose target is not a capability operation rejected.
+- [~] **LNK-6** The 20-byte Linux entry trampoline at the start of `.text` on both link paths (`e_entry` is
+  the trampoline, restoring the post-`call` stack-alignment contract). Open: the initial-stack
+  pointer passed in `rdi` is not read yet — program arguments remain unported.
+- [ ] **LNK-7** Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
   (`LlvmImageLinkerElf.cs`; [Linux x86-64](../internals/architecture.md#linux-x86-64-elf64) lists the relocation set and
   the trampoline).
-- [ ] Lay out and relocate AArch64 ELF64 images with the complete supported relocation set
+- [ ] **LNK-8** Lay out and relocate AArch64 ELF64 images with the complete supported relocation set
   (`LlvmImageLinkerElfArm64.cs`; [Linux AArch64](../internals/architecture.md#linux-aarch64-elf64)).
-- [ ] Lay out AMD64 PE32+ images, imports, BSS, entry trampoline, stack probing, and relocations
+- [ ] **LNK-9** Lay out AMD64 PE32+ images, imports, BSS, entry trampoline, stack probing, and relocations
   (`LlvmImageLinkerPe.cs`; [Windows](../internals/architecture.md#windows-pe32) — import-table slots are positional, so
   the hint array, the IAT address table, and the `__imp_` symbol map must change together).
-- [ ] Lay out ARM64 PE32+ images, imports, unwind/runtime requirements, entry code, and relocations
+- [ ] **LNK-10** Lay out ARM64 PE32+ images, imports, unwind/runtime requirements, entry code, and relocations
   (`LlvmImageLinkerPeArm64.cs`; validated structurally on x64 hosts, see the win-arm64 note in
   [Development](../guide/development.md)).
-- [ ] Resolve compiler runtime symbols, platform APIs, linked bitcode symbols, external libraries, and
+- [ ] **LNK-11** Resolve compiler runtime symbols, platform APIs, linked bitcode symbols, external libraries, and
   embedded resources deterministically.
-- [ ] Write final executables atomically, preserve installed-layout behavior, and produce deterministic
+- [ ] **LNK-12** Write final executables atomically, preserve installed-layout behavior, and produce deterministic
   structural diagnostics for malformed or unsupported objects.
-- [ ] Execute host-target outputs and preserve the current Wine/QEMU/native/structural validation policy
+- [ ] **LNK-13** Execute host-target outputs and preserve the current Wine/QEMU/native/structural validation policy
   for non-host targets, including structural-only win-arm64 validation on x64 hosts. Source of truth:
   `src/Ashes.TestRunner/Runner.cs` and `src/Ashes.Tests/TestProcessHelper.cs` — a win-x64 binary
   under Wine runs with `WINEDEBUG=-all` and `WINEDLLOVERRIDES="mscoree,mshtml=d"` (the emitted PE
@@ -2684,295 +898,122 @@ same public behavior.
 
 #### CLI, package management, and registry client
 
-- [~] Implement shared argument scanning, help, validation, exit codes, stdout/stderr discipline, target
-  selection, CPU/worker/stack options, optimization levels, and debug options. Source of truth:
-  `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` and `CliDiagnosticsTests` as the behavioral oracle;
-  the [CLI reference](../reference/cli.md) is the authoritative surface for every command and flag.
-  The shared top-level dispatcher is ported for the six commands this package actually has
-  (`Dispatch.ash` in `selfhost/packages/cli`, wired as `Package.ash`'s own entry point via
-  `Ashes.IO.exit(runCli(Ashes.IO.args))` — turning the CLI package from a set of independently
-  testable command modules into an actual runnable `ashes` executable for the first time): no
-  arguments falls through to usage (exit 2); a bare `--help`/`-h` as the first argument is global
-  help (exit 0) regardless of what follows it, matching stage 0's own check on `args[0]` alone
-  before any subcommand parsing runs; every other command name is matched case-insensitively
-  (stage 0 lowercases `args[0]` before dispatch) and routed to `add`/`fmt`/`init`/`remove`/`tree`/
-  `why` with the rest of the arguments untouched. Verified by actually compiling and running the
-  resulting executable end-to-end (`init` → `add` → `tree` → `remove`, plus `--help`/unknown-
-  command), not just unit tests, and separately by pure tests over `runCli` that dispatch to each
-  subcommand's
-  own DISTINCT failure exit code (e.g. `runCli(["Add"])` returning 1, `runCli(["why"])` returning
-  2) specifically to prove routing and case-insensitivity reach the right function with arguments
-  intact, without needing a real filesystem for most cases. Deliberately deferred, since stage 0's
-  own equivalent has no self-hosted counterpart yet: `--version`/`-v` (the version string comes
-  from assembly metadata this package doesn't have an analog of) falls through to usage like any
-  other unknown command rather than reproducing a version string; target selection, CPU/worker/
-  stack options, optimization levels, and debug options are not parsed by any command this package
-  has ported (`compile` and `run` accept only their file form so far, and `test` does not exist
-  here yet).
-- [~] Implement `compile` for files, expressions, projects, output selection, IR dumps, and compiler
-  reports. `AshesCompiler.Cli.Compile` compiles one `.ash` file to a linux-x64 executable through
-  the self-hosted pipeline (`stitchWithShippedModules` against the shipped `lib/Ashes` texts,
-  `lowerCoreProgramWithSource`, `optimizeIrProgram`, `codegenProgram`, `linkLinuxExecutable`), with
-  `-o`/`--out`, the derived default output path, the `OK Wrote <size> to <output>` confirmation,
-  and stage 0's exit codes. Not yet: `--expr`, `--project`, other targets, optimization/debug
-  options, `--explain`, IR dumps, elapsed time, and locating the shipped library from an installed
-  layout (it probes `lib/Ashes` beside the executable, its parent, and the working directory).
-  Surveying `tests/*.ash` through this command (2026-08-30): 118 programs compile and print their
-  expected output, 63 expected compile errors are reported, 428 fail to compile (intrinsic-only
-  module imports such as `import Ashes.IO`, unported builtins such as `Ashes.Task.run`/`async`/
-  `Ashes.Text.parseFloat`, float codegen, non-scalar constructor fields), 15 compile that stage 0
-  rejects (exhaustiveness, redundancy, capability, and alias-cycle diagnostics), and 7 compile but
-  crash at run time (closures with several captures, mutual-recursion TCO, large ADT dispatch,
-  arena growth).
-- [~] Implement `run`, program argument forwarding, temporary outputs, and propagation of program exit
-  status. The file form compiles to `<temp>/ashes/<stem>`, forwards the arguments after `--`, relays
-  the program's stdout and stderr line by line (not inherited), and returns the program's own exit
-  code. Not yet: `--expr`, `--project`, uniquely named temporary outputs, and the compile options
-  `compile` also lacks.
-- [ ] Implement the stateful `repl`, target/optimization commands, recovery after diagnostics, and
+Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral oracle; the
+[CLI reference](../reference/cli.md) is the authoritative surface for every command and flag.
+
+- [~] **CLI-1** Shared argument scanning, help, validation, exit codes, and dispatch. Done: the top-level
+  dispatcher (`Dispatch.ash`, the package's runnable entry point) with usage/help exit codes and
+  case-insensitive routing for the ported commands. Open: `--version`, target/CPU/worker/stack,
+  optimization, and debug options.
+- [~] **CLI-2** `compile` for files, expressions, projects, output selection, IR dumps, and compiler reports.
+  Done: the single-file form through the full self-hosted pipeline to a linux-x64 executable, with
+  `-o`/`--out`, default output naming, the `OK Wrote ...` confirmation, and stage 0's exit codes.
+  Open: `--expr`, `--project`, other targets, optimization/debug options, `--explain`, IR dumps,
+  elapsed time, and installed-layout library discovery.
+- [~] **CLI-3** `run` with argument forwarding, temporary outputs, and exit-status propagation. Done: the file
+  form (temp output, `--` forwarding, line-relayed stdio, the program's own exit code). Open:
+  `--expr`, `--project`, uniquely named temp outputs, and the compile options above.
+- [ ] **CLI-4** The stateful `repl`, target/optimization commands, recovery after diagnostics, and
   deterministic cleanup.
-- [~] Implement `fmt` discovery, preview/write behavior, project awareness, malformed-file handling, and
-  canonical exit codes. A new `selfhost/packages/cli` package (`Fmt.ash`, depending only on the
-  already-complete `frontend` and `formatter`) implements the observable contract
-  (`docs/md/reference/cli.md#ashes-fmt`): recursive `.ash` discovery under a directory (sorted,
-  deterministic), the `-w`/`--write` vs. preview split, only rewriting a file whose formatted
-  content actually changed, the inline-`module`-block skip carve-out (reusing
-  `AshesCompiler.Frontend.InlineModules.containsInlineModule`, not reimplementing it), and stage
-  0's exact `0`/`1`/`2` exit-code split (a missing path is a *user* error, exit 1; an ambiguous
-  invocation — wrong argument count, a bare `-w` with no path — is a *usage* error, exit 2).
-  Verified against stage 0 byte-for-byte: `fmt`'s `-w` output on a real repository file
-  (`tests/trait_deriving.ash`) is identical to this port's own output for the same file (a raw
-  stdout *preview* diff is not a valid comparison for this — Spectre.Console line-wraps
-  `AnsiConsole.Write` output to a fixed console width when stdout is piped to a non-TTY, which
-  cosmetically splits long lines/comments with no relationship to the canonical formatted text;
-  the `-w` path writes via a plain file write and is unaffected). **Deliberately deferred, noted
-  as open follow-ups in the port's own header comment**: `.editorconfig` resolution
-  (`indent_style`/`indent_size`/`tab_width`/`end_of_line`; `formatSource` always applies the
-  formatter's fixed 4-space/`\n` defaults) and the elapsed-time clause in the write-mode summary
-  line (no monotonic-clock capability is shipped in `Ashes.IO` yet). "Project awareness" turned
-  out to mean only the inline-module carve-out above — stage 0's own `fmt` handler
-  (`src/Ashes.Cli/Program.cs`) does not consult `ashes.json`/project discovery at all, contrary to
-  what the phrase suggests. Tested end-to-end against the real filesystem (a scratch directory
-  tree, matching `tests/io_directory_operations.ash`'s own pattern) in
-  `selfhost/tests/cli/Main.ash`, not just against in-memory strings.
-- [x] **Fixed a stage-0 arena/RC placement bug found through the self-hosted `fmt` command**: a
-  specific 4-nested-`if` source shape, re-formatted by `ashes-selfhost fmt`'s own fixed-point
-  re-parse loop, corrupted one byte of its own output (`0x1F` where a plain space, `0x20`, belongs,
-  on the deepest-nested branch keyword's leading indentation), breaking the re-parse with a
-  misleading cascade of lexer errors. Minimized to a 12-line repro (an outer `if` with a nested `if`
-  in both its `then` and `else` branches, the `else`-side nested `if` itself nesting a third).
-  `--emit-ir lowered` on the real `selfhost/packages/cli` compile traced the corruption to
-  `Formatter.ash`'s mutually-recursive `formatterExpr`/`formatterBranchSuffix` pair (also mutually
-  recursive with `formatterLet`/`formatterCases`/`formatterArms`): the call from `formatterExpr`'s
-  body to `formatterBranchSuffix` — a forward reference compiled while `formatterBranchSuffix`'s own
-  body was still mid-lowering — emitted an unconditional `RestoreArenaState` immediately followed by
-  `ReclaimArenaChunks`, with no `JumpIfFalse`/`CopyOutArena` safety check, reclaiming the arena the
-  call's `Str` result still pointed into before the caller's own `ConcatStr` read it. Root-caused to
-  `Lowering.cs`'s `CalleeCanProvideRuntimeManagedResult`: when the callee's actual compiled result
-  isn't known yet (`TryGetCompiledFunctionResultRuntimeManaged` unresolved — a self-recursive call
-  still mid-compile, or a mutual-recursion sibling referenced before its own turn), it fell back to
-  trusting the callee's whole-program `FunctionOwnershipSummary.ResultFresh`/`RcEligible` estimate
-  unconditionally. That estimate proves only that SOME reachable terminal arm of the mutual-recursion
-  group is independently RC-eligible, not that THIS specific call's own compiled result ends up
-  runtime-managed rather than arena-placed; a large, deeply-interlocking group like this one
-  demonstrated the gap concretely, with the actual compiled result staying arena-placed despite the
-  summary reporting RC-eligible. A narrower fix that trusted the fallback only for a genuine
-  cross-function forward reference (distinguishing it from direct self-recursion via a new
-  `_labelsCurrentlyLowering` in-flight tracking set) still let a different specialization of this
-  same mutual-recursion group reach the corrupted state, proving the summary-trust fallback unsound
-  even for the "sibling forward reference" case the surrounding comment had specifically justified.
-  Fixed by removing the trust-the-summary fallback entirely: an unresolved compiled-result answer now
-  always returns `false`, falling through to the existing dynamic ownership-bit check at the call
-  site instead of being treated as a verified positive, matching the soundness contract
-  `TryGetCompiledFunctionResultRuntimeManaged`'s own doc comment already specified. One C# unit test
-  (`OwnershipProvenanceTests.MutuallyRecursiveFreshBaseResults_ConvergeAcrossTheExactCycle`) encoded
-  the old, now-disproven blind-trust behavior — updated to assert the two call sites it covers
-  resolve to different outcomes (one via the verified compiled-result check, one via the now-correct
-  conservative fallback) rather than converging on the same unconditional `true`. Verified through the
-  full stage-0 gate (`Ashes.Tests` 2461/2461, `Ashes.Lsp.Tests` 72/72, the `tests/*.ash` suite
-  684/684, `dotnet format --verify-no-changes`) and the full selfhost verification loop this fix
-  itself is about: stage 0 rebuilds `selfhost/packages/cli` into `ashes-selfhost`, and that
-  executable's own `fmt` (both preview and `-w`) now formats the minimized repro correctly, byte for
-  byte, with no re-parse cascade. The survey corpus (`tests/*.ash` compiled and run through
-  `ashes-selfhost`) shows zero regressions against the recorded baseline (255 pass vs. 247, from
-  intervening unrelated work; the 2 pre-existing `RUN-MISMATCH` entries — an empty-expected-string
-  survey-script quirk and the already-documented `tco_affine_string_append` timeout — are byte-for-byte
-  identical to the baseline, not new).
-- [~] Implement `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, path/registry
-  dependencies, lock files, frozen/offline modes, and the content-addressed source cache. Contract:
-  [Projects](../guide/projects.md) and [Package manager](../internals/architecture.md#package-manager); source of truth
-  `src/Ashes.Semantics/ProjectSupport.cs` (manifest, planning, stitching) and the CLI commands.
-  `init` is ported (`Init.ash` in `selfhost/packages/cli`, the smallest of the six — no discovery,
-  no dependency graph, just existence checks plus two fixed-shape file writes): a bare `--help`/
-  `-h` prints usage, any other argument is a usage error, an existing `ashes.json` in the target
-  directory fails without writing anything, and otherwise it writes the manifest (`name` from the
-  directory's own basename, `entry`/`sourceRoots` fixed) and `src/Main.ash` (only if absent, never
-  overwriting a file the user already has there) — verified byte-for-byte identical to stage 0's
-  own output (`RunInit` in `src/Ashes.Cli/Program.cs`) for both files, and the same "already
-  exists" exit code. `why` is ported (`Why.ash` in `selfhost/packages/cli`): resolves the target
-  project's manifest, flattens its dependency graph
-  (`AshesCompiler.Semantics.ProjectDependencyGraph`), then runs a breadth-first search from the
-  root's own direct dependency namespaces (not the flattened graph, which would let an unrelated
-  transitive package masquerade as a root) over the lock-recorded dependency edges to report the
-  shortest path to the target namespace, or that it isn't a dependency at all. Verified against a
-  scratch two-package registry+override fixture (`selfhost/tests/cli/Main.ash`) covering a direct
-  dependency, a transitive one, an unrelated namespace, and a missing manifest, and separately
-  against a hand-built three-package registry+override fixture end-to-end (the shape every real
-  selfhost package's own manifest takes) — the shape that surfaced a genuine stage-0 compiler bug
-  in argument retention across a curried call boundary, fixed in #663, not a `why`-specific issue.
-  `tree` is ported (`Tree.ash` in `selfhost/packages/cli`, reusing `why`'s project/lock-file
-  infrastructure and its BFS-adjacent root-dependency resolution): renders the resolved dependency
-  tree (project root, its own direct `dependencies`/`devDependencies` in that order, then each
-  one's lock-recorded transitive dependencies) as plain-text guide-connected lines (`└── `/`├── `
-  with `    `/`│   ` continuations, matching the CLI reference's own example rendering byte for
-  byte) rather than stage 0's Spectre.Console `Tree` widget markup, a namespace shared by two
-  branches expanded in both while a cycle along a single path is cut and marked `(cycle)`, and a
-  path dependency suffixed `(path)` instead of a lock version. Verified with pure unit tests over
-  `renderDependencyTree` (root-only, direct+transitive, path-dependency-and-sibling-ordering,
-  cycle) and an end-to-end scratch two-package registry+override fixture matching `why`'s own.
-  Porting it surfaced a real Ashes inference gotcha, not a stage-0 bug: an unannotated self-recursive
-  helper built on `==` (`containsNamespace`-shaped) left ambiguous inside a project with several
-  other call chains reports `ASH010`/"no hidden dictionary parameter" with the location pinned to
-  the project's entry file rather than the helper itself; the existing `containsText` helper in
-  `ProjectDependencyGraph.ash` already carries the fix as its own convention — annotate such a
-  helper's parameters explicitly (`(namespace: Str) (list: List(Str))`) rather than leaving them
-  fully polymorphic. `add` is ported (`Add.ash` in `selfhost/packages/cli`): unlike every other
-  ported command, it edits the manifest's raw JSON (`Ashes.Text.Json`'s `Json` value, not the typed
-  `ProjectManifest` model) so unknown/forward-compatible fields survive untouched, matching stage
-  0's own `Dictionary<string, object?>` round trip in `RunAdd`/`ReadProjectJson`/`WriteProjectJson`
-  — but by updating the parsed key/value list in place (`setJsonObjectField`) rather than stripping
-  and re-appending a field the way stage 0's dictionary rebuild does, this port does NOT reproduce
-  stage 0's incidental quirk of relocating `dependencies`/`devDependencies` to the end of the
-  object on every write; a deliberate deviation; the CLI reference's own contract for `add` never
-  mentions field order. Re-serializes with a new private 2-space indented writer
-  (`stringifyIndented`) matching `System.Text.Json`'s `WriteIndented = true` default (compact
-  `{}`/`[]`, one member per line otherwise) — `Ashes.Text.Json`'s shipped `stringify` only produces
-  compact JSON, so this was added as a private helper scoped to `Add.ash` rather than touching the
-  shared stdlib module; deliberately deferred, matching `escStr`'s existing escaping rather than
-  `System.Text.Json`'s stricter default encoder (no HTML-sensitive-character or non-ASCII
-  `\uXXXX` escaping). Verified with pure unit tests over `setJsonObjectField` (in-place update vs.
-  append), `addPackageToManifest` (creates a missing field, preserves the other dependency field,
-  overwrites an existing package entry), and `stringifyIndented` (matches `init`'s own byte-exact
-  sample shape, renders empty collections compactly), plus an end-to-end scratch fixture covering
-  a fresh `dependencies` field, a `--path` dependency with backslash normalization, and a missing
-  manifest. Porting it surfaced a genuine stage-0 bug, fixed first in #673 (not an `add`-specific
-  self-hosting issue): `RunAdd`'s `--dev` branch never reattached the project's existing
-  `dependencies` field to the rebuilt object, so `ashes add X --dev` on a project that already
-  declared `dependencies` silently deleted that field on write. `remove` is ported (`Remove.ash`
-  in `selfhost/packages/cli`): removes the named package from BOTH `dependencies` and
-  `devDependencies` (matching stage 0's `RunRemove` exactly — the CLI reference's own prose only
-  mentions `dependencies`, but the actual check covers both fields), failing with
-  `Package '<name>' is not a dependency.` when it was in neither, and omitting either field
-  entirely from the written manifest once removal empties it out. Shares `add`'s raw-JSON model
-  and its private indented writer (`AshesCompiler.Cli.Add`'s `stringifyIndented`/
-  `setJsonObjectField`) instead of duplicating that pretty-printer a second time — real
-  serialization logic the two commands must agree on, unlike `why`/`tree`'s small independently-
-  duplicated linear-search helpers. Verified with pure unit tests over `removeObjectField`
-  (removes an existing key, leaves an unrelated one untouched) and `removePackageFromManifest`
-  (omits an emptied field, keeps a field with remaining entries, checks `devDependencies` too,
-  leaves the manifest unchanged when the package isn't found), plus an end-to-end scratch fixture
-  covering the last-dependency-removed/field-omitted case, a kept-sibling case, a not-a-dependency
-  case, and a missing manifest. `restore` is ported (`Restore.ash`) for path dependencies only:
-  resolves and lists a project's dependencies by reusing `resolveProjectDependencyGraph` (the same
-  function `tree`/`why` already call), honoring root-level `overrides` so a registry-named
-  dependency pointed at a local path (the shape every selfhost package's own `ashes.json` uses)
-  resolves normally, matching stage 0's own `PackageRestorePolicy.NeedsRestore` semantics for that
-  case. A root dependency with a registry source and no override refuses cleanly rather than
-  claiming a restore it cannot perform — no network access, lock-file writing, or `ash1:` hash
-  verification exists yet, all covered by the next checklist item. Verified with pure unit tests
-  over argument parsing (help, `--project`, unrecognized flags ignored) and end-to-end scratch
-  fixtures covering an overridden-registry-dependency project (resolves via path), a
-  dependency-free project, an un-overridden registry dependency (refused), and a missing manifest.
-- [ ] Implement semantic versions, version constraints, deterministic dependency solving, `ash1:` source
+- [~] **CLI-5** `fmt` discovery, preview/write behavior, malformed-file handling, and canonical exit codes.
+  Done: sorted recursive discovery, `-w` vs. preview, changed-files-only writes, the inline-module
+  skip, and stage 0's exit codes — `-w` output byte-identical to stage 0's. Open: `.editorconfig`
+  resolution and the elapsed-time clause in the write summary.
+- [~] **CLI-6** `init`, `add`, `remove`, `restore`, `tree`, and `why` over manifests, dependencies, and lock
+  files. Done: all six — `init` byte-identical to stage 0; `add`/`remove` edit raw manifest JSON so
+  unknown fields survive (one shared indented writer; `add` deliberately does not reproduce stage
+  0's field-reordering quirk); `tree`/`why` walk the lock-recorded graph with plain-text tree
+  rendering and marked cycles; `restore` resolves path/overridden dependencies only and cleanly
+  refuses a registry fetch. Open: registry restore (network, lock writing, `ash1:` verification)
+  under the item below.
+- [ ] **CLI-7** Semantic versions, version constraints, deterministic dependency solving, `ash1:` source
   hashes, archive validation, and package materialization
   ([the `ash1:` content hash](../internals/architecture.md#the-ash1-content-hash) fixes the byte-exact hashing rules).
-- [ ] Implement registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and
-  `info`, including package capability extraction from compiler metadata, against the unchanged .NET
+- [ ] **CLI-8** Registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and `info`,
+  including package capability extraction from compiler metadata, against the unchanged .NET
   registry server ([Package registry](../internals/architecture.md#package-registry) documents the wire protocol).
-- [ ] Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
-  `concurrency`, and `memory` reports with stable filtering and stderr behavior. Source of truth:
-  `IrExplainReporter.cs`, `ExplainReportFormatter.cs`, `IrTextFormatter.cs`, and `IrFunctionSelector.cs` in
-  `src/Ashes.Semantics/`; the report shapes are documented under
-  [Compiler reports](../reference/cli.md#compiler-reports).
+- [ ] **CLI-9** Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
+  `concurrency`, and `memory` reports with stable filtering and stderr behavior
+  ([Compiler reports](../reference/cli.md#compiler-reports)).
 
 #### TestRunner and validation infrastructure
 
-- [ ] Discover individual files, directories, and project tests with the documented project-mode rules
+- [ ] **TR-1** Discover individual files, directories, and project tests with the documented project-mode rules
   and deterministic ordering. Source of truth: `src/Ashes.TestRunner/Runner.cs`; the directive
   surface and execution model are in [Testing](../guide/testing.md). The runner compiles the
   unoptimized pipeline as well as the optimized one, so lowering bugs the optimizer would mask stay
   visible (`--pipeline both` in CI).
-- [ ] Parse and enforce stdout, stderr, compile-error, exit-code, stdin, file/text, file/bytes,
+- [ ] **TR-2** Parse and enforce stdout, stderr, compile-error, exit-code, stdin, file/text, file/bytes,
   executable-directory, working-directory, TCP fixture, and formatter-skip directives.
-- [ ] Compile tests normally, with the requested raw/reuse-disabled pipeline, and for selected targets;
+- [ ] **TR-3** Compile tests normally, with the requested raw/reuse-disabled pipeline, and for selected targets;
   execute through native, Wine, or QEMU runners as appropriate.
-- [ ] Enforce timeouts, isolate temporary files/processes/ports, terminate process trees, and report
+- [ ] **TR-4** Enforce timeouts, isolate temporary files/processes/ports, terminate process trees, and report
   failures without leaking fixtures.
-- [ ] Match exact output normalization, compiler-error matching, skip behavior, summaries, and exit
+- [ ] **TR-5** Match exact output normalization, compiler-error matching, skip behavior, summaries, and exit
   codes.
-- [ ] Run the full existing `.ash` corpus through both toolchains and classify every difference before
+- [ ] **TR-6** Run the full existing `.ash` corpus through both toolchains and classify every difference before
   bootstrap acceptance.
 
 #### LSP, DAP, editor integration, and fuzzing
 
-- [ ] Implement Content-Length JSON-RPC transport, lifecycle, cancellation, document state, UTF-8/UTF-16
+- [ ] **IDE-1** Implement Content-Length JSON-RPC transport, lifecycle, cancellation, document state, UTF-8/UTF-16
   coordinate conversion, and structured error handling for the LSP. Source of truth: `src/Ashes.Lsp/`
   with `src/Ashes.Lsp.Tests/` as the oracle; the consumer-only boundary is stated in
   [Tooling Servers](../internals/architecture.md#tooling-servers).
-- [ ] Provide compiler-backed diagnostics, hover schemes/effects/evidence, definitions, completions,
+- [ ] **IDE-2** Provide compiler-backed diagnostics, hover schemes/effects/evidence, definitions, completions,
   references, semantic tokens, and canonical formatting without duplicating compiler logic.
-- [ ] Resolve projects, imports, dependencies, standard-library documentation, and multi-file updates in
+- [ ] **IDE-3** Resolve projects, imports, dependencies, standard-library documentation, and multi-file updates in
   the LSP with deterministic invalidation.
-- [ ] Implement the standalone DAP transport and session lifecycle plus launch, breakpoints, stepping,
+- [ ] **IDE-4** Implement the standalone DAP transport and session lifecycle plus launch, breakpoints, stepping,
   threads, stack frames, scopes, variables, termination, and disconnect requests. Source of truth:
   `src/Ashes.Dap/` with `DapServerTests`; the debugger workflow it must serve is in
   [Debugging](../guide/debugging.md), and every module of a project must be breakpointable (the
   source-map anchors item under IR model and lowering).
-- [ ] Broker GDB, LLDB, and `lldb-dap` processes with portable command/response parsing, timeouts, value
+- [ ] **IDE-5** Broker GDB, LLDB, and `lldb-dap` processes with portable command/response parsing, timeouts, value
   formatting, and source-path mapping; keep the DAP independent of compiler implementation packages.
-- [ ] Preserve the existing VS Code extension's compiler/LSP/DAP acquisition and launch contracts; the
+- [ ] **IDE-6** Preserve the existing VS Code extension's compiler/LSP/DAP acquisition and launch contracts; the
   extension itself remains JavaScript/TypeScript because it runs inside the VS Code extension host.
-- [ ] Port deterministic seeds, profiles, generation budgets, typed program generation, invalid-source
+- [ ] **IDE-7** Port deterministic seeds, profiles, generation budgets, typed program generation, invalid-source
   mutation, AST/IR invariants, execution oracles, coverage guidance, and interaction templates to the
   pure-Ashes fuzzing package. Source of truth: `src/Ashes.Fuzzing/` with `src/Ashes.Fuzzing.Tests/`;
   the campaign contract is in [Fuzz Testing](../guide/fuzz-testing.md).
-- [ ] Port shrinking, stable size metrics, corpus replay, artifact writing, failure classification,
+- [ ] **IDE-8** Port shrinking, stable size metrics, corpus replay, artifact writing, failure classification,
   replay commands, isolated workers, timeouts, and campaign summaries.
-- [ ] Differentially fuzz the self-hosted and C# phases without making host-language helpers part of the
+- [ ] **IDE-9** Differentially fuzz the self-hosted and C# phases without making host-language helpers part of the
   self-hosted implementation or its normal test path.
 
 #### Bootstrap, release, and default-toolchain gates
 
-- [ ] Define a reproducible stage-0 input consisting of the released C# compiler, pinned LLVM/runtime
+- [ ] **BOOT-1** Define a reproducible stage-0 input consisting of the released C# compiler, pinned LLVM/runtime
   payloads, restored source dependencies, and the pure-Ashes compiler sources.
-- [ ] Build a stage-1 host compiler with stage 0, then use stage 1 to build stage 2 without invoking C#,
+- [ ] **BOOT-2** Build a stage-1 host compiler with stage 0, then use stage 1 to build stage 2 without invoking C#,
   Python, shell, or Node.js as an implementation step.
-- [ ] Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
+- [ ] **BOOT-3** Compare stage-1/stage-2 deterministic artifacts where possible and otherwise compare normalized
   tokens, diagnostics, schemes, IR, object structure, executable behavior, and reports.
-- [ ] Compile and run the compiler, standard library, examples, and complete test corpus with the
+- [ ] **BOOT-4** Compile and run the compiler, standard library, examples, and complete test corpus with the
   self-hosted host-target compiler.
-- [ ] Build self-contained compiler, CLI, LSP, DAP, TestRunner, and fuzzing bundles for every host RID,
+- [ ] **BOOT-5** Build self-contained compiler, CLI, LSP, DAP, TestRunner, and fuzzing bundles for every host RID,
   including the matching native `libLLVM` and runtime payload layout.
-- [ ] Cross-compile and execute/structurally validate all four target RIDs under the documented host
+- [ ] **BOOT-6** Cross-compile and execute/structurally validate all four target RIDs under the documented host
   matrix.
-- [ ] Add deterministic bootstrap, parity, packaging, and release jobs to local CI and hosted CI with
+- [ ] **BOOT-7** Add deterministic bootstrap, parity, packaging, and release jobs to local CI and hosted CI with
   cached but reproducibly verifiable native assets.
-- [ ] Grow the standing phase benchmark (`selfhost/bench/`, see its README) with the port: add the
+- [ ] **BOOT-8** Grow the standing phase benchmark (`selfhost/bench/`, see its README) with the port: add the
   `lower` row when the self-hosted core lowering accepts a whole program and make `optimize`
   two-sided, add the stage-2 column once stage 1 emits executables, and refresh the results table at
   every milestone that changes a phase. The benchmark is also where stage-0 memory-model bugs surface
   first (four were found through it in one week), so a crashing corpus file is a bug to record, not a
   file to exclude silently.
-- [ ] Demonstrate acceptable compile time, peak memory, produced-code behavior, diagnostics, and tool
+- [ ] **BOOT-9** Demonstrate acceptable compile time, peak memory, produced-code behavior, diagnostics, and tool
   compatibility on representative projects before changing the default compiler. Acceptance is
   measured with the phase benchmark and the self-hosted package builds: no phase slower than the
   .NET implementation by more than the ratio recorded in the benchmark README at the time of the
   gate, and the semantics package compiling in the stage-1 compiler within the same peak memory as
   stage 0.
-- [ ] Retire the .NET compiler and tooling servers from the default and release paths only after
+- [ ] **BOOT-10** Retire the .NET compiler and tooling servers from the default and release paths only after
   sustained bootstrap and release parity. Keep their sources buildable and tested in the repository as
   the permanent stage-0 and behavioral reference toolchain.
-- [ ] After the self-hosted compiler becomes the default, make any source-tree reorganization a
+- [ ] **BOOT-11** After the self-hosted compiler becomes the default, make any source-tree reorganization a
   separate mechanical change. Prefer `toolchains/ashes/` for the primary implementation and
   `toolchains/dotnet/` for the preserved .NET implementation; keep shared documentation, libraries,
   tests, examples, and runtime payloads at the repository root.
@@ -3000,6 +1041,10 @@ same public behavior.
   bootstrap parity fixtures as soon as a self-hosted phase can serialize the same public result as C#.
 - Update this migration table and the implementation status in `selfhost/README.md` in the same PR when
   a milestone changes either one. Do not mark an area complete merely because its data model exists.
+- Keep every checklist item short and precise: its ID, its scope, a one-clause "Done:" boundary and
+  a one-clause "Open:" tail where partially complete, and at most one load-bearing gotcha or
+  regression-test pointer. Per-PR narratives, verification transcripts, and investigation histories
+  belong in the PR description and git history, never appended to this document.
 
 ## Language/stdlib prerequisites
 
