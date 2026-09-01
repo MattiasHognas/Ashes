@@ -2395,9 +2395,34 @@ same public behavior.
   Verified end to end (survey 250 → 251; `fs_exists_missing` — the one File.exists test with no
   `// file:` fixture requirement — now passes, and both `fs_exists_present`/
   `std_fs_qualified_names_resolve` were confirmed correct by hand with a real fixture file since the
-  survey harness does not create `// file:` fixtures). `readText`/`readAllBytes`/`writeText`/
-  `writeBytes`/`open`/`readChunk`/`readLine`/`close` remain — each needs a real `read`/`write` loop
-  and, for `open`, a resource-typed handle the lowering side does not model yet.
+  survey harness does not create `// file:` fixtures). `readText`/`readAllBytes`/`writeBytes`/
+  `open`/`readChunk`/`readLine`/`close` remain — each needs a real `read`/`write` loop and, for
+  `open`, a resource-typed handle the lowering side does not model yet.
+  `Ashes.IO.File.writeText`, `Ashes.IO.File.replace`, and `Ashes.IO.Directory.createAll` followed:
+  `writeText` is `openat(O_WRONLY|O_CREAT|O_TRUNC, 0644)` plus one `write` syscall for the whole
+  payload (this codegen's other direct-write paths already assume a single `write` covers the
+  buffer rather than retrying a short one, so `writeText` matches rather than porting stage 0's
+  fuller retry loop) then `close`; `replace` rejects a `source` that names a directory (the same
+  `openat(..., O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC, 0)` probe-flag value stage 0's own
+  `EmitLinuxFileReplace` uses) and otherwise calls the raw `rename` syscall rather than stage 0's
+  libc import, since renaming has a direct syscall equivalent and this slice's whole point was
+  staying on the no-libc-linking raw-syscall path; `createAll` walks the path byte by byte,
+  temporarily NUL-terminating the C string at each `/` (restored immediately after) to `mkdir` one
+  component at a time, tolerating an already-existing directory via an `openat(path, O_DIRECTORY, 0)`
+  probe closed unconditionally afterward (closing an invalid fd is a harmless `-EBADF` at the raw
+  syscall level, so no branch is needed to skip it). Two new raw-syscall helpers
+  (`emitLinuxMkdir`/`emitLinuxRename`, syscalls 83/82) and a shared `emitFilesystemStatusResult`
+  (the raw-syscall-convention, "non-negative return means success" counterpart of stage 0's own
+  `EmitFilesystemStatusResult`) back all three. Verified end to end against the real self-hosted
+  pipeline (`AshesCompiler.Cli.Compile.runRun`, not just the backend/semantics test suites): a
+  program that creates a nested-free directory, writes two files into it, replaces one with the
+  other, and confirms the resulting existence of each via the already-shipped `File.exists` prints
+  the expected `true`/`false`, with the destination file's on-disk contents matching the replaced
+  source's. `Ashes.IO.Directory.entries`/`removeTree` and `File.open`/`readChunk`/`readLine`/`close`
+  remain open — `entries` additionally needs a UTF-8 validator and list-cons construction this
+  codegen doesn't have yet, `removeTree` needs a recursive directory walk (stage 0 uses libc's
+  `nftw`, which has no raw-syscall equivalent), and `open` needs the resource-typed handle lowering
+  doesn't model yet.
 - [~] `Ashes.IO.readLine` (stdin, `Option(Str)` — distinct from the `Ashes.IO.File.readLine` handle
   variant noted as still open above) reads one line at a time via a raw `read` syscall, one byte per
   call, into a fixed 64 KiB stack buffer: `\n` ends the line (excluded from the result), an

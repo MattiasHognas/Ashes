@@ -494,6 +494,27 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.IO.File")("writeText")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("replace")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Directory")("createAll")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.Text")("fromInt")(
             TypeScheme(quantified = [], body = SemFunction(SemInt)(SemString)(None), constraints = [])
         ),
