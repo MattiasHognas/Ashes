@@ -2450,6 +2450,38 @@ same public behavior.
   check that an ordinary, non-reserved `type` declaration (`type_symbol_registration.ash`) still
   compiles and runs correctly, and the selfhost backend suite (normal and `--debug-disable-reuse`)
   and semantics suite.
+- [x] **Explicit lambda-parameter type annotations are now enforced.** Investigating
+  `type_zero_cost_nominality.ash` (`// expect-compile-error: ASH002` — a zero-cost nominal type
+  `type UserId = UserId(Int)` should not unify with its underlying `Int`) found a much larger gap
+  than the test's own name suggested: `given (x: T) -> ...` and `let f (x: T) = ...` (the parser
+  desugars both into the same `ExprLambda(parameter, body, annotation)` node) had their `annotation`
+  discarded everywhere in `CoreLowering.ash` — `ExprLambda(parameter, body, _annotation) ->
+  lowerLambda(...)`, the leading underscore marking it intentionally unused. A minimal probe with no
+  zero-cost types at all, `(given (value: Bool) -> value)(42)`, compiled and ran cleanly; stage 0
+  correctly rejects it ("Type mismatch: Bool vs Int"). `lowerLambda` now takes the annotation as a
+  new parameter: when present, it's resolved via `typeExprToSemanticType` (an existing resolver,
+  previously used only for ADT constructor field types — relocated earlier in the file, since Model
+  A sequential scoping requires it be defined before `lowerLambda` can call it) and the lambda's
+  fresh parameter type is bound against it via `bindType` (the same unify-and-record-error primitive
+  already used ~20 other places in this file), reporting a real `CoreLoweringError` on mismatch.
+  When the annotation is a form this resolver can't yet handle (a function type, a resource, a
+  capability row), it is left unchecked rather than rejected — an unproven "can't check this" is not
+  proof the annotation is wrong, matching the resolver's existing constructor-field contract. Missed
+  two call sites on the first pass (`lowerOneShotPost`'s synthetic post-resume closure,
+  `lowerOperationArmParameters`'s synthetic per-parameter closure — both compiler-internal, always
+  annotation-free) since they use different local variable names than the two ordinary `ExprLambda`
+  match arms a narrow grep initially covered; the type checker's own arity/argument-type errors on
+  the now-6-argument `lowerLambda` caught both immediately. Verified end to end: all three probes
+  (`let`-sugar, explicit `given`, and inline lambda application) now correctly reject
+  `Bool` vs `Int`; `type_zero_cost_nominality.ash` itself now fails to compile
+  (`CoreCallTypeMismatch(TypeMismatch(SemNamed(0, "UserId", []), SemInt))`); full survey shows zero
+  regressions and TWO net improvements, not one — `type_zero_cost_nominality` moving from
+  `COMPILED-BUT-ERROR-EXPECTED` to `COMPILE-ERROR-EXPECTED` as expected, plus
+  `logical_and_or_short_circuit` newly passing as an unplanned side effect (its `sideEffect (n: Int)`
+  helper's parameter was previously left fully polymorphic instead of monomorphized to `Int` at
+  definition time, plausibly over-generalizing in a way this fix also happens to close); the selfhost
+  backend suite (normal and `--debug-disable-reuse`) and semantics suite both pass, including the
+  semantics suite's own "annotation-aware inference" group specifically.
 - [~] `AshesCompiler.Backend.ElfLinker` now emits the same 20-byte Linux entry trampoline
   `LlvmImageLinkerElf.cs`'s `BuildLinuxTrampoline` does, at the start of `.text` on both the
   static and dynamic-import paths (`e_entry` is the trampoline; the object's own code starts at

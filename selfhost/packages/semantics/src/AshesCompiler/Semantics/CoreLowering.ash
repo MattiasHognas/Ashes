@@ -1279,6 +1279,83 @@ let finishLambdaBody label captures stackAllocate typedOuter parameterType lower
                             |> allocateEnvironment(survivors)(stackAllocate)
                             |> emitPrunedClosure(label)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
+// A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
+// explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
+// (via `parameterTypes`) the enclosing type's own type parameters — not through
+// `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment` this
+// single-file pipeline does not build. An annotation outside this list (a function, a resource, a
+// capability row) answers `None` — the caller's job to treat that as "can't check this one," not as
+// an error, since it is a gap in this resolver, not proof the annotation is invalid.
+let recursive lookupTypeParameter (name: Str) (parameterTypes: List((Str, SemanticType))) =
+    match parameterTypes with
+        | [] -> None
+        | (candidateName, semanticType) :: rest ->
+            if candidateName == name
+            then Some(semanticType)
+            else lookupTypeParameter(name)(rest)
+
+let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List((Str, SemanticType))) =
+    match typeExpr with
+        | TypeAt(_span, inner) -> typeExprToSemanticType(inner)(parameterTypes)
+        | TypeNamed("Int") -> Some(SemInt)
+        | TypeNamed("Str") -> Some(SemString)
+        | TypeNamed("Bool") -> Some(SemBool)
+        | TypeNamed("Float") -> Some(SemFloat)
+        | TypeNamed("BigInt") -> Some(SemBigInt)
+        | TypeNamed("Rune") -> Some(SemRune)
+        | TypeNamed("Bytes") -> Some(SemBytes)
+        | TypeUnit ->
+            []
+            |> SemNamed(0)("Unit")
+            |> Some
+        | TypeNamed(name) ->
+            match lookupTypeParameter(name)(parameterTypes) with
+                | Some(parameterType) -> Some(parameterType)
+                | None ->
+                    []
+                    |> SemNamed(0)(name)
+                    |> Some
+        | TypeApplied("List", element :: []) ->
+            match typeExprToSemanticType(element)(parameterTypes) with
+                | None -> None
+                | Some(elementType) -> Some(SemList(elementType))
+        | TypeApplied(name, arguments) ->
+            match typeExprListToSemanticTypes(arguments)(parameterTypes) with
+                | None -> None
+                | Some(argumentTypes) ->
+                    argumentTypes
+                    |> SemNamed(0)(name)
+                    |> Some
+        | TypeTuple(elements) ->
+            match typeExprListToSemanticTypes(elements)(parameterTypes) with
+                | None -> None
+                | Some(elementTypes) -> Some(SemTuple(elementTypes))
+        | _other -> None
+and typeExprListToSemanticTypes (typeExprs: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
+    match typeExprs with
+        | [] -> Some([])
+        | typeExpr :: rest ->
+            match typeExprToSemanticType(typeExpr)(parameterTypes) with
+                | None -> None
+                | Some(semanticType) ->
+                    match typeExprListToSemanticTypes(rest)(parameterTypes) with
+                        | None -> None
+                        | Some(restTypes) -> Some(semanticType :: restTypes)
+
+// Binds a lambda parameter's fresh type variable to its explicit annotation, when one was written
+// and this resolver can understand it — `given (x: Bool) -> ...`, `let f (x: Bool) = ...` (the
+// parser desugars both into the same `ExprLambda` shape). An unresolvable annotation (a function
+// type, a resource, anything `typeExprToSemanticType` answers `None` for) is left unchecked rather
+// than rejected, matching this resolver's existing constructor-field contract: an unproven "can't
+// check this" is not the same as "this is wrong."
+let lowerLambdaParameterType annotation parameterType state =
+    match annotation with
+        | None -> (state, None)
+        | Some(typeExpr) ->
+            match typeExprToSemanticType(typeExpr)([]) with
+                | None -> (state, None)
+                | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
+
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
@@ -1290,16 +1367,18 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures fresh =
                     |> lower(body)
                     |> finishLambdaBody(label)(captures)(stackAllocate)(typedOuter)(parameterType)
 
-let lowerLambda parameter body stackAllocate lower state =
+let lowerLambda parameter body annotation stackAllocate lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
             let freeNames = collectFree(body)([parameter])([])
             in
                 let captures = capturedBindings(freeNames)(outerBindings)([])
                 in
-                    state
-                    |> freshType
-                    |> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)
+                    match freshType(state) with
+                        | FreshType { state = freshState, semanticType = parameterType } ->
+                            match lowerLambdaParameterType(annotation)(parameterType)(freshState) with
+                                | (checkedState, Some(error)) -> failure(checkedState)(error)
+                                | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(FreshType(state = checkedState, semanticType = parameterType))
 
 let resolvedFunctionType state argumentType resultType =
     FunctionTypeResolution(
@@ -1336,7 +1415,7 @@ let ensureFunctionType semanticType state =
 let recursive lowerCallFunction expression lower state =
     match expression with
         | ExprAt(_span, inner) -> lowerCallFunction(inner)(lower)(state)
-        | ExprLambda(parameter, body, _annotation) -> lowerLambda(parameter)(body)(true)(lower)(state)
+        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(true)(lower)(state)
         | _ -> lower(expression)(state)
 
 let finishCoreCall functionTemp argumentTemp resultType binding =
@@ -4481,7 +4560,7 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
     match lower(resumeArgument)(state) with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
-            match lowerLambda(postName)(postBody)(false)(lower)(valueState) with
+            match lowerLambda(postName)(postBody)(None)(false)(lower)(valueState) with
                 | LoweredCoreValue { state = failedPostState, error = Some(error) } -> failure(failedPostState)(error)
                 | LoweredCoreValue { state = postState, temp = postTemp, error = None } ->
                     postState
@@ -4704,6 +4783,7 @@ let recursive lowerOperationArmParameters patterns armBody placeholderBody lower
             lowerLambda(
                 name,
                 placeholderBody,
+                None,
                 false,
                 given (_ignoredBody) ->
                     given (s) -> lowerOperationArmParameters(rest)(armBody)(placeholderBody)(lower)(postRegisterIndex)(capName)(opName)(s),
@@ -4962,7 +5042,7 @@ let recursive lowerCore expression state =
                 state
             )
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
-        | ExprLambda(parameter, body, _annotation) -> lowerLambda(parameter)(body)(false)(lowerCore)(state)
+        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(false)(lowerCore)(state)
         | ExprCall(function, argument, _whitespace, _layout) ->
             match tryLowerConstructorCall(expression)(lowerCore)(state) with
                 | Some(lowered) -> lowered
@@ -5371,67 +5451,6 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
                             valueState
                             |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(None))
                             |> continuation(topLevelContinuationBody)
-
-// A user-defined top-level `type` declaration's field types are resolved against exactly the
-// scalar primitives listed here, plus (via `parameterTypes`) the type's own type parameters — not
-// through `TypeResolution.ash`'s real `resolveTypeExpression`, which needs a full `TypeEnvironment`
-// this single-file pipeline does not build. A field type outside this list (a function, a tuple,
-// another named type) answers `None`.
-let recursive lookupTypeParameter (name: Str) (parameterTypes: List((Str, SemanticType))) =
-    match parameterTypes with
-        | [] -> None
-        | (candidateName, semanticType) :: rest ->
-            if candidateName == name
-            then Some(semanticType)
-            else lookupTypeParameter(name)(rest)
-
-let recursive typeExprToSemanticType (typeExpr: TypeExpr) (parameterTypes: List((Str, SemanticType))) =
-    match typeExpr with
-        | TypeAt(_span, inner) -> typeExprToSemanticType(inner)(parameterTypes)
-        | TypeNamed("Int") -> Some(SemInt)
-        | TypeNamed("Str") -> Some(SemString)
-        | TypeNamed("Bool") -> Some(SemBool)
-        | TypeNamed("Float") -> Some(SemFloat)
-        | TypeNamed("BigInt") -> Some(SemBigInt)
-        | TypeNamed("Rune") -> Some(SemRune)
-        | TypeNamed("Bytes") -> Some(SemBytes)
-        | TypeUnit ->
-            []
-            |> SemNamed(0)("Unit")
-            |> Some
-        | TypeNamed(name) ->
-            match lookupTypeParameter(name)(parameterTypes) with
-                | Some(parameterType) -> Some(parameterType)
-                | None ->
-                    []
-                    |> SemNamed(0)(name)
-                    |> Some
-        | TypeApplied("List", element :: []) ->
-            match typeExprToSemanticType(element)(parameterTypes) with
-                | None -> None
-                | Some(elementType) -> Some(SemList(elementType))
-        | TypeApplied(name, arguments) ->
-            match typeExprListToSemanticTypes(arguments)(parameterTypes) with
-                | None -> None
-                | Some(argumentTypes) ->
-                    argumentTypes
-                    |> SemNamed(0)(name)
-                    |> Some
-        | TypeTuple(elements) ->
-            match typeExprListToSemanticTypes(elements)(parameterTypes) with
-                | None -> None
-                | Some(elementTypes) -> Some(SemTuple(elementTypes))
-        | _other -> None
-and typeExprListToSemanticTypes (typeExprs: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
-    match typeExprs with
-        | [] -> Some([])
-        | typeExpr :: rest ->
-            match typeExprToSemanticType(typeExpr)(parameterTypes) with
-                | None -> None
-                | Some(semanticType) ->
-                    match typeExprListToSemanticTypes(rest)(parameterTypes) with
-                        | None -> None
-                        | Some(restTypes) -> Some(semanticType :: restTypes)
 
 let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
     match parameters with
