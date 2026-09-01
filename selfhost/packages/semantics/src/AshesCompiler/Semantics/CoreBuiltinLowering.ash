@@ -433,6 +433,12 @@ let standardBuiltinLayout moduleName memberName scheme =
 
 let unitType = SemNamed(0)("Unit")([])
 
+// The compiler-provided file-handle resource type: at runtime the raw fd as one scalar word (stage
+// 0's own `EmitFileOpen` contract), so nothing heap-shaped rides on it. The resource-side contract
+// (automatic close at scope exit, use-after-close and double-close diagnostics) is ownership work
+// this typing deliberately does not carry yet.
+let fileHandleType = SemNamed(0)("FileHandle")([])
+
 // The number of distinct quantified-variable ids used by EITHER `standardBuiltinLayouts`' schemes
 // below OR `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`'s `(0, "a")`;
 // `Maybe`'s `None`/`Some` sharing `(1, "a")`; `Result`'s `Ok`/`Error` sharing `(2, "e")` and
@@ -505,6 +511,34 @@ let standardBuiltinLayouts =
             TypeScheme(
                 quantified = [],
                 body = SemFunction(SemString)(SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("open")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, fileHandleType]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("readChunk")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(fileHandleType)(SemFunction(SemInt)(SemNamed(0)("Result")([SemString, SemString]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("readLine")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(fileHandleType)(SemNamed(0)("Maybe")([SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("close")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(fileHandleType)(SemNamed(0)("Result")([SemString, unitType]))(None),
                 constraints = []
             )
         ),

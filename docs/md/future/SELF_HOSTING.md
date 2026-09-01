@@ -859,14 +859,17 @@ same public behavior.
   `writeBuffered`/`writeBufferedLine`/`flush` (immediate writes — with nothing deferred, the
   flush-on-exit contract holds by construction), `exit`, and the complete File/Directory filesystem
   surface: `File.exists`/`writeText`/`replace` and `Directory.createAll` on raw syscalls
-  (`openat`/`write`/`close`/`mkdir`/`rename`), and `Directory.entries`/`removeTree` via libc
+  (`openat`/`write`/`close`/`mkdir`/`rename`), `Directory.entries`/`removeTree` via libc
   dynamic imports (`fdopendir`/`readdir`/`closedir`, `qsort`/`strcmp`, `strlen`/`realloc`/
   `memmove`, `lstat`/`nftw`/`remove`, `__errno_location`) with per-occurrence internal-linkage
-  helper functions, a whole-buffer UTF-8 validator, and hand-built RC-managed list cons cells.
-  Open: `File.open`/`readChunk`/`readLine`/`close` (need the resource-typed handle lowering does
-  not model yet), `readText`/`readAllBytes`/`writeBytes`/`mmap`/`makeExecutable` (read/write
-  loops), and a real buffered-stdout ring only if immediate writes ever regress measured
-  throughput.
+  helper functions, a whole-buffer UTF-8 validator, and hand-built RC-managed list cons cells,
+  and `File.open`/`readChunk`/`readLine`/`close` — a `FileHandle` is the raw fd as one scalar
+  word (a seeded `SemNamed` builtin type, stage 0's runtime contract), `readChunk` reads into a
+  runtime-sized RC string, and `File.readLine` reuses the stdin `readLine` machinery with the fd
+  parameterized. Open: SEM-14's resource-ownership half (automatic close at scope exit,
+  use-after-close/double-close diagnostics — an unclosed handle currently leaks its fd),
+  `readText`/`readAllBytes`/`writeBytes`/`mmap`/`makeExecutable` (read/write loops), and a real
+  buffered-stdout ring only if immediate writes ever regress measured throughput.
 - [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
   reserved built-in runtime type names rejected in top-level `type` declarations, explicit
   lambda-parameter type annotations enforced (previously silently discarded), and a `perform`

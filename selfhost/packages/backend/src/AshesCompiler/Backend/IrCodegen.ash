@@ -1545,13 +1545,13 @@ let emitReadLineBlocks context function_ =
 // `inspectBlock`/`skipCrBlock`: `\n` finishes the line, a `\r` right before it is dropped, anything
 // else falls through to `storeByteBlock`.
 // `storeByteBlock`/`appendByteBlock`: append the byte unless the buffer is already at capacity.
-let emitReadLineReadAndInspect i64 i8 builder scratch blocks =
+let emitReadLineReadAndInspect i64 i8 builder fd scratch blocks =
     (let _ = positionBuilderAtEnd(builder)(blocks.loopBlock)
     in
         let n =
             false
             |> constInt(i64)(1u64)
-            |> emitLinuxRead(builder)(i64)(constInt(i64)(0u64)(false))(scratch.byteAddr)
+            |> emitLinuxRead(builder)(i64)(fd)(scratch.byteAddr)
         in
             let atEof =
                 buildICmp(builder)(intPredicateSle)(n)(constInt(i64)(0u64)(false))("read_line_at_eof")
@@ -1643,22 +1643,23 @@ let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcp
 // fixed 64 KiB stack buffer — safe even inside a `musttail`-driven loop, since each call's frame
 // (and its alloca) is reused by the very next tail call rather than piling up. A line at or past
 // that capacity panics rather than silently truncating, matching stage 0's own overflow contract.
-let emitReadLine context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType =
+let emitReadLineFromFd context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType fd =
     (let scratch = emitReadLineScratch(builder)(i64)(i8)
     in
         let blocks = emitReadLineBlocks(context)(function_)
         in
-            let _ =
-                buildStore(builder)(constInt(i64)(0u64)(false))(scratch.lenSlot)
-            in
-                let _ = buildBr(builder)(blocks.loopBlock)
-                in
-                    let _ = emitReadLineReadAndInspect(i64)(i8)(builder)(scratch)(blocks)
-                    in
-                        let _ = emitReadLineFinish(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(blocks)
-                        in
-                            let _ = positionBuilderAtEnd(builder)(blocks.continueBlock)
-                            in buildLoad(builder)(i64)(scratch.resultSlot)("read_line_result_value"))
+            scratch.lenSlot
+            |> buildStore(builder)(constInt(i64)(0u64)(false))
+            |> (given (_) -> buildBr(builder)(blocks.loopBlock))
+            |> (given (_) -> emitReadLineReadAndInspect(i64)(i8)(builder)(fd)(scratch)(blocks))
+            |> (given (_) -> emitReadLineFinish(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch)(blocks))
+            |> (given (_) -> positionBuilderAtEnd(builder)(blocks.continueBlock))
+            |> (given (_) -> buildLoad(builder)(i64)(scratch.resultSlot)("read_line_result_value")))
+
+let emitReadLine context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType =
+    false
+    |> constInt(i64)(0u64)
+    |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
 
 // `Text.unconsText(text)`: `None` for the empty string, otherwise `Some((head, rest))` where
 // `head` is the first UTF-8 scalar's bytes (its width classed from the lead byte alone, clamped
@@ -2637,6 +2638,109 @@ let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType build
                                     |> (given (_) -> buildBr(builder)(doneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
+
+// `emitRcAllocPayloadPtr`'s runtime-sized twin: `payloadSize` is an LLVM `i64` value rather than a
+// compile-time constant, for a buffer whose size only the running program knows
+// (`File.readChunk`'s caller-chosen count).
+let emitRcAllocPayloadPtrDynamic builder i64 i8 mallocFn mallocType payloadSize name =
+    (let headerPtr =
+        name + "_total"
+        |> buildAdd(builder)(payloadSize)(constInt(i64)(16u64)(false))
+        |> (given (totalSize) -> buildCall(builder)(mallocType)(mallocFn)([totalSize])(1u32)(name + "_header"))
+    in
+        headerPtr
+        |> buildStore(builder)(constInt(i64)(1u64)(false))
+        |> (given (_) ->
+            name + "_size_ptr"
+            |> gepBytes(builder)(i64)(i8)(headerPtr)(8)
+            |> buildStore(builder)(payloadSize))
+        |> (given (_) -> gepBytes(builder)(i64)(i8)(headerPtr)(16)(name + "_payload_ptr")))
+
+let fileOpenErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 108, 101, 46, 111, 112, 101, 110, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 111, 112, 101, 110, 32, 102, 105, 108, 101]
+
+let fileReadChunkErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 108, 101, 46, 114, 101, 97, 100, 67, 104, 117, 110, 107, 58, 32, 114, 101, 97, 100, 32, 102, 97, 105, 108, 101, 100]
+
+// `Ashes.IO.File.open(path)`: `openat(path, O_RDONLY, 0)` — a `FileHandle` is the raw fd as one
+// scalar word (stage 0's own `EmitFileOpen` contract), wrapped `Ok(fd)`/`Error(...)`. The
+// resource-side contract (automatic close at scope exit, use-after-close/double-close
+// diagnostics) is ownership work this codegen does not carry yet — an unclosed handle leaks its
+// fd until process exit.
+let emitFileOpen context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
+    (let resultSlot = buildAlloca(builder)(i64)("file_open_result")
+    in
+        let okBlock = appendBasicBlock(context)(function_)("file_open_ok")
+        in
+            let errorBlock = appendBasicBlock(context)(function_)("file_open_error")
+            in
+                let continueBlock = appendBasicBlock(context)(function_)("file_open_continue")
+                in
+                    let fd =
+                        "file_open_path"
+                        |> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)
+                        |> (given (pathCstr) -> buildPtrToInt(builder)(pathCstr)(i64)("file_open_path_addr"))
+                        |> (given (pathAddr) ->
+                            false
+                            |> constInt(i64)(0u64)
+                            |> emitLinuxOpenat(builder)(i64)(pathAddr)(constInt(i64)(0u64)(false)))
+                    in
+                        okBlock
+                        |> buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(fd)(constInt(i64)(0u64)(false))("file_open_failed"))(errorBlock)
+                        |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
+                        |> (given (_) ->
+                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(fd)("file_open_ok_result"))(resultSlot))
+                        |> (given (_) -> buildBr(builder)(continueBlock))
+                        |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
+                        |> (given (_) ->
+                            buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileOpenErrorCodes)("file_open_error_msg"))("file_open_error_result"))(resultSlot))
+                        |> (given (_) -> buildBr(builder)(continueBlock))
+                        |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
+                        |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("file_open_result_value")))
+
+// `Ashes.IO.File.readChunk(handle)(count)`: one `read` syscall of up to `count` bytes into a fresh
+// RC string sized by the caller's count; `n < 0` is `Error`, `n == 0` (EOF) an empty-string `Ok`,
+// exactly stage 0's `EmitFileReadChunk`.
+let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType handleVal countVal =
+    (let resultSlot = buildAlloca(builder)(i64)("file_chunk_result")
+    in
+        let okBlock = appendBasicBlock(context)(function_)("file_chunk_ok")
+        in
+            let errorBlock = appendBasicBlock(context)(function_)("file_chunk_error")
+            in
+                let continueBlock = appendBasicBlock(context)(function_)("file_chunk_continue")
+                in
+                    let payloadPtr =
+                        "file_chunk_payload_size"
+                        |> buildAdd(builder)(countVal)(constInt(i64)(8u64)(false))
+                        |> (given (payloadSize) -> emitRcAllocPayloadPtrDynamic(builder)(i64)(i8)(mallocFn)(mallocType)(payloadSize)("file_chunk"))
+                    in
+                        let stringRef = buildPtrToInt(builder)(payloadPtr)(i64)("file_chunk_string")
+                        in
+                            let nRead =
+                                "file_chunk_dest_addr"
+                                |> buildAdd(builder)(stringRef)(constInt(i64)(8u64)(false))
+                                |> (given (destAddr) -> emitLinuxRead(builder)(i64)(handleVal)(destAddr)(countVal))
+                            in
+                                okBlock
+                                |> buildCondBr(builder)(buildICmp(builder)(intPredicateSlt)(nRead)(constInt(i64)(0u64)(false))("file_chunk_failed"))(errorBlock)
+                                |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
+                                |> (given (_) -> buildStore(builder)(nRead)(payloadPtr))
+                                |> (given (_) ->
+                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(stringRef)("file_chunk_ok_result"))(resultSlot))
+                                |> (given (_) -> buildBr(builder)(continueBlock))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
+                                |> (given (_) ->
+                                    buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(1)(emitAsciiHeapString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(fileReadChunkErrorCodes)("file_chunk_error_msg"))("file_chunk_error_result"))(resultSlot))
+                                |> (given (_) -> buildBr(builder)(continueBlock))
+                                |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
+                                |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("file_chunk_result_value")))
+
+// `Ashes.IO.File.close(handle)`: fire-and-forget `close` returning `Ok(Unit)`, stage 0's own
+// `EmitFileClose` contract exactly (no failure mode is surfaced).
+let emitFileClose builder i64 i8 ptrType mallocFn mallocType handleVal =
+    handleVal
+    |> emitLinuxClose(builder)(i64)
+    |> (given (_) -> emitAllocAdtStack(builder)(i64)(0)("file_close_unit"))
+    |> (given (unitValue) -> emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(unitValue)("file_close_ok"))
 
 let emitDecimalDigitCheck builder i64 byteValue name =
     buildAnd(builder)(buildICmp(builder)(intPredicateUge)(byteValue)(constInt(i64)(48u64)(false))(name + "_ge_zero"))(buildICmp(builder)(intPredicateUle)(byteValue)(constInt(i64)(57u64)(false))(name + "_le_nine"))(name)
@@ -4969,6 +5073,30 @@ let codegenInstructionKind cx builder kind state =
                                         | DirectoryRemoveTree(target, path) ->
                                             let resultValue =
                                                 emitDirectoryRemoveTree(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)(lookupIndexed(path)(tempEnv))("dir_remove_t" + Ashes.Text.fromInt(target))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileOpen(target, path) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(path)
+                                                |> emitFileOpen(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileReadChunk(target, fileHandle, count) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(count)
+                                                |> emitFileReadChunk(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(fileHandle)(tempEnv))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileReadLine(target, fileHandle) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(fileHandle)
+                                                |> emitReadLineFromFd(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileClose(target, fileHandle) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(fileHandle)
+                                                |> emitFileClose(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
