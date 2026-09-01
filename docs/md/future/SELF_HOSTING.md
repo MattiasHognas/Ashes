@@ -139,9 +139,9 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
 1. **Finish the file-system and process builtin surface.** Resource-typed handles in the
    self-hosted lowering first (the compiler-provided-handle classification and deterministic
    cleanup stage 0 already proves; it unblocks `File.open`/`readChunk`/`readLine`/`close` and the
-   resource-alias diagnostics at once), then the File read family
-   (`readText`/`readAllBytes`/`mmap`/`writeBytes`/`makeExecutable` — read loops over the proven
-   raw-syscall helpers), `Environment`/`Console` basics, the real buffered-stdout ring with
+   resource-alias diagnostics at once), then the File read family (landed:
+   `readText`/`readAllBytes`/`mmap`/`writeBytes`/`makeExecutable` over the proven raw-syscall
+   helpers), `Environment`/`Console` basics, the real buffered-stdout ring with
    flush-on-exit (`writeBuffered`/`flush` currently write immediately — sound but unbatched), and
    `Process.*` over the now-proven libc dynamic-import route (`fork`/`execve`/`waitpid`/`pipe`/
    `dup2` rows in the linker whitelist, the same shape `nftw` just landed with). `Process` is what
@@ -873,10 +873,13 @@ same public behavior.
   and `File.open`/`readChunk`/`readLine`/`close` — a `FileHandle` is the raw fd as one scalar
   word (a seeded `SemNamed` builtin type, stage 0's runtime contract), `readChunk` reads into a
   runtime-sized RC string, and `File.readLine` reuses the stdin `readLine` machinery with the fd
-  parameterized. Open: SEM-14's resource-ownership half (automatic close at scope exit,
-  use-after-close/double-close diagnostics — an unclosed handle currently leaks its fd),
-  `readText`/`readAllBytes`/`writeBytes`/`mmap`/`makeExecutable` (read/write loops), and a real
-  buffered-stdout ring only if immediate writes ever regress measured throughput.
+  parameterized, plus the whole-file read family: `readText` (measure via `lseek`, 1 MiB cap,
+  read loop, UTF-8 validation) and `readAllBytes` (uncapped, raw), `mmap` returning a zero-copy
+  `Bytes` view over a `PROT_READ`/`MAP_PRIVATE` mapping, `writeBytes` sharing the `writeText`
+  writer, and `makeExecutable` (libc `lstat` regular-file check + raw `chmod` 0755), all with
+  stage 0's exact message constants. Open: SEM-14's resource-ownership half (automatic close at
+  scope exit, use-after-close/double-close diagnostics — an unclosed handle currently leaks its
+  fd), and a real buffered-stdout ring only if immediate writes ever regress measured throughput.
 - [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
   reserved built-in runtime type names rejected in top-level `type` declarations, explicit
   lambda-parameter type annotations enforced (previously silently discarded), and a `perform`

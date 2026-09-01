@@ -514,6 +514,41 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.IO.File")("readText")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("readAllBytes")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemBytes]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("mmap")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, SemBytes]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("writeBytes")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemFunction(SemBytes)(SemNamed(0)("Result")([SemString, unitType]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.File")("makeExecutable")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemNamed(0)("Result")([SemString, unitType]))(None),
+                constraints = []
+            )
+        ),
         standardBuiltinLayout("Ashes.IO.File")("open")(
             TypeScheme(
                 quantified = [],

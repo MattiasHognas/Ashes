@@ -981,6 +981,36 @@ let codegenInstructionKind cx builder kind state =
                                                 |> lookupIndexed(fileHandle)
                                                 |> emitFileClose(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)
                                             in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileReadText(target, path) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(path)
+                                                |> emitFileReadText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileReadAllBytes(target, path) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(path)
+                                                |> emitFileReadAllBytes(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileMmap(target, path) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(path)
+                                                |> emitFileMmap(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileWriteBytes(target, path, bytes) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(bytes)
+                                                |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | FileMakeExecutable(target, path) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(path)
+                                                |> emitFileMakeExecutable(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                            in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
