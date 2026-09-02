@@ -668,6 +668,19 @@ same public behavior.
   compiled result is arena-placed or unresolved — a verified runtime-managed result copied or
   retained the parts it kept, so the caller deep-releases (skipping there leaked one reference per
   kept part, 507 MB → 8.2 MB on the consumed-tuple-head plateau workload).
+  Open concrete instance (root-caused 2026-09-02):
+  `Linux_backend_llvm_pattern_owned_call_argument_in_arena_aggregate_memory_should_plateau` leaks
+  ~250 B/iteration (fails deterministically in isolation, intermittently in-suite). Minimal repro:
+  a TCO loop whose arm rebuilds its state ADT around a pattern-extracted list field
+  (`match state with S(perm, b) -> loop(n-1)(S(perm)(b))(...)`). The pattern binding's ownership
+  is dup-transferred into the fresh ARENA aggregate; the back-edge normalization
+  (`EmitRuntimeManagedTcoConstructorDeepCopy`: `CopyOutArena` + per-child `CopyOutList`) copies
+  the aggregate but nothing releases the transferred reference the dying arena original holds, so
+  each iteration's `CopyOutList` copy survives with a phantom +1 count. The borrow-model cases
+  (owner kept armed, released via `IterationOwnedDrops`) are balanced — only the transfer path
+  leaks, and discriminating it at the back-edge needs the ownership summaries (`ResultReachesWhole`
+  et al.: the failing test wraps the constructor in an `identity()` call, so syntactic gating
+  cannot see the transfer). Fix belongs with this item's milestone-2 work.
 - [x] **OPT-31** Keep a heap aggregate alive when stored through a generic parameter of a function neither
   inlined nor specialized: both call-lowering paths copy the argument into the persistent to-space
   region (the RC heap is NOT immune — it shares the arena's reclaimable cursor). Covers `Str` and
