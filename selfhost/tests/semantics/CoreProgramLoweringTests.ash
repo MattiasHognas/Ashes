@@ -214,10 +214,109 @@ let expectPlainTopLevelLetsProduceExpectedIr unit =
         ""
     ])
 
+let recursive containsLine (needle: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> false
+        | line :: rest ->
+            if line == needle
+            then true
+            else containsLine(needle)(rest)
+
+let constructorLetProgramSource unit = "type Option(a) =\n    | NoVal\n    | HasVal(a)\n\nlet value = HasVal(42)\n\nmatch value with\n    | HasVal(n) -> n + 1\n    | NoVal -> 0"
+
+// A `let` bound to a saturated constructor of scalar arguments, consumed only by a `match` whose
+// constructor patterns bind those scalar fields, is arena-confined: the whole program is
+// bracketed like a scalar chain, and the cell itself is an arena `AllocAdt` (no RC request).
+// This is the `pattern_match` parity fixture's source; only stage 0's `Borrow` on the owned
+// read and its `RcDrop` placement markers remain unported.
+let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
+    Unit
+    |> constructorLetProgramSource
+    |> dumpSource
+    |> test.assertEqual([
+        "IR (lowered)",
+        "============",
+        "",
+        "function _start_main  [ProgramEntry]",
+        "  locals=14 temps=20",
+        "    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1",
+        "    LoadConstInt          Target=0 Value=42",
+        "    AllocAdt              Target=1 Tag=1 FieldCount=1",
+        "    SetAdtField           Ptr=1 FieldIndex=0 Source=0",
+        "    StoreLocal            Slot=2 Source=1",
+        "    LoadLocal             Target=2 Slot=2",
+        "    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5",
+        "    LoadConstInt          Target=3 Value=0",
+        "    CmpIntNe              Target=4 Left=2 Right=3",
+        "    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_3",
+        "    GetAdtTag             Target=5 Ptr=2",
+        "    LoadConstInt          Target=7 Value=1",
+        "    CmpIntEq              Target=6 Left=5 Right=7",
+        "    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_3",
+        "    GetAdtField           Target=8 Ptr=2 FieldIndex=0",
+        "    StoreLocal            Slot=6 Source=8",
+        "    LoadLocal             Target=9 Slot=6",
+        "    LoadConstInt          Target=10 Value=1",
+        "    AddInt                Target=11 Left=9 Right=10",
+        "    StoreLocal            Slot=3 Source=11",
+        "    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=7",
+        "    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=7",
+        "    Jump                  Target=match_end_0",
+        "  match_arm_cleanup_3:",
+        "    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=8",
+        "    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=8",
+        "    Jump                  Target=match_next_2",
+        "  match_next_2:",
+        "    SaveArenaState        CursorLocalSlot=9 EndLocalSlot=10",
+        "    LoadConstInt          Target=12 Value=0",
+        "    CmpIntNe              Target=13 Left=2 Right=12",
+        "    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_4",
+        "    GetAdtTag             Target=14 Ptr=2",
+        "    LoadConstInt          Target=16 Value=0",
+        "    CmpIntEq              Target=15 Left=14 Right=16",
+        "    JumpIfFalse           CondTemp=15 Target=match_arm_cleanup_4",
+        "    LoadConstInt          Target=17 Value=0",
+        "    StoreLocal            Slot=3 Source=17",
+        "    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11",
+        "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11",
+        "    Jump                  Target=match_end_0",
+        "  match_arm_cleanup_4:",
+        "    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12",
+        "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12",
+        "    Jump                  Target=match_none_1",
+        "  match_none_1:",
+        "    LoadConstInt          Target=18 Value=0",
+        "    StoreLocal            Slot=3 Source=18",
+        "  match_end_0:",
+        "    LoadLocal             Target=19 Slot=3",
+        "    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=13",
+        "    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=13",
+        "    Return                Source=19",
+        ""
+    ])
+
+// The same cell escaping as the program's result is not arena-confined, so the chain stays
+// unbracketed: an arena reset would free the value being returned.
+let expectEscapingConstructorLetStaysUnbracketed unit =
+    "type Option(a) =\n    | NoVal\n    | HasVal(a)\n\nlet value = HasVal(42)\n\nvalue"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1")
+            |> test.assertEqual(false))
+        |> (given (_) ->
+            lines
+            |> containsLine("    AllocAdt              Target=1 Tag=1 FieldCount=1")
+            |> test.assertEqual(true)))
+
 let runCoreProgramLoweringTests unit =
     unit
     |> expectPlainTopLevelLetsProduceIr
     |> expectPlainTopLevelLetsProduceExpectedIr
+    |> expectConstructorLetMatchedByConstructorPatternsIsBracketed
+    |> expectEscapingConstructorLetStaysUnbracketed
     |> expectSelfRecursiveTopLevelLetLowers
     |> expectMutualRecursionGroupLowers
     |> expectMixedPlainAndRecursiveLettersLower

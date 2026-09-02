@@ -885,6 +885,37 @@ let finishLetValue name body lower outerBindings lowered =
             |> freshLocal
             |> lowerStoredLet(name)(body)(lower)(outerBindings)(temp)(semanticType)
 
+let recursive stripExprAt (expr: Expr) =
+    match expr with
+        | ExprAt(_span, inner) -> stripExprAt(inner)
+        | other -> other
+
+// The names the arena-safety whitelist has proven so far: `arenaScalarNames` hold scalars,
+// `arenaAdtNames` hold arena-confined constructor cells whose every field is a scalar (see
+// `isArenaConfinedConstructorValue`), and `arenaConstructorLayouts` recognizes constructor calls.
+type ArenaSafeScope =
+    | arenaScalarNames: List(Str)
+    | arenaAdtNames: List(Str)
+    | arenaConstructorLayouts: List(CoreConstructorLayout)
+
+let arenaSafeScope layouts = ArenaSafeScope(arenaScalarNames = [], arenaAdtNames = [], arenaConstructorLayouts = layouts)
+
+let arenaScopeWithScalar name (scope: ArenaSafeScope) = scope with arenaScalarNames = name :: scope.arenaScalarNames
+
+let arenaScopeWithAdt name (scope: ArenaSafeScope) = scope with arenaAdtNames = name :: scope.arenaAdtNames
+
+let recursive schemeParameterCount (semanticType: SemanticType) =
+    match semanticType with
+        | SemFunction(_parameter, result, _row) -> 1 + schemeParameterCount(result)
+        | _ -> 0
+
+// `Ctor(a1)...(an)` as its root name and argument list; `None` for anything not rooted at a name.
+let recursive callSpineArguments (expr: Expr) (arguments: List(Expr)) =
+    match stripExprAt(expr) with
+        | ExprCall(callee, argument, _isSugar, _argumentLayout) -> callSpineArguments(callee)(argument :: arguments)
+        | ExprVar(name) -> Some((name, arguments))
+        | _ -> None
+
 let recursive arenaSafeContainsName (name: Str) (names: List(Str)) =
     match names with
         | [] -> false
@@ -894,80 +925,159 @@ let recursive arenaSafeContainsName (name: Str) (names: List(Str)) =
             else arenaSafeContainsName(name)(rest)
 
 // A conservative, purely syntactic whitelist: true only when `expr` can never produce or read a
-// heap value — scalar literals, scalar operators over such expressions, a reference to a name
-// already proven scalar within this same check, and a nested `let` whose own value and body both
-// pass the same check. Never inspects real types, so it is sound (a false positive would let an
-// escaping heap reference be reclaimed) without needing inference: anything not on the whitelist
-// (calls, constructors, lambdas, matches, external types, ...) conservatively answers false.
-let recursive isProvablyArenaSafeExpr (expr: Expr) (scalarNames: List(Str)) =
+// heap value that outlives its arena bracket — scalar literals, scalar operators over such
+// expressions, a reference to a name already proven scalar within this same check, a nested
+// `let` whose value is scalar or an arena-confined constructor cell (`arenaSafeBindingScope`)
+// and whose body passes the same check, and a `match` over a scalar or over such a cell. Never
+// inspects real types, so it is sound (a false positive would let an escaping heap reference be
+// reclaimed) without needing inference: anything not on the whitelist (calls, lambdas, external
+// types, ...) conservatively answers false.
+let recursive isProvablyArenaSafeExpr (expr: Expr) (scope: ArenaSafeScope) =
     match expr with
-        | ExprAt(_span, inner) -> isProvablyArenaSafeExpr(inner)(scalarNames)
+        | ExprAt(_span, inner) -> isProvablyArenaSafeExpr(inner)(scope)
         | ExprInt(_value) -> true
         | ExprBool(_value) -> true
-        | ExprVar(name) -> arenaSafeContainsName(name)(scalarNames)
-        | ExprAdd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprSubtract(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprMultiply(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprDivide(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprModulo(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprBitwiseAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprBitwiseOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprBitwiseXor(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprShiftLeft(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprShiftRight(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprGreaterThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprGreaterOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprLessThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprLessOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprNotEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprBitwiseNot(operand) -> isProvablyArenaSafeExpr(operand)(scalarNames)
-        | ExprLogicalNot(operand) -> isProvablyArenaSafeExpr(operand)(scalarNames)
-        | ExprLogicalAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
-        | ExprLogicalOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scalarNames)
+        | ExprVar(name) -> arenaSafeContainsName(name)(scope.arenaScalarNames)
+        | ExprAdd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprSubtract(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprMultiply(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprDivide(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprModulo(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprBitwiseAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprBitwiseOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprBitwiseXor(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprShiftLeft(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprShiftRight(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprGreaterThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprGreaterOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprLessThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprLessOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprNotEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprBitwiseNot(operand) -> isProvablyArenaSafeExpr(operand)(scope)
+        | ExprLogicalNot(operand) -> isProvablyArenaSafeExpr(operand)(scope)
+        | ExprLogicalAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
+        | ExprLogicalOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
         | ExprLet(name, letValue, letBody, _parameters, _annotation, _requirements) ->
-            if isProvablyArenaSafeExpr(letValue)(scalarNames)
-            then isProvablyArenaSafeExpr(letBody)(name :: scalarNames)
-            else false
+            match arenaSafeBindingScope(name)(letValue)(scope) with
+                | Some(bodyScope) -> isProvablyArenaSafeExpr(letBody)(bodyScope)
+                | None -> false
         | ExprMatch(matchValue, cases, _position) ->
-            if isProvablyArenaSafeExpr(matchValue)(scalarNames)
-            then arenaSafeMatchCases(cases)(scalarNames)
-            else false
+            if isArenaConfinedScrutinee(matchValue)(scope)
+            then arenaSafeAdtMatchCases(cases)(scope)
+            else
+                if isProvablyArenaSafeExpr(matchValue)(scope)
+                then arenaSafeMatchCases(cases)(scope)
+                else false
         | _ -> false
-and isProvablyArenaSafeBinary (left: Expr) (right: Expr) (scalarNames: List(Str)) =
-    if isProvablyArenaSafeExpr(left)(scalarNames)
-    then isProvablyArenaSafeExpr(right)(scalarNames)
+and isProvablyArenaSafeBinary (left: Expr) (right: Expr) (scope: ArenaSafeScope) =
+    if isProvablyArenaSafeExpr(left)(scope)
+    then isProvablyArenaSafeExpr(right)(scope)
     else false
 // Only patterns that bind nothing heap-derived keep the chain provable: a literal or wildcard
 // binds no name at all, and a plain variable pattern binds the scrutinee itself, which this same
 // check has already proven scalar. A constructor, tuple, list, or record pattern extracts a field
 // whose own type this syntactic check cannot see, so it conservatively stops the chain. A guard
 // is an ordinary expression and must pass in the arm's own scope.
-and arenaSafeMatchCases (cases: List((Pattern, Expr, Maybe(Expr)))) (scalarNames: List(Str)) =
+and arenaSafeMatchCases (cases: List((Pattern, Expr, Maybe(Expr)))) (scope: ArenaSafeScope) =
     match cases with
         | [] -> true
         | (pattern, body, guard) :: rest ->
-            match arenaSafePatternNames(pattern)(scalarNames) with
+            match arenaSafePatternNames(pattern)(scope) with
                 | None -> false
                 | Some(armNames) ->
                     if arenaSafeGuard(guard)(armNames)
                     then
                         if isProvablyArenaSafeExpr(body)(armNames)
-                        then arenaSafeMatchCases(rest)(scalarNames)
+                        then arenaSafeMatchCases(rest)(scope)
                         else false
                     else false
-and arenaSafeGuard (guard: Maybe(Expr)) (scalarNames: List(Str)) =
+and arenaSafeGuard (guard: Maybe(Expr)) (scope: ArenaSafeScope) =
     match guard with
         | None -> true
-        | Some(condition) -> isProvablyArenaSafeExpr(condition)(scalarNames)
-and arenaSafePatternNames (pattern: Pattern) (scalarNames: List(Str)) =
+        | Some(condition) -> isProvablyArenaSafeExpr(condition)(scope)
+and arenaSafePatternNames (pattern: Pattern) (scope: ArenaSafeScope) =
     match pattern with
-        | PatternAt(_span, inner) -> arenaSafePatternNames(inner)(scalarNames)
-        | PatternWildcard -> Some(scalarNames)
-        | PatternInt(_value) -> Some(scalarNames)
-        | PatternBool(_value) -> Some(scalarNames)
-        | PatternVar(name) -> Some(name :: scalarNames)
+        | PatternAt(_span, inner) -> arenaSafePatternNames(inner)(scope)
+        | PatternWildcard -> Some(scope)
+        | PatternInt(_value) -> Some(scope)
+        | PatternBool(_value) -> Some(scope)
+        | PatternVar(name) ->
+            scope
+            |> arenaScopeWithScalar(name)
+            |> Some
         | _ -> None
+// Arms over an arena-confined constructor cell: a constructor pattern binds only that cell's
+// scalar fields (each sub-pattern a variable, literal, or wildcard), a wildcard binds nothing,
+// and a plain variable pattern aliases the cell itself under the same restrictions.
+and arenaSafeAdtMatchCases (cases: List((Pattern, Expr, Maybe(Expr)))) (scope: ArenaSafeScope) =
+    match cases with
+        | [] -> true
+        | (pattern, body, guard) :: rest ->
+            match arenaSafeAdtPatternScope(pattern)(scope) with
+                | None -> false
+                | Some(armScope) ->
+                    if arenaSafeGuard(guard)(armScope)
+                    then
+                        if isProvablyArenaSafeExpr(body)(armScope)
+                        then arenaSafeAdtMatchCases(rest)(scope)
+                        else false
+                    else false
+and arenaSafeAdtPatternScope (pattern: Pattern) (scope: ArenaSafeScope) =
+    match pattern with
+        | PatternAt(_span, inner) -> arenaSafeAdtPatternScope(inner)(scope)
+        | PatternWildcard -> Some(scope)
+        | PatternVar(name) ->
+            scope
+            |> arenaScopeWithAdt(name)
+            |> Some
+        | PatternConstructor(_name, fields) -> arenaSafeFieldPatternScope(fields)(scope)
+        | _ -> None
+and arenaSafeFieldPatternScope (fields: List(Pattern)) (scope: ArenaSafeScope) =
+    match fields with
+        | [] -> Some(scope)
+        | field :: rest ->
+            match arenaSafePatternNames(field)(scope) with
+                | None -> None
+                | Some(fieldScope) -> arenaSafeFieldPatternScope(rest)(fieldScope)
+and isArenaConfinedScrutinee (value: Expr) (scope: ArenaSafeScope) =
+    match stripExprAt(value) with
+        | ExprVar(name) -> arenaSafeContainsName(name)(scope.arenaAdtNames)
+        | _ -> false
+// The scope a `let`-bound `name` extends: scalar values join `arenaScalarNames`, arena-confined
+// constructor cells join `arenaAdtNames`, and anything else stops the proof.
+and arenaSafeBindingScope (name: Str) (value: Expr) (scope: ArenaSafeScope) =
+    if isProvablyArenaSafeExpr(value)(scope)
+    then
+        scope
+        |> arenaScopeWithScalar(name)
+        |> Some
+    else
+        if isArenaConfinedConstructorValue(value)(scope)
+        then
+            scope
+            |> arenaScopeWithAdt(name)
+            |> Some
+        else None
+// A saturated application of a known, non-zero-cost constructor to provably scalar arguments:
+// the cell is arena-placed and every field holds a scalar, so a match on it binds only scalars.
+and isArenaConfinedConstructorValue (value: Expr) (scope: ArenaSafeScope) =
+    match callSpineArguments(value)([]) with
+        | None -> false
+        | Some((name, arguments)) ->
+            match findConstructorLayout(name)(scope.arenaConstructorLayouts) with
+                | Some(CoreConstructorLayout { isZeroCost = false, scheme = TypeScheme { body = body } }) ->
+                    if schemeParameterCount(body) == coreListLength(arguments)
+                    then allProvablyArenaSafe(arguments)(scope)
+                    else false
+                | _ -> false
+and allProvablyArenaSafe (values: List(Expr)) (scope: ArenaSafeScope) =
+    match values with
+        | [] -> true
+        | value :: rest ->
+            if isProvablyArenaSafeExpr(value)(scope)
+            then allProvablyArenaSafe(rest)(scope)
+            else false
 
 // Stage 0's parser attaches no location between `in` and a directly-chained `let`, so every
 // frame store in a `let ... in let ... in body` chain carries the chain head's span (its
@@ -5341,22 +5451,26 @@ let recursive allTopLevelBindingNames items =
 // lower through lowerPreparedRecursiveGroupWith, a distinct path this first slice does not cover.
 // Every other item (types, externals, capabilities, traits, providers) lowers no value in this
 // function and is transparent, matching lowerCoreProgramItems's own fallthrough.
-let recursive topLevelItemsProvablyArenaSafe (items: List(TopLevelItem)) (trailingBody: Expr) (scalarNames: List(Str)) =
+let recursive topLevelItemsProvablyArenaSafe (items: List(TopLevelItem)) (trailingBody: Expr) (scope: ArenaSafeScope) =
     match items with
-        | [] -> isProvablyArenaSafeExpr(trailingBody)(scalarNames)
-        | TopLevelAt(_span, inner) :: rest -> topLevelItemsProvablyArenaSafe(inner :: rest)(trailingBody)(scalarNames)
+        | [] -> isProvablyArenaSafeExpr(trailingBody)(scope)
+        | TopLevelAt(_span, inner) :: rest -> topLevelItemsProvablyArenaSafe(inner :: rest)(trailingBody)(scope)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
-            if isProvablyArenaSafeExpr(value)(scalarNames)
-            then topLevelItemsProvablyArenaSafe(rest)(trailingBody)(name :: scalarNames)
-            else false
+            match arenaSafeBindingScope(name)(value)(scope) with
+                | Some(nextScope) -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(nextScope)
+                | None -> false
         | TopLevelLet(_letBinding, true) :: _rest -> false
         | TopLevelRecursiveGroup(_bindings) :: _rest -> false
-        | _other :: rest -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scalarNames)
+        | _other :: rest -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scope)
 
-let topLevelLetChainProvablyArenaSafe name value rest trailingBody =
-    if isProvablyArenaSafeExpr(value)([])
-    then topLevelItemsProvablyArenaSafe(rest)(trailingBody)([name])
-    else false
+// `layouts` are the constructors declared before this `let`; a constructor of a later `type`
+// declaration is simply not recognized, which conservatively stops the chain.
+let topLevelLetChainProvablyArenaSafe name value rest trailingBody layouts =
+    match layouts
+    |> arenaSafeScope
+    |> arenaSafeBindingScope(name)(value) with
+        | Some(scope) -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scope)
+        | None -> false
 
 // Brackets one flat top-level let with the arena save/restore/reclaim triple stage 0 always emits
 // (SaveArenaState before the value, RestoreArenaState + ReclaimArenaChunks after the rest of the
@@ -5543,11 +5657,6 @@ let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailin
             then true
             else topLevelItemsMayReferenceName(rest)(trailingBody)(name)
         | _other :: rest -> topLevelItemsMayReferenceName(rest)(trailingBody)(name)
-
-let recursive stripExprAt (expr: Expr) =
-    match expr with
-        | ExprAt(_span, inner) -> stripExprAt(inner)
-        | other -> other
 
 // Recognizes ONLY `Ctor(arg)` — one, fully-saturating argument — against a known constructor whose
 // scheme is exactly `a -> T(...)` (not itself a function, ruling out a curried/multi-argument
@@ -5908,7 +6017,7 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                                 if alreadyArmed
                                 then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(alreadyArmed)(state)
                                 else
-                                    if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)
+                                    if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)(constructorLayouts)
                                     then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)((state with arenaBracketingArmed = true))
                                     else
                                         match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
