@@ -1117,6 +1117,18 @@ let computeTailJoins instructions =
             else []
         | _ -> []
 
+// `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` are pure bookkeeping this backend
+// treats as no-ops (no bump-allocated arena exists yet), but the lowerer emits them between a
+// match arm's `StoreLocal` and its `Jump` — the arm closes its own scoped bracket there. The
+// tail-call fusion below matches on adjacency, so it looks past them; dropping them on the fused
+// path is exactly what emitting them would have done.
+let recursive skipArenaBookkeeping instructions =
+    match instructions with
+        | IrInstruction { instruction = SaveArenaState(_cursor, _end, _managed) } :: rest -> skipArenaBookkeeping(rest)
+        | IrInstruction { instruction = RestoreArenaState(_cursor, _end, _preRestore, _managed) } :: rest -> skipArenaBookkeeping(rest)
+        | IrInstruction { instruction = ReclaimArenaChunks(_end, _preRestore, _managed) } :: rest -> skipArenaBookkeeping(rest)
+        | _ -> instructions
+
 let recursive lookupTailJoin (label: Str) (joins: List((Str, Int))) =
     match joins with
         | [] -> None
@@ -1124,6 +1136,36 @@ let recursive lookupTailJoin (label: Str) (joins: List((Str, Int))) =
             if candidate == label
             then Some(slot)
             else lookupTailJoin(label)(rest)
+
+// How a `CallKnown` whose result an arm stores into a tail join's slot is fused. `fusionMustTail`
+// false is the stack-allocating case: the call only gets the advisory `tail` marker and the store
+// and jump are still emitted normally, so there is no continuation to skip to. Otherwise the call
+// becomes `musttail` + `ret`, and `fusionContinuation` is what to resume with — everything after
+// the arm's `Jump`, or the `Label` itself when the arm merely falls into the join (other blocks
+// still branch to that label, so it must survive).
+type TailJoinFusion =
+    | fusionMustTail: Bool
+    | fusionContinuation: List(IrInstruction)
+
+let tailJoinFusionPlan (cx: CodegenContext) tailJoins allocatesStack environmentIsStackAllocated target storeSlot storeSource afterStore =
+    (let storeForwardsCallResult = environmentIsStackAllocated == false && cx.isEntry == false && storeSource == target
+    in
+        match afterStore with
+            | IrInstruction { instruction = Jump(jumpLabel) } :: restAfterJump ->
+                match lookupTailJoin(jumpLabel)(tailJoins) with
+                    | Some(joinSlot) ->
+                        if storeForwardsCallResult && storeSlot == joinSlot
+                        then Some(TailJoinFusion(fusionMustTail = allocatesStack == false, fusionContinuation = restAfterJump))
+                        else None
+                    | None -> None
+            | IrInstruction { instruction = Label(nextLabel) } :: _restAfterLabel ->
+                match lookupTailJoin(nextLabel)(tailJoins) with
+                    | Some(joinSlot) ->
+                        if storeForwardsCallResult && allocatesStack == false && storeSlot == joinSlot
+                        then Some(TailJoinFusion(fusionMustTail = true, fusionContinuation = afterStore))
+                        else None
+                    | None -> None
+            | _ -> None)
 
 // The `(env, arg, flag)` direct call `CallKnown`'s dispatch case emits, shared with the fused
 // tail-call path below.
@@ -1169,43 +1211,22 @@ let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack ta
                                 in
                                     let _ = buildRet(builder)(call)
                                     in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(restAfterReturn)(((target, call) :: tempEnv, true))
-        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: IrInstruction { instruction = Jump(jumpLabel) } :: restAfterJump as storeAndRest) ->
-            let fused =
-                match lookupTailJoin(jumpLabel)(tailJoins) with
-                    | Some(joinSlot) -> environmentIsStackAllocated == false && cx.isEntry == false && storeSource == target && storeSlot == joinSlot
-                    | None -> false
-            in
-                if fused == false
-                then
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: afterStore as storeAndRest) ->
+            match afterStore
+            |> skipArenaBookkeeping
+            |> tailJoinFusionPlan(cx)(tailJoins)(allocatesStack)(environmentIsStackAllocated)(target)(storeSlot)(storeSource) with
+                | None ->
                     state
                     |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
                     |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)
-                else
+                | Some(TailJoinFusion { fusionMustTail = false }) ->
                     match state with
                         | (tempEnv, _terminated) ->
                             let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
                             in
-                                if allocatesStack
-                                then
-                                    let _ = setTailCallKind(call)(tailCallKindTail)
-                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)(((target, call) :: tempEnv, false))
-                                else
-                                    let _ = setTailCallKind(call)(tailCallKindMustTail)
-                                    in
-                                        let _ = buildRet(builder)(call)
-                                        in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(restAfterJump)(((target, call) :: tempEnv, true))
-        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: (IrInstruction { instruction = Label(nextLabel) } :: restAfterLabel as labelAndRest) as storeAndRest) ->
-            let fused =
-                match lookupTailJoin(nextLabel)(tailJoins) with
-                    | Some(joinSlot) -> environmentIsStackAllocated == false && cx.isEntry == false && allocatesStack == false && storeSource == target && storeSlot == joinSlot
-                    | None -> false
-            in
-                if fused == false
-                then
-                    state
-                    |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
-                    |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)
-                else
+                                let _ = setTailCallKind(call)(tailCallKindTail)
+                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)(((target, call) :: tempEnv, false))
+                | Some(TailJoinFusion { fusionContinuation = continuation }) ->
                     match state with
                         | (tempEnv, _terminated) ->
                             let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
@@ -1213,7 +1234,7 @@ let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack ta
                                 let _ = setTailCallKind(call)(tailCallKindMustTail)
                                 in
                                     let _ = buildRet(builder)(call)
-                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(labelAndRest)(((target, call) :: tempEnv, true))
+                                    in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(continuation)(((target, call) :: tempEnv, true))
         | instruction :: rest ->
             match instruction with
                 | IrInstruction { instruction = kind } ->

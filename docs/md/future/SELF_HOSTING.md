@@ -661,14 +661,19 @@ same public behavior.
   layout from the start rather than unboxing the tagged layout later.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
-  brackets around flat top-level `let` scopes AND nested `let` chains (per-binding brackets
-  closing LIFO after the innermost body, stage 0's exact discipline including its chain-ambient
-  store spans — the `let_bindings` and `nested_let_scopes` IR parity fixtures match stage 0
-  byte-for-byte), both gated by the conservative syntactic provably-arena-safe whitelist. Open:
-  `CopyOutArena` and the general heap-escaping case, coroutine/async back edges, entry
-  normalization of a parameter reaching the result, the owner-alias walk across curried chains,
-  borrowed reads of owned bindings at call sites, and the actual `RcDup`/`RcDrop` emission itself
-  (only the provably-dead top-level constructor drop is emitted from `CoreLowering.ash` so far).
+  brackets around flat top-level `let` scopes, nested `let` chains (per-binding brackets closing
+  LIFO after the innermost body, stage 0's chain-ambient store spans included), and every `match`
+  arm on the linear dispatch path (save before the pattern test; restore/reclaim on both exits —
+  before the jump to the join and in the arm's own `match_arm_cleanup_N` block, which then jumps
+  to the real fail target). The `let_bindings`, `nested_let_scopes`, and `scalar_match` IR parity
+  fixtures match stage 0 byte-for-byte; all gated by the conservative syntactic
+  provably-arena-safe whitelist, which now also admits a `match` whose scrutinee, guards, and arm
+  bodies are scalar and whose patterns bind nothing heap-derived. Open: per-arm brackets on the
+  tag-group dispatch and capability-operation arm paths (no parity fixture yet, so they still
+  pass `None`), `CopyOutArena` and the general heap-escaping case, coroutine/async back edges,
+  entry normalization of a parameter reaching the result, the owner-alias walk across curried
+  chains, borrowed reads of owned bindings at call sites, and the actual `RcDup`/`RcDrop`
+  emission itself (only the provably-dead top-level constructor drop is emitted so far).
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
