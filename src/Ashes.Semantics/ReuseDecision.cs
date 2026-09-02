@@ -99,6 +99,7 @@ internal enum ReuseDecisionReason
     NoCompatibleReuseToken,
     NoReuseTokenAvailable,
     RuntimeUniquenessFallback,
+    HelperUnreachableFromSpecialization,
 }
 
 /// <summary>A stable source name plus optional lowering identities for a reuse candidate.</summary>

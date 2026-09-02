@@ -1198,6 +1198,14 @@ public sealed partial class Lowering
         }
 
         ReuseDecisionCandidate candidate = CreateReuseSpecializationCandidate(accumulator);
+        if (!SpecializationReferencesResolvable(specialization.Lambda, targetFunction))
+        {
+            return CreateReuseSpecializationQualification(
+                targetFunction,
+                candidate,
+                ReuseDecisionReason.HelperUnreachableFromSpecialization);
+        }
+
         Binding? binding = Lookup(targetFunction);
         return accumulator switch
         {
@@ -1217,6 +1225,47 @@ public sealed partial class Lowering
             _ => throw new InvalidOperationException(
                 "A reuse specialization candidate must be a variable or call result."),
         };
+    }
+
+    /// <summary>
+    /// A specialized body is lowered in a fresh scope holding only its own parameters, the captures
+    /// visible at the generating call site, the top-level helpers callable by label (empty
+    /// environment), the inlinable helpers, constructors, and the top-level self bindings. A free
+    /// reference of the candidate that is none of those — a capturing top-level helper the generating
+    /// function itself never mentions, say — would have no binding inside the specialization (and
+    /// surface as a spurious forward-reference diagnostic), so such a call stays an ordinary one.
+    /// </summary>
+    private bool SpecializationReferencesResolvable(Expr.Lambda lambda, string selfName)
+    {
+        var bound = new HashSet<string>(CollectLambdaParams(lambda), StringComparer.Ordinal) { selfName };
+        foreach (string reference in FreeVars(GetInnermostBody(lambda), bound))
+        {
+            if (Lookup(reference) is not null
+                || _topLevelFunctionRefs.ContainsKey(reference)
+                || _inlinableFunctions.ContainsKey(reference)
+                || _constructorSymbols.ContainsKey(reference)
+                || IsTopLevelSelfBinding(reference))
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool IsTopLevelSelfBinding(string name)
+    {
+        foreach (System.Collections.Immutable.ImmutableSortedDictionary<string, Binding> topScope in _topLevelScopeStack)
+        {
+            if (topScope.TryGetValue(name, out Binding? binding) && binding is Binding.Self)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool ShouldRecordReuseSpecializationCandidateRejection(
