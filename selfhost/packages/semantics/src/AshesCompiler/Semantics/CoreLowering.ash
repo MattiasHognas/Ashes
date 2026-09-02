@@ -99,10 +99,14 @@ type CoreBindingLocation =
     | CoreEnvironment(Int)
     | CoreSelf(Str, Int)
 
+// `ownedRead` marks a `let` or pattern binding, whose reads borrow when the binding's resolved
+// type is heap-represented (see `finishOwnedRead`); a parameter, capture, or recursive
+// self-reference is not owned by its reader and loads plainly.
 type CoreBinding =
     | name: Str
     | scheme: TypeScheme
     | location: CoreBindingLocation
+    | ownedRead: Bool
 
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
@@ -771,6 +775,53 @@ let lowerString value state =
         | StringInterning { state = internedState, label = label } ->
             lowerConstant(given (target) -> LoadConstStr(target)(label))(SemString)(internedState)
 
+// The payload type a zero-cost single-constructor type is represented as, when `name` names one.
+let recursive zeroCostPayloadType (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | CoreConstructorLayout { isZeroCost = true, scheme = TypeScheme { body = SemFunction(payload, SemNamed(_symbolId, candidate, _arguments), _row) } } :: rest ->
+            if candidate == name
+            then Some(payload)
+            else zeroCostPayloadType(name)(rest)
+        | _ :: rest -> zeroCostPayloadType(name)(rest)
+
+// The type name an owned binding carries, stage 0's `GetOwnedTypeName`: a heap-represented value
+// (string, bytes, big integer, list, tuple, closure, or a declared type, seen through a zero-cost
+// wrapper to its payload) is owned; copy types and unresolved type variables are not. A zero-cost
+// wrapper whose payload is a type variable erases to that variable and so counts as not owned.
+let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreConstructorLayout)) =
+    match semanticType with
+        | SemString -> Some("String")
+        | SemBytes -> Some("Bytes")
+        | SemBigInt -> Some("BigInt")
+        | SemList(_element) -> Some("List")
+        | SemTuple(_elements) -> Some("Tuple")
+        | SemFunction(_parameter, _result, _row) -> Some("Function")
+        | SemNamed(_symbolId, name, _arguments) ->
+            match zeroCostPayloadType(name)(layouts) with
+                | Some(payload) -> ownedTypeNameOf(payload)(layouts)
+                | None -> Some(name)
+        | _ -> None
+
+// Stage 0's compiler-inferred borrowing (`LowerVar`): reading an owned binding yields a `Borrow`
+// alias of the loaded value, so the owning scope keeps the drop obligation. Ownership is decided
+// from the binding's resolved type at the read, since a pattern binding's type is a fresh variable
+// when it is bound.
+let finishOwnedRead ownedRead temp semanticType state =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts } ->
+            if ownedRead
+            then
+                match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
+                    | Some(_typeName) ->
+                        match freshTemp(state) with
+                            | FreshTemp { state = borrowState, temp = borrowTemp } ->
+                                borrowState
+                                |> emit(Borrow(borrowTemp)(temp))
+                                |> success(borrowTemp)(semanticType)
+                    | None -> success(temp)(semanticType)(state)
+            else success(temp)(semanticType)(state)
+
 let recursive lowerVariable name state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
@@ -798,12 +849,12 @@ and lowerBoundVariable binding state =
                                         false
                                     ))
                                     |> success(closureTemp)(semanticType)
-                | CoreBinding { location = CoreLocal(slot) } ->
+                | CoreBinding { location = CoreLocal(slot), ownedRead = ownedRead } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
                             tempState
                             |> emit(LoadLocal(temp)(slot))
-                            |> success(temp)(semanticType)
+                            |> finishOwnedRead(ownedRead)(temp)(semanticType)
                 | CoreBinding { location = CoreEnvironment(index) } ->
                     match freshTemp(instantiatedState) with
                         | FreshTemp { state = tempState, temp = temp } ->
@@ -814,7 +865,13 @@ and lowerBoundVariable binding state =
 let addBinding name scheme location state =
     match state with
         | CoreLoweringState { bindings = bindings } ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = location)
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = false)
+            in state with bindings = binding :: bindings
+
+let addOwnedBinding name scheme location state =
+    match state with
+        | CoreLoweringState { bindings = bindings } ->
+            let binding = CoreBinding(name = name, scheme = scheme, location = location, ownedRead = true)
             in state with bindings = binding :: bindings
 
 let restoreBindings bindings (state: CoreLoweringState) = state with bindings = bindings
@@ -873,7 +930,7 @@ let lowerStoredLet name body lower outerBindings valueTemp valueType fresh =
                     generalize(pendingOperatorScheme(storedState) :: bindingSchemes(outerBindings))(resolveType(storedState)(valueType))([])
                 in
                     storedState
-                    |> addBinding(name)(scheme)(CoreLocal(local))
+                    |> addOwnedBinding(name)(scheme)(CoreLocal(local))
                     |> lower(body)
                     |> restoreLoweredBindings(outerBindings)
 
@@ -1101,6 +1158,44 @@ let stripChainedLetAt body =
 // was already proven provably-arena-safe by `topLevelLetChainProvablyArenaSafe`, which recursed
 // through every nested `let` (see `isProvablyArenaSafeExpr`'s own `ExprLet` case), so no separate
 // per-site proof is needed here.
+// Whether a lowered `let` value is owned (`ownedTypeNameOf`), in which case its scope carries a
+// drop obligation the closing bracket must respect.
+let loweredValueIsOwned lowered =
+    match lowered with
+        | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
+            match state with
+                | CoreLoweringState { constructorLayouts = layouts } ->
+                    match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
+                        | Some(_typeName) -> true
+                        | None -> false
+        | _ -> false
+
+// Closes a `let`'s arena bracket and returns the closed state with the result temp. A scope that
+// owns its binding spills the body result to a slot across the restore and reloads it afterwards
+// (stage 0's result preservation: the drops emitted at scope exit may overwrite the result
+// temp); a scope owning nothing returns the body temp directly.
+let closeOwnedLetBracket ownedLet cursorSlot endSlot resultTemp state =
+    if ownedLet
+    then
+        match freshLocal(state) with
+            | FreshLocal { state = resultAllocated, local = resultSlot } ->
+                match resultAllocated
+                |> emit(StoreLocal(resultSlot)(resultTemp))
+                |> freshLocal with
+                    | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                        match preRestoreAllocated
+                        |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                        |> freshTemp with
+                            | FreshTemp { state = reloadState, temp = reloadTemp } ->
+                                (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
+    else
+        match freshLocal(state) with
+            | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                (preRestoreAllocated
+                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false)), resultTemp)
+
 let lowerArenaBracketedNestedLet name value body lower outerBindings state =
     match freshLocal(state) with
         | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
@@ -1108,16 +1203,14 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                 | FreshLocal { state = endAllocated, local = endSlot } ->
                     match endAllocated
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
-                    |> lower(value)
-                    |> finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings) with
+                    |> lower(value) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                        | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
-                            match freshLocal(bodyState) with
-                                | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                                    preRestoreAllocated
-                                    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                                    |> success(resultTemp)(resultType)
+                        | LoweredCoreValue { error = None } as loweredValue ->
+                            match finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings)(loweredValue) with
+                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                                | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                                    match closeOwnedLetBracket(loweredValueIsOwned(loweredValue))(cursorSlot)(endSlot)(resultTemp)(bodyState) with
+                                        | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
 
 let lowerLet name value body lower state =
     match state with
@@ -1382,7 +1475,7 @@ let recursive capturedScope captures index =
     match captures with
         | [] -> []
         | CoreBinding { name = name, scheme = scheme } :: rest ->
-            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index))
+            let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = false)
             in binding :: capturedScope(rest)(index + 1)
 
 let lambdaOrigin label =
@@ -1456,7 +1549,8 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId state =
         CoreBinding(
             name = parameter,
             scheme = emptyScheme(parameterType),
-            location = CoreLocal(1)
+            location = CoreLocal(1),
+            ownedRead = false
         ) :: capturedScope(captures)(0)
     in
         state
@@ -1845,7 +1939,7 @@ let recursive prepareCorePatternBindings pending seen state =
                                     match freshLocal(typedState) with
                                         | FreshLocal { state = localState, local = local } ->
                                             localState
-                                            |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
+                                            |> addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
                                             |> prepareCorePatternBindings(rest)(name :: seen)
                 | PatternCons(head, tail) -> prepareCorePatternBindings(head :: tail :: rest)(seen)(state)
                 | PatternTuple(elements) ->
@@ -1863,7 +1957,7 @@ let recursive prepareCorePatternBindings pending seen state =
                                 match freshLocal(typedState) with
                                     | FreshLocal { state = localState, local = local } ->
                                         localState
-                                        |> addBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
+                                        |> addOwnedBinding(name)(emptyScheme(semanticType))(CoreLocal(local))
                                         |> prepareCorePatternBindings(inner :: rest)(name :: seen)
                 | PatternOr(first :: _alternatives) -> prepareCorePatternBindings(first :: rest)(seen)(state)
                 | _ -> prepareCorePatternBindings(rest)(seen)(state)
@@ -2984,7 +3078,8 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings stat
         CoreBinding(
             name = parameter,
             scheme = emptyScheme(parameterType),
-            location = CoreLocal(1)
+            location = CoreLocal(1),
+            ownedRead = false
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
         state
@@ -3026,7 +3121,8 @@ let preparedSelfBinding environmentSize prepared =
             CoreBinding(
                 name = name,
                 scheme = emptyScheme(semanticType),
-                location = CoreSelf(label)(environmentSize)
+                location = CoreSelf(label)(environmentSize),
+                ownedRead = false
             )
 
 let recursive preparedSelfBindings environmentSize members =
@@ -5491,23 +5587,14 @@ let lowerArenaBracketedTopLevelLet name value environment continuation outerBind
                         match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
                             | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure((saved with arenaBracketingArmed = restoreArmedTo))(UnresolvedTraitEvidenceForwarding(error))
                             | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-                                match saved
-                                |> lowerCore(rewrittenValue)
-                                |> finishLetValue(
-                                    name,
-                                    topLevelContinuationBody,
-                                    continuation,
-                                    outerBindings
-                                ) with
+                                match lowerCore(rewrittenValue)(saved) with
                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
-                                    | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
-                                        match freshLocal(bodyState) with
-                                            | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                                                let closed =
-                                                    preRestoreAllocated
-                                                    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                                                in success(resultTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
+                                    | LoweredCoreValue { error = None } as loweredValue ->
+                                        match finishLetValue(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
+                                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
+                                            | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                                                match closeOwnedLetBracket(loweredValueIsOwned(loweredValue))(cursorSlot)(endSlot)(resultTemp)(bodyState) with
+                                                    | (closed, finalTemp) -> success(finalTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
 // fully-saturated call to a known field-carrying constructor (see

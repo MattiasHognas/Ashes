@@ -69,6 +69,7 @@ import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrCompileTimeEval
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrInstructionTemps
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.StateMachineTransform
 import AshesCompiler.Semantics.Types
@@ -207,95 +208,16 @@ let recursive resolveTemp remap temp =
         | None -> temp
         | Some(resolved) -> resolveTemp(remap)(resolved)
 
+// Rewrites an instruction's source temps through `remap`, leaving its defined temps alone: a
+// remapped temp is only ever an elided `Borrow`/`RcDup` destination, defined nowhere else, and
+// every operand of every kind flows through `mapInstructionTemps`.
 let remapSourceTemps inst (remap: List((IrTemp, IrTemp))) =
-    (let r temp = resolveTemp(remap)(temp)
+    (let defined = getDefinedTemps(inst)
     in
-        match inst with
-            | LoadConstInt(_, _) -> inst
-            | LoadConstFloat(_, _) -> inst
-            | LoadConstBool(_, _) -> inst
-            | LoadConstStr(_, _) -> inst
-            | LoadProgramArgs(_) -> inst
-            | LoadLocal(_, _) -> inst
-            | StoreLocal(slot, src) -> StoreLocal(slot)(r(src))
-            | LoadEnv(_, _) -> inst
-            | StoreMemOffset(basePtr, offset, src) -> StoreMemOffset(r(basePtr))(offset)(r(src))
-            | LoadMemOffset(dest, basePtr, offset) -> LoadMemOffset(dest)(r(basePtr))(offset)
-            | AddInt(dest, l, right) -> AddInt(dest)(r(l))(r(right))
-            | SubInt(dest, l, right) -> SubInt(dest)(r(l))(r(right))
-            | MulInt(dest, l, right) -> MulInt(dest)(r(l))(r(right))
-            | DivInt(dest, l, right) -> DivInt(dest)(r(l))(r(right))
-            | DivUInt(dest, l, right) -> DivUInt(dest)(r(l))(r(right))
-            | AndInt(dest, l, right) -> AndInt(dest)(r(l))(r(right))
-            | OrInt(dest, l, right) -> OrInt(dest)(r(l))(r(right))
-            | XorInt(dest, l, right) -> XorInt(dest)(r(l))(r(right))
-            | ShlInt(dest, l, right) -> ShlInt(dest)(r(l))(r(right))
-            | ShrInt(dest, l, right) -> ShrInt(dest)(r(l))(r(right))
-            | AddFloat(dest, l, right) -> AddFloat(dest)(r(l))(r(right))
-            | SubFloat(dest, l, right) -> SubFloat(dest)(r(l))(r(right))
-            | MulFloat(dest, l, right) -> MulFloat(dest)(r(l))(r(right))
-            | DivFloat(dest, l, right) -> DivFloat(dest)(r(l))(r(right))
-            | IntToFloat(dest, src) -> IntToFloat(dest)(r(src))
-            | FloatToInt(dest, src) -> FloatToInt(dest)(r(src))
-            | FloatUnaryIntrinsic(dest, src, name) -> FloatUnaryIntrinsic(dest)(r(src))(name)
-            | CallLibm(dest, name, args) -> CallLibm(dest)(name)(map(r)(args))
-            | CmpIntGt(dest, l, right) -> CmpIntGt(dest)(r(l))(r(right))
-            | CmpIntGe(dest, l, right) -> CmpIntGe(dest)(r(l))(r(right))
-            | CmpIntLt(dest, l, right) -> CmpIntLt(dest)(r(l))(r(right))
-            | CmpIntLe(dest, l, right) -> CmpIntLe(dest)(r(l))(r(right))
-            | CmpUIntGt(dest, l, right) -> CmpUIntGt(dest)(r(l))(r(right))
-            | CmpUIntGe(dest, l, right) -> CmpUIntGe(dest)(r(l))(r(right))
-            | CmpUIntLt(dest, l, right) -> CmpUIntLt(dest)(r(l))(r(right))
-            | CmpUIntLe(dest, l, right) -> CmpUIntLe(dest)(r(l))(r(right))
-            | CmpIntEq(dest, l, right) -> CmpIntEq(dest)(r(l))(r(right))
-            | CmpIntNe(dest, l, right) -> CmpIntNe(dest)(r(l))(r(right))
-            | CmpFloatGt(dest, l, right) -> CmpFloatGt(dest)(r(l))(r(right))
-            | CmpFloatGe(dest, l, right) -> CmpFloatGe(dest)(r(l))(r(right))
-            | CmpFloatLt(dest, l, right) -> CmpFloatLt(dest)(r(l))(r(right))
-            | CmpFloatLe(dest, l, right) -> CmpFloatLe(dest)(r(l))(r(right))
-            | CmpFloatEq(dest, l, right) -> CmpFloatEq(dest)(r(l))(r(right))
-            | CmpFloatNe(dest, l, right) -> CmpFloatNe(dest)(r(l))(r(right))
-            | CmpStrEq(dest, l, right) -> CmpStrEq(dest)(r(l))(r(right))
-            | CmpStrNe(dest, l, right) -> CmpStrNe(dest)(r(l))(r(right))
-            | ConcatStr(dest, l, right, managed) -> ConcatStr(dest)(r(l))(r(right))(managed)
-            | ConcatStrTip(dest, l, right, cur, endSlot, managed) -> ConcatStrTip(dest)(r(l))(r(right))(cur)(endSlot)(managed)
-            | ConcatStrN(dest, parts, managed) -> ConcatStrN(dest)(map(r)(parts))(managed)
-            | MakeClosure(dest, fnLabel, envTemp, envSize, hasEnv, isClosure, isAsync) -> MakeClosure(dest)(fnLabel)(r(envTemp))(envSize)(hasEnv)(isClosure)(isAsync)
-            | MakeClosureStack(dest, fnLabel, envTemp, envSize, hasEnv, isClosure) -> MakeClosureStack(dest)(fnLabel)(r(envTemp))(envSize)(hasEnv)(isClosure)
-            | CallClosure(dest, closureTemp, argTemp, flagTemp) ->
-                let remappedFlag =
-                    if flagTemp < 0
-                    then -1
-                    else r(flagTemp)
-                in CallClosure(dest)(r(closureTemp))(r(argTemp))(remappedFlag)
-            | CallKnown(dest, fnLabel, envTemp, argTemp, flagTemp, envOnStack) ->
-                let remappedFlag =
-                    if flagTemp < 0
-                    then -1
-                    else r(flagTemp)
-                in CallKnown(dest)(fnLabel)(r(envTemp))(r(argTemp))(remappedFlag)(envOnStack)
-            | SetAdtField(ptr, idx, src) -> SetAdtField(r(ptr))(idx)(r(src))
-            | GetAdtTag(dest, ptr) -> GetAdtTag(dest)(r(ptr))
-            | GetAdtField(dest, ptr, idx) -> GetAdtField(dest)(r(ptr))(idx)
-            | PrintInt(src) -> PrintInt(r(src))
-            | PrintStr(src) -> PrintStr(r(src))
-            | PrintBool(src) -> PrintBool(r(src))
-            | WriteStr(src) -> WriteStr(r(src))
-            | WriteErrorStr(src, managed) -> WriteErrorStr(r(src))(managed)
-            | WriteBufferedStr(src, managed) -> WriteBufferedStr(r(src))(managed)
-            | ExitProcess(src) -> ExitProcess(r(src))
-            | PanicStr(src) -> PanicStr(r(src))
-            | JumpIfFalse(cond, target) -> JumpIfFalse(r(cond))(target)
-            | SwitchTag(tagTemp, cases, defaultLabel) -> SwitchTag(r(tagTemp))(cases)(defaultLabel)
-            | Return(src) -> Return(r(src))
-            | Borrow(dest, src) -> Borrow(dest)(r(src))
-            | RcDup(dest, src, managed, borrowFlag) -> RcDup(dest)(r(src))(managed)(borrowFlag)
-            | RcDrop(src, name, slot, managed, borrowFlag, origin) -> RcDrop(r(src))(name)(slot)(managed)(borrowFlag)(origin)
-            | RcIsUnique(dest, src) -> RcIsUnique(dest)(r(src))
-            | DropReuse(dest, src, size, managed) -> DropReuse(dest)(r(src))(size)(managed)
-            | AllocReusing(dest, tag, size, tok, isStack, isManaged) -> AllocReusing(dest)(tag)(size)(r(tok))(isStack)(isManaged)
-            | StoreCapabilityHandler(idx, src) -> StoreCapabilityHandler(idx)(r(src))
-            | _ -> inst)
+        mapInstructionTemps(given (temp) ->
+            if listContains(temp)(defined)
+            then temp
+            else resolveTemp(remap)(temp))(inst))
 
 let recursive countTempUses instructions acc =
     match instructions with

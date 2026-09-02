@@ -787,6 +787,57 @@ let testIdentityCopyErasedAfterReduction unit =
             then test.fail("testIdentityCopyErasedAfterReduction: the copy introduced by identity reduction must be erased by the second elision")
             else Unit)
 
+let recursive bytesSubTextSource instructions =
+    match instructions with
+        | [] -> None
+        | IrInstruction { instruction = BytesSubText(_target, bytesTemp, _start, _length, _runtimeManaged) } :: _ -> Some(bytesTemp)
+        | _ :: tail -> bytesSubTextSource(tail)
+
+// Eliding a single-use Borrow remaps its use for every instruction kind: the borrowed operand of
+// a builtin such as BytesSubText must end up naming the borrowed source, never the erased temp.
+let testBorrowElisionRemapsBytesOperand unit =
+    (let optimized =
+        optimizeInstructions(
+            [
+                "hello world"
+                |> LoadConstStr(0)
+                |> makeInstruction,
+                0
+                |> StoreLocal(0)
+                |> makeInstruction,
+                0
+                |> LoadLocal(1)
+                |> makeInstruction,
+                1
+                |> Borrow(2)
+                |> makeInstruction,
+                6
+                |> LoadConstInt(3)
+                |> makeInstruction,
+                5
+                |> LoadConstInt(4)
+                |> makeInstruction,
+                false
+                |> BytesSubText(5)(2)(3)(4)
+                |> makeInstruction,
+                makeInstruction(Return(5))
+            ]
+        )(
+            1
+        )(
+            6
+        )
+    in
+        if hasBorrow(optimized)
+        then test.fail("testBorrowElisionRemapsBytesOperand: a single-use Borrow must be elided")
+        else
+            match bytesSubTextSource(optimized) with
+                | Some(source) ->
+                    if source == 2
+                    then test.fail("testBorrowElisionRemapsBytesOperand: the BytesSubText operand still names the erased Borrow temp")
+                    else Unit
+                | None -> test.fail("testBorrowElisionRemapsBytesOperand: the BytesSubText must survive optimization"))
+
 let recursive hasCallClosure instructions =
     match instructions with
         | [] -> false
@@ -2581,4 +2632,5 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testDevirtualizeClosure(Unit))
     |> (given (_) -> testRedundantArenaBrackets(Unit))
     |> (given (_) -> testCompileTimeEvaluation(Unit))
+    |> (given (_) -> testBorrowElisionRemapsBytesOperand(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted IR optimizer tests passed"))
