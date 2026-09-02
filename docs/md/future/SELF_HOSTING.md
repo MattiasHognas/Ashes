@@ -668,9 +668,15 @@ same public behavior.
   to the real fail target). The `let_bindings`, `nested_let_scopes`, and `scalar_match` IR parity
   fixtures match stage 0 byte-for-byte; all gated by the conservative syntactic
   provably-arena-safe whitelist, which now also admits a `match` whose scrutinee, guards, and arm
-  bodies are scalar and whose patterns bind nothing heap-derived. Open: per-arm brackets on the
-  tag-group dispatch and capability-operation arm paths (no parity fixture yet, so they still
-  pass `None`), `CopyOutArena` and the general heap-escaping case, coroutine/async back edges,
+  bodies are scalar and whose patterns bind nothing heap-derived. Every ordinary (tagged)
+  constructor pattern on the linear path now guards its tag test with stage 0's `ptr != 0`
+  check, and the tag test allocates its temps in stage 0's order (tag, compare, expected
+  constant); the tag-group path binds fields under the switch without either, as stage 0 does.
+  Open: per-arm brackets on the tag-group dispatch and capability-operation arm paths (no parity
+  fixture yet, so they still pass `None`), the `Borrow` a match emits when its scrutinee is an
+  owned binding (that comes from owned-binding reads in variable lowering, i.e. the ownership
+  tracking below, not from the match itself), `CopyOutArena` and the general heap-escaping case,
+  coroutine/async back edges,
   entry normalization of a parameter reaching the result, the owner-alias walk across curried
   chains, borrowed reads of owned bindings at call sites, and the actual `RcDup`/`RcDrop`
   emission itself (only the provably-dead top-level constructor drop is emitted so far).
