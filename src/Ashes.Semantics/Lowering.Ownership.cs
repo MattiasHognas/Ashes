@@ -895,31 +895,38 @@ public sealed partial class Lowering
         }
     }
 
-    private int EmitRuntimeManagedParentFieldTransfer(OwnershipInfo parent, int childTemp)
+    /// <summary>
+    /// Returns a child extracted from a runtime-managed parent out of a match arm: the child keeps a
+    /// reference of its own and the parent is released as a whole. The release names the parent's
+    /// slot, so precise placement moves it to the last use on every path through the match, the arms
+    /// that extract nothing included. It therefore carries the parent's type-derived flags rather than
+    /// this arm's: the structural dropper releases the parent's other children, and a list parent may
+    /// be empty on an arm that never reached this one. The parent is read once more after the child's
+    /// retain, since placement releases an owner right after its last use and a unique parent's
+    /// structural release would otherwise free the child before it was retained.
+    /// </summary>
+    private int EmitRuntimeManagedParentFieldTransfer(OwnershipInfo parent, int childTemp, TypeRef? childType)
     {
+        int duplicatedTemp = NewTemp();
+        Emit(new IrInst.RcDup(
+            duplicatedTemp,
+            childTemp,
+            RuntimeManaged: true,
+            MayBeEmpty: childType is not null && MayUseEmptyListRepresentation(childType)));
+        MarkRuntimeManagedTemp(duplicatedTemp);
+        Emit(new IrInst.LoadLocal(NewTemp(), parent.Slot));
+
         int parentTemp = NewTemp();
         Emit(new IrInst.LoadLocal(parentTemp, parent.Slot));
-        int resultSlot = NewLocal();
-        Emit(new IrInst.StoreLocal(resultSlot, childTemp));
-
-        int uniqueTemp = NewTemp();
-        string sharedLabel = NewLabel("rc_transfer_child_shared");
-        string transferredLabel = NewLabel("rc_transfer_child");
-        Emit(new IrInst.RcIsUnique(uniqueTemp, parentTemp));
-        Emit(new IrInst.JumpIfFalse(uniqueTemp, sharedLabel));
-        Emit(new IrInst.Jump(transferredLabel));
-        Emit(new IrInst.Label(sharedLabel));
-        int duplicatedTemp = NewTemp();
-        Emit(new IrInst.RcDup(duplicatedTemp, childTemp, RuntimeManaged: true));
-        Emit(new IrInst.StoreLocal(resultSlot, duplicatedTemp));
-        Emit(new IrInst.Label(transferredLabel));
-
-        Emit(new IrInst.RcDrop(parentTemp, parent.TypeName, parent.Slot, RuntimeManaged: true));
+        Emit(new IrInst.RcDrop(
+            parentTemp,
+            parent.TypeName,
+            parent.Slot,
+            RuntimeManaged: true,
+            MayBeEmpty: parent.Type is { } parentType && MayUseEmptyListRepresentation(parentType),
+            StructuralDropperLabel: parent.Type is { } droppedType ? SynthesizeStructuralOwnerDropper(droppedType) : null));
         parent.ReleaseKind = ResourceReleaseKind.AutoDropped;
-        int resultTemp = NewTemp();
-        Emit(new IrInst.LoadLocal(resultTemp, resultSlot));
-        MarkRuntimeManagedTemp(resultTemp);
-        return resultTemp;
+        return duplicatedTemp;
     }
 
     /// <summary>
