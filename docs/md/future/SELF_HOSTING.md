@@ -675,8 +675,11 @@ same public behavior.
   bodies are scalar and whose patterns bind nothing heap-derived, and a `let` bound to a
   saturated non-zero-cost constructor of scalar arguments (an arena-confined cell) that is only
   ever matched by constructor, variable, or wildcard patterns binding its scalar fields
-  (`ArenaSafeScope`); the `pattern_match` source now differs from stage 0 only by its `Borrow`
-  and `RcDrop` markers. Every ordinary (tagged)
+  (`ArenaSafeScope`). Reads of owned bindings (`let` and pattern bindings whose resolved type is
+  heap-represented, `ownedTypeNameOf`) emit stage 0's `Borrow` alias, and a bracketed `let` that
+  owns its binding spills the body result to a slot across the closing restore
+  (`closeOwnedLetBracket`); the `pattern_match` source now differs from stage 0 only by its
+  `RcDrop` placement markers. Every ordinary (tagged)
   constructor pattern on the linear path now guards its tag test with stage 0's `ptr != 0`
   check, and the tag test allocates its temps in stage 0's order (tag, compare, expected
   constant); the tag-group path binds fields under the switch without either, as stage 0 does.

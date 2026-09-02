@@ -367,14 +367,15 @@ let expectPartialApplicationOrder unit =
             "    Return                Source=2",
             "",
             "function _start_main  [ProgramEntry]",
-            "  locals=1 temps=5",
+            "  locals=1 temps=6",
             "    LoadConstInt          Target=0 Value=0",
             "    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0",
             "    StoreLocal            Slot=0 Source=1",
             "    LoadLocal             Target=2 Slot=0",
-            "    LoadConstInt          Target=3 Value=1",
-            "    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3",
-            "    Return                Source=4",
+            "    Borrow                Target=3 SourceTemp=2",
+            "    LoadConstInt          Target=4 Value=1",
+            "    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4",
+            "    Return                Source=5",
             ""
         ])))(unit)
 
