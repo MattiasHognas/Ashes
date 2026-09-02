@@ -1656,7 +1656,7 @@ public sealed partial class Lowering
             return bodyTemp;
         }
 
-        return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp);
+        return EmitRuntimeManagedParentFieldTransfer(owner, bodyTemp, resultBinding?.Type);
     }
 
     private int DuplicateRuntimeManagedMatchResult(int bodyTemp, OwnershipInfo owner)
