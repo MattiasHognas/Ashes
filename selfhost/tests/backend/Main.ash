@@ -2555,9 +2555,12 @@ let assertLooksLikeStaticExecutable bytes =
         |> Ashes.Byte.getU16Le(bytes)
         |> test.assertEqual(62u16))
     |> (given (_) ->
+        // Two `PT_LOAD`s: the `R+X` text segment plus the trailing `R+W` `.bss` page every
+        // codegen'd program now carries for the entry-captured `__ashes_envp` module global
+        // (neither module here embeds a string literal, so no read-only data segment joins them).
         56
         |> Ashes.Byte.getU16Le(bytes)
-        |> test.assertEqual(1u16))
+        |> test.assertEqual(2u16))
 
 let testLinkStaticExecutableForRealIrArithmeticModule unit =
     match emitModule(buildRealIrArithmeticModule)("selfhostBackendLinkArith")(objectFileType) with

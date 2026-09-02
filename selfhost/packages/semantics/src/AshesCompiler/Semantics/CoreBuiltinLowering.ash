@@ -439,6 +439,8 @@ let unitType = SemNamed(0)("Unit")([])
 // this typing deliberately does not carry yet.
 let fileHandleType = SemNamed(0)("FileHandle")([])
 
+let processType = SemNamed(0)("Process")([])
+
 // The number of distinct quantified-variable ids used by EITHER `standardBuiltinLayouts`' schemes
 // below OR `CoreLowering.ash`'s `standardConstructorLayouts` (currently: `print`'s `(0, "a")`;
 // `Maybe`'s `None`/`Some` sharing `(1, "a")`; `Result`'s `Ok`/`Error` sharing `(2, "e")` and
@@ -576,6 +578,40 @@ let standardBuiltinLayouts =
                 body = SemFunction(fileHandleType)(SemNamed(0)("Result")([SemString, unitType]))(None),
                 constraints = []
             )
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("spawn")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(SemString)(SemFunction(SemList(SemString))(SemNamed(0)("Result")([SemString, processType]))(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("writeStdin")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(processType)(SemFunction(SemString)(unitType)(None))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("readStdoutLine")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(processType)(SemNamed(0)("Maybe")([SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("readStderrLine")(
+            TypeScheme(
+                quantified = [],
+                body = SemFunction(processType)(SemNamed(0)("Maybe")([SemString]))(None),
+                constraints = []
+            )
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("waitForExit")(
+            TypeScheme(quantified = [], body = SemFunction(processType)(SemInt)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO.Process")("kill")(
+            TypeScheme(quantified = [], body = SemFunction(processType)(unitType)(None), constraints = [])
         ),
         standardBuiltinLayout("Ashes.IO.Environment")("currentDirectory")(
             TypeScheme(

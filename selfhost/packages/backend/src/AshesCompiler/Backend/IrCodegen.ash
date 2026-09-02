@@ -108,6 +108,7 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
+import AshesCompiler.Backend.IrCodegen.Process
 import AshesCompiler.Backend.IrCodegen.TextBytes
 import Ashes.Number.UInt
 export (
@@ -167,6 +168,7 @@ type CodegenContext =
     | stringLiteralGlobals: List((Str, LLVMValueRef))
     | liftedFunctions: List((Str, LLVMValueRef))
     | closureFunctionType: LLVMTypeRef
+    | envpGlobal: LLVMValueRef
     | isEntry: Bool
 
 // Everything shared by every function in one module — computed once by `codegenFunctions`, then
@@ -179,6 +181,7 @@ type ModuleCodegen =
     | moduleStringLiteralGlobals: List((Str, LLVMValueRef))
     | moduleLiftedFunctions: List((Str, LLVMValueRef))
     | moduleClosureFunctionType: LLVMTypeRef
+    | moduleEnvpGlobal: LLVMValueRef
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -322,7 +325,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -1026,6 +1029,42 @@ let codegenInstructionKind cx builder kind state =
                                                 |> lookupIndexed(name)
                                                 |> emitEnvironmentGet(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                             in ((target, resultValue) :: tempEnv, terminated)
+                                        | SpawnProcess(target, executable, args) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(args)
+                                                |> emitSpawnProcess(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(envpGlobal)(lookupIndexed(executable)(tempEnv))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ProcessWriteStdin(target, process, text) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(text)
+                                                |> emitProcessWriteStdin(context)(function_)(i64)(i8)(ptrType)(builder)(lookupIndexed(process)(tempEnv))
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ProcessReadStdoutLine(target, process) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(process)
+                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(true)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ProcessReadStderrLine(target, process) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(process)
+                                                |> emitProcessReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(false)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ProcessWaitForExit(target, process) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(process)
+                                                |> emitProcessWaitForExit(builder)(i64)(i8)(ptrType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ProcessKill(target, process) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(process)
+                                                |> emitProcessKill(builder)(i64)(i8)(ptrType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
 // Whether any instruction allocates native stack memory reachable outside its own frame slot
@@ -1214,26 +1253,49 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             in Unit
                                     else Unit
                                 in
-                                    let labelBlocks =
-                                        instructions
-                                        |> collectLabelNames
-                                        |> createLabelBlocks(context)(functionValue)
+                                    let _ =
+                                    // The entry receives the initial stack pointer in `rdi` (the
+                                    // trampoline's `mov rdi, rsp`); the SysV layout there is
+                                    // `[argc][argv...][NULL][envp...]`, so the environment vector
+                                    // base is `sp + 8 * (argc + 2)`. Captured once into
+                                    // `__ashes_envp` so `Process.spawn`'s child `execve` can hand
+                                    // the parent environment on — stage 0's own
+                                    // `EmitLinuxEntryEnvpCapture` exactly.
+                                        if isEntry
+                                        then
+                                            let stackPointer = getParam(functionValue)(0u32)
+                                            in
+                                                let argc =
+                                                    buildLoad(builder)(types.i64)(buildIntToPtr(builder)(stackPointer)(types.ptrType)("envp_stack_ptr"))("envp_argc")
+                                                in
+                                                    let envpBase =
+                                                        buildAdd(builder)(stackPointer)(buildMul(builder)(buildAdd(builder)(argc)(constInt(types.i64)(2u64)(false))("envp_words"))(constInt(types.i64)(8u64)(false))("envp_offset"))("envp_base")
+                                                    in
+                                                        let _ = buildStore(builder)(envpBase)(mc.moduleEnvpGlobal)
+                                                        in Unit
+                                        else Unit
                                     in
-                                        let cx =
-                                            CodegenContext(
-                                                context = context,
-                                                moduleRef = mc.moduleRef,
-                                                function_ = functionValue,
-                                                types = types,
-                                                externals = externals,
-                                                localSlots = localSlots,
-                                                labelBlocks = labelBlocks,
-                                                stringLiteralGlobals = stringLiteralGlobals,
-                                                liftedFunctions = liftedFunctions,
-                                                closureFunctionType = closureFnType,
-                                                isEntry = isEntry
-                                            )
-                                        in (cx, instructions)
+                                        let labelBlocks =
+                                            instructions
+                                            |> collectLabelNames
+                                            |> createLabelBlocks(context)(functionValue)
+                                        in
+                                            let cx =
+                                                CodegenContext(
+                                                    context = context,
+                                                    moduleRef = mc.moduleRef,
+                                                    function_ = functionValue,
+                                                    types = types,
+                                                    externals = externals,
+                                                    localSlots = localSlots,
+                                                    labelBlocks = labelBlocks,
+                                                    stringLiteralGlobals = stringLiteralGlobals,
+                                                    liftedFunctions = liftedFunctions,
+                                                    closureFunctionType = closureFnType,
+                                                    envpGlobal = mc.moduleEnvpGlobal,
+                                                    isEntry = isEntry
+                                                )
+                                            in (cx, instructions)
 
 let codegenFunctionBody mc functionValue isEntry irFunction =
     match buildFunctionContext(mc)(functionValue)(isEntry)(irFunction) with
@@ -1276,27 +1338,37 @@ let codegenFunctions name context entryFunction functions stringLiterals =
         in
             let entryValue =
                 false
-                |> functionType(voidType(context))([])(0u32)
+                |> functionType(voidType(context))([types.i64])(1u32)
                 |> addFunction(module_)(name)
             in
                 let closureFnType = closureFunctionTypeOf(types.i64)
                 in
-                    let mc =
-                        ModuleCodegen(
-                            moduleRef = module_,
-                            moduleContext = context,
-                            moduleTypes = types,
-                            moduleExternals = declareExternalFunctions(module_)(context)(types),
-                            moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
-                            moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
-                            moduleClosureFunctionType = closureFnType,
-                            moduleBuilder = createBuilder(context)
-                        )
+                    let envpGlobal = addGlobal(module_)(types.i64)("__ashes_envp")
                     in
-                        let _ = codegenLiftedFunctions(mc)(functions)
+                        let _ =
+                            false
+                            |> constInt(types.i64)(0u64)
+                            |> setInitializer(envpGlobal)
                         in
-                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                            in (module_, mc.moduleBuilder))
+                            let _ = setLinkage(envpGlobal)(linkageInternal)
+                            in
+                                let mc =
+                                    ModuleCodegen(
+                                        moduleRef = module_,
+                                        moduleContext = context,
+                                        moduleTypes = types,
+                                        moduleExternals = declareExternalFunctions(module_)(context)(types),
+                                        moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
+                                        moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
+                                        moduleClosureFunctionType = closureFnType,
+                                        moduleEnvpGlobal = envpGlobal,
+                                        moduleBuilder = createBuilder(context)
+                                    )
+                                in
+                                    let _ = codegenLiftedFunctions(mc)(functions)
+                                    in
+                                        let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                        in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)
