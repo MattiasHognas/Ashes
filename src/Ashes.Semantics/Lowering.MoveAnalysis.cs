@@ -77,6 +77,14 @@ public sealed partial class Lowering
     // the binding's own FuncKey (its defining Let/LetRecursive/LetResult node), not its bare name.
     private readonly Dictionary<FuncKey, (List<string> Params, Expr Body)> _maFuncs = new();
 
+    // Lambda literals in callee position (the shape every `x |> (given (y) -> ...)` stage desugars
+    // to). They are applied through a closure call rather than beta-reduced, so their argument's
+    // ownership is decided by an ownership summary exactly like a named callee's. Keyed by the lambda
+    // node under a synthetic name no source binding can spell; kept out of the per-lambda origin map so
+    // the IR keeps attributing the closure to its enclosing source function.
+    private readonly Dictionary<Expr.Lambda, FuncKey> _maAppliedLambdaKeys =
+        new(ReferenceEqualityComparer.Instance);
+
     // The lexical function scope at the entry of each registered function body. Populated by the same
     // normalized-body walk that collects calls, so ResultReach and move analysis resolve copied binders
     // to the same FuncKey as the call census.
@@ -255,6 +263,7 @@ public sealed partial class Lowering
     private void AnalyzeReuseCopyElision(Expr desugaredBody)
     {
         _maFuncs.Clear();
+        _maAppliedLambdaKeys.Clear();
         _maValueRhs.Clear();
         _maNameIndex.Clear();
         _maKeyName.Clear();
@@ -398,6 +407,7 @@ public sealed partial class Lowering
 
                 return;
             case Expr.Call c:
+                RegisterAppliedLambda(c, enclosingSource);
                 RegisterBindings(c.Func, enclosingSource);
                 RegisterBindings(c.Arg, enclosingSource);
                 return;
@@ -410,6 +420,30 @@ public sealed partial class Lowering
                 return;
         }
     }
+
+    private void RegisterAppliedLambda(Expr.Call call, SourceFunctionOrigin? enclosingSource)
+    {
+        if (StripOrSelf(call.Func) is not Expr.Lambda lambda)
+        {
+            return;
+        }
+
+        var key = new FuncKey(lambda);
+        if (_maFuncs.ContainsKey(key))
+        {
+            return;
+        }
+
+        TextSpan span = AstSpans.GetOrDefault(lambda);
+        string name = $"$applied@{span.Start}";
+        _maFunctionOrigins[key] = CreateSourceFunctionOrigin(name, span, enclosingSource);
+        _maFuncs[key] = (CollectLambdaParams(lambda), GetInnermostBody(lambda));
+        _maKeyName[key] = name;
+        _maAppliedLambdaKeys[lambda] = key;
+    }
+
+    private bool IsAppliedLambdaFunction(FuncKey key)
+        => _maAppliedLambdaKeys.ContainsValue(key);
 
     private void RegisterBindings(Expr.Let let, SourceFunctionOrigin? enclosingSource)
     {
@@ -784,15 +818,25 @@ public sealed partial class Lowering
     /// </summary>
     internal IReadOnlyCollection<string> AnalyzedFunctionNames =>
         _maAnalyzed
-            ? _ownershipSummaries.Keys.Select(key => _maKeyName[key]).OrderBy(name => name, StringComparer.Ordinal).ToList()
+            ? _ownershipSummaries.Keys
+                .Where(key => !IsAppliedLambdaFunction(key))
+                .Select(key => _maKeyName[key])
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList()
             : [];
 
     /// <summary>
-    /// Every retained ownership summary in stable source order. Returns an immutable projection
-    /// rather than exposing the mutable analysis dictionary or its internal <see cref="FuncKey"/>.
+    /// Every retained ownership summary of a source-declared function in stable source order (applied
+    /// lambda literals are analysed but not surfaced). Returns an immutable projection rather than
+    /// exposing the mutable analysis dictionary or its internal <see cref="FuncKey"/>.
     /// </summary>
     internal IReadOnlyList<FunctionOwnershipSummary> OwnershipSummaries =>
-        _maAnalyzed ? OrderOwnershipSummaries(_ownershipSummaries.Values).ToList() : [];
+        _maAnalyzed
+            ? OrderOwnershipSummaries(_ownershipSummaries
+                .Where(entry => !IsAppliedLambdaFunction(entry.Key))
+                .Select(entry => entry.Value))
+                .ToList()
+            : [];
 
     internal IReadOnlyList<OwnershipFactConsumption> OwnershipFactConsumptions =>
         _ownershipFactConsumptions
@@ -937,6 +981,12 @@ public sealed partial class Lowering
 
     private FunctionOwnershipSummary? GetOwnershipSummaryForCallRoot(Expr root)
     {
+        if (StripOrSelf(root) is Expr.Lambda applied
+            && _maAppliedLambdaKeys.TryGetValue(applied, out FuncKey appliedKey))
+        {
+            return GetOwnershipSummary(appliedKey);
+        }
+
         if (TryResolveKnownFunctionLabel(root, out string label)
             && GetOwnershipSummaryForLabel(label) is { } exact)
         {
@@ -4737,6 +4787,13 @@ public sealed partial class Lowering
     {
         var args = new List<Expr>();
         var root = CollectCallArgs(e, args);
+        if (StripOrSelf(root) is Expr.Lambda appliedLambda
+            && _maAppliedLambdaKeys.TryGetValue(appliedLambda, out FuncKey appliedKey))
+        {
+            CollectAppliedLambdaCall(appliedLambda, appliedKey, args, enclosing, scope);
+            return;
+        }
+
         string? calleeName = root switch
         {
             Expr.Var v => v.Name,
@@ -4775,6 +4832,42 @@ public sealed partial class Lowering
         var call = (Expr.Call)e;
         CollectCallsAndEscapes(call.Func, enclosing, scope);
         CollectCallsAndEscapes(call.Arg, enclosing, scope);
+    }
+
+    // An applied lambda literal is both a function body to walk under its own scope and a call site of
+    // that function: a saturated application is recorded in the call census (so parameter move safety
+    // sees every argument it receives), a partial one escapes as an incomplete application.
+    private void CollectAppliedLambdaCall(
+        Expr.Lambda lambda,
+        FuncKey key,
+        List<Expr> args,
+        FuncKey? enclosing,
+        IReadOnlyDictionary<string, FuncKey> scope)
+    {
+        (List<string> Params, Expr Body) callee = _maFuncs[key];
+        if (args.Count == callee.Params.Count)
+        {
+            if (!_maCallSites.TryGetValue(key, out var list))
+            {
+                list = new List<MoveCallSite>();
+                _maCallSites[key] = list;
+            }
+
+            list.Add(new MoveCallSite(
+                enclosing,
+                args,
+                Enumerable.Repeat(scope, args.Count).ToList()));
+        }
+        else
+        {
+            MarkFunctionEscaped(key, FunctionCallCensusCause.IncompleteApplication);
+        }
+
+        WalkBindingValueCore(TryResolveBindingFunction(key, lambda), lambda, enclosing, scope);
+        foreach (Expr arg in args)
+        {
+            CollectCallsAndEscapes(arg, enclosing, scope);
+        }
     }
 
     private void RecordIncompleteCallCensus(
