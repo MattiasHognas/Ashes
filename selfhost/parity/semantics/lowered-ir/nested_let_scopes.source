@@ -1,0 +1,7 @@
+let x = 10
+let y =
+    let a = x + 5
+    in
+        let b = a * 2
+        in a + b
+y + x
