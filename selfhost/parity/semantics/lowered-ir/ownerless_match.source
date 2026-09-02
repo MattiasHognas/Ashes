@@ -1,0 +1,7 @@
+type Option(a) =
+    | NoVal
+    | HasVal(a)
+
+match HasVal(42) with
+    | HasVal(n) -> n + 1
+    | NoVal -> 0

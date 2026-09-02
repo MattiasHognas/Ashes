@@ -11,6 +11,7 @@ public sealed class SelfhostIrParityTests
     [Arguments("let_bindings")]
     [Arguments("nested_let_scopes")]
     [Arguments("scalar_match")]
+    [Arguments("ownerless_match")]
     [Arguments("closure_capture")]
     [Arguments("pattern_match")]
     [Arguments("mutual_recursion")]

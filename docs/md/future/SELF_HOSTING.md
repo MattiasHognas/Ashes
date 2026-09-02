@@ -665,8 +665,12 @@ same public behavior.
   LIFO after the innermost body, stage 0's chain-ambient store spans included), and every `match`
   arm on the linear dispatch path (save before the pattern test; restore/reclaim on both exits —
   before the jump to the join and in the arm's own `match_arm_cleanup_N` block, which then jumps
-  to the real fail target). The `let_bindings`, `nested_let_scopes`, and `scalar_match` IR parity
-  fixtures match stage 0 byte-for-byte; all gated by the conservative syntactic
+  to the real fail target). The `let_bindings`, `nested_let_scopes`, `scalar_match`, and
+  `ownerless_match` IR parity fixtures match stage 0 byte-for-byte; the last one covers an
+  arena-placed constructor scrutinee: a constructor allocates in the arena unless its consumer
+  requests an RC cell (`runtimeAdtRequested`, consumed at instantiation so nested constructor
+  arguments stay arena-placed), and the dead top-level `let` path is the one requester today. The
+  brackets are gated by the conservative syntactic
   provably-arena-safe whitelist, which now also admits a `match` whose scrutinee, guards, and arm
   bodies are scalar and whose patterns bind nothing heap-derived. Every ordinary (tagged)
   constructor pattern on the linear path now guards its tag test with stage 0's `ptr != 0`
