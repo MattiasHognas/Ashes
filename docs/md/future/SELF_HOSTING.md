@@ -639,12 +639,14 @@ same public behavior.
   layout from the start rather than unboxing the tagged layout later.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
-  brackets around flat top-level `let` scopes, gated by a conservative syntactic
-  provably-arena-safe whitelist (the `let_bindings` IR parity fixture now matches stage 0
-  byte-for-byte). Open: nested `let` bracketing, `CopyOutArena` and the general heap-escaping
-  case, coroutine/async back edges, entry normalization of a parameter reaching the result, the
-  owner-alias walk across curried chains, borrowed reads of owned bindings at call sites, and the
-  actual `RcDup`/`RcDrop` emission itself (none is emitted from `CoreLowering.ash` yet).
+  brackets around flat top-level `let` scopes AND nested `let` chains (per-binding brackets
+  closing LIFO after the innermost body, stage 0's exact discipline including its chain-ambient
+  store spans — the `let_bindings` and `nested_let_scopes` IR parity fixtures match stage 0
+  byte-for-byte), both gated by the conservative syntactic provably-arena-safe whitelist. Open:
+  `CopyOutArena` and the general heap-escaping case, coroutine/async back edges, entry
+  normalization of a parameter reaching the result, the owner-alias walk across curried chains,
+  borrowed reads of owned bindings at call sites, and the actual `RcDup`/`RcDrop` emission itself
+  (only the provably-dead top-level constructor drop is emitted from `CoreLowering.ash` so far).
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
@@ -676,8 +678,9 @@ same public behavior.
   high (~250 B/iteration; 204 MB at 200K iterations). `EmitRuntimeManagedTcoConstructorDeepCopy`
   now releases the source's owned children after copying them (top level only — nesting is
   handled by the release's own cascading walk), scoped to the back-edge ADT normalization path.
-  The plateau test passes deterministically; 200K-iteration probes plateau at 8.2 MB. Still open
-  here: the same shape for tuples, and the entry-side parameter normalization (a one-time, not
+  The plateau test passes deterministically; 200K-iteration probes plateau at 8.2 MB. Tuple
+  successors were probed with the analogous rebuild shape and plateau at 4.1 MB — no release
+  needed there. Still open here: the entry-side parameter normalization (a one-time, not
   per-iteration, non-release).
 - [x] **OPT-31** Keep a heap aggregate alive when stored through a generic parameter of a function neither
   inlined nor specialized: both call-lowering paths copy the argument into the persistent to-space

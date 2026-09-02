@@ -898,18 +898,55 @@ and isProvablyArenaSafeBinary (left: Expr) (right: Expr) (scalarNames: List(Str)
     then isProvablyArenaSafeExpr(right)(scalarNames)
     else false
 
-// Nested (non-top-level) lets are not yet bracketed — see lowerCoreProgramItems's TopLevelLet
-// case and isProvablyArenaSafeExpr's own doc comment for why the first slice stops at the
-// top-level sequence. A nested ExprLet remains a safe, correct subset of that check: it is still
-// walked (as one recognized shape) when deciding whether an enclosing top-level let's trailing
-// body is provably arena-safe, so a program that mixes the two loses only the inner scope's own
-// bracket, never correctness.
+// Stage 0's parser attaches no location between `in` and a directly-chained `let`, so every
+// frame store in a `let ... in let ... in body` chain carries the chain head's span (its
+// LowerSequentialBindingChain walks the chain without touching the ambient diagnostic span).
+// This parser wraps the chained let in its own `ExprAt`; dropping that wrapper here reproduces
+// stage 0's spans exactly — the chained let's value and body keep their own inner `ExprAt`s, so
+// only the frame store's location is affected.
+let stripChainedLetAt body =
+    match body with
+        | ExprAt(_span, inner) ->
+            match inner with
+                | ExprLet(_name, _value, _body, _parameters, _annotation, _requirements) -> inner
+                | ExprLetRecursive(_name, _value, _body, _parameters, _annotation, _requirements) -> inner
+                | _ -> body
+        | _ -> body
+
+// A nested `let`'s arena bracket, stage 0's exact per-binding discipline: `SaveArenaState`
+// before the value, the restore/reclaim pair after the whole body (an inner chained `let` opens
+// and closes its own bracket inside this one, so the pairs close LIFO before the enclosing
+// binding's store). Reached only when `arenaBracketingArmed` is set — the whole remaining program
+// was already proven provably-arena-safe by `topLevelLetChainProvablyArenaSafe`, which recursed
+// through every nested `let` (see `isProvablyArenaSafeExpr`'s own `ExprLet` case), so no separate
+// per-site proof is needed here.
+let lowerArenaBracketedNestedLet name value body lower outerBindings state =
+    match freshLocal(state) with
+        | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
+            match freshLocal(cursorAllocated) with
+                | FreshLocal { state = endAllocated, local = endSlot } ->
+                    match endAllocated
+                    |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
+                    |> lower(value)
+                    |> finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings) with
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
+                            match freshLocal(bodyState) with
+                                | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                                    preRestoreAllocated
+                                    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> success(resultTemp)(resultType)
+
 let lowerLet name value body lower state =
     match state with
-        | CoreLoweringState { bindings = outerBindings } ->
-            state
-            |> lower(value)
-            |> finishLetValue(name)(body)(lower)(outerBindings)
+        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = armed } ->
+            if armed
+            then lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
+            else
+                state
+                |> lower(value)
+                |> finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings)
 
 let recursive containsName name names =
     match names with

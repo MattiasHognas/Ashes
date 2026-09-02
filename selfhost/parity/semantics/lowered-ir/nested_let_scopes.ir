@@ -1,0 +1,36 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=13
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=10   (nested_let_scopes.ash:1:9)
+    StoreLocal            Slot=2 Source=0
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6
+    LoadLocal             Target=1 Slot=2   (nested_let_scopes.ash:3:13)
+    LoadConstInt          Target=2 Value=5   (nested_let_scopes.ash:3:17)
+    AddInt                Target=3 Left=1 Right=2   (nested_let_scopes.ash:3:13)
+    StoreLocal            Slot=7 Source=3   (nested_let_scopes.ash:3:5)
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=4 Slot=7   (nested_let_scopes.ash:5:17)
+    LoadConstInt          Target=5 Value=2   (nested_let_scopes.ash:5:21)
+    MulInt                Target=6 Left=4 Right=5   (nested_let_scopes.ash:5:17)
+    StoreLocal            Slot=10 Source=6   (nested_let_scopes.ash:3:5)
+    LoadLocal             Target=7 Slot=7   (nested_let_scopes.ash:6:12)
+    LoadLocal             Target=8 Slot=10   (nested_let_scopes.ash:6:16)
+    AddInt                Target=9 Left=7 Right=8   (nested_let_scopes.ash:6:12)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=11
+    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=12
+    StoreLocal            Slot=13 Source=9
+    LoadLocal             Target=10 Slot=13   (nested_let_scopes.ash:7:1)
+    LoadLocal             Target=11 Slot=2   (nested_let_scopes.ash:7:5)
+    AddInt                Target=12 Left=10 Right=11   (nested_let_scopes.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=14
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
+    Return                Source=12
+
