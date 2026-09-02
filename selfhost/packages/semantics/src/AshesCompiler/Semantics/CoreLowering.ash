@@ -1937,13 +1937,39 @@ let recursive lowerAdtPatternFields patterns types valueTemp index failLabel low
             |> lowerAdtPatternFields(patternRest)(typeRest)(valueTemp)(index + 1)(failLabel)(lowerPattern)
         | _ -> result
 
+// An ordinary (tagged) constructor value is a heap pointer that may be null; stage 0 guards every
+// tag test with `ptr != 0` first (`EmitRequireNonZero`: zero constant, `CmpIntNe`, jump to the
+// arm's fail target on false), and this codegen's null-checked tag read depends on it. The zero
+// temp is allocated before the comparison temp, matching stage 0's temp order exactly.
+let requireNonZeroPattern valueTemp failLabel state =
+    match freshTemp(state) with
+        | FreshTemp { state = zeroState, temp = zeroTemp } ->
+            match freshTemp(zeroState) with
+                | FreshTemp { state = compareState, temp = compareTemp } ->
+                    compareState
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> emit(CmpIntNe(compareTemp)(valueTemp)(zeroTemp))
+                    |> emit(JumpIfFalse(compareTemp)(failLabel))
+
+// The tag test allocates its temps in stage 0's `EmitRequireTagMatch` order — tag, compare,
+// THEN the expected constant — which is the reverse of every other pattern comparison (a literal
+// pattern lowers its constant first, then compares). `finishPatternComparison` would allocate the
+// compare temp last, so the tag test emits its own three instructions.
 let finishConstructorTag valueTemp tag failLabel state =
     match freshTemp(state) with
         | FreshTemp { state = tagState, temp = tagTemp } ->
-            tagState
-            |> emit(GetAdtTag(tagTemp)(valueTemp))
-            |> lowerConstant(given (target) -> LoadConstInt(target)(tag))(SemInt)
-            |> finishPatternComparison(tagTemp)(SemInt)(failLabel)(CmpIntEq)
+            match freshTemp(tagState) with
+                | FreshTemp { state = compareState, temp = compareTemp } ->
+                    match freshTemp(compareState) with
+                        | FreshTemp { state = expectedState, temp = expectedTemp } ->
+                            LoweredCorePattern(
+                                state = expectedState
+                                |> emit(GetAdtTag(tagTemp)(valueTemp))
+                                |> emit(LoadConstInt(expectedTemp)(tag))
+                                |> emit(CmpIntEq(compareTemp)(tagTemp)(expectedTemp))
+                                |> emit(JumpIfFalse(compareTemp)(failLabel)),
+                                error = None
+                            )
 
 let lowerZeroCostPattern patterns parameterTypes valueTemp failLabel lowerPattern state =
     match (patterns, parameterTypes) with
@@ -1976,6 +2002,7 @@ let finishConstructorPattern patterns valueTemp valueType failLabel lowerPattern
                     | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                     | (typedState, None) ->
                         typedState
+                        |> requireNonZeroPattern(valueTemp)(failLabel)
                         |> finishConstructorTag(valueTemp)(tag)(failLabel)
                         |> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)
 
