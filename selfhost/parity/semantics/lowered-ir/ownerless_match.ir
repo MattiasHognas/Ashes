@@ -1,0 +1,54 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=10 temps=19
+    LoadConstInt          Target=0 Value=42   (ownerless_match.ash:5:14)
+    AllocAdt              Target=1 Tag=1 FieldCount=1   (ownerless_match.ash:5:7)
+    SetAdtField           Ptr=1 FieldIndex=0 Source=0   (ownerless_match.ash:5:7)
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadConstInt          Target=2 Value=0   (ownerless_match.ash:5:1)
+    CmpIntNe              Target=3 Left=1 Right=2   (ownerless_match.ash:5:1)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_3   (ownerless_match.ash:5:1)
+    GetAdtTag             Target=4 Ptr=1   (ownerless_match.ash:5:1)
+    LoadConstInt          Target=6 Value=1   (ownerless_match.ash:5:1)
+    CmpIntEq              Target=5 Left=4 Right=6   (ownerless_match.ash:5:1)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (ownerless_match.ash:5:1)
+    GetAdtField           Target=7 Ptr=1 FieldIndex=0   (ownerless_match.ash:5:1)
+    StoreLocal            Slot=3 Source=7   (ownerless_match.ash:5:1)
+    LoadLocal             Target=8 Slot=3   (ownerless_match.ash:6:20)
+    LoadConstInt          Target=9 Value=1   (ownerless_match.ash:6:24)
+    AddInt                Target=10 Left=8 Right=9   (ownerless_match.ash:6:20)
+    StoreLocal            Slot=0 Source=10   (ownerless_match.ash:5:1)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=4
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=4
+    Jump                  Target=match_end_0   (ownerless_match.ash:5:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=5
+    Jump                  Target=match_next_2   (ownerless_match.ash:5:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=11 Value=0   (ownerless_match.ash:5:1)
+    CmpIntNe              Target=12 Left=1 Right=11   (ownerless_match.ash:5:1)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_4   (ownerless_match.ash:5:1)
+    GetAdtTag             Target=13 Ptr=1   (ownerless_match.ash:5:1)
+    LoadConstInt          Target=15 Value=0   (ownerless_match.ash:5:1)
+    CmpIntEq              Target=14 Left=13 Right=15   (ownerless_match.ash:5:1)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_4   (ownerless_match.ash:5:1)
+    LoadConstInt          Target=16 Value=0   (ownerless_match.ash:7:16)
+    StoreLocal            Slot=0 Source=16   (ownerless_match.ash:5:1)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=8
+    Jump                  Target=match_end_0   (ownerless_match.ash:5:1)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=9
+    Jump                  Target=match_none_1   (ownerless_match.ash:5:1)
+  match_none_1:
+    LoadConstInt          Target=17 Value=0   (ownerless_match.ash:5:1)
+    StoreLocal            Slot=0 Source=17   (ownerless_match.ash:5:1)
+  match_end_0:
+    LoadLocal             Target=18 Slot=0   (ownerless_match.ash:5:1)
+    Return                Source=18
+

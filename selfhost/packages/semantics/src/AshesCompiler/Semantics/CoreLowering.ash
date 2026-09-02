@@ -129,6 +129,7 @@ type CoreLoweringState =
     | currentItem: Int
     | topLevelNames: List(Str)
     | arenaBracketingArmed: Bool
+    | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
 
@@ -277,6 +278,7 @@ type CoreConstructorShape =
     | layout: CoreConstructorLayout
     | parameterTypes: List(SemanticType)
     | resultType: SemanticType
+    | constructorRuntimeManaged: Bool
 
 type CoreBuiltinShape =
     | state: CoreLoweringState
@@ -338,6 +340,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         currentItem = 0,
         topLevelNames = [],
         arenaBracketingArmed = false,
+        runtimeAdtRequested = false,
         pendingOperatorDefaults = [],
         sealedOperatorDefaults = []
     )
@@ -610,18 +613,22 @@ let recursive splitConstructorType semanticType reversed =
         | SemFunction(parameterType, resultType, _row) -> splitConstructorType(resultType)(parameterType :: reversed)
         | resultType -> (reverse(reversed), resultType)
 
+// A constructor allocates in the arena unless its consumer requested a runtime-managed (RC) cell
+// through `runtimeAdtRequested`. The request is consumed here, before the constructor's arguments
+// are lowered, so a nested constructor argument allocates in the arena as usual.
 let instantiateConstructor layout state =
     match (layout, state) with
-        | (CoreConstructorLayout { scheme = scheme }, CoreLoweringState { typeSupply = supply }) ->
+        | (CoreConstructorLayout { scheme = scheme }, CoreLoweringState { typeSupply = supply, runtimeAdtRequested = requested }) ->
             match instantiate(scheme)(supply) with
                 | InstantiationResult { semanticType = semanticType, supply = nextSupply } ->
                     match splitConstructorType(semanticType)([]) with
                         | (parameterTypes, resultType) ->
                             CoreConstructorShape(
-                                state = withTypeSupply(nextSupply)(state),
+                                state = withTypeSupply(nextSupply)((state with runtimeAdtRequested = false)),
                                 layout = layout,
                                 parameterTypes = parameterTypes,
-                                resultType = resultType
+                                resultType = resultType,
+                                constructorRuntimeManaged = requested
                             )
 
 let instantiateBuiltin layout state =
@@ -3195,7 +3202,7 @@ let recursive emitAdtFields baseTemp index temps state =
             |> emit(SetAdtField(baseTemp)(index)(temp))
             |> emitAdtFields(baseTemp)(index + 1)(rest)
 
-let finishConstructorAllocation layout resultType lowered =
+let finishConstructorAllocation layout resultType runtimeManaged lowered =
     match (layout, lowered) with
         | (_layout, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (CoreConstructorLayout { isZeroCost = true }, LoweredCoreValues { state = state, temps = temp :: [], error = None }) ->
@@ -3210,30 +3217,17 @@ let finishConstructorAllocation layout resultType lowered =
                 | FreshTemp { state = allocatedState, temp = resultTemp } ->
                     let fieldCount = coreListLength(temps)
                     in
-                        // A zero-field constructor (`Unit`, `None`) carries no payload to leak or
-                        // double-free, so it stays arena-shaped (`runtimeManaged = false`) exactly as
-                        // before. Any field-carrying constructor now allocates via RC
-                        // (`runtimeManaged = true`) rather than the previous unconditional `false`:
-                        // architecture.md calls RC "the general lifetime substrate ... region[s]
-                        // remain for compiler-proven scoped values" — a plain field-count check is a
-                        // conservative stand-in for the real per-value escape analysis that decision
-                        // deserves (nothing here proves a given allocation is scope-confined), but it
-                        // is never UNSAFE: over-classifying a value as RC-managed only costs an extra
-                        // header word and a heap allocation, never a use-after-free or leaked-as-arena
-                        // heap value. `AshesCompiler.Backend.IrCodegen` gained real `malloc`-backed
-                        // codegen for this case (see its own header comment); nothing yet inserts the
-                        // matching `RcDrop` (no lowering site constructs one anywhere in this file),
-                        // so a runtime-managed value from this path leaks today — an explicit,
-                        // temporary limitation matching every other stand-in in this arc, closed by
-                        // the next slice (Perceus drop insertion).
+                        // `runtimeManaged` is the consumer's placement request carried by the
+                        // constructor shape (see `instantiateConstructor`); without one the cell is
+                        // arena-placed, and any `RcDrop` the consumer pairs with an RC cell is its own.
                         allocatedState
-                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(fieldCount != 0))
+                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged))
                         |> emitAdtFields(resultTemp)(0)(temps)
                         |> success(resultTemp)(resolveType(allocatedState)(resultType))
 
 let finishConstructorArguments arguments lower shape =
     match shape with
-        | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             let expectedArity = coreListLength(parameterTypes)
             in
                 let actualArity = coreListLength(arguments)
@@ -3253,7 +3247,7 @@ let finishConstructorArguments arguments lower shape =
                                     | (failedState, Some(error)) -> failure(failedState)(error)
                                     | (typedState, None) ->
                                         let typedValues = lowered with state = typedState
-                                        in finishConstructorAllocation(layout)(resultType)(typedValues)
+                                        in finishConstructorAllocation(layout)(resultType)(runtimeManaged)(typedValues)
 
 let lowerConstructor layout arguments lower state =
     state
@@ -3774,20 +3768,20 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                         )
         | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
 
-let lowerTypedRecordUpdate layout resultType fieldNames fieldTypes fields targetTemp lower typed =
+let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp lower typed =
     match typed with
         | (failedState, Some(error)) -> failure(failedState)(error)
         | (typedState, None) ->
             typedState
             |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(lower)([])([])
-            |> finishConstructorAllocation(layout)(resultType)
+            |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
 
 let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
     match shape with
-        | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             state
             |> bindType(targetType)(resultType)
-            |> lowerTypedRecordUpdate(layout)(resultType)(fieldNames)(fieldTypes)(fields)(targetTemp)(lower)
+            |> lowerTypedRecordUpdate(layout)(resultType)(runtimeManaged)(fieldNames)(fieldTypes)(fields)(targetTemp)(lower)
 
 let finishRecordUpdateLayout fields targetTemp targetType lower state layout =
     match layout with
@@ -5602,12 +5596,12 @@ let lowerDeadRcTopLevelLet name value layout environment continuation state =
     match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
         | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
         | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-            match lowerCore(rewrittenValue)(state) with
+            match lowerCore(rewrittenValue)((state with runtimeAdtRequested = true)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = valueTemp, error = None } ->
                     match layout with
                         | CoreConstructorLayout { name = constructorName } ->
-                            valueState
+                            (valueState with runtimeAdtRequested = false)
                             |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(None))
                             |> continuation(topLevelContinuationBody)
 
