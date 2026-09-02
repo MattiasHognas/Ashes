@@ -9,6 +9,7 @@ public sealed class SelfhostIrParityTests
     [Test]
     [Arguments("simple_arith")]
     [Arguments("let_bindings")]
+    [Arguments("nested_let_scopes")]
     [Arguments("closure_capture")]
     [Arguments("pattern_match")]
     [Arguments("mutual_recursion")]
