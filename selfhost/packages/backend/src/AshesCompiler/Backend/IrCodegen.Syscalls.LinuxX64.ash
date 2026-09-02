@@ -31,6 +31,8 @@ export (
     value emitLinuxLseek,
     value emitLinuxChmod,
     value emitLinuxMmapReadPrivate,
+    value emitLinuxMmapAnonymous,
+    value emitLinuxMunmap,
     value emitLinuxPipe2,
     value emitLinuxDup2,
     value emitLinuxFork,
@@ -141,6 +143,17 @@ let emitLinuxMmapReadPrivate builder i64 len fd =
     (let zero = constInt(i64)(0u64)(false)
     in
         emitLinuxSyscallCall6(builder)(i64)(constInt(i64)(9u64)(false))(zero)(len)(constInt(i64)(1u64)(false))(constInt(i64)(2u64)(false))(fd)(zero)("sys_mmap"))
+
+// `mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0)` — the arena's chunk
+// allocation, stage 0's `EmitLinuxMmap`. Errors are encoded like `emitLinuxMmapReadPrivate`'s.
+let emitLinuxMmapAnonymous builder i64 len =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        emitLinuxSyscallCall6(builder)(i64)(constInt(i64)(9u64)(false))(zero)(len)(constInt(i64)(3u64)(false))(constInt(i64)(34u64)(false))(constInt(i64)(Ashes.Number.UInt.fromInt64(-1))(false))(zero)("sys_mmap_anon"))
+
+// `munmap(addr, len)` — syscall 11, releasing one arena chunk.
+let emitLinuxMunmap builder i64 addr len =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(11u64)(false))(addr)(len)(constInt(i64)(0u64)(false))("sys_munmap")
 
 // `pipe2(fds, 0)` — syscall 293, writing two `i32` fds into the buffer at `fdsAddr`; the modern
 // primitive (`pipe` is unavailable on some architectures), same shape as stage 0's `SyscallPipe2`.

@@ -16,10 +16,8 @@
 //   hand-built tests already used (`buildMaxModule` et al.): a `StoreLocal` into a shared result
 //   slot in each arm, joined by a `LoadLocal` after both arms converge on one label — the real
 //   compiler's own strategy turns out to match this package's LLVM codegen model exactly.
-//   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` (emitted around every top-level `let`
-//   scope, even a provably-scalar one) are treated as genuine no-ops: real scoped-arena codegen is
-//   a separate, much bigger slice this one deliberately does not attempt, so these are explicitly
-//   ignored rather than silently producing wrong code for a case they can't yet handle.
+//   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` bracket the scoped arena
+//   `IrCodegen.Arena` implements (chunked bump allocation, watermark reset, chunk reclaim).
 // - `PrintInt` is the first genuinely user-observable instruction this codegen supports: converts
 //   its `Int` source to decimal ASCII in a 32-byte stack buffer (`printIntPrologue`/
 //   `printIntDigitLoopBody`/`printIntWriteAndNewline`, porting `LlvmCodegenPlatform.cs`'s own
@@ -27,13 +25,10 @@
 //   `emitLinuxSyscallCall` generalizes `Return`'s own inline-assembly `syscall` mechanism to any
 //   3-argument syscall, shared by `exit` and `write`. Entirely stack-local: no global/`.data`
 //   reference anywhere, so it needs nothing new from `AshesCompiler.Backend.ElfLinker`'s current
-//   relocation-free scope. `AllocAdt` is supported only for the zero-field, non-RC-managed case
-//   (exactly what `PrintInt`'s own `Unit` result lowers to): a plain stack `alloca` standing in for
-//   a real arena bump allocation, correct only because today's supported program shapes never loop
-//   around a top-level `AllocAdt` — a genuine scoped-arena allocator remains a separate, much
-//   bigger slice. Any field-carrying or RC-managed `AllocAdt`, and every other instruction kind
-//   (closures, non-trivial ADTs, strings, RC), panics with a clear "unsupported" message rather
-//   than silently producing wrong code.
+//   relocation-free scope. A non-RC-managed `AllocAdt` is an arena cell; the RC-managed form is a
+//   `malloc`'d header-carrying cell (`emitAllocAdtRuntimeManaged`). Every instruction kind this
+//   codegen does not implement panics with a clear "unsupported" message rather than silently
+//   producing wrong code.
 // - Every IR value is a full-width `i64` word (architecture.md: "every value is an i64 word"), so
 //   a temp environment is just `List((IrTemp, LLVMValueRef))` — no type-directed dispatch needed
 //   for this instruction subset. `Ashes.Number.UInt.fromInt64` (added alongside the first version
@@ -93,9 +88,9 @@
 //   through their `code` word (`CallClosure`) or directly by label once `IrOptimizer.ash` has
 //   devirtualized the call (`CallKnown`); a captured environment is an `Alloc`'d block written
 //   with `StoreMemOffset` and read back inside the callee with `LoadEnv` through local slot `0`.
-//   Every non-RC-managed allocation this needs (`Alloc`, `MakeClosure`) is a bare `malloc` standing
-//   in for the scoped-arena bump allocation stage 0 would make — never a stack slot, since a
-//   closure and its environment routinely outlive the frame that built them — and is never freed.
+//   Every non-RC-managed allocation this needs (`Alloc`, `MakeClosure`) is a scoped-arena bump
+//   allocation (`IrCodegen.Arena`) — never a stack slot, since a closure and its environment
+//   routinely outlive the frame that built them.
 
 // - Split across slices per family: `IrCodegen.Support` (shared low-level emission helpers),
 //   `IrCodegen.Filesystem` (File/Directory/readLine), and `IrCodegen.TextBytes`
@@ -107,6 +102,7 @@ import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
@@ -170,6 +166,7 @@ type CodegenContext =
     | liftedFunctions: List((Str, LLVMValueRef))
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
+    | arenaRuntime: ArenaRuntime
     | isEntry: Bool
 
 // Everything shared by every function in one module — computed once by `codegenFunctions`, then
@@ -183,6 +180,7 @@ type ModuleCodegen =
     | moduleLiftedFunctions: List((Str, LLVMValueRef))
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
+    | moduleArenaRuntime: ArenaRuntime
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -326,7 +324,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, arenaRuntime = arena, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -581,12 +579,11 @@ let codegenInstructionKind cx builder kind state =
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
                                         | Borrow(target, sourceTemp) -> ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
-                        // `CopyOutArena` moves a value out of a scope-local arena before the arena
-                        // itself is reclaimed. Arena instructions are no-ops in this codegen (no real
-                        // bump-allocated arena exists yet — see `SaveArenaState`/`RestoreArenaState`/
-                        // `ReclaimArenaChunks` below), so there is nothing to copy out of: the source
-                        // SSA value is already valid past the reclaim point, and this is an alias.
-                                        | CopyOutArena(destTemp, srcTemp, _staticSizeBytes, _runtimeManaged, _purpose, _semanticType) -> ((destTemp, lookupIndexed(srcTemp)(tempEnv)) :: tempEnv, terminated)
+                        // `CopyOutArena` moves a value below a scope's restored watermark before
+                        // its chunks are reclaimed. `CoreLowering.ash` only brackets scopes whose
+                        // values are provably scalar, so it never emits one; the copy itself
+                        // (stage 0's `EmitCopyOutArena` size kinds) is not ported yet.
+                                        | CopyOutArena(_destTemp, _srcTemp, _staticSizeBytes, _runtimeManaged, _purpose, _semanticType) -> Ashes.IO.panic("codegen: CopyOutArena not yet supported")
                                         | StoreLocal(slot, source) ->
                                             let _ =
                                                 localSlots
@@ -638,9 +635,35 @@ let codegenInstructionKind cx builder kind state =
                                                 in
                                                     let _ = addResolvedSwitchCases(switchInst)(i64)(resolved)
                                                     in (tempEnv, true)
-                                        | SaveArenaState(_, _, _) -> (tempEnv, terminated)
-                                        | RestoreArenaState(_, _, _, _) -> (tempEnv, terminated)
-                                        | ReclaimArenaChunks(_, _, _) -> (tempEnv, terminated)
+                        // The scoped-arena brackets — see `IrCodegen.Arena`. The coroutine-loop
+                        // form belongs to the async scheduler, which is not ported.
+                                        | SaveArenaState(cursorSlot, endSlot, coroutineLoop) ->
+                                            if coroutineLoop
+                                            then Ashes.IO.panic("codegen: coroutine-loop arena bookkeeping not yet supported")
+                                            else
+                                                let _ =
+                                                    localSlots
+                                                    |> lookupIndexed(endSlot)
+                                                    |> emitSaveArenaState(builder)(i64)(arena)(lookupIndexed(cursorSlot)(localSlots))
+                                                in (tempEnv, terminated)
+                                        | RestoreArenaState(cursorSlot, endSlot, preRestoreSlot, coroutineLoop) ->
+                                            if coroutineLoop
+                                            then Ashes.IO.panic("codegen: coroutine-loop arena bookkeeping not yet supported")
+                                            else
+                                                let _ =
+                                                    localSlots
+                                                    |> lookupIndexed(preRestoreSlot)
+                                                    |> emitRestoreArenaState(builder)(i64)(arena)(lookupIndexed(cursorSlot)(localSlots))(lookupIndexed(endSlot)(localSlots))
+                                                in (tempEnv, terminated)
+                                        | ReclaimArenaChunks(savedEndSlot, preRestoreSlot, coroutineLoop) ->
+                                            if coroutineLoop
+                                            then Ashes.IO.panic("codegen: coroutine-loop arena bookkeeping not yet supported")
+                                            else
+                                                let _ =
+                                                    localSlots
+                                                    |> lookupIndexed(preRestoreSlot)
+                                                    |> emitReclaimArenaChunks(context)(function_)(builder)(i64)(arena)(lookupIndexed(savedEndSlot)(localSlots))
+                                                in (tempEnv, terminated)
                                         | PrintInt(source) ->
                                             let _ =
                                                 tempEnv
@@ -671,19 +694,15 @@ let codegenInstructionKind cx builder kind state =
                                                     |> constInt(i64)(1u64)
                                                     |> emitLinuxProcessExitWithCode(builder)(i64)
                                                 in (tempEnv, true)
-                        // See `emitAllocAdtRuntimeManaged`/`emitAllocAdtStack` above for the two
-                        // branches' own layout/scope documentation. A non-RC-managed `AllocAdt`
-                        // with fields panics rather than silently miscompiling — `CoreLowering.ash`
-                        // never emits that combination today.
+                        // See `emitAllocAdtRuntimeManaged` for the RC cell's layout; the ordinary
+                        // form is a `[tag][fields...]` cell bumped from the scoped arena
+                        // (`IrCodegen.Arena`'s `emitArenaAllocAdt`).
                                         | AllocAdt(target, tag, fieldCount, runtimeManaged) ->
                                             let resultName = "t" + Ashes.Text.fromInt(target)
                                             in
                                                 if runtimeManaged
                                                 then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
-                                                else
-                                                    if fieldCount != 0
-                                                    then Ashes.IO.panic("codegen: non-RC-managed AllocAdt with fields not yet supported")
-                                                    else ((target, emitAllocAdtStack(builder)(i64)(tag)(resultName)) :: tempEnv, terminated)
+                                                else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
                         // Stores one field into an already-allocated ADT's payload (word `1 + fieldIndex`,
                         // since word `0` is the tag — see `AllocAdt`'s own layout comment above). The
                         // `ptr` operand arrives as this codegen's universal `i64` word representation, so
@@ -734,13 +753,14 @@ let codegenInstructionKind cx builder kind state =
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other
                         // RC-managed allocation here has (so a future closure drop can walk back to
-                        // it); the ordinary form is an arena stand-in `malloc` — see
-                        // `emitArenaStandInAlloc` for why not a stack slot.
+                        // it); the ordinary form is an arena bump allocation, since a closure and
+                        // its environment routinely outlive the frame that built them.
                                         | MakeClosure(target, funcLabel, envPtrTemp, envSizeBytes, runtimeManaged, returnsRuntimeManaged, acceptsRuntimeManagedArgument) ->
                                             let closurePtr =
                                                 if runtimeManaged
                                                 then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(closureSizeBytes)("rc_closure")
-                                                else emitArenaStandInAlloc(builder)(i64)(mallocFn)(mallocType)(closureSizeBytes)("closure")
+                                                else
+                                                    buildIntToPtr(builder)(emitArenaAlloc(context)(function_)(builder)(i64)(arena)(closureSizeBytes)("closure"))(ptrType)("closure_ptr")
                                             in
                                                 let result =
                                                     emitStoreClosureWords(builder)(i64)(i8)(closurePtr)(lookupIndexed(funcLabel)(liftedFunctions))(lookupIndexed(envPtrTemp)(tempEnv))(
@@ -791,13 +811,15 @@ let codegenInstructionKind cx builder kind state =
                                         | LoadEnv(target, index) ->
                                             ((target, emitLoadEnv(builder)(i64)(i8)(ptrType)(lookupIndexed(0)(localSlots))(index)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | LoadArgumentOwnership(target) -> ((target, getParam(function_)(2u32)) :: tempEnv, terminated)
-                        // See `emitRcAllocPayloadPtr`/`emitArenaStandInAlloc` for the two forms.
+                        // See `emitRcAllocPayloadPtr` for the RC form; the ordinary form is an
+                        // arena bump allocation (`IrCodegen.Arena`).
                                         | Alloc(target, sizeBytes, runtimeManaged) ->
-                                            let blockPtr =
+                                            let blockRef =
                                                 if runtimeManaged
-                                                then emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(sizeBytes)("rc_alloc")
-                                                else emitArenaStandInAlloc(builder)(i64)(mallocFn)(mallocType)(sizeBytes)("alloc")
-                                            in ((target, buildPtrToInt(builder)(blockPtr)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                then
+                                                    buildPtrToInt(builder)(emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(sizeBytes)("rc_alloc"))(i64)("t" + Ashes.Text.fromInt(target))
+                                                else emitArenaAlloc(context)(function_)(builder)(i64)(arena)(sizeBytes)("t" + Ashes.Text.fromInt(target))
+                                            in ((target, blockRef) :: tempEnv, terminated)
                                         | AllocStack(target, sizeBytes) ->
                                             ((target, buildPtrToInt(builder)(emitStackAlloc(builder)(i64)(sizeBytes)("stack_alloc"))(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                                         | StoreMemOffset(basePtr, offsetBytes, source) ->
@@ -940,19 +962,19 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(text)
-                                                |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))
+                                                |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileReplace(target, source, destination) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(destination)
-                                                |> emitFileReplace(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(source)(tempEnv))
+                                                |> emitFileReplace(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(source)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | DirectoryCreateAll(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(path)
-                                                |> emitDirectoryCreateAll(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                                |> emitDirectoryCreateAll(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | DirectoryEntries(target, path) ->
                                             let resultValue =
@@ -960,7 +982,7 @@ let codegenInstructionKind cx builder kind state =
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | DirectoryRemoveTree(target, path) ->
                                             let resultValue =
-                                                emitDirectoryRemoveTree(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)(lookupIndexed(path)(tempEnv))("dir_remove_t" + Ashes.Text.fromInt(target))
+                                                emitDirectoryRemoveTree(moduleRef)(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)(lookupIndexed(path)(tempEnv))("dir_remove_t" + Ashes.Text.fromInt(target))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileOpen(target, path) ->
                                             let resultValue =
@@ -984,7 +1006,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(fileHandle)
-                                                |> emitFileClose(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)
+                                                |> emitFileClose(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(mallocFn)(mallocType)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileReadText(target, path) ->
                                             let resultValue =
@@ -1008,13 +1030,13 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(bytes)
-                                                |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))
+                                                |> emitFileWriteText(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(lookupIndexed(path)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | FileMakeExecutable(target, path) ->
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(path)
-                                                |> emitFileMakeExecutable(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
+                                                |> emitFileMakeExecutable(context)(function_)(i64)(i8)(types.i32)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(directoryExternals)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | EnvironmentDirectory(target, directoryKind) ->
                                             let resultValue =
@@ -1040,7 +1062,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(text)
-                                                |> emitProcessWriteStdin(context)(function_)(i64)(i8)(ptrType)(builder)(lookupIndexed(process)(tempEnv))
+                                                |> emitProcessWriteStdin(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(lookupIndexed(process)(tempEnv))
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | ProcessReadStdoutLine(target, process) ->
                                             let resultValue =
@@ -1064,7 +1086,7 @@ let codegenInstructionKind cx builder kind state =
                                             let resultValue =
                                                 tempEnv
                                                 |> lookupIndexed(process)
-                                                |> emitProcessKill(builder)(i64)(i8)(ptrType)
+                                                |> emitProcessKill(context)(function_)(builder)(i64)(i8)(ptrType)(arena)
                                             in ((target, resultValue) :: tempEnv, terminated)
                                         | _ -> Ashes.IO.panic("codegen: unsupported IrInstructionKind for this minimal slice")
 
@@ -1117,11 +1139,11 @@ let computeTailJoins instructions =
             else []
         | _ -> []
 
-// `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` are pure bookkeeping this backend
-// treats as no-ops (no bump-allocated arena exists yet), but the lowerer emits them between a
-// match arm's `StoreLocal` and its `Jump` — the arm closes its own scoped bracket there. The
-// tail-call fusion below matches on adjacency, so it looks past them; dropping them on the fused
-// path is exactly what emitting them would have done.
+// The lowerer closes a match arm's arena bracket (`RestoreArenaState`/`ReclaimArenaChunks`)
+// between the arm's `StoreLocal` and its `Jump`. The tail-call fusion below matches on adjacency,
+// so it looks past that bookkeeping; on the fused path a `musttail` call replaces this frame, so
+// the arm's own restore can never run and the next enclosing bracket reclaims its scratch instead.
+// Restores only ever release memory, so skipping one is always safe.
 let recursive skipArenaBookkeeping instructions =
     match instructions with
         | IrInstruction { instruction = SaveArenaState(_cursor, _end, _managed) } :: rest -> skipArenaBookkeeping(rest)
@@ -1251,7 +1273,7 @@ let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack ta
 // parameters at all.
 let buildFunctionContext mc functionValue isEntry irFunction =
     match mc with
-        | ModuleCodegen { moduleContext = context, moduleTypes = types, moduleExternals = externals, moduleStringLiteralGlobals = stringLiteralGlobals, moduleLiftedFunctions = liftedFunctions, moduleClosureFunctionType = closureFnType, moduleBuilder = builder } ->
+        | ModuleCodegen { moduleContext = context, moduleTypes = types, moduleExternals = externals, moduleStringLiteralGlobals = stringLiteralGlobals, moduleLiftedFunctions = liftedFunctions, moduleClosureFunctionType = closureFnType, moduleArenaRuntime = arena, moduleBuilder = builder } ->
             let entryBlock = appendBasicBlock(context)(functionValue)("entry")
             in
                 let _ = positionBuilderAtEnd(builder)(entryBlock)
@@ -1297,27 +1319,35 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
-                                        let labelBlocks =
-                                            instructions
-                                            |> collectLabelNames
-                                            |> createLabelBlocks(context)(functionValue)
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
+                                        let _ =
+                                            if isEntry
+                                            then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)
+                                            else Unit
                                         in
-                                            let cx =
-                                                CodegenContext(
-                                                    context = context,
-                                                    moduleRef = mc.moduleRef,
-                                                    function_ = functionValue,
-                                                    types = types,
-                                                    externals = externals,
-                                                    localSlots = localSlots,
-                                                    labelBlocks = labelBlocks,
-                                                    stringLiteralGlobals = stringLiteralGlobals,
-                                                    liftedFunctions = liftedFunctions,
-                                                    closureFunctionType = closureFnType,
-                                                    envpGlobal = mc.moduleEnvpGlobal,
-                                                    isEntry = isEntry
-                                                )
-                                            in (cx, instructions)
+                                            let labelBlocks =
+                                                instructions
+                                                |> collectLabelNames
+                                                |> createLabelBlocks(context)(functionValue)
+                                            in
+                                                let cx =
+                                                    CodegenContext(
+                                                        context = context,
+                                                        moduleRef = mc.moduleRef,
+                                                        function_ = functionValue,
+                                                        types = types,
+                                                        externals = externals,
+                                                        localSlots = localSlots,
+                                                        labelBlocks = labelBlocks,
+                                                        stringLiteralGlobals = stringLiteralGlobals,
+                                                        liftedFunctions = liftedFunctions,
+                                                        closureFunctionType = closureFnType,
+                                                        envpGlobal = mc.moduleEnvpGlobal,
+                                                        arenaRuntime = arena,
+                                                        isEntry = isEntry
+                                                    )
+                                                in (cx, instructions)
 
 let codegenFunctionBody mc functionValue isEntry irFunction =
     match buildFunctionContext(mc)(functionValue)(isEntry)(irFunction) with
@@ -1374,23 +1404,26 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                         in
                             let _ = setLinkage(envpGlobal)(linkageInternal)
                             in
-                                let mc =
-                                    ModuleCodegen(
-                                        moduleRef = module_,
-                                        moduleContext = context,
-                                        moduleTypes = types,
-                                        moduleExternals = declareExternalFunctions(module_)(context)(types),
-                                        moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
-                                        moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
-                                        moduleClosureFunctionType = closureFnType,
-                                        moduleEnvpGlobal = envpGlobal,
-                                        moduleBuilder = createBuilder(context)
-                                    )
+                                let builder = createBuilder(context)
                                 in
-                                    let _ = codegenLiftedFunctions(mc)(functions)
+                                    let mc =
+                                        ModuleCodegen(
+                                            moduleRef = module_,
+                                            moduleContext = context,
+                                            moduleTypes = types,
+                                            moduleExternals = declareExternalFunctions(module_)(context)(types),
+                                            moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
+                                            moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
+                                            moduleClosureFunctionType = closureFnType,
+                                            moduleEnvpGlobal = envpGlobal,
+                                            moduleArenaRuntime = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType),
+                                            moduleBuilder = builder
+                                        )
                                     in
-                                        let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                        in (module_, mc.moduleBuilder))
+                                        let _ = codegenLiftedFunctions(mc)(functions)
+                                        in
+                                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                            in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)
