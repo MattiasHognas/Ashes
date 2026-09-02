@@ -106,6 +106,7 @@ import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
+import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process

@@ -194,6 +194,28 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    Windows runtime builtins, win-arm64 PE structurally), plus DWARF debug information — kept in
    the compiler scope even though its main consumer (DAP) is out of scope here.
    Gates: LNK-1, LNK-7..LNK-13, CG-2, CG-8, CG-9, CG-14, CG-15.
+   **Organizing rule, decided up front so the first port does not set the wrong precedent.** The
+   platform surface is three axes, not one, and each takes a different treatment. *Image format*
+   (ELF/PE) and the relocation/trampoline work under it is genuinely different code: separate
+   modules, as stage 0 already does (`LlvmImageLinkerElf`/`…ElfArm64`/`…Pe`/`…PeArm64`);
+   `ElfLinker.ash` gains siblings rather than branches. *Architecture* (x64/arm64) changes syscall
+   numbers and asm constraints but not the emitters: a resolver seam, the shape of stage 0's
+   `ResolveSyscallNr` + `EmitSyscallArm64`/`EmitSyscallX86`, so the ~120 call sites pay nothing —
+   the linux-x64 wrappers are already isolated in `IrCodegen.Syscalls.LinuxX64.ash` for exactly
+   this. *OS* (raw syscall vs Win32 import) is the one to get right: most builtin emitters share
+   their whole algorithm across platforms (`emitFileReadText`'s open/measure/allocate/read-loop/
+   validate/close is identical on Windows) and differ only in primitives, so thread a record of
+   those primitives through them — the way `DirectoryExternals` already threads libc handles —
+   and do NOT duplicate the emitter per target. Stage 0 took the inline-branch route here and pays
+   for it: ~110 `IsLinuxFlavor`/`IsWindowsFlavor` branches across twelve files, with 99
+   `EmitLinux*`/`EmitWindows*` references inside `LlvmCodegenBuiltins.File.cs` alone. Split by file
+   only where the ALGORITHM diverges, not merely the primitives — `Directory.entries`' `readdir`
+   stream versus `FindFirstFile` iteration is the standing example, and stage 0 splits there too
+   (`LlvmCodegenBuiltins.Directory.Windows.cs`). Name such a file subject-first, platform-last
+   (`IrCodegen.Filesystem.Windows.ash`) so a subject's slices sort together. The primitives record
+   itself is deliberately NOT built ahead of the first Windows emitter: its shape should be derived
+   from a real second implementation, and converting the direct calls to it is a mechanical rename
+   the existing fixtures verify.
 10. **Bootstrap and retirement.** Stage 1 (built by stage 0) builds stage 2; compare deterministic
     artifacts or normalized output; compile and run the compiler, standard library, examples, and
     corpus with the bootstrapped compiler; wire the reproducible bootstrap/packaging jobs; and

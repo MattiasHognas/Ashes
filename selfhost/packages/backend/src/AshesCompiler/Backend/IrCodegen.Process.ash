@@ -12,6 +12,7 @@
 
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
+import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import Ashes.Number.UInt
 export (
     value processSpawnForkFailedCodes,
