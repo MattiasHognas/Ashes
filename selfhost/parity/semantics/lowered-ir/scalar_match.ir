@@ -1,0 +1,42 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=13 temps=8
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=3   (scalar_match.ash:1:9)
+    StoreLocal            Slot=2 Source=0
+    LoadLocal             Target=1 Slot=2   (scalar_match.ash:2:7)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=1   (scalar_match.ash:2:1)
+    CmpIntEq              Target=3 Left=1 Right=2   (scalar_match.ash:2:1)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_3   (scalar_match.ash:2:1)
+    LoadConstInt          Target=4 Value=10   (scalar_match.ash:3:12)
+    StoreLocal            Slot=3 Source=4   (scalar_match.ash:2:1)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
+    Jump                  Target=match_end_0   (scalar_match.ash:2:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=7
+    Jump                  Target=match_next_2   (scalar_match.ash:2:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadConstInt          Target=5 Value=20   (scalar_match.ash:4:12)
+    StoreLocal            Slot=3 Source=5   (scalar_match.ash:2:1)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    Jump                  Target=match_end_0   (scalar_match.ash:2:1)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=11
+    Jump                  Target=match_none_1   (scalar_match.ash:2:1)
+  match_none_1:
+    LoadConstInt          Target=6 Value=0   (scalar_match.ash:2:1)
+    StoreLocal            Slot=3 Source=6   (scalar_match.ash:2:1)
+  match_end_0:
+    LoadLocal             Target=7 Slot=3   (scalar_match.ash:2:1)
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=12
+    Return                Source=7
+

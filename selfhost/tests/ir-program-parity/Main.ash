@@ -39,10 +39,10 @@ let checkFixture root name =
                         | _ -> test.fail("lowering produced no program for " + name)
                 | ProgramParseResult { diagnostics = diagnostics } -> test.fail(name + " should parse cleanly: " + Ashes.Trait.Show.show(diagnostics)))
 
-// let_bindings and nested_let_scopes need only arena bracketing (SaveArenaState/
-// RestoreArenaState/ReclaimArenaChunks around flat top-level and nested let scopes), ported for
-// the provably-scalar case (CoreLowering.ash's isProvablyArenaSafeExpr/
-// topLevelItemsProvablyArenaSafe/lowerArenaBracketedNestedLet). closure_capture,
+// let_bindings, nested_let_scopes, and scalar_match need only arena bracketing (SaveArenaState/
+// RestoreArenaState/ReclaimArenaChunks around flat top-level lets, nested let chains, and each
+// match arm), ported for the provably-scalar case (CoreLowering.ash's isProvablyArenaSafeExpr/
+// topLevelItemsProvablyArenaSafe/lowerArenaBracketedNestedLet/lowerMatchArms). closure_capture,
 // mutual_recursion, and pattern_match still need constructor-layout registration,
 // closure/resource cleanup, or recursive bindings — none of which lowerCoreProgram runs yet —
 // and remain deliberately excluded until that machinery is ported.
@@ -52,5 +52,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("simple_arith"))
         |> (given (_) -> checkFixture(root)("let_bindings"))
         |> (given (_) -> checkFixture(root)("nested_let_scopes"))
+        |> (given (_) -> checkFixture(root)("scalar_match"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

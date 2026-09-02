@@ -446,6 +446,9 @@ let guardedMatchExpression =
         None
     )
 
+// Each arm carries its own arena bracket and cleanup block, stage 0's exact shape: the label
+// chain runs cleanup_3 -> next_2 -> cleanup_5 -> next_4 -> cleanup_6 -> none_1, and every arm
+// restores on both exits (before its jump to the end, and again in its cleanup block).
 let expectGuardedMatchOrder unit =
     ((given (_) ->
         guardedMatchExpression
@@ -455,25 +458,46 @@ let expectGuardedMatchOrder unit =
             "============",
             "",
             "function _start_main  [ProgramEntry]",
-            "  locals=2 temps=9",
+            "  locals=14 temps=9",
             "    LoadConstInt          Target=0 Value=3",
+            "    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2",
             "    LoadConstInt          Target=1 Value=2",
             "    CmpIntEq              Target=2 Left=0 Right=1",
-            "    JumpIfFalse           CondTemp=2 Target=match_next_2",
+            "    JumpIfFalse           CondTemp=2 Target=match_arm_cleanup_3",
             "    LoadConstInt          Target=3 Value=20",
             "    StoreLocal            Slot=0 Source=3",
+            "    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3",
+            "    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3",
             "    Jump                  Target=match_end_0",
+            "  match_arm_cleanup_3:",
+            "    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=4",
+            "    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=4",
+            "    Jump                  Target=match_next_2",
             "  match_next_2:",
-            "    StoreLocal            Slot=1 Source=0",
+            "    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6",
+            "    StoreLocal            Slot=7 Source=0",
             "    LoadConstBool         Target=4",
-            "    JumpIfFalse           CondTemp=4 Target=match_next_3",
-            "    LoadLocal             Target=5 Slot=1",
+            "    JumpIfFalse           CondTemp=4 Target=match_arm_cleanup_5",
+            "    LoadLocal             Target=5 Slot=7",
             "    StoreLocal            Slot=0 Source=5",
+            "    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=8",
+            "    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=8",
             "    Jump                  Target=match_end_0",
-            "  match_next_3:",
+            "  match_arm_cleanup_5:",
+            "    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=9",
+            "    ReclaimArenaChunks    SavedEndSlot=6 PreRestoreEndSlot=9",
+            "    Jump                  Target=match_next_4",
+            "  match_next_4:",
+            "    SaveArenaState        CursorLocalSlot=10 EndLocalSlot=11",
             "    LoadConstInt          Target=6 Value=40",
             "    StoreLocal            Slot=0 Source=6",
+            "    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=12",
+            "    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=12",
             "    Jump                  Target=match_end_0",
+            "  match_arm_cleanup_6:",
+            "    RestoreArenaState     CursorLocalSlot=10 EndLocalSlot=11 PreRestoreEndSlot=13",
+            "    ReclaimArenaChunks    SavedEndSlot=11 PreRestoreEndSlot=13",
+            "    Jump                  Target=match_none_1",
             "  match_none_1:",
             "    LoadConstInt          Target=7 Value=0",
             "    StoreLocal            Slot=0 Source=7",
@@ -814,7 +838,9 @@ let expectRecordAsAndOrPatterns unit =
         )
         |> loweredProgram
         |> entryLocalCount
-        |> test.assertEqual(2))
+        // The result slot and the `value` binding, plus each of the two arms' own arena bracket:
+        // two watermark slots at the save, and a `preRestoreEnd` slot at each of its two closes.
+        |> test.assertEqual(10))
 
 type CoreOperationClass =
     | AddIntClass
