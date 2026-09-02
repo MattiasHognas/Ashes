@@ -27,6 +27,12 @@ export (
     value emitLinuxChmod,
     value emitLinuxSyscallCall6,
     value emitLinuxMmapReadPrivate,
+    value emitLinuxPipe2,
+    value emitLinuxDup2,
+    value emitLinuxFork,
+    value emitLinuxExecve,
+    value emitLinuxWait4,
+    value emitLinuxKill,
     value emitStringParts,
     value emitWriteStrBytesToFd,
     value emitWriteNewlineToFd,
@@ -207,6 +213,35 @@ let emitLinuxMmapReadPrivate builder i64 len fd =
     (let zero = constInt(i64)(0u64)(false)
     in
         emitLinuxSyscallCall6(builder)(i64)(constInt(i64)(9u64)(false))(zero)(len)(constInt(i64)(1u64)(false))(constInt(i64)(2u64)(false))(fd)(zero)("sys_mmap"))
+
+// `pipe2(fds, 0)` — syscall 293, writing two `i32` fds into the buffer at `fdsAddr`; the modern
+// primitive (`pipe` is unavailable on some architectures), same shape as stage 0's `SyscallPipe2`.
+let emitLinuxPipe2 builder i64 fdsAddr =
+    (let zero = constInt(i64)(0u64)(false)
+    in
+        emitLinuxSyscallCall(builder)(i64)(constInt(i64)(293u64)(false))(fdsAddr)(zero)(zero)("sys_pipe2"))
+
+// `dup2(oldfd, newfd)` — syscall 33, the child-side stdio rewiring primitive.
+let emitLinuxDup2 builder i64 oldFd newFd =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(33u64)(false))(oldFd)(newFd)(constInt(i64)(0u64)(false))("sys_dup2")
+
+// `fork()` — syscall 57. The argument registers are ignored on x86-64; the `17` in the first
+// mirrors stage 0's own emission, where the same call site is `clone(SIGCHLD, 0, 0)` on arm64
+// (SIGCHLD = 17 is what makes the child `wait()`-able there).
+let emitLinuxFork builder i64 =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(57u64)(false))(constInt(i64)(17u64)(false))(constInt(i64)(0u64)(false))(constInt(i64)(0u64)(false))("sys_fork")
+
+// `execve(path, argv, envp)` — syscall 59; every argument is an address word.
+let emitLinuxExecve builder i64 pathAddr argvAddr envpAddr =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(59u64)(false))(pathAddr)(argvAddr)(envpAddr)("sys_execve")
+
+// `wait4(pid, status, options, rusage)` — syscall 61, the rusage pointer explicitly zero.
+let emitLinuxWait4 builder i64 pid statusAddr options =
+    emitLinuxSyscallCall4(builder)(i64)(constInt(i64)(61u64)(false))(pid)(statusAddr)(options)(constInt(i64)(0u64)(false))("sys_wait4")
+
+// `kill(pid, signal)` — syscall 62, same "harmless extra `0`" shape as `emitLinuxMkdir`.
+let emitLinuxKill builder i64 pid signal =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(62u64)(false))(pid)(signal)(constInt(i64)(0u64)(false))("sys_kill")
 
 // A `Str`/`Bytes` value is either owned (`[len:i64][bytes...]`, bytes inline at `ref + 8`) or a
 // view (`[len|VIEW:i64][backingBytesAddr:i64]`, bit 63 of the length word set and the byte address

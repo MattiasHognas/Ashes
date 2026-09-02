@@ -144,9 +144,10 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    helpers), `Environment` (landed: all five members over libc imports), `Console` basics, the
    real buffered-stdout ring with
    flush-on-exit (`writeBuffered`/`flush` currently write immediately — sound but unbatched), and
-   `Process.*` over the now-proven libc dynamic-import route (`fork`/`execve`/`waitpid`/`pipe`/
-   `dup2` rows in the linker whitelist, the same shape `nftw` just landed with). `Process` is what
-   later lets the TestRunner spawn compiled tests at all.
+   `Process.*` (landed: all six members over raw `pipe2`/`fork`/`execve`/`wait4`/`kill`
+   syscalls, with the entry-captured `__ashes_envp` and the linker's new `.bss` segment carrying
+   the parent environment into children). `Process` is what lets the TestRunner spawn compiled
+   tests at all.
    Gates: SEM-14, LNK-4 (its "Open:" tail), and the files/environment/process/console/
    buffered-stdout slice of CG-11.
 2. **Memory-model correctness.** The backend's RC/arena stand-ins deliberately leak today; this
@@ -806,8 +807,10 @@ same public behavior.
   `.rela.dyn`, `PT_INTERP`/`PT_DYNAMIC`, `$ORIGIN` RUNPATH); a concatenated multi-`.rodata*`
   read-only image supports absolute 32/64-bit and PC-relative data patches plus inside-rodata
   (`.rela.rodata` jump-table) patches; local `.text` calls and address-taking resolve against the
-  final text base. An unrecognized relocation type or external symbol is an `Error`, never a
-  silently wrong link. Open: TLS sections, program arguments, and growing the recognized-symbol
+  final text base; `.bss` (writable zero-initialized module globals — `__ashes_envp` is the
+  first) becomes a trailing zero-filled `R+W` `PT_LOAD` on both paths with the same patch shapes.
+  An unrecognized relocation type or external symbol is an `Error`, never a silently wrong link.
+  Open: TLS sections, initialized `.data`, program arguments, and growing the recognized-symbol
   surface alongside codegen.
 - [ ] **CG-8** Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
   parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
@@ -897,15 +900,23 @@ same public behavior.
   `Ashes.IO.Environment` is fully ported (`IrCodegen.Environment.ash`): `currentDirectory`/
   `executableDirectory` over libc `getcwd`/`readlink` with the parent-path trim,
   `temporaryDirectory`/`cacheDirectory` with stage 0's env-fallback chains, and `get` over
-  `getenv` — libc rows ride the shared `DirectoryExternals`. Note: a driver-spawned child sees an
-  empty environment until stage 0's `Process.spawn` null-`envp` execve is fixed.
+  `getenv` — libc rows ride the shared `DirectoryExternals`.
+  `Ashes.IO.Process` is fully ported (`IrCodegen.Process.ash`): `spawn` (three `pipe2` pairs,
+  `fork`, child `dup2`/`close` rewiring, `execve` with the parent environment from
+  `__ashes_envp`), `writeStdin` (partial-write-safe loop), `readStdoutLine`/`readStderrLine`
+  (per-byte scan, `Maybe(Str)`), `waitForExit` (`wait4` + `WEXITSTATUS`), and `kill`
+  (`SIGTERM`) — a `Process` is stage 0's 32-byte `{stdinW, stdoutR, stderrR, pid}` payload, and
+  its drop-time cleanup (close pipes, reap the child) is the same SEM-14 tail `FileHandle`
+  carries.
 - [x] **LNK-5** Diagnostic slices landed alongside the builtins, each with stage 0's exact message text:
   reserved built-in runtime type names rejected in top-level `type` declarations, explicit
   lambda-parameter type annotations enforced (previously silently discarded), and a `perform`
   whose target is not a capability operation rejected.
 - [~] **LNK-6** The 20-byte Linux entry trampoline at the start of `.text` on both link paths (`e_entry` is
-  the trampoline, restoring the post-`call` stack-alignment contract). Open: the initial-stack
-  pointer passed in `rdi` is not read yet — program arguments remain unported.
+  the trampoline, restoring the post-`call` stack-alignment contract). The entry function now
+  takes the initial stack pointer as its one parameter and captures the environment vector base
+  (`sp + 8 * (argc + 2)`) into `__ashes_envp` for `Process.spawn`. Open: the argc/argv half —
+  program arguments remain unported.
 - [ ] **LNK-7** Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
   (`LlvmImageLinkerElf.cs`; [Linux x86-64](../internals/architecture.md#linux-x86-64-elf64) lists the relocation set and
   the trampoline).
