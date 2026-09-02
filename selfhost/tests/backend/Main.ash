@@ -2364,21 +2364,29 @@ let assertLooksLikeAssembly bytes label =
 // Proves the entry-function-can't-just-`ret` fix in `AshesCompiler.Backend.IrCodegen` beyond just
 // "the label is present": the compiled entry function must genuinely end in the `exit` syscall,
 // not a bare `ret` — a real, separate claim from `assertLooksLikeAssembly`'s label-only check.
+// The module also carries the arena runtime's helper functions, which return normally, so only
+// the entry function's own body is checked: the entry is the module's first function, so its
+// body is everything before the `.Lfunc_end0` marker.
 let assertEndsInSyscallExit bytes =
     (let text =
         bytes
         |> Ashes.Byte.length
         |> Ashes.Byte.subText(bytes)(0)
     in
-        Unit
-        |> (given (_) ->
-            "syscall"
-            |> Ashes.Text.contains(text)
-            |> test.assertEqual(true))
-        |> (given (_) ->
-            "retq"
-            |> Ashes.Text.contains(text)
-            |> test.assertEqual(false)))
+        let entryText =
+            match Ashes.Text.split(text)(".Lfunc_end0") with
+                | entry :: _ -> entry
+                | [] -> text
+        in
+            Unit
+            |> (given (_) ->
+                "syscall"
+                |> Ashes.Text.contains(entryText)
+                |> test.assertEqual(true))
+            |> (given (_) ->
+                "retq"
+                |> Ashes.Text.contains(entryText)
+                |> test.assertEqual(false)))
 
 let testBuildAndVerifyTrivialModule unit =
     (let context = contextCreate(Unit)
@@ -2555,12 +2563,13 @@ let assertLooksLikeStaticExecutable bytes =
         |> Ashes.Byte.getU16Le(bytes)
         |> test.assertEqual(62u16))
     |> (given (_) ->
-        // Two `PT_LOAD`s: the `R+X` text segment plus the trailing `R+W` `.bss` page every
-        // codegen'd program now carries for the entry-captured `__ashes_envp` module global
-        // (neither module here embeds a string literal, so no read-only data segment joins them).
+        // Three `PT_LOAD`s: the `R+X` text segment, the read-only `.rodata` segment every
+        // codegen'd program carries for the arena's allocation-failure message (neither module
+        // here embeds a string literal of its own), and the trailing `R+W` `.bss` page for the
+        // entry-captured `__ashes_envp` and the arena cursor/end globals.
         56
         |> Ashes.Byte.getU16Le(bytes)
-        |> test.assertEqual(2u16))
+        |> test.assertEqual(3u16))
 
 let testLinkStaticExecutableForRealIrArithmeticModule unit =
     match emitModule(buildRealIrArithmeticModule)("selfhostBackendLinkArith")(objectFileType) with
@@ -3097,8 +3106,9 @@ let testRunStaticExecutableForRealIrJumpTableDispatchModule unit = assertProgram
 // THE dynamic-linking proof: `buildMallocFreeEntryModule`'s object has real
 // `R_X86_64_PLT32` relocations against `malloc`/`free`, so `linkLinuxExecutable` must produce a
 // genuinely dynamically-linked executable (`e_phnum = 4`: text `PT_LOAD`, data `PT_LOAD`,
-// `PT_INTERP`, `PT_DYNAMIC` — checked structurally) that the REAL Linux dynamic loader can load
-// and run. Verified independently outside this assertion (via `strace`) that the kernel loads
+// `PT_INTERP`, `PT_DYNAMIC` — checked structurally; this module is built from raw LLVM calls, so
+// it carries neither the codegen arena runtime's `.rodata` message nor its `.bss` globals) that
+// the REAL Linux dynamic loader can load and run. Verified independently outside this assertion (via `strace`) that the kernel loads
 // `ld-linux-x86-64.so.2`, which loads real glibc and calls its actual `malloc` (observable as a
 // real `brk` syscall extending the heap) before this program's own `exit(0)` syscall fires.
 let testLinkAndRunDynamicMallocFreeModule unit =
@@ -3301,6 +3311,98 @@ let testRunStaticExecutableForRealIrStringConcatModule unit =
                                                         let _ = test.assertEqual("hello world")(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// Links `buildModule`'s object, writes and runs the executable, and checks its single stdout line
+// and a `0` exit code.
+let expectExecutableLine buildModule moduleName executableName expectedLine =
+    match emitModule(buildModule)(moduleName)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(moduleName) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executableName)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executableName) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executableName)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match Ashes.IO.Process.readStdoutLine(process) with
+                                                | None -> test.fail("expected one line of stdout from " + executableName + ", got none")
+                                                | Some(line) ->
+                                                    let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                    in
+                                                        let _ = test.assertEqual(expectedLine)(line)
+                                                        in test.assertEqual(0)(exitCode)
+
+let handBuiltEntryFunction name instructions localCount tempCount =
+    IrFunction(
+        label = name,
+        instructions = instructions,
+        localCount = localCount,
+        tempCount = tempCount,
+        hasEnvAndArgParams = false,
+        coroutine = None,
+        localNames = [],
+        localTypes = [],
+        origin = None,
+        lifetimesPlaced = false
+    )
+
+// `SaveArenaState`, one arena cell, `RestoreArenaState`/`ReclaimArenaChunks`, then another cell:
+// the restore rewinds the cursor, so the second cell lands at the first one's address. Prints
+// `true`.
+let buildArenaRestoreReusesCursorModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = AllocAdt(0)(0)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(7), location = None),
+        IrInstruction(instruction = SetAdtField(0)(0)(1), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(2)(0)(2)(false), location = None),
+        IrInstruction(instruction = CmpIntEq(3)(0)(2), location = None),
+        IrInstruction(instruction = PrintBool(3), location = None),
+        IrInstruction(instruction = LoadConstInt(4)(0), location = None),
+        IrInstruction(instruction = Return(4), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(5))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A cell before the bracket, then two 6 MB `Alloc`s inside it, each larger than a chunk so each
+// maps a chunk of its own (their last words are written, proving the mapping covers them), then
+// restore/reclaim, which walks two chunks back to the saved one, and a new cell that must land 16
+// bytes after the pre-bracket cell. A final 6 MB `Alloc` maps a fresh chunk after the reclaim.
+// Prints `true`.
+let buildArenaGrowAndReclaimModule name context =
+    [
+        IrInstruction(instruction = AllocAdt(0)(0)(1)(false), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(6000000)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(5999992)(0), location = None),
+        IrInstruction(instruction = Alloc(2)(6000000)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(2)(5999992)(0), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(3)(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(4)(6000000)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(5999992)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(16), location = None),
+        IrInstruction(instruction = AddInt(6)(0)(5), location = None),
+        IrInstruction(instruction = CmpIntEq(7)(6)(3), location = None),
+        IrInstruction(instruction = PrintBool(7), location = None),
+        IrInstruction(instruction = LoadConstInt(8)(0), location = None),
+        IrInstruction(instruction = Return(8), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(9))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+let testArenaRestoreReusesCursor unit = expectExecutableLine(buildArenaRestoreReusesCursorModule)("selfhostBackendArenaRestore")("selfhost_backend_arena_restore_e2e")("true")
+
+let testArenaGrowAndReclaim unit = expectExecutableLine(buildArenaGrowAndReclaimModule)("selfhostBackendArenaGrow")("selfhost_backend_arena_grow_e2e")("true")
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3383,6 +3485,8 @@ let run shipped =
     |> testRunStaticExecutableForTextParseFloatModule
     |> testRunStaticExecutableForRealIrJumpTableDispatchModule
     |> testLinkAndRunDynamicMallocFreeModule
+    |> testArenaRestoreReusesCursor
+    |> testArenaGrowAndReclaim
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

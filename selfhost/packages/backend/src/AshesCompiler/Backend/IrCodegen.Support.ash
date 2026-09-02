@@ -50,7 +50,6 @@ export (
     value gepBytes,
     value emitRcAllocPayloadPtr,
     value emitAllocAdtRuntimeManaged,
-    value emitArenaStandInAlloc,
     value emitStackAlloc,
     value closureSizeBytes,
     value packClosureEnvironmentSize,
@@ -58,7 +57,6 @@ export (
     value emitCallClosure,
     value emitLoadEnv,
     value memOffsetPtr,
-    value emitAllocAdtStack,
     value emitRcDrop,
     value sumPartLengths,
     value emitConcatCopyParts,
@@ -595,16 +593,6 @@ let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount
             buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
         in buildPtrToInt(builder)(payloadPtr)(i64)(resultName))
 
-// A plain `malloc` of `sizeBytes` with no header at all: the stand-in for a scoped-arena bump
-// allocation (`Alloc`/`MakeClosure` with `runtimeManaged = false`, which `CoreLowering.ash` emits
-// for every closure environment and closure object today) — this codegen has no real arena, and
-// a stack `alloca` would be wrong here because both a closure object and its environment
-// routinely outlive the function that built them (a curried function RETURNS the closure that
-// captures its first argument). Never freed: the same leak-not-miscompile trade every other
-// arena stand-in in this file makes.
-let emitArenaStandInAlloc builder i64 mallocFn mallocType sizeBytes name =
-    buildCall(builder)(mallocType)(mallocFn)([constInt(i64)(Ashes.Number.UInt.fromInt64(sizeBytes))(false)])(1u32)(name)
-
 // `sizeBytes` of stack storage as `[n x i64]` (`AllocStack`/`MakeClosureStack`: lowering only
 // picks the stack form when it has proven the value never escapes the current frame).
 let emitStackAlloc builder i64 sizeBytes name =
@@ -676,19 +664,6 @@ let emitLoadEnv builder i64 i8 ptrType envSlot index resultName =
 
 let memOffsetPtr builder i64 i8 ptrType baseRef offsetBytes name =
     gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(baseRef)(ptrType)(name + "_base"))(offsetBytes)(name)
-
-// The non-RC-managed, zero-field `AllocAdt` branch — exactly what a `Unit` result (e.g. `PrintInt`'s
-// own return value) lowers to: a plain stack `alloca` standing in for a real arena bump allocation,
-// correct only because today's supported program shapes never loop around a top-level `AllocAdt` —
-// a genuine scoped-arena allocator remains a separate, much bigger slice. A non-RC-managed
-// `AllocAdt` WITH fields panics rather than silently miscompiling (`CoreLowering.ash` never emits
-// that combination today), so this only ever runs for `fieldCount == 0`.
-let emitAllocAdtStack builder i64 tag resultName =
-    (let cell = buildAlloca(builder)(i64)("adt_cell")
-    in
-        let _ =
-            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(cell)
-        in buildPtrToInt(builder)(cell)(i64)(resultName))
 
 // Releases one RC-managed `AllocAdt` cell: walks back to the header with the NEGATIVE byte-offset
 // GEP that mirrors `AllocAdt`'s own forward one (the public value pointer never carries the header

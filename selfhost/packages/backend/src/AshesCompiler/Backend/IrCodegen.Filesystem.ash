@@ -13,6 +13,7 @@
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Arena
 import Ashes.Number.UInt
 export (
     type DirectoryExternals(..),
@@ -535,7 +536,7 @@ let emitValidateUtf8 context function_ i64 i8 builder bytesPtr len prefix =
 // `emitAsciiHeapString`) otherwise — the raw-syscall-convention ("non-negative return means
 // success") counterpart of stage 0's own `EmitFilesystemStatusResult`, shared by every filesystem
 // builtin below that reports a plain "did it work" outcome.
-let emitFilesystemStatusResult context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType succeeded codes prefix =
+let emitFilesystemStatusResult context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType succeeded codes prefix =
     (let resultSlot = buildAlloca(builder)(i64)(prefix + "_status_result")
     in
         let okBlock = appendBasicBlock(context)(function_)(prefix + "_status_ok")
@@ -548,7 +549,7 @@ let emitFilesystemStatusResult context function_ i64 i8 ptrType builder mallocFn
                     |> buildCondBr(builder)(succeeded)(okBlock)
                     |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                     |> (given (_) ->
-                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitAllocAdtStack(builder)(i64)(0)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
+                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                     |> (given (_) ->
@@ -565,7 +566,7 @@ let fileWriteTextErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 
 // syscall for the whole payload — matching this file's other direct-write paths (`emitWriteStrBytesToFd`),
 // which also assume a single `write` covers the buffer rather than porting stage 0's full
 // partial-write retry loop — then `close`. Only `open` failure is surfaced as `Error`.
-let emitFileWriteText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef textRef =
+let emitFileWriteText context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef textRef =
     (let writeBlock = appendBasicBlock(context)(function_)("file_write_text_write")
     in
         let joinBlock = appendBasicBlock(context)(function_)("file_write_text_join")
@@ -591,7 +592,7 @@ let emitFileWriteText context function_ i64 i8 ptrType builder mallocFn mallocTy
                             |> (given (_) -> emitLinuxClose(builder)(i64)(fd))
                             |> (given (_) -> buildBr(builder)(joinBlock))
                             |> (given (_) -> positionBuilderAtEnd(builder)(joinBlock))
-                            |> (given (_) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(openOk)(fileWriteTextErrorCodes)("file_write_text")))
+                            |> (given (_) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(openOk)(fileWriteTextErrorCodes)("file_write_text")))
 
 let fileReplaceErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 108, 101, 46, 114, 101, 112, 108, 97, 99, 101, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 114, 101, 112, 108, 97, 99, 101, 32, 100, 101, 115, 116, 105, 110, 97, 116, 105, 111, 110]
 
@@ -600,7 +601,7 @@ let fileReplaceErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 10
 // `EmitLinuxFileReplace` uses for this probe), otherwise `rename(source, destination)`. The probe
 // fd is closed unconditionally on the join path — closing an invalid fd is a harmless `-EBADF` at
 // the raw-syscall level, so no branch is needed to skip it.
-let emitFileReplace context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType sourceRef destinationRef =
+let emitFileReplace context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType sourceRef destinationRef =
     (let renameBlock = appendBasicBlock(context)(function_)("file_replace_rename")
     in
         let joinBlock = appendBasicBlock(context)(function_)("file_replace_join")
@@ -635,7 +636,7 @@ let emitFileReplace context function_ i64 i8 ptrType builder mallocFn mallocType
                             |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("file_replace_status_value"))
                             |> (given (status) ->
                                 buildICmp(builder)(intPredicateSge)(status)(constInt(i64)(0u64)(false))("file_replace_succeeded"))
-                            |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileReplaceErrorCodes)("file_replace")))
+                            |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileReplaceErrorCodes)("file_replace")))
 
 let directoryCreateAllErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 99, 114, 101, 97, 116, 101, 65, 108, 108, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 99, 114, 101, 97, 116, 101, 32, 100, 105, 114, 101, 99, 116, 111, 114, 121]
 
@@ -710,7 +711,7 @@ let emitDirectoryCreateByteStep builder i64 i8 pathCstr pathAddr indexSlot statu
 
 // `emitDirectoryCreateAll`'s finish: one final `mkdir` on the whole path, then the join block turns
 // the stored status into `Ok(Unit)`/`Error(...)`.
-let emitDirectoryCreateFinish context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathAddr statusSlot finalBlock joinBlock =
+let emitDirectoryCreateFinish context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathAddr statusSlot finalBlock joinBlock =
     finalBlock
     |> positionBuilderAtEnd(builder)
     |> (given (_) ->
@@ -720,7 +721,7 @@ let emitDirectoryCreateFinish context function_ i64 i8 ptrType builder mallocFn 
     |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("dir_create_status_value"))
     |> (given (status) ->
         buildICmp(builder)(intPredicateEq)(status)(constInt(i64)(0u64)(false))("dir_create_succeeded"))
-    |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(directoryCreateAllErrorCodes)("dir_create"))
+    |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(directoryCreateAllErrorCodes)("dir_create"))
 
 // `Ashes.IO.Directory.createAll(path)`: `mkdir`s each path component in turn, temporarily
 // NUL-terminating the C string at each `/` byte (restored immediately after, exactly like stage 0's
@@ -728,7 +729,7 @@ let emitDirectoryCreateFinish context function_ i64 i8 ptrType builder mallocFn 
 // path prefix at a time, then a final call on the whole (untouched) path. `statusSlot` starts at
 // `-1`, so an empty path — which never reaches either the per-component or final call — falls
 // through to `Error` on its own, with no separate empty-path check needed.
-let emitDirectoryCreateAll context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
+let emitDirectoryCreateAll context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType pathRef =
     (let checkBlock = appendBasicBlock(context)(function_)("dir_create_check")
     in
         let byteBlock = appendBasicBlock(context)(function_)("dir_create_byte")
@@ -759,7 +760,7 @@ let emitDirectoryCreateAll context function_ i64 i8 ptrType builder mallocFn mal
                                                         buildCondBr(builder)(buildICmp(builder)(intPredicateNe)(length)(constInt(i64)(0u64)(false))("dir_create_nonempty"))(checkBlock)(joinBlock))
                                                     |> (given (_) -> emitDirectoryCreateLoopCheck(builder)(i64)(length)(indexSlot)(checkBlock)(byteBlock)(finalBlock))
                                                     |> (given (_) -> emitDirectoryCreateByteStep(builder)(i64)(i8)(pathCstr)(pathAddr)(indexSlot)(statusSlot)(byteBlock)(componentBlock)(advanceBlock)(joinBlock)(checkBlock))
-                                                    |> (given (_) -> emitDirectoryCreateFinish(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathAddr)(statusSlot)(finalBlock)(joinBlock)))
+                                                    |> (given (_) -> emitDirectoryCreateFinish(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathAddr)(statusSlot)(finalBlock)(joinBlock)))
 
 let directoryEntriesFailedCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 68, 105, 114, 101, 99, 116, 111, 114, 121, 46, 101, 110, 116, 114, 105, 101, 115, 58, 32, 99, 111, 117, 108, 100, 32, 110, 111, 116, 32, 101, 110, 117, 109, 101, 114, 97, 116, 101, 32, 100, 105, 114, 101, 99, 116, 111, 114, 121]
 
@@ -1190,7 +1191,7 @@ let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder 
 // `errno` says `ENOENT`, anything else is a real failure — then libc's `nftw` post-order walk
 // (`FTW_DEPTH|FTW_PHYS`, 32 fds) with the `remove`-everything visitor trampoline, exactly stage
 // 0's own `EmitLinuxDirectoryRemoveTree`.
-let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt pathRef prefix =
+let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt pathRef prefix =
     (let resumeBlock = appendBasicBlock(context)(function_)(prefix + "_resume")
     in
         let visitFn =
@@ -1224,14 +1225,14 @@ let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType build
                                     |> (given (errnoValue) ->
                                         buildICmp(builder)(intPredicateEq)(errnoValue)(constInt(i32)(2u64)(false))(prefix + "_enoent"))
                                     |> (given (isMissing) ->
-                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(isMissing)(directoryRemoveTreeErrorCodes)(prefix + "_probe"))(resultSlot))
+                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(isMissing)(directoryRemoveTreeErrorCodes)(prefix + "_probe"))(resultSlot))
                                     |> (given (_) -> buildBr(builder)(doneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(walkBlock))
                                     |> (given (_) -> buildCall(builder)(dirExt.nftwType)(dirExt.nftwFn)([pathCstr, visitFn, constInt(i32)(32u64)(false), constInt(i32)(9u64)(false)])(4u32)(prefix + "_nftw"))
                                     |> (given (nftwStatus) ->
                                         buildICmp(builder)(intPredicateEq)(nftwStatus)(constInt(i32)(0u64)(false))(prefix + "_walk_ok"))
                                     |> (given (walkOk) ->
-                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(walkOk)(directoryRemoveTreeErrorCodes)(prefix + "_walk"))(resultSlot))
+                                        buildStore(builder)(emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(walkOk)(directoryRemoveTreeErrorCodes)(prefix + "_walk"))(resultSlot))
                                     |> (given (_) -> buildBr(builder)(doneBlock))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(prefix + "_result_value")))
@@ -1316,10 +1317,10 @@ let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocTy
 
 // `Ashes.IO.File.close(handle)`: fire-and-forget `close` returning `Ok(Unit)`, stage 0's own
 // `EmitFileClose` contract exactly (no failure mode is surfaced).
-let emitFileClose builder i64 i8 ptrType mallocFn mallocType handleVal =
+let emitFileClose context function_ builder i64 i8 ptrType arena mallocFn mallocType handleVal =
     handleVal
     |> emitLinuxClose(builder)(i64)
-    |> (given (_) -> emitAllocAdtStack(builder)(i64)(0)("file_close_unit"))
+    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("file_close_unit"))
     |> (given (unitValue) -> emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(unitValue)("file_close_ok"))
 
 // "Ashes.IO.File.readText() failed" — stage 0's `FileReadFailedMessage`, shared by `readText`,
@@ -1620,7 +1621,7 @@ let fileMakeExecutableErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 
 // (`(mode & 0xF000) == 0x8000`), then `chmod(path, 0o755)` — stage 0's
 // `EmitLinuxFileMakeExecutable`, with the `chmod` as a raw syscall rather than a second libc
 // import.
-let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt pathRef =
+let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt pathRef =
     (let statusSlot = buildAlloca(builder)(i64)("file_executable_status")
     in
         let statBuffer =
@@ -1658,4 +1659,4 @@ let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder mallocFn
                                     |> (given (_) -> buildLoad(builder)(i64)(statusSlot)("file_executable_status_value"))
                                     |> (given (status) ->
                                         buildICmp(builder)(intPredicateSge)(status)(constInt(i64)(0u64)(false))("file_executable_succeeded"))
-                                    |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileMakeExecutableErrorCodes)("file_executable")))
+                                    |> (given (succeeded) -> emitFilesystemStatusResult(context)(function_)(i64)(i8)(ptrType)(builder)(arena)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(succeeded)(fileMakeExecutableErrorCodes)("file_executable")))

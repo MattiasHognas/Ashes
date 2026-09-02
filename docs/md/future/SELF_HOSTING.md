@@ -812,10 +812,13 @@ same public behavior.
   with per-part `memcpy`), `PrintInt`/`PrintBool`/`PanicStr` over the raw `write` syscall, and
   the builtin surface tracked under "Object parsing and executable linking". The entry function
   lowers `Return` to the raw `exit` syscall plus `unreachable` (`e_entry` contract — the process
-  entry can never `ret`). Open: real scoped-arena codegen (arena instructions are explicit
-  no-ops; every non-RC allocation is a `malloc` stand-in that leaks by design), the rest of
-  Perceus placement (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and
-  the async/parallel/net/FFI instruction families.
+  entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
+  header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
+  `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
+  `munmap` walk, with module-level grow/reclaim helpers). Open: `CopyOutArena` (panics; lowering
+  brackets only provably-scalar scopes and never emits it), the rest of Perceus placement
+  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
+  async/parallel/net/FFI instruction families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently

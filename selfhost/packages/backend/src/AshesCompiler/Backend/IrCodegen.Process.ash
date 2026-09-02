@@ -13,6 +13,7 @@
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
+import AshesCompiler.Backend.IrCodegen.Arena
 import Ashes.Number.UInt
 export (
     value processSpawnForkFailedCodes,
@@ -292,7 +293,7 @@ let emitSpawnProcess context function_ i64 i8 i32 ptrType builder mallocFn mallo
 // `Ashes.IO.Process.writeStdin(process)(text)`: a partial-write-safe loop over the child's stdin
 // pipe (a pipe accepts at most a buffer's worth per `write`), stopping on any non-positive
 // count — stage 0's `EmitProcessWriteStdin`. Returns `Unit`.
-let emitProcessWriteStdin context function_ i64 i8 ptrType builder processRef textRef =
+let emitProcessWriteStdin context function_ i64 i8 ptrType builder arena processRef textRef =
     (let writtenSlot = buildAlloca(builder)(i64)("proc_write_written")
     in
         let writeLoopBlock = appendBasicBlock(context)(function_)("proc_write_loop")
@@ -328,7 +329,7 @@ let emitProcessWriteStdin context function_ i64 i8 ptrType builder processRef te
                                                 buildStore(builder)(buildAdd(builder)(written)(writtenNow)("proc_write_new_written"))(writtenSlot))
                                             |> (given (_) -> buildBr(builder)(writeLoopBlock))))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(writeDoneBlock))
-                                    |> (given (_) -> emitAllocAdtStack(builder)(i64)(0)("proc_write_unit")))
+                                    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("proc_write_unit")))
 
 // `Ashes.IO.Process.readStdoutLine`/`readStderrLine`: one line from the child's pipe as
 // `Maybe(Str)` — a fresh per-call 64 KiB stack buffer scanned one byte at a time (`\n` ends the
@@ -462,11 +463,11 @@ let emitProcessWaitForExit builder i64 i8 ptrType processRef =
 
 // `Ashes.IO.Process.kill(process)`: `SIGTERM` the child, returning `Unit` — stage 0's
 // `EmitProcessKill`.
-let emitProcessKill builder i64 i8 ptrType processRef =
+let emitProcessKill context function_ builder i64 i8 ptrType arena processRef =
     "proc_kill_pid"
     |> emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(24)
     |> (given (pid) ->
         false
         |> constInt(i64)(15u64)
         |> emitLinuxKill(builder)(i64)(pid))
-    |> (given (_) -> emitAllocAdtStack(builder)(i64)(0)("proc_kill_unit"))
+    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("proc_kill_unit"))
