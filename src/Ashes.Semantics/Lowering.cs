@@ -1760,7 +1760,10 @@ public sealed partial class Lowering
         }
         else if (argType is TypeRef.TNamedType named && !CanCopyOutAdt(named, out _))
         {
-            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named);
+            // The arena successor dies at this back edge but OWNS the references its
+            // construction dup-transferred in; the copy carries the next iteration's own, so
+            // the dying original's are released (see EmitRuntimeManagedTcoConstructorDeepCopy).
+            return EmitRuntimeManagedTcoDeepCopy(sourceTemp, named, releaseAdtSourceChildren: true);
         }
         else
         {
@@ -1888,7 +1891,7 @@ public sealed partial class Lowering
             };
     }
 
-    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type)
+    private int EmitRuntimeManagedTcoDeepCopy(int sourceTemp, TypeRef type, bool releaseAdtSourceChildren = false)
     {
         TypeRef valueType = Prune(type);
         if (CanArenaReset(valueType))
@@ -1941,7 +1944,7 @@ public sealed partial class Lowering
                     IrInst.CopyOutPurpose.RcNormalization));
                 break;
             case TypeRef.TNamedType named when CanRuntimeManageTcoAdt(named):
-                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named);
+                return EmitRuntimeManagedTcoAdtDeepCopy(sourceTemp, named, releaseAdtSourceChildren);
             default:
                 throw new InvalidOperationException("Unsupported runtime-managed TCO aggregate.");
         }
@@ -2034,14 +2037,15 @@ public sealed partial class Lowering
         Emit(new IrInst.StoreLocal(lastSlot, cellTemp));
     }
 
-    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named)
+    private int EmitRuntimeManagedTcoAdtDeepCopy(int sourceTemp, TypeRef.TNamedType named, bool releaseSourceChildren = false)
     {
         if (named.Symbol.Constructors.Count == 1)
         {
             return EmitRuntimeManagedTcoConstructorDeepCopy(
                 sourceTemp,
                 named,
-                named.Symbol.Constructors[0]);
+                named.Symbol.Constructors[0],
+                releaseSourceChildren);
         }
 
         int resultSlot = NewLocal();
@@ -2058,7 +2062,8 @@ public sealed partial class Lowering
             int branchTemp = EmitRuntimeManagedTcoConstructorDeepCopy(
                 sourceTemp,
                 named,
-                named.Symbol.Constructors[i]);
+                named.Symbol.Constructors[i],
+                releaseSourceChildren);
             Emit(new IrInst.StoreLocal(resultSlot, branchTemp));
             Emit(new IrInst.Jump(endLabel));
         }
@@ -2073,7 +2078,8 @@ public sealed partial class Lowering
     private int EmitRuntimeManagedTcoConstructorDeepCopy(
         int sourceTemp,
         TypeRef.TNamedType named,
-        ConstructorSymbol constructor)
+        ConstructorSymbol constructor,
+        bool releaseSourceChildren = false)
     {
         int resultTemp = NewTemp();
         Emit(new IrInst.CopyOutArena(
@@ -2084,16 +2090,59 @@ public sealed partial class Lowering
             IrInst.CopyOutPurpose.RcNormalization));
         List<OrdinaryHeapLayoutChild> children =
             GetOwnedOrdinaryHeapChildren(named, constructor);
+        var originalChildren = new List<(int Temp, TypeRef Type)>(children.Count);
         foreach (OrdinaryHeapLayoutChild child in children)
         {
             int childTemp = NewTemp();
             Emit(new IrInst.GetAdtField(childTemp, sourceTemp, child.Index, IsTaglessConstructor(constructor)));
             int copiedChild = EmitRuntimeManagedTcoDeepCopy(childTemp, child.Type);
             Emit(new IrInst.SetAdtField(resultTemp, child.Index, copiedChild, IsTaglessConstructor(constructor)));
+            originalChildren.Add((childTemp, child.Type));
+        }
+
+        // A dying arena source (the back-edge successor the arena reset reclaims right after this
+        // copy) owns the references its construction dup-transferred into it; release them now
+        // that the copy carries its own, or every iteration's copy survives one count too high.
+        // Only the top level releases — a nested child's own references are handled by this
+        // release's cascading walk, not by the nested copy.
+        if (releaseSourceChildren)
+        {
+            foreach ((int childTemp, TypeRef childType) in originalChildren)
+            {
+                EmitRuntimeManagedTcoSourceChildRelease(childTemp, childType);
+            }
         }
 
         MarkRuntimeManagedTemp(resultTemp);
         return resultTemp;
+    }
+
+    private void EmitRuntimeManagedTcoSourceChildRelease(int childTemp, TypeRef childType)
+    {
+        TypeRef pruned = Prune(childType);
+        if (pruned is TypeRef.TList list)
+        {
+            EmitRuntimeManagedListDrop(childTemp, list.Element);
+            return;
+        }
+
+        if (pruned is TypeRef.TTuple tuple)
+        {
+            EmitRuntimeManagedTupleDrop(childTemp, tuple);
+            return;
+        }
+
+        if (pruned is TypeRef.TNamedType named)
+        {
+            EmitRuntimeManagedAdtDrop(childTemp, named);
+            return;
+        }
+
+        Emit(new IrInst.RcDrop(
+            childTemp,
+            TcoRuntimeManagedTypeName(pruned),
+            OwnerSlot: -1,
+            RuntimeManaged: true));
     }
 
     private int TcoRuntimeManagedCopySize(TypeRef type)
