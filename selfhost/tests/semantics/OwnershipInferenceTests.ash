@@ -1,6 +1,7 @@
 // Unit tests for self-hosted parameter ownership, result reachability, moves, borrows, and SCC provenance.
 
 import Ashes.Test as test
+import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipSummary
@@ -451,6 +452,152 @@ let testProgramLevelCaptureExcludesOtherFunctions unit =
                                             | [] -> test.fail("expected 2 program summaries")
                                     | [] -> test.fail("expected non-empty program summaries"))
 
+// 6. Whole-program inspect-only fixpoint over parsed programs
+let parsedProgram source =
+    match parseProgram(source) with
+        | ProgramParseResult { program = program, diagnostics = [] } -> program
+        | ProgramParseResult { diagnostics = diagnostics } -> test.fail("program should parse cleanly: " + Ashes.Trait.Show.show(diagnostics))
+
+let programOwnershipTable source =
+    source
+    |> parsedProgram
+    |> topLevelFunctions
+    |> inferProgramParameterOwnership
+
+let ownershipOf (table: ProgramParameterOwnership) (name: Str) =
+    match lookupProgramParameterOwnership(name)(table) with
+        | Some(ownership) -> ownership
+        | None -> test.fail("expected a table entry for " + name)
+
+// Each assertion hands the table on so a test reads as one pipeline over it.
+let assertBorrowed (name: Str) (expected: List(Str)) (table: ProgramParameterOwnership) =
+    (let _ =
+        name
+        |> ownershipOf(table)
+        |> getBorrowedParameters
+        |> test.assertEqual(expected)
+    in table)
+
+let assertConsumed (name: Str) (expected: List(Str)) (table: ProgramParameterOwnership) =
+    (let _ =
+        name
+        |> ownershipOf(table)
+        |> getConsumedParameters
+        |> test.assertEqual(expected)
+    in table)
+
+let done (_table: ProgramParameterOwnership) = Unit
+
+let peekSource = "let peek h = Ashes.IO.File.readChunk(h)(2)\n"
+
+let peekTwiceSource = peekSource + "let peekTwice h = (let a = peek(h) in peek(h))\n"
+
+// A helper that only reads its handle, and a wrapper that only hands the handle to that helper.
+let testInspectingHelperAndWrapperAreBorrowed unit =
+    peekTwiceSource
+    |> programOwnershipTable
+    |> assertBorrowed("peek")(["h"])
+    |> assertBorrowed("peekTwice")(["h"])
+    |> done
+
+// Alone, the wrapper cannot see through `peek`: the single-function verdict stays consumed.
+let testSingleFunctionVerdictForWrapperStaysConsumed unit =
+    match "let peekTwice h = (let a = peek(h) in peek(h))\n"
+    |> parsedProgram
+    |> topLevelFunctions with
+        | (_name, parameters, body) :: [] ->
+            []
+            |> classifyParameterOwnership(parameters)(body)
+            |> getConsumedParameters
+            |> test.assertEqual(["h"])
+        | _ -> test.fail("expected exactly one registered function")
+
+// A wrapper that also stores the handle in its result consumes it; the helper stays borrowed.
+let testWrapperStoringParameterIsConsumed unit =
+    peekSource + "let keep h = (peek(h), h)\n"
+    |> programOwnershipTable
+    |> assertBorrowed("peek")(["h"])
+    |> assertConsumed("keep")(["h"])
+    |> done
+
+// Two mutually recursive functions that hand the handle to each other: neither is proven before the
+// other is checked, so the cycle never converges to borrowed (stage 0's outcome).
+let testMutuallyRecursiveInspectorsStayConsumed unit =
+    "let recursive ping h n = if n == 0 then Ashes.IO.File.readChunk(h)(1) else pong(h)(n - 1)\nand pong h n = if n == 0 then Ashes.IO.File.readChunk(h)(2) else ping(h)(n - 1)\n"
+    |> programOwnershipTable
+    |> assertConsumed("ping")(["h", "n"])
+    |> assertConsumed("pong")(["h", "n"])
+    |> done
+
+// One member of the cycle returns the handle, so the handle flowing through the other is consumed.
+let testCycleWithRetainingMemberIsConsumed unit =
+    "let recursive ping h n = if n == 0 then h else pong(h)(n - 1)\nand pong h n = if n == 0 then Ashes.IO.File.readChunk(h)(2) else ping(h)(n - 1)\n"
+    |> programOwnershipTable
+    |> assertConsumed("ping")(["h", "n"])
+    |> assertConsumed("pong")(["h", "n"])
+    |> done
+
+// A hand-off to a function outside the registered set is a consuming use.
+let testUnregisteredCalleeIsConsumed unit =
+    peekSource + "let wrap h = unknown(h)\n"
+    |> programOwnershipTable
+    |> assertConsumed("wrap")(["h"])
+    |> done
+
+// A local binding that shadows the registered helper's name is not the helper.
+let testShadowedCalleeIsConsumed unit =
+    peekSource + "let local h = (let peek = given (x) -> x in peek(h))\n"
+    |> programOwnershipTable
+    |> assertConsumed("local")(["h"])
+    |> done
+
+// A partial application of an inspecting helper captures the handle in a closure.
+let testPartialHandOffIsConsumed unit =
+    "let peekAt h n = Ashes.IO.File.readChunk(h)(n)\nlet part h = peekAt(h)\n"
+    |> programOwnershipTable
+    |> assertBorrowed("peekAt")(["h"])
+    |> assertConsumed("part")(["h"])
+    |> done
+
+let recursive signaturesOf (funcs: List((Str, List(Str), Expr))) =
+    match funcs with
+        | [] -> []
+        | (name, parameters, body) :: rest -> FunctionSignature(name = name, origin = dummyOrigin(name), parameters = parameters, body = body) :: signaturesOf(rest)
+
+let recursive provenanceNodesOf (funcs: List((Str, List(Str), Expr))) =
+    match funcs with
+        | [] -> []
+        | (name, _parameters, _body) :: rest -> buildProvenanceNode(name)(false)(false)(1)([])(None)([])(false) :: provenanceNodesOf(rest)
+
+let recursive borrowedInSummaries (summaries: List(FunctionOwnershipSummary)) (name: Str) =
+    match summaries with
+        | [] -> test.fail("expected a summary for " + name)
+        | FunctionOwnershipSummary { functionName = candidate, borrowedParameters = borrowed } :: rest ->
+            if candidate == name
+            then borrowed
+            else borrowedInSummaries(rest)(name)
+
+let assertSummaryBorrowed (name: Str) (expected: List(Str)) (summaries: List(FunctionOwnershipSummary)) =
+    (let _ =
+        name
+        |> borrowedInSummaries(summaries)
+        |> test.assertEqual(expected)
+    in summaries)
+
+// The program summaries carry the fixpoint verdict, not the single-function one.
+let testProgramSummariesSeeThroughHandOff unit =
+    (let funcs =
+        peekTwiceSource
+        |> parsedProgram
+        |> topLevelFunctions
+    in
+        funcs
+        |> provenanceNodesOf
+        |> inferProgramOwnership(signaturesOf(funcs))
+        |> assertSummaryBorrowed("peek")(["h"])
+        |> assertSummaryBorrowed("peekTwice")(["h"])
+        |> (given (_summaries) -> Unit))
+
 let reportOwnershipInferenceSuccess unit = Ashes.IO.print("all self-hosted ownership inference and provenance tests passed")
 
 let runOwnershipInferenceTests unit =
@@ -474,4 +621,13 @@ let runOwnershipInferenceTests unit =
     |> testProgramOwnershipInference
     |> testDirectCaptureOfFreeVariable
     |> testProgramLevelCaptureExcludesOtherFunctions
+    |> testInspectingHelperAndWrapperAreBorrowed
+    |> testSingleFunctionVerdictForWrapperStaysConsumed
+    |> testWrapperStoringParameterIsConsumed
+    |> testMutuallyRecursiveInspectorsStayConsumed
+    |> testCycleWithRetainingMemberIsConsumed
+    |> testUnregisteredCalleeIsConsumed
+    |> testShadowedCalleeIsConsumed
+    |> testPartialHandOffIsConsumed
+    |> testProgramSummariesSeeThroughHandOff
     |> reportOwnershipInferenceSuccess
