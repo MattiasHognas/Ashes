@@ -58,6 +58,7 @@ import AshesCompiler.Semantics.TcoAnalysis
 import AshesCompiler.Semantics.TcoPromotionCostSignal
 import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReach
 import AshesCompiler.Semantics.OwnershipProvenance
 import AshesCompiler.Semantics.OwnershipInference
 Unit

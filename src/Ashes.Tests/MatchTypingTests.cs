@@ -97,6 +97,21 @@ public sealed class MatchTypingTests
     }
 
     [Test]
+    public void Match_pattern_with_too_few_arguments_reports_arity_instead_of_crashing()
+    {
+        var (_, diag) = LowerProgram(
+            """
+            type Plan = | Leaf(Int, Int) | Empty
+            match Leaf(1, 2) with
+            | Leaf(x) -> x
+            | Empty -> 0
+            """);
+
+        diag.Errors.ShouldContain(x =>
+            x.Contains("Constructor 'Leaf' expects 2 argument(s) but pattern has 1", StringComparison.Ordinal));
+    }
+
+    [Test]
     public void Match_with_all_constructors_of_adt_is_exhaustive()
     {
         var (_, diag) = LowerProgram(
