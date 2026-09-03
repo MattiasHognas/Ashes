@@ -3321,6 +3321,7 @@ let finishRecordPattern fields valueTemp valueType failLabel lowerPattern shape 
                 | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                 | (typedState, None) ->
                     typedState
+                    |> requireNonZeroPattern(valueTemp)(failLabel)
                     |> finishConstructorTag(valueTemp)(tag)(tagless)(failLabel)
                     |> lowerRecordPatternFields(fields)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
 

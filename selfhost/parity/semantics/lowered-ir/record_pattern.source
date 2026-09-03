@@ -1,0 +1,10 @@
+type Point =
+    | x: Int
+    | y: Int
+
+let describe p =
+    match p with
+        | Point { x = 0, y = y } -> y
+        | Point { x = x } -> x
+
+Ashes.IO.print(Ashes.Text.fromInt(describe(Point(x = 0, y = 4))))
