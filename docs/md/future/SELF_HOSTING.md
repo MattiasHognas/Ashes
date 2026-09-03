@@ -814,8 +814,16 @@ same public behavior.
   cancelled or completed tasks.
 - [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
   changes, and explanation/report instrumentation.
-- [ ] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
-  current public reports.
+- [~] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
+  current public reports. Done: the report model, reporter, and formatter (`ExplainReport.ash`,
+  `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`) and the decision
+  snapshot capture (`captureDecisionSnapshot` in `DecisionSnapshot.ash`, built from whole-program
+  ownership inference and the lowered origins), rendering byte-identical `ownership`, `rc`, `reuse`,
+  and `memory` reports for the shared parity fixtures against stage 0's text under
+  `selfhost/parity/semantics/explain/` (`ExplainReportTests.ash`). Open: value placements (the
+  `memory` report's `representation` blocks), reuse decisions (lowering records none), move-safety
+  proofs (every parameter reports `unique: yes`), and the `mutual_recursion` RC counts, which wait
+  on recursive-group lowering parity; each is pinned as a known difference in the test.
 
 #### LLVM code generation and runtime integration
 
@@ -1083,9 +1091,14 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [ ] **CLI-8** Registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and `info`,
   including package capability extraction from compiler metadata, against the unchanged .NET
   registry server ([Package registry](../internals/architecture.md#package-registry) documents the wire protocol).
-- [ ] **CLI-9** Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
+- [~] **CLI-9** Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
   `concurrency`, and `memory` reports with stable filtering and stderr behavior
-  ([Compiler reports](../reference/cli.md#compiler-reports)).
+  ([Compiler reports](../reference/cli.md#compiler-reports)). Done: `--explain <kind>[:<selector>]`
+  on `compile` and `run` (repeatable, deduplicated kinds, last selector wins, all seven kinds
+  parsed, unknown kind or missing value a usage error listing the valid values), printing the
+  reports to stderr between optimization and code generation. Open: structured diagnostics, the
+  `test` command, and the `traits`/`authority`/`concurrency`/representation data the self-hosted
+  lowering does not record yet, which render as their empty sections.
 
 #### TestRunner and validation infrastructure
 

@@ -2,6 +2,7 @@ import Ashes.Test as test
 import Ashes.Collection.List.length
 import Ashes.IO.Path
 import Ashes.Text.Json
+import AshesCompiler.Semantics.ExplainReport
 import AshesCompiler.Cli.Add
 import AshesCompiler.Cli.Compile
 import AshesCompiler.Cli.Dispatch
@@ -1185,6 +1186,113 @@ let testParseRunArgumentsRejectsOption unit =
         | RunUsageError(message) -> test.assertEqual("Unknown option '--bogus'.")(message)
         | _ -> test.fail("expected an option to be a usage error")
 
+// Repeats of a kind deduplicate and the last selector wins, as stage 0 accumulates them.
+let testParseCompileArgumentsExplainOptions unit =
+    match parseCompileArguments(["--explain", "rc", "--explain", "ownership:map", "--explain", "rc", "examples/hello.ash"]) with
+        | CompileParsedArguments(CompileArguments { inputPath = inputPath, explain = ExplainRequest { kinds = ExplainRc :: ExplainOwnership :: [], functionFilter = Some("map") } }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | _ -> test.fail("expected repeated --explain options to accumulate into one request")
+
+let testParseCompileArgumentsWithoutExplainHasEmptyRequest unit =
+    match parseCompileArguments(["examples/hello.ash"]) with
+        | CompileParsedArguments(CompileArguments { explain = explain }) ->
+            explain
+            |> isExplainRequestEmpty
+            |> test.assertEqual(true)
+        | _ -> test.fail("expected a bare input to parse with no explain request")
+
+let testParseCompileArgumentsRejectsUnknownExplainKind unit =
+    match parseCompileArguments(["--explain", "bogus", "examples/hello.ash"]) with
+        | CompileUsageError(message) -> test.assertEqual("Unknown explain type 'bogus'." + explainValidValuesText)(message)
+        | _ -> test.fail("expected an unknown explain kind to be a usage error")
+
+let testParseCompileArgumentsExplainRequiresValue unit =
+    match parseCompileArguments(["examples/hello.ash", "--explain"]) with
+        | CompileUsageError(message) -> test.assertEqual("--explain requires a value." + explainValidValuesText)(message)
+        | _ -> test.fail("expected a bare --explain to be a usage error")
+
+let testParseRunArgumentsAcceptsExplain unit =
+    match parseRunArguments(["--explain", "memory", "examples/hello.ash", "--", "arg"]) with
+        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = "arg" :: [], runExplain = ExplainRequest { kinds = ExplainMemory :: [], functionFilter = None } }) -> test.assertEqual("examples/hello.ash")(inputPath)
+        | _ -> test.fail("expected --explain before the input to parse for run")
+
+let testParseRunArgumentsRejectsUnknownExplainKind unit =
+    match parseRunArguments(["--explain", "bogus", "examples/hello.ash"]) with
+        | RunUsageError(message) -> test.assertEqual("Unknown explain type 'bogus'." + explainValidValuesText)(message)
+        | _ -> test.fail("expected an unknown explain kind to be a usage error for run")
+
+let explainScratchRoot = "cli-explain-scratch"
+
+// The child's stdout starts with the `OK Wrote ...` confirmation.
+let expectConfirmation process =
+    match Ashes.IO.Process.readStdoutLine(process) with
+        | None -> test.fail("expected the compile confirmation on stdout, got none")
+        | Some(confirmation) ->
+            "OK Wrote "
+            |> Ashes.Text.startsWith(confirmation)
+            |> test.assertEqual(true)
+
+let recursive drainStdout process =
+    match Ashes.IO.Process.readStdoutLine(process) with
+        | None -> Unit
+        | Some(_) -> drainStdout(process)
+
+// The child's stderr starts with exactly `expected`, line by line.
+let recursive expectStderrLines process (expected: List(Str)) =
+    match expected with
+        | [] -> Unit
+        | head :: rest ->
+            match Ashes.IO.Process.readStderrLine(process) with
+                | None -> test.fail("stderr ended before the expected report line " + head)
+                | Some(line) ->
+                    line
+                    |> test.assertEqual(head)
+                    |> (given (_) -> expectStderrLines(process)(rest))
+
+let recursive drainStderr process =
+    match Ashes.IO.Process.readStderrLine(process) with
+        | None -> Unit
+        | Some(_) -> drainStderr(process)
+
+let removeExplainScratch unit =
+    match Ashes.IO.Directory.removeTree(explainScratchRoot) with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail("failed to clean up explain scratch directory: " + message)
+
+let requireOk (label: Str) result =
+    match result with
+        | Ok(_) -> Unit
+        | Error(message) -> test.fail(label + ": " + message)
+
+// `ashes compile --explain rc` prints the RC report to stderr and the confirmation to stdout. The
+// CLI runs as a child process, this test executable re-entered through `/proc/self/exe` with the
+// `--as-cli` marker, so the two streams are observed exactly as a shell would see them.
+let testCompileExplainRcPrintsReportToStderr unit =
+    (let _ = removeExplainScratch(Unit)
+    in
+        let _ =
+            explainScratchRoot
+            |> Ashes.IO.Directory.createAll
+            |> requireOk("create explain scratch directory")
+        in
+            let _ =
+                "type Box =\n    | Boxed(Int)\n\nlet box = Boxed(41)\n\nmatch box with\n    | Boxed(n) -> Ashes.IO.print(n + 1)\n"
+                |> Ashes.IO.File.writeText(explainScratchRoot + "/boxed.ash")
+                |> requireOk("write explain scratch program")
+            in
+                match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "compile", "--explain", "rc", "-o", explainScratchRoot + "/boxed", explainScratchRoot + "/boxed.ash"]) with
+                    | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
+                    | Ok(process) ->
+                        Unit
+                        |> (given (_) -> expectConfirmation(process))
+                        |> (given (_) -> drainStdout(process))
+                        |> (given (_) -> expectStderrLines(process)(["RC report", "=========", ""]))
+                        |> (given (_) -> drainStderr(process))
+                        |> (given (_) -> Ashes.IO.Process.waitForExit(process))
+                        |> (given (exitCode) ->
+                            Unit
+                            |> removeExplainScratch
+                            |> (given (_) -> test.assertEqual(0)(exitCode))))
+
 let testRunCliDispatchesToCompileHelp unit =
     ["COMPILE", "--help"]
     |> runCli
@@ -1314,6 +1422,20 @@ let run unit =
     |> testParseRunArgumentsRejectsOption
     |> testRunCliDispatchesToCompileHelp
     |> testRunCliDispatchesToRunWithInputError
+    |> testParseCompileArgumentsExplainOptions
+    |> testParseCompileArgumentsWithoutExplainHasEmptyRequest
+    |> testParseCompileArgumentsRejectsUnknownExplainKind
+    |> testParseCompileArgumentsExplainRequiresValue
+    |> testParseRunArgumentsAcceptsExplain
+    |> testParseRunArgumentsRejectsUnknownExplainKind
+    |> testCompileExplainRcPrintsReportToStderr
     |> (given (_) -> Ashes.IO.print("all self-hosted cli tests passed"))
 
-run(Unit)
+// `--as-cli <args...>` re-enters this executable as the `ashes` CLI itself, so a test can observe
+// the CLI's stdout, stderr, and exit code as a separate process.
+match Ashes.IO.args with
+    | "--as-cli" :: cliArguments ->
+        cliArguments
+        |> runCli
+        |> Ashes.IO.exit
+    | _ -> run(Unit)
