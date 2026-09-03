@@ -579,6 +579,19 @@ let codegenInstructionKind cx builder kind state =
                         // crosses it) — with no real reference-count tracking in this codegen yet,
                         // it is exactly an alias of the same SSA value under a new temp number.
                                         | Borrow(target, sourceTemp) -> ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                        // An ordinary (arena) `RcDup` is a placement marker with no count to
+                        // retain: an alias, like `Borrow`. The RC-managed form needs the retain
+                        // this codegen has not implemented yet.
+                                        | RcDup(target, sourceTemp, runtimeManaged, _mayBeEmpty) ->
+                                            if runtimeManaged
+                                            then Ashes.IO.panic("codegen: RC-managed RcDup not yet supported")
+                                            else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                        // A closure's `CleanupResource` releases nothing, as in stage 0; every
+                        // other resource kind still needs its destructor ported.
+                                        | CleanupResource(_sourceTemp, typeName, _destructor) ->
+                                            if typeName == "Function"
+                                            then (tempEnv, terminated)
+                                            else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
                         // `CopyOutArena` moves a value below a scope's restored watermark before
                         // its chunks are reclaimed. `CoreLowering.ash` only brackets scopes whose
                         // values are provably scalar, so it never emits one; the copy itself
@@ -737,7 +750,7 @@ let codegenInstructionKind cx builder kind state =
                         // release first.
                                         | RcDrop(sourceTemp, _typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
                                             if runtimeManaged == false
-                                            then Ashes.IO.panic("codegen: non-RC-managed RcDrop not yet supported")
+                                            then (tempEnv, terminated)
                                             else
                                                 if mayBeEmpty
                                                 then Ashes.IO.panic("codegen: mayBeEmpty RcDrop not yet supported")

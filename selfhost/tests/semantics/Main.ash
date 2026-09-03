@@ -41,6 +41,7 @@ import MetadataAndOriginsTests
 import TcoTests
 import IrValidationTests
 import IrOptimizerTests
+import PerceusLifetimePlacementTests
 import OwnershipInferenceTests
 import HeapLayoutClassificationTests
 let run unit =
@@ -84,6 +85,7 @@ let run unit =
     |> (given (_) -> TcoTests.runTcoTests(Unit))
     |> (given (_) -> IrValidationTests.runIrValidationTests(Unit))
     |> (given (_) -> IrOptimizerTests.runIrOptimizerTests(Unit))
+    |> (given (_) -> PerceusLifetimePlacementTests.runPerceusLifetimePlacementTests(Unit))
     |> (given (_) -> OwnershipInferenceTests.runOwnershipInferenceTests(Unit))
     |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))

@@ -229,7 +229,9 @@ let constructorLetProgramSource unit = "type Option(a) =\n    | NoVal\n    | Has
 // bracketed like a scalar chain, and the cell itself is an arena `AllocAdt` (no RC request).
 // This is the `pattern_match` parity fixture's source. The owned read of `value` borrows, and
 // because the top-level scope owns that binding the program result is spilled to a slot across
-// the closing restore; only stage 0's `RcDrop` placement markers remain unported.
+// the closing restore. The binding's `RcDrop` marker is placed at its last use on every path:
+// after the field read in the matching arm, after the tag read in the second arm, and at the
+// entry of the arm cleanup that no longer reads it.
 let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
     Unit
     |> constructorLetProgramSource
@@ -239,7 +241,7 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "============",
         "",
         "function _start_main  [ProgramEntry]",
-        "  locals=15 temps=22",
+        "  locals=15 temps=23",
         "    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1",
         "    LoadConstInt          Target=0 Value=42",
         "    AllocAdt              Target=1 Tag=1 FieldCount=1",
@@ -256,6 +258,7 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    CmpIntEq              Target=7 Left=6 Right=8",
         "    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_3",
         "    GetAdtField           Target=9 Ptr=3 FieldIndex=0",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
         "    StoreLocal            Slot=6 Source=9",
         "    LoadLocal             Target=10 Slot=6",
         "    LoadConstInt          Target=11 Value=1",
@@ -274,6 +277,7 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    CmpIntNe              Target=14 Left=3 Right=13",
         "    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_4",
         "    GetAdtTag             Target=15 Ptr=3",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
         "    LoadConstInt          Target=17 Value=0",
         "    CmpIntEq              Target=16 Left=15 Right=17",
         "    JumpIfFalse           CondTemp=16 Target=match_arm_cleanup_4",
@@ -283,6 +287,7 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=11",
         "    Jump                  Target=match_end_0",
         "  match_arm_cleanup_4:",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
         "    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=12",
         "    ReclaimArenaChunks    SavedEndSlot=10 PreRestoreEndSlot=12",
         "    Jump                  Target=match_none_1",
@@ -294,8 +299,8 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
         "    StoreLocal            Slot=13 Source=20",
         "    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=14",
         "    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=14",
-        "    LoadLocal             Target=21 Slot=13",
-        "    Return                Source=21",
+        "    LoadLocal             Target=22 Slot=13",
+        "    Return                Source=22",
         ""
     ])
 
