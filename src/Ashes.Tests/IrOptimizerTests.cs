@@ -2691,6 +2691,42 @@ public sealed class IrOptimizerTests
     }
 
     [Test]
+    public void ConcatStrN_sinks_a_released_owned_part_past_the_fold()
+    {
+        // The lifetime placement drops the owned `expected` string right after the link that
+        // reads it; the fold reads it at the root instead, so the drop must follow the ConcatStrN.
+        var ir = IrOptimizer.Optimize(LowerProgram(
+            """
+            let recursive grow (n: Int) (acc: Str) =
+                if n == 0
+                then acc
+                else grow(n - 1)(acc + "0123456789abcdef")
+
+            let describe (name: Str) =
+                let expected = grow(300)("")
+                in
+                    let actual = grow(299)("")
+                    in
+                        if actual == expected
+                        then "same"
+                        else "mismatch for " + name + "\nexpected:\n" + expected + "actual:\n" + actual
+
+            Ashes.IO.print(describe("x"))
+            """));
+        IrFunction describe = ir.Functions.Single(function => function.Instructions.OfType<IrInst.ConcatStrN>().Any());
+        List<IrInst> instructions = describe.Instructions;
+        int foldIndex = instructions.FindIndex(instruction => instruction is IrInst.ConcatStrN);
+        IrInst.ConcatStrN folded = (IrInst.ConcatStrN)instructions[foldIndex];
+        folded.Parts.Count.ShouldBe(6);
+        instructions.OfType<IrInst.ConcatStr>().ShouldBeEmpty();
+        int elseLabel = instructions.FindLastIndex(foldIndex, instruction => instruction is IrInst.Label);
+        instructions.Skip(elseLabel).Take(foldIndex - elseLabel).OfType<IrInst.RcDrop>().Where(drop => drop.RuntimeManaged).ShouldBeEmpty(
+            "no runtime-managed release may sit between the parts' reads and the fold that reads them.");
+        instructions.Skip(foldIndex + 1).OfType<IrInst.RcDrop>().Where(drop => drop.RuntimeManaged).ShouldNotBeEmpty(
+            "the owned part's release follows the fold.");
+    }
+
+    [Test]
     public async Task ConcatStrN_declined_chain_still_produces_correct_output()
     {
         string stdout = await RunAsync(IrOptimizer.Optimize(LowerProgram(
