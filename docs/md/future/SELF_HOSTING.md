@@ -352,8 +352,20 @@ same public behavior.
   for match/handler arm attachment — a nested match silently swallowed the enclosing match's
   remaining arms; `parserLeadingPipeColumn` now ends an arm list at any `|` dedented past the
   first arm's column, as stage 0 does.
-- [ ] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
-  diagnostics at the semantic boundary.
+- [~] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
+  diagnostics at the semantic boundary. Done for the compiler-provided `FileHandle` and `Process`
+  handles in `CoreLowering.ash`: every owned `let` or pattern binding of a resource type is live,
+  closed (an explicit `File.close`), or moved (stored into a constructor, tuple, list, or cons
+  cell; passed to `Ashes.Task.spawn`-free consuming callees — a let-bound lambda borrows a
+  parameter only when stage 0's `isParamUsedOnlyAsBorrowRead` proves it reads it, any other
+  callee consumes; or returned as its arm's result); a resource builtin reading a released
+  binding reports stage 0's use-after-close/use-after-move messages, and a live binding gets
+  stage 0's `CleanupResource` at its `let` or arm exit, which the backend lowers to `close` for a
+  handle and pipe-close plus reap for a process. Open: declared external resources (`consume`
+  transfer and destructor closes), sockets, resources captured by an escaping closure, a
+  resource-bearing aggregate's recursive cleanup, and the cleanup a tail self-call must run
+  before its back edge (today the arm's cleanup follows the call, which keeps that call an
+  ordinary call rather than a fused tail call).
 - [~] **SEM-15** Seed the shipped standard trait/type identities and primitive/structural implementation heads so
   ordinary evidence resolution no longer depends only on focused test declarations. The remaining
   builtin and standard-library value/type environment must be populated through module stitching.
@@ -953,9 +965,9 @@ same public behavior.
   read loop, UTF-8 validation) and `readAllBytes` (uncapped, raw), `mmap` returning a zero-copy
   `Bytes` view over a `PROT_READ`/`MAP_PRIVATE` mapping, `writeBytes` sharing the `writeText`
   writer, and `makeExecutable` (libc `lstat` regular-file check + raw `chmod` 0755), all with
-  stage 0's exact message constants. Open: SEM-14's resource-ownership half (automatic close at
-  scope exit, use-after-close/double-close diagnostics — an unclosed handle currently leaks its
-  fd), and a real buffered-stdout ring only if immediate writes ever regress measured throughput.
+  stage 0's exact message constants, and the automatic close of a handle left open at its scope
+  exit (SEM-14). Open: a real buffered-stdout ring only if immediate writes ever regress
+  measured throughput.
   `Ashes.IO.Environment` is fully ported (`IrCodegen.Environment.ash`): `currentDirectory`/
   `executableDirectory` over libc `getcwd`/`readlink` with the parent-path trim,
   `temporaryDirectory`/`cacheDirectory` with stage 0's env-fallback chains, and `get` over

@@ -586,12 +586,30 @@ let codegenInstructionKind cx builder kind state =
                                             if runtimeManaged
                                             then Ashes.IO.panic("codegen: RC-managed RcDup not yet supported")
                                             else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
-                        // A closure's `CleanupResource` releases nothing, as in stage 0; every
-                        // other resource kind still needs its destructor ported.
-                                        | CleanupResource(_sourceTemp, typeName, _destructor) ->
+                        // A closure's `CleanupResource` releases nothing, as in stage 0; a
+                        // `FileHandle` closes its fd and a `Process` closes its pipes and reaps
+                        // the child (`EmitResourceCleanup`). Sockets and declared external
+                        // resources still need their destructors ported.
+                                        | CleanupResource(sourceTemp, typeName, _destructor) ->
                                             if typeName == "Function"
                                             then (tempEnv, terminated)
-                                            else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
+                                            else
+                                                if typeName == "FileHandle"
+                                                then
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupIndexed(sourceTemp)
+                                                        |> emitLinuxClose(builder)(i64)
+                                                    in (tempEnv, terminated)
+                                                else
+                                                    if typeName == "Process"
+                                                    then
+                                                        let _ =
+                                                            tempEnv
+                                                            |> lookupIndexed(sourceTemp)
+                                                            |> emitProcessDrop(context)(function_)(builder)(i64)(i8)(ptrType)
+                                                        in (tempEnv, terminated)
+                                                    else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
                         // `CopyOutArena` moves a value below a scope's restored watermark before
                         // its chunks are reclaimed. `CoreLowering.ash` only brackets scopes whose
                         // values are provably scalar, so it never emits one; the copy itself
@@ -1314,6 +1332,8 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                             |> lookupIndexed(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexed(1)
@@ -1343,8 +1363,6 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         in Unit
                                         else Unit
                                     in
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                         let _ =
                                             if isEntry
                                             then emitArenaInit(context)(functionValue)(builder)(types.i64)(types.i8)(types.ptrType)(arena)

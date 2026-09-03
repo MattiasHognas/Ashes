@@ -3090,6 +3090,12 @@ let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProg
 
 let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
 
+// A file handle bound by a match arm is closed at the arm's exit: opening the same file more
+// times than the default per-process fd limit only succeeds when every earlier handle was closed.
+let buildOptimizedIrFileHandleAutoCloseModule name context = codegenOptimizedRealSource("let recursive loop n =\n    if n == 0\n    then 0\n    else\n        match Ashes.IO.File.open(\"lib/Ashes/Text.ash\") with\n            | Error(_) -> 1\n            | Ok(fh) ->\n                match Ashes.IO.File.readChunk(fh)(1) with\n                    | Error(_) -> 2\n                    | Ok(_) -> loop(n - 1)\nAshes.IO.print(loop(3000))")(name)(context)
+
+let testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule unit = assertProgramPrints(buildOptimizedIrFileHandleAutoCloseModule)("selfhostBackendRunOptimizedFileHandleAutoClose")("selfhost_backend_file_handle_auto_close_e2e")("0")
+
 let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assertProgramPrints(buildOptimizedIrDeepMutualRecursionModule)("selfhostBackendRunOptimizedDeepMutualRecursion")("selfhost_backend_deep_mutual_recursion_e2e")("true")
 
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
@@ -3458,6 +3464,7 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
     |> testRunStaticExecutableForOptimizedIrDeepTailLoopModule
+    |> testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
