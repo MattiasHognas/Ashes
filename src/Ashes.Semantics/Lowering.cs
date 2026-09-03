@@ -6550,6 +6550,12 @@ public sealed partial class Lowering
             case Expr.RecordLit record:
                 return record.Fields.Any(field =>
                     ResultAlwaysReachesVariable(field.Value, variableName, callDepth));
+            // The rebuilt cell carries the target's unchanged fields and every updated value, so
+            // the variable reaches the result through either.
+            case Expr.RecordUpdate update:
+                return ResultAlwaysReachesVariable(update.Target, variableName, callDepth)
+                    || update.Updates.Any(field =>
+                        ResultAlwaysReachesVariable(field.Value, variableName, callDepth));
             case Expr.TupleLit tuple:
                 return tuple.Elements.Any(element =>
                     ResultAlwaysReachesVariable(element, variableName, callDepth));

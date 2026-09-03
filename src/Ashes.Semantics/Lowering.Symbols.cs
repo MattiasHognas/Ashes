@@ -165,7 +165,7 @@ public sealed partial class Lowering
         int tag = GetConstructorTag(ctor);
 
         // Load all field values, then store update values, allocate new cell
-        var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, resultType);
+        var fieldTemps = BuildRecordUpdateFieldTemps(ctor, fieldNames, updateByName, targetTemp, resultType, request);
 
         int ptrTemp = NewTemp();
         bool tagless = IsTaglessConstructor(ctor);
@@ -181,23 +181,45 @@ public sealed partial class Lowering
     /// <summary>
     /// Builds the per-field temps for a record update: updated fields are lowered and unified with
     /// their declared parameter types; unchanged fields are loaded from the update target.
+    /// An updated field is a constructor argument of the rebuilt cell, so it takes the request the
+    /// constructor path hands its arguments (an arena cell, hence no runtime-managed parent) and the
+    /// same escaping-child retain: a runtime-managed value stored into the new cell — a list literal
+    /// over a borrowed RC record, a `let`-bound call result — keeps a reference of its own past the
+    /// scope that owns it, instead of dangling once that scope's release fires.
     /// </summary>
     private int[] BuildRecordUpdateFieldTemps(
         ConstructorSymbol ctor,
         IReadOnlyList<string> fieldNames,
         Dictionary<string, Expr> updateByName,
         int targetTemp,
-        TypeRef.TNamedType resultType)
+        TypeRef.TNamedType resultType,
+        LoweredValueRequest request)
     {
+        LoweredValueRequest childRequest = request with
+        {
+            RuntimeRepresentation = request.RuntimeRepresentation
+                & ~(LoweredValueRuntimeRepresentation.Adt | LoweredValueRuntimeRepresentation.Record),
+        };
         var fieldTemps = new int[fieldNames.Count];
         for (int i = 0; i < fieldNames.Count; i++)
         {
             if (updateByName.TryGetValue(fieldNames[i], out var updateExpr))
             {
-                var (updateTemp, updateType) = LowerExpr(updateExpr);
-                var paramType = InstantiateConstructorParameterType(ctor, i, resultType);
+                TypeRef paramType = Prune(InstantiateConstructorParameterType(ctor, i, resultType));
+                (int updateTemp, TypeRef updateType) = LowerRuntimeManagedConstructorArgument(
+                    updateExpr,
+                    paramType,
+                    runtimeManagedParent: false,
+                    childRequest);
+                updateTemp = RetainEscapingConstructorArgument(
+                    updateExpr,
+                    updateTemp,
+                    updateType,
+                    runtimeManagedCandidate: false,
+                    request);
                 Unify(paramType, updateType);
                 fieldTemps[i] = updateTemp;
+                MarkResourceArgMoved(updateExpr);
             }
             else
             {
