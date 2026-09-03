@@ -45,11 +45,9 @@ let checkFixture root name =
 // arena-placed constructor scrutinee with a null guard before each tag test, pattern_match the
 // owned-binding borrow and its control-flow precise release, and closure_capture the source-named
 // function origins, the closure environment normalizer, the per-call windows, and the stack
-// closure of a let-bound lambda used only as a callee. closure_capture's instructions now match
-// stage 0 exactly and only two source locations still differ (the environment normalizer's own,
-// and the span of a lambda a `let`'s parameter sugar synthesizes, which stage 0 leaves unspanned);
-// it and mutual_recursion, which still needs recursive-binding lowering parity, remain excluded
-// until those are ported.
+// closure of a let-bound lambda used only as a callee, down to its source locations.
+// mutual_recursion still needs recursive-binding lowering parity and remains deliberately
+// excluded until that is ported.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -59,5 +57,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("scalar_match"))
         |> (given (_) -> checkFixture(root)("ownerless_match"))
         |> (given (_) -> checkFixture(root)("pattern_match"))
+        |> (given (_) -> checkFixture(root)("closure_capture"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

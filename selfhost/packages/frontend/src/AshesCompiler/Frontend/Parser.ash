@@ -1088,10 +1088,9 @@ and parserParseNamedLet state =
                                                                 match parserParseExpression(afterIn) with
                                                                     | (body, afterBody) ->
                                                                         let value =
-                                                                            parserBuildLambdas(
+                                                                            parserBuildSugarLambdas(
                                                                                 parameters,
-                                                                                rawValue,
-                                                                                letToken.position
+                                                                                rawValue
                                                                             )
                                                                         in
                                                                             let parameterNames =
@@ -1161,6 +1160,20 @@ and parserBuildLambdas parameters body start =
                     |> ExprLambda(parameter)(current)
                     |> parserAt(start)(parserExprEnd(current))
                 )
+    in
+        build(Ashes.Collection.List.reverse(parameters))(body))
+// The lambdas a `let`'s parameter sugar stands for carry no span of their own: the written source
+// spans the binding, not a lambda, and stage 0 synthesizes them from the binding's parameter list
+// unspanned, so nothing an enclosing frame emits around one is attributed to a lambda. The value
+// and the parameter annotations keep their own spans.
+and parserBuildSugarLambdas parameters body =
+    (let recursive build reversed current =
+        match reversed with
+            | [] -> current
+            | (parameter, annotation) :: tail ->
+                annotation
+                |> ExprLambda(parameter)(current)
+                |> build(tail)
     in
         build(Ashes.Collection.List.reverse(parameters))(body))
 and parserParseLetResult state =
@@ -1932,10 +1945,9 @@ and parserParseParenthesizedFlatBody sourceBytes state =
                                                     ) with
                                                         | (rawValue, afterValue) ->
                                                             let value =
-                                                                parserBuildLambdas(
+                                                                parserBuildSugarLambdas(
                                                                     parameters,
-                                                                    rawValue,
-                                                                    letToken.position
+                                                                    rawValue
                                                                 )
                                                             in
                                                                 if parserCurrentKind(afterValue) == In
@@ -3517,7 +3529,7 @@ and parserParseTopLevelBinding sourceBytes declarationColumn state =
                                 in
                                     match parserParseTopLevelValue(sourceBytes)(declarationColumn)(afterEquals) with
                                         | (rawValue, afterValue) ->
-                                            let value = parserBuildLambdas(parameters)(rawValue)(name.position)
+                                            let value = parserBuildSugarLambdas(parameters)(rawValue)
                                             in
                                                 let binding =
                                                     LetBindingSyntax(name = name.text, value = value, sugarParameters = parserParameterNames(
