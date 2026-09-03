@@ -14,7 +14,7 @@ public sealed partial class Lowering
     }
 
     private sealed class PatternBindingOwnershipBuilder(
-        Pattern.Var binder,
+        Pattern binder,
         SourceFunctionOrigin function,
         int bindingOrdinal,
         int rootParameterOrdinal,
@@ -23,7 +23,7 @@ public sealed partial class Lowering
         int extractionDepth,
         SourceLocation? location)
     {
-        public Pattern.Var Binder { get; } = binder;
+        public Pattern Binder { get; } = binder;
         public SourceFunctionOrigin Function { get; } = function;
         public int BindingOrdinal { get; } = bindingOrdinal;
         public int RootParameterOrdinal { get; } = rootParameterOrdinal;
@@ -39,7 +39,7 @@ public sealed partial class Lowering
                 Binder,
                 Function,
                 BindingOrdinal,
-                Binder.Name,
+                PatternBinderName(Binder),
                 RootParameterOrdinal,
                 RootParameterName,
                 ParentBindingOrdinal,
@@ -350,9 +350,10 @@ public sealed partial class Lowering
             return result;
         }
 
-        foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipBinders(pattern, 1))
+        foreach ((Pattern binder, int relativeDepth) in EnumeratePatternOwnershipBinders(pattern, 1))
         {
-            if (_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
+            string binderName = PatternBinderName(binder);
+            if (_constructorSymbols.TryGetValue(binderName, out ConstructorSymbol? constructor)
                 && constructor.Arity == 0)
             {
                 continue;
@@ -368,7 +369,7 @@ public sealed partial class Lowering
                 sourceLineage.ExtractionDepth + relativeDepth,
                 ResolveSourceLocation(AstSpans.GetOrDefault(binder)));
             state.Bindings.Add(builder);
-            result[binder.Name] = new PatternBindingLineage(
+            result[binderName] = new PatternBindingLineage(
                 sourceLineage.RootParameterOrdinal,
                 sourceLineage.RootParameterName,
                 builder.ExtractionDepth,
@@ -530,7 +531,12 @@ public sealed partial class Lowering
         return result;
     }
 
-    private static IEnumerable<(Pattern.Var Binder, int RelativeDepth)> EnumeratePatternOwnershipBinders(
+    /// <summary>
+    /// The binders a pattern introduces, each with its extraction depth: a variable, and an `as`
+    /// alias, which names the whole value matched at its position and so sits at that position's
+    /// depth, one level above the binders its inner pattern extracts.
+    /// </summary>
+    private static IEnumerable<(Pattern Binder, int RelativeDepth)> EnumeratePatternOwnershipBinders(
         Pattern pattern,
         int depth)
     {
@@ -539,79 +545,69 @@ public sealed partial class Lowering
             case Pattern.Var binder:
                 yield return (binder, depth);
                 yield break;
-            case Pattern.Cons cons:
-                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(cons.Head, depth))
-                {
-                    yield return (binder, relativeDepth);
-                }
-
-                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(cons.Tail, depth))
-                {
-                    yield return (binder, relativeDepth);
-                }
-
-                yield break;
-            case Pattern.Tuple tuple:
-                foreach (Pattern element in tuple.Elements)
-                {
-                    foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(element, depth))
-                    {
-                        yield return (binder, relativeDepth);
-                    }
-                }
-                yield break;
-            case Pattern.Constructor constructor:
-                foreach (Pattern child in constructor.Patterns)
-                {
-                    foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(child, depth))
-                    {
-                        yield return (binder, relativeDepth);
-                    }
-                }
-                yield break;
-            case Pattern.Record record:
-                foreach ((string _, Pattern child) in record.Fields)
-                {
-                    foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipChild(child, depth))
-                    {
-                        yield return (binder, relativeDepth);
-                    }
-                }
-
-                yield break;
             case Pattern.As asPattern:
-                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipBinders(asPattern.Inner, depth))
+                yield return (asPattern, depth);
+                foreach ((Pattern binder, int relativeDepth) in EnumeratePatternOwnershipChild(asPattern.Inner, depth))
                 {
                     yield return (binder, relativeDepth);
                 }
                 yield break;
             case Pattern.Or { Alternatives.Count: > 0 } orPattern:
-                foreach ((Pattern.Var binder, int relativeDepth) in EnumeratePatternOwnershipBinders(orPattern.Alternatives[0], depth))
+                foreach ((Pattern binder, int relativeDepth) in EnumeratePatternOwnershipBinders(orPattern.Alternatives[0], depth))
                 {
                     yield return (binder, relativeDepth);
+                }
+
+                yield break;
+            default:
+                foreach (Pattern child in PatternOwnershipChildren(pattern))
+                {
+                    foreach ((Pattern binder, int relativeDepth) in EnumeratePatternOwnershipChild(child, depth))
+                    {
+                        yield return (binder, relativeDepth);
+                    }
                 }
 
                 yield break;
         }
     }
 
-    private static IEnumerable<(Pattern.Var Binder, int RelativeDepth)> EnumeratePatternOwnershipChild(
+    private static IEnumerable<Pattern> PatternOwnershipChildren(Pattern pattern)
+        => pattern switch
+        {
+            Pattern.Cons cons => [cons.Head, cons.Tail],
+            Pattern.Tuple tuple => tuple.Elements,
+            Pattern.Constructor constructor => constructor.Patterns,
+            Pattern.Record record => record.Fields.Select(field => field.Pattern),
+            _ => [],
+        };
+
+    private static IEnumerable<(Pattern Binder, int RelativeDepth)> EnumeratePatternOwnershipChild(
         Pattern pattern,
         int parentDepth)
     {
-        int childDepth = pattern is Pattern.Var ? parentDepth : parentDepth + 1;
+        int childDepth = pattern is Pattern.Var or Pattern.As ? parentDepth : parentDepth + 1;
         return EnumeratePatternOwnershipBinders(pattern, childDepth);
     }
+
+    private static string PatternBinderName(Pattern binder)
+        => binder switch
+        {
+            Pattern.Var variable => variable.Name,
+            Pattern.As alias => alias.Name,
+            _ => throw new InvalidOperationException($"Pattern '{binder.GetType().Name}' does not bind a name."),
+        };
 
     private HashSet<string> CollectPatternOwnershipBinderNames(Pattern pattern)
     {
         var result = new HashSet<string>(StringComparer.Ordinal);
-        foreach ((Pattern.Var binder, int _) in EnumeratePatternOwnershipBinders(pattern, 1))
+        foreach ((Pattern binder, int _) in EnumeratePatternOwnershipBinders(pattern, 1))
         {
-            if (!_constructorSymbols.TryGetValue(binder.Name, out ConstructorSymbol? constructor)
+            string binderName = PatternBinderName(binder);
+            if (!_constructorSymbols.TryGetValue(binderName, out ConstructorSymbol? constructor)
                 || constructor.Arity != 0)
             {
-                result.Add(binder.Name);
+                result.Add(binderName);
             }
         }
 

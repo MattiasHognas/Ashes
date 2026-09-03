@@ -1538,9 +1538,10 @@ public sealed partial class Lowering
             return;
         }
 
-        foreach (Pattern.Var binder in PatternVariableBinders(armPattern))
+        foreach (Pattern binder in PatternOwnershipBinders(armPattern))
         {
-            if (!patternBindings.TryGetValue(binder.Name, out TypeRef? bindingType)
+            string binderName = PatternBinderName(binder);
+            if (!patternBindings.TryGetValue(binderName, out TypeRef? bindingType)
                 || !tco.TryGetPatternBinding(
                     binder,
                     out int localSlot,
@@ -1566,7 +1567,7 @@ public sealed partial class Lowering
 
             TypeRef prunedType = Prune(bindingType);
             TrackOwnedValue(
-                binder.Name,
+                binderName,
                 localSlot,
                 GetOwnedTypeName(prunedType) ?? "PatternBinding",
                 isResource: false,
@@ -2302,9 +2303,9 @@ public sealed partial class Lowering
         RecordLocalBytesProvenance(slot, valueTemp);
         RecordLocalDebugInfo(slot, name, bindingTypes[name]);
         SetCurrentScopeBinding(name, new Binding.Local(slot, Prune(bindingTypes[name])));
-        if (binder is Pattern.Var variable)
+        if (binder is Pattern.Var or Pattern.As)
         {
-            _tcoCtx?.RegisterPatternBindingSlot(variable, slot);
+            _tcoCtx?.RegisterPatternBindingSlot(binder, slot);
         }
     }
 
@@ -2525,17 +2526,24 @@ public sealed partial class Lowering
         }
     }
 
-    private static IEnumerable<Pattern.Var> PatternVariableBinders(Pattern pattern)
+    // The binding nodes of a pattern: its variables and its `as` aliases, the two shapes that name a
+    // matched value and so can own it.
+    private static IEnumerable<Pattern> PatternOwnershipBinders(Pattern pattern)
     {
-        if (pattern is Pattern.Var variable)
+        if (pattern is Pattern.Var)
         {
-            yield return variable;
+            yield return pattern;
             yield break;
+        }
+
+        if (pattern is Pattern.As)
+        {
+            yield return pattern;
         }
 
         foreach (Pattern child in PatternBindingChildren(pattern))
         {
-            foreach (Pattern.Var binder in PatternVariableBinders(child))
+            foreach (Pattern binder in PatternOwnershipBinders(child))
             {
                 yield return binder;
             }
