@@ -1,0 +1,38 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from shout]
+  locals=6 temps=3
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadLocal             Target=0 Slot=1   (heap_result_let.ash:2:35)
+    TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (heap_result_let.ash:2:16)
+    StoreLocal            Slot=4 Source=1   (heap_result_let.ash:2:5)
+    LoadLocal             Target=2 Slot=4   (heap_result_let.ash:3:8)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=5
+    Return                Source=2
+
+function _start_main  [ProgramEntry]
+  locals=8 temps=9
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (heap_result_let.ash:5:16)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=7   (heap_result_let.ash:5:22)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (heap_result_let.ash:5:16)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    PrintStr              Source=5   (heap_result_let.ash:5:1)
+    RcDrop                SourceTemp=5 TypeName=String RuntimeManaged=true
+    AllocAdt              Target=6 Tag=0 FieldCount=0   (heap_result_let.ash:5:1)
+    StoreLocal            Slot=6 Source=6
+    LoadLocal             Target=7 Slot=2
+    CleanupResource       SourceTemp=7 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
+    CopyOutArena          DestTemp=8 SrcTemp=6 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=7
+    Return                Source=8
+

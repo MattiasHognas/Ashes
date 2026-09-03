@@ -463,7 +463,7 @@ and emitAdtFieldDrops (valueTemp: Int) (children: List(HeapLayoutChild)) (body: 
             match freshDropperTemp(body) with
                 | (childTemp, childBody) ->
                     childBody
-                    |> emitDropper(GetAdtField(childTemp)(valueTemp)(index))
+                    |> emitDropper(GetAdtField(childTemp)(valueTemp)(index)(false))
                     |> emitChildDrop(childTemp)(childType)
                     |> emitAdtFieldDrops(valueTemp)(rest)
 and emitRecursiveAdtDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =

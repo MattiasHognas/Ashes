@@ -337,7 +337,7 @@ let getFinalTcoPlacementReason initialReason eligibility hasBlocker =
                     else TcoReasonEligible
             | _ -> initialReason
 
-let recursive historyHasRuntime history =
+let recursive historyHasRuntime (history: List(TcoParamPlacementDecision)) =
     match history with
         | [] -> false
         | decision :: rest ->

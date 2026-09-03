@@ -383,7 +383,7 @@ let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocT
                                     let _ = positionBuilderAtEnd(builder)(emptyBlock)
                                     in
                                         let _ =
-                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("text_uncons_none"))(resultSlot)
+                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("text_uncons_none"))(resultSlot)
                                         in
                                             let _ = buildBr(builder)(continueBlock)
                                             in
@@ -433,7 +433,7 @@ let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocT
                                                                                                                     in
                                                                                                                         let _ = buildStore(builder)(tailRef)(tupleTailPtr)
                                                                                                                         in
-                                                                                                                            let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("text_uncons_some")
+                                                                                                                            let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("text_uncons_some")
                                                                                                                             in
                                                                                                                                 let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("text_uncons_some_ptr")
                                                                                                                                 in
@@ -681,7 +681,7 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
                                     let _ = positionBuilderAtEnd(builder)(emptyBlock)
                                     in
                                         let _ =
-                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("runeu_none"))(resultSlot)
+                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("runeu_none"))(resultSlot)
                                         in
                                             let _ = buildBr(builder)(doneBlock)
                                             in
@@ -760,7 +760,7 @@ let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType 
                                                                                                                                                                 in
                                                                                                                                                                     let _ = buildStore(builder)(tailRef)(tupleTailPtr)
                                                                                                                                                                     in
-                                                                                                                                                                        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("runeu_some")
+                                                                                                                                                                        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("runeu_some")
                                                                                                                                                                         in
                                                                                                                                                                             let somePtr = buildIntToPtr(builder)(someValue)(ptrType)("runeu_some_ptr")
                                                                                                                                                                             in

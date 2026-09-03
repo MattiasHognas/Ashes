@@ -1018,7 +1018,7 @@ let testTransitivelyReturnedClosureCallDevirtualizes unit =
 let recursive countGetAdtField instructions =
     match instructions with
         | [] -> 0
-        | IrInstruction { instruction = GetAdtField(_, _, _) } :: tail -> 1 + countGetAdtField(tail)
+        | IrInstruction { instruction = GetAdtField(_, _, _, _) } :: tail -> 1 + countGetAdtField(tail)
         | _ :: tail -> countGetAdtField(tail)
 
 let recursive countCallKnownTo instructions label =
@@ -1042,8 +1042,8 @@ let readFieldTwiceThroughSlot =
         1
         |> LoadLocal(0)
         |> makeInstruction,
-        0
-        |> GetAdtField(1)(0)
+        false
+        |> GetAdtField(1)(0)(0)
         |> makeInstruction,
         1
         |> StoreLocal(2)
@@ -1051,8 +1051,8 @@ let readFieldTwiceThroughSlot =
         1
         |> LoadLocal(3)
         |> makeInstruction,
-        0
-        |> GetAdtField(4)(3)
+        false
+        |> GetAdtField(4)(3)(0)
         |> makeInstruction,
         4
         |> AddInt(5)(1)
@@ -1074,8 +1074,8 @@ let testFieldReadNotMergedAcrossLabel unit =
                 1
                 |> LoadLocal(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(1)(0)
+                false
+                |> GetAdtField(1)(0)(0)
                 |> makeInstruction,
                 4
                 |> LoadLocal(6)
@@ -1087,8 +1087,8 @@ let testFieldReadNotMergedAcrossLabel unit =
                 1
                 |> LoadLocal(3)
                 |> makeInstruction,
-                0
-                |> GetAdtField(4)(3)
+                false
+                |> GetAdtField(4)(3)(0)
                 |> makeInstruction,
                 4
                 |> AddInt(5)(1)
@@ -1108,20 +1108,20 @@ let testFieldReadNotMergedAcrossAliasingWrite unit =
                 1
                 |> LoadLocal(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(1)(0)
+                false
+                |> GetAdtField(1)(0)(0)
                 |> makeInstruction,
                 0
                 |> LoadLocal(6)
                 |> makeInstruction,
-                1
-                |> SetAdtField(6)(0)
+                false
+                |> SetAdtField(6)(0)(1)
                 |> makeInstruction,
                 1
                 |> LoadLocal(3)
                 |> makeInstruction,
-                0
-                |> GetAdtField(4)(3)
+                false
+                |> GetAdtField(4)(3)(0)
                 |> makeInstruction,
                 4
                 |> AddInt(5)(1)
@@ -1141,8 +1141,8 @@ let testFieldReadMergedAcrossArenaBracket unit =
                 1
                 |> LoadLocal(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(1)(0)
+                false
+                |> GetAdtField(1)(0)(0)
                 |> makeInstruction,
                 false
                 |> SaveArenaState(2)(3)
@@ -1156,8 +1156,8 @@ let testFieldReadMergedAcrossArenaBracket unit =
                 1
                 |> LoadLocal(3)
                 |> makeInstruction,
-                0
-                |> GetAdtField(4)(3)
+                false
+                |> GetAdtField(4)(3)(0)
                 |> makeInstruction,
                 4
                 |> AddInt(5)(1)
@@ -1276,13 +1276,13 @@ let testStoreToLoadForwardsThroughFreshRecord unit =
                 |> LoadLocal(0)
                 |> makeInstruction,
                 false
-                |> AllocAdt(1)(0)(2)
+                |> AllocAdt(1)(0)(2)(false)
                 |> makeInstruction,
-                0
-                |> SetAdtField(1)(0)
+                false
+                |> SetAdtField(1)(0)(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(2)(1)
+                false
+                |> GetAdtField(2)(1)(0)
                 |> makeInstruction,
                 2
                 |> AddInt(3)(2)
@@ -1309,19 +1309,19 @@ let testLaterStoreThroughFreshRecordForwardsTheNewerValue unit =
                 |> LoadConstInt(1)
                 |> makeInstruction,
                 false
-                |> AllocAdt(2)(0)(1)
+                |> AllocAdt(2)(0)(1)(false)
                 |> makeInstruction,
-                0
-                |> SetAdtField(2)(0)
+                false
+                |> SetAdtField(2)(0)(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(3)(2)
+                false
+                |> GetAdtField(3)(2)(0)
                 |> makeInstruction,
-                1
-                |> SetAdtField(2)(0)
+                false
+                |> SetAdtField(2)(0)(1)
                 |> makeInstruction,
-                0
-                |> GetAdtField(4)(2)
+                false
+                |> GetAdtField(4)(2)(0)
                 |> makeInstruction,
                 makeInstruction(Return(4))
             ]
@@ -1348,11 +1348,11 @@ let testStoreThroughUnknownPointerDoesNotForward unit =
                 0
                 |> LoadLocal(1)
                 |> makeInstruction,
-                0
-                |> SetAdtField(1)(0)
+                false
+                |> SetAdtField(1)(0)(0)
                 |> makeInstruction,
-                0
-                |> GetAdtField(2)(1)
+                false
+                |> GetAdtField(2)(1)(0)
                 |> makeInstruction,
                 2
                 |> AddInt(3)(2)
@@ -1954,7 +1954,7 @@ let testConcatChainAcrossArenaBracketIsDeclined unit =
                 |> SaveArenaState(0)(1)
                 |> makeInstruction,
                 false
-                |> AllocAdt(7)(0)(1)
+                |> AllocAdt(7)(0)(1)(false)
                 |> makeInstruction,
                 "str_1"
                 |> LoadConstStr(1)

@@ -68,7 +68,7 @@ let recursive lowerAscii (text: Str) =
         | None -> ""
         | Some((head, tail)) -> lowerAsciiChar(head) + lowerAscii(tail)
 
-let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  compile  [-o <output>] <input.ash>\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  restore  [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]\n" + "  run      <input.ash> [-- <args...>]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
+let usageText = "Usage: ashes <command> [args]\n" + "\n" + "Commands:\n" + "  add      <package> [--project <manifest>] [--path <dir>] [--dev]\n" + "  compile  [--explain <kind>] [-o <output>] <input.ash>\n" + "  fmt      <file|dir> [-w]\n" + "  init\n" + "  remove   <package> [--project <manifest>]\n" + "  restore  [--project <manifest>] [--registry <name-or-url>] [--frozen] [--offline]\n" + "  run      [--explain <kind>] <input.ash> [-- <args...>]\n" + "  tree     [--project <manifest>]\n" + "  why      <namespace> [--project <manifest>]\n"
 
 let printUsage exitCode =
     (let _ = Ashes.IO.print(usageText)

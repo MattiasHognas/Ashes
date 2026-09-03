@@ -82,16 +82,16 @@ let coreInstructions =
         LoadArgumentOwnership(0),
         Alloc(0)(16)(true),
         AllocStack(0)(16),
-        AllocAdt(0)(1)(2)(true),
-        AllocAdtStack(0)(1)(2),
-        AllocAdtToSpace(0)(1)(2),
+        AllocAdt(0)(1)(2)(true)(false),
+        AllocAdtStack(0)(1)(2)(false),
+        AllocAdtToSpace(0)(1)(2)(false),
         DropReuse(0)(1)(2)(true),
-        AllocReusing(0)(1)(2)(3)(true)(false),
-        SetAdtField(0)(1)(2),
+        AllocReusing(0)(1)(2)(3)(true)(false)(false),
+        SetAdtField(0)(1)(2)(false),
         SaveStackPointer(0),
         RestoreStackPointer(0),
         GetAdtTag(0)(1),
-        GetAdtField(0)(1)(2)
+        GetAdtField(0)(1)(2)(false)
     ]
 
 let ioInstructions =

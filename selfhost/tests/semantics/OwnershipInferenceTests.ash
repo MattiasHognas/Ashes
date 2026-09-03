@@ -127,6 +127,27 @@ let testFreshConstantResult unit =
                         |> isResultPoisoned
                         |> test.assertEqual(false))
 
+// `x + y` is a copy-typed scalar: it reaches neither parameter, so the result is fresh even though
+// both parameters are read.
+let testScalarOperatorResultIsFresh unit =
+    (let body = ExprAdd(ExprVar("x"))(ExprVar("y"))
+    in
+        let sig = FunctionSignature(name = "add", origin = dummyOrigin("add"), parameters = ["x", "y"], body = body)
+        in
+            match inferFunctionOwnership(sig)([]) with
+                | FunctionOwnershipSummary { resultReachFacts = facts } ->
+                    facts
+                    |> isResultFresh
+                    |> test.assertEqual(true)
+                    |> (given (_) ->
+                        "x"
+                        |> resultReachesParameter(facts)
+                        |> test.assertEqual(false))
+                    |> (given (_) ->
+                        "y"
+                        |> resultReachesParameter(facts)
+                        |> test.assertEqual(false)))
+
 let testParameterReachingResult unit =
     (let sig = FunctionSignature(name = "id", origin = dummyOrigin("id"), parameters = ["x"], body = ExprVar("x"))
     in
@@ -610,6 +631,7 @@ let runOwnershipInferenceTests unit =
     |> testConsumedConstructorParameter
     |> testMixedParameters
     |> testFreshConstantResult
+    |> testScalarOperatorResultIsFresh
     |> testParameterReachingResult
     |> testDestructuredParameterIsNotReachedWhole
     |> testConditionalBranchReachingResult

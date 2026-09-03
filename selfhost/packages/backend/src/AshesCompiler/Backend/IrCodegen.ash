@@ -103,10 +103,13 @@
 
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
+import AshesCompiler.Semantics.TaglessAdtLayout.adtFieldOffsetBytes
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Arena
+import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
@@ -587,12 +590,19 @@ let codegenInstructionKind cx builder kind state =
                         // it is exactly an alias of the same SSA value under a new temp number.
                                         | Borrow(target, sourceTemp) -> ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
                         // An ordinary (arena) `RcDup` is a placement marker with no count to
-                        // retain: an alias, like `Borrow`. The RC-managed form needs the retain
-                        // this codegen has not implemented yet.
-                                        | RcDup(target, sourceTemp, runtimeManaged, _mayBeEmpty) ->
+                        // retain: an alias, like `Borrow`. The RC-managed form is the real retain
+                        // (`IrCodegen.Rc`), identity-preserving so the target is the same word.
+                                        | RcDup(target, sourceTemp, runtimeManaged, mayBeEmpty) ->
                                             if runtimeManaged
-                                            then Ashes.IO.panic("codegen: RC-managed RcDup not yet supported")
+                                            then
+                                                ((target, tempEnv
+                                                |> lookupIndexed(sourceTemp)
+                                                |> emitRuntimeManagedDup(context)(function_)(i64)(i8)(ptrType)(builder)(mayBeEmpty)) :: tempEnv, terminated)
                                             else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                        | RcIsUnique(target, sourceTemp) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(sourceTemp)
+                                            |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A closure's `CleanupResource` releases nothing, as in stage 0; a
                         // `FileHandle` closes its fd and a `Process` closes its pipes and reaps
                         // the child (`EmitResourceCleanup`). Sockets and declared external
@@ -738,77 +748,82 @@ let codegenInstructionKind cx builder kind state =
                                                 in (tempEnv, true)
                         // See `emitAllocAdtRuntimeManaged` for the RC cell's layout; the ordinary
                         // form is a `[tag][fields...]` cell bumped from the scoped arena
-                        // (`IrCodegen.Arena`'s `emitArenaAllocAdt`).
-                                        | AllocAdt(target, tag, fieldCount, runtimeManaged) ->
+                        // (`IrCodegen.Arena`'s `emitArenaAllocAdt`). A tagless cell (the flag every
+                        // ADT instruction carries, see TaglessAdtLayout) has no tag word: its
+                        // payload starts at offset 0 and the allocation is one word smaller.
+                                        | AllocAdt(target, tag, fieldCount, runtimeManaged, tagless) ->
                                             let resultName = "t" + Ashes.Text.fromInt(target)
                                             in
                                                 if runtimeManaged
-                                                then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
-                                                else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
-                        // Stores one field into an already-allocated ADT's payload (word `1 + fieldIndex`,
-                        // since word `0` is the tag — see `AllocAdt`'s own layout comment above). The
-                        // `ptr` operand arrives as this codegen's universal `i64` word representation, so
-                        // it round-trips through `buildIntToPtr` before the byte-offset GEP.
-                                        | SetAdtField(ptr, fieldIndex, source) ->
+                                                then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
+                                                else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(tagless)(resultName)) :: tempEnv, terminated)
+                        // The reuse pair (`IrCodegen.Rc`): an arena `DropReuse` is statically
+                        // unique, so its token is the cell itself; the RC-managed form consumes
+                        // the source and yields the cell only when its count is `1`, else the null
+                        // token that makes `AllocReusing` allocate a fresh cell.
+                                        | DropReuse(target, sourceTemp, _fieldCount, runtimeManaged) ->
+                                            if runtimeManaged
+                                            then
+                                                ((target, tempEnv
+                                                |> lookupIndexed(sourceTemp)
+                                                |> emitRuntimeDropReuse(context)(function_)(i64)(i8)(ptrType)(builder)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                        | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell, tagless) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(tokenTemp)
+                                            |> emitAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(runtimeManaged)(listCell)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                        // Stores one field into an already-allocated ADT's payload: word `1 + fieldIndex`
+                        // of a tagged cell (word `0` is the tag — see `AllocAdt`'s own layout comment
+                        // above), word `fieldIndex` of a tagless one. The `ptr` operand arrives as this
+                        // codegen's universal `i64` word representation, so it round-trips through
+                        // `buildIntToPtr` before the byte-offset GEP.
+                                        | SetAdtField(ptr, fieldIndex, source, tagless) ->
                                             let basePtr =
                                                 buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
                                             in
-                                                let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
+                                                let fieldPtr =
+                                                    gepBytes(builder)(i64)(i8)(basePtr)(adtFieldOffsetBytes(tagless)(fieldIndex))("adt_field_ptr")
                                                 in
                                                     let _ =
                                                         buildStore(builder)(lookupIndexed(source)(tempEnv))(fieldPtr)
                                                     in (tempEnv, terminated)
                         // The read half of `SetAdtField`: same word offset, a load instead of a store.
-                                        | GetAdtField(target, ptr, fieldIndex) ->
+                                        | GetAdtField(target, ptr, fieldIndex, tagless) ->
                                             let basePtr =
                                                 buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_field_base")
                                             in
-                                                let fieldPtr = gepBytes(builder)(i64)(i8)(basePtr)((fieldIndex + 1) * 8)("adt_field_ptr")
+                                                let fieldPtr =
+                                                    gepBytes(builder)(i64)(i8)(basePtr)(adtFieldOffsetBytes(tagless)(fieldIndex))("adt_field_ptr")
                                                 in ((target, buildLoad(builder)(i64)(fieldPtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        // Reads word `0` (the tag) — the same offset `AllocAdt` writes it to.
+                        // Reads word `0` (the tag) — the same offset `AllocAdt` writes it to. A tagless
+                        // cell has no tag word; `rejectTagReadsOfTaglessCells` refuses the function
+                        // before any of its instructions are emitted.
                                         | GetAdtTag(target, ptr) ->
                                             let basePtr =
                                                 buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
                                             in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        // See `emitRcDrop` above for the release itself. `CoreLowering.ash`'s
-                        // `lowerDeadRcTopLevelLet` emits this with `runtimeManaged = true` and
-                        // `mayBeEmpty = false`; a release that reaches past the cell (a list
-                        // spine, an aggregate with managed children) names its synthesized
-                        // structural dropper, and the drop is then that helper's call with a zero
-                        // environment, exactly as `LlvmCodegen.cs`'s `EmitDropCountedValue` makes
-                        // it. Any other combination panics rather than silently dropping the wrong
-                        // thing or leaking a child that needed its own release first.
-                                        | RcDrop(sourceTemp, _typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
+                        // An arena `RcDrop` is a placement marker with nothing to release. The
+                        // RC-managed form is `IrCodegen.Rc`'s release: a structural dropper label
+                        // resolves to the lifted function that owns the whole cascade, a `Function`
+                        // releases its environment with itself, and `mayBeEmpty` guards the null
+                        // empty list.
+                                        | RcDrop(sourceTemp, typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
                                             if runtimeManaged == false
                                             then (tempEnv, terminated)
                                             else
-                                                if mayBeEmpty
-                                                then Ashes.IO.panic("codegen: mayBeEmpty RcDrop not yet supported")
-                                                else
+                                                let structuralDropper =
                                                     match structuralDropperLabel with
                                                         | Some(label) ->
-                                                            let _ =
-                                                                buildCall(builder)(closureFunctionType)(lookupIndexed(label)(liftedFunctions))([constInt(i64)(0u64)(false), lookupIndexed(sourceTemp)(tempEnv), constInt(i64)(0u64)(false)])(3u32)(
-                                                                    "rc_drop_structural"
-                                                                )
-                                                            in (tempEnv, false)
-                                                        | None ->
-                                                            let _ =
-                                                                tempEnv
-                                                                |> lookupIndexed(sourceTemp)
-                                                                |> emitRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)
-                                                            in (tempEnv, false)
-                        // The synthesized droppers test whether a cell is uniquely referenced
-                        // before releasing its children: the count word sits 16 bytes before the
-                        // payload pointer (`emitRcDrop`'s header walk), and the answer is the
-                        // `Bool` word `CmpIntNe` produces.
-                                        | RcIsUnique(target, sourceTemp) ->
-                                            let headerPtr =
-                                                gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("rc_unique_value_ptr"))(-16)("rc_unique_header_ptr")
-                                            in
-                                                let isUnique =
-                                                    buildICmp(builder)(intPredicateEq)(buildLoad(builder)(i64)(headerPtr)("rc_unique_count"))(constInt(i64)(1u64)(false))("t" + Ashes.Text.fromInt(target) + "_i1")
-                                                in ((target, buildZExt(builder)(isUnique)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                                            liftedFunctions
+                                                            |> lookupIndexed(label)
+                                                            |> Some
+                                                        | None -> None
+                                                in
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupIndexed(sourceTemp)
+                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
+                                                    in (tempEnv, false)
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other
                         // RC-managed allocation here has (so a future closure drop can walk back to
@@ -1194,7 +1209,9 @@ let recursive reverseInstructionList instructions acc =
 // to `s2` instead — multi-level match/if joins chain arbitrarily deep this way. The walk stops at
 // the first instruction outside the copy chain. An arm that stores a call result into a mapped
 // label's slot and jumps (or falls) into it is a tail call through the join, which the fusion
-// below turns into a native tail call.
+// below turns into a native tail call. A join reached only by a `Jump` (an `if` join whose
+// block forwards its slot into the enclosing `match` join) is off the fallthrough chain, so
+// `extendTailJoins` below adds every block that is nothing but such a forward into a mapped join.
 let recursive collectTailJoins reversedInstructions currentSlot acc =
     match reversedInstructions with
         | IrInstruction { instruction = Label(name) } :: rest -> collectTailJoins(rest)(currentSlot)((name, currentSlot) :: acc)
@@ -1207,7 +1224,7 @@ let recursive collectTailJoins reversedInstructions currentSlot acc =
             else acc
         | _ -> acc
 
-let computeTailJoins instructions =
+let fallthroughTailJoins instructions =
     match reverseInstructionList(instructions)([]) with
         | IrInstruction { instruction = Return(source) } :: IrInstruction { instruction = LoadLocal(loaded, slot) } :: rest ->
             if source == loaded
@@ -1234,6 +1251,39 @@ let recursive lookupTailJoin (label: Str) (joins: List((Str, Int))) =
             if candidate == label
             then Some(slot)
             else lookupTailJoin(label)(rest)
+
+// Whether the instructions past a block's forwarding copy jump or fall into a join mapped to
+// `storeSlot`, the slot that copy stored into.
+let forwardsIntoTailJoin (joins: List((Str, Int))) (storeSlot: Int) instructions =
+    match instructions with
+        | IrInstruction { instruction = Jump(label) } :: _rest -> lookupTailJoin(label)(joins) == Some(storeSlot)
+        | IrInstruction { instruction = Label(label) } :: _rest -> lookupTailJoin(label)(joins) == Some(storeSlot)
+        | _ -> false
+
+// One pass over the function: a block whose entire body (arena bookkeeping aside) is
+// `LoadLocal(t, s2); StoreLocal(s1, t)` followed by a jump or fall into a join mapped to `s1` is
+// itself a join mapped to `s2`. Returns the extended map and whether anything was added.
+let recursive extendTailJoinsOnce (joins: List((Str, Int))) instructions (added: Bool) =
+    match instructions with
+        | [] -> (joins, added)
+        | IrInstruction { instruction = Label(name) } :: rest ->
+            match skipArenaBookkeeping(rest) with
+                | IrInstruction { instruction = LoadLocal(loaded, sourceSlot) } :: IrInstruction { instruction = StoreLocal(storeSlot, stored) } :: afterStore ->
+                    if loaded == stored && lookupTailJoin(name)(joins) == None && forwardsIntoTailJoin(joins)(storeSlot)(skipArenaBookkeeping(afterStore))
+                    then extendTailJoinsOnce((name, sourceSlot) :: joins)(rest)(true)
+                    else extendTailJoinsOnce(joins)(rest)(added)
+                | _ -> extendTailJoinsOnce(joins)(rest)(added)
+        | _ :: rest -> extendTailJoinsOnce(joins)(rest)(added)
+
+// Iterates `extendTailJoinsOnce` to a fixed point, so a chain of jump-reached joins is mapped
+// innermost-last however deeply the `if` and `match` joins nest.
+let recursive extendTailJoins (joins: List((Str, Int))) instructions =
+    match extendTailJoinsOnce(joins)(instructions)(false) with
+        | (extended, true) -> extendTailJoins(extended)(instructions)
+        | (extended, false) -> extended
+
+let computeTailJoins instructions =
+    extendTailJoins(fallthroughTailJoins(instructions))(instructions)
 
 // How a `CallKnown` whose result an arm stores into a tail join's slot is fused. `fusionMustTail`
 // false is the stack-allocating case: the call only gets the advisory `tail` marker and the store
@@ -1437,12 +1487,37 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                     )
                                                 in (cx, instructions)
 
+// The temps holding cells this function allocates with the tagless layout.
+let recursive taglessCellTemps instructions =
+    match instructions with
+        | [] -> []
+        | IrInstruction { instruction = AllocAdt(target, _tag, _fieldCount, _runtimeManaged, true) } :: rest -> target :: taglessCellTemps(rest)
+        | IrInstruction { instruction = AllocAdtStack(target, _tag, _fieldCount, true) } :: rest -> target :: taglessCellTemps(rest)
+        | IrInstruction { instruction = AllocAdtToSpace(target, _tag, _fieldCount, true) } :: rest -> target :: taglessCellTemps(rest)
+        | IrInstruction { instruction = AllocReusing(target, _tag, _fieldCount, _tokenTemp, _runtimeManaged, _listCell, true) } :: rest -> target :: taglessCellTemps(rest)
+        | _ :: rest -> taglessCellTemps(rest)
+
+// A tagless cell has no tag word, so lowering never emits `GetAdtTag` for one (its single
+// constructor tag is loaded as a constant instead). A tag read of a cell this function allocated
+// tagless is a lowering bug that would otherwise silently read the first payload word.
+let recursive rejectTagReadsOfTaglessCells taglessTemps instructions =
+    match instructions with
+        | [] -> Unit
+        | IrInstruction { instruction = GetAdtTag(_target, ptr) } :: rest ->
+            if containsInt(ptr)(taglessTemps)
+            then Ashes.IO.panic("codegen: GetAdtTag reads t" + Ashes.Text.fromInt(ptr) + ", a tagless single-constructor cell with no tag word")
+            else rejectTagReadsOfTaglessCells(taglessTemps)(rest)
+        | _ :: rest -> rejectTagReadsOfTaglessCells(taglessTemps)(rest)
+
 let codegenFunctionBody mc functionValue isEntry irFunction =
     match buildFunctionContext(mc)(functionValue)(isEntry)(irFunction) with
         | (cx, instructions) ->
-            let _ =
-                codegenInstructions(cx)(mc.moduleBuilder)(functionAllocatesStackMemory(instructions))(computeTailJoins(instructions))(instructions)(([], false))
-            in Unit
+            Unit
+            |> (given (_) ->
+                rejectTagReadsOfTaglessCells(taglessCellTemps(instructions))(instructions))
+            |> (given (_) ->
+                codegenInstructions(cx)(mc.moduleBuilder)(functionAllocatesStackMemory(instructions))(computeTailJoins(instructions))(instructions)(([], false)))
+            |> (given (_) -> Unit)
 
 // Emits every lifted function's body into the `LLVMValueRef` `declareLiftedFunctions` already
 // created for its label — every function is declared before ANY body is emitted, so a body can

@@ -1,0 +1,18 @@
+Memory report
+=============
+
+Function: makeAdder
+  ownership
+    x: consumed, move-safe yes
+    y: consumed, move-safe yes
+    result fresh: yes
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_1]
+    copy value:           3
+  representation [lambda_0]
+    region:               2
+    copy value:           1
+

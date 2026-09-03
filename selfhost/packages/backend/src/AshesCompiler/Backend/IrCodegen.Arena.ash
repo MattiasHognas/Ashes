@@ -31,6 +31,7 @@
 // immortal-count header so a retain or release on it is a no-op, as stage 0's
 // `EmitArenaValueAllocDynamic` writes).
 import AshesCompiler.Semantics.IrInstructions
+import AshesCompiler.Semantics.TaglessAdtLayout.adtAllocationSizeBytes
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
@@ -275,17 +276,21 @@ let emitArenaAlloc context function_ builder i64 (arena: ArenaRuntime) sizeBytes
     |> arenaConst(i64))(name)
 
 // A `[tag][field0]...[fieldN-1]` cell in the arena, the tag written and the fields left to
-// `SetAdtField`, returned as the address word.
-let emitArenaAllocAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) tag fieldCount name =
+// `SetAdtField`, returned as the address word. A tagless cell (a single-constructor type, see
+// TaglessAdtLayout) is `[field0]...[fieldN-1]`: one word smaller, and no tag is written.
+let emitArenaAllocAdt context function_ builder i64 i8 ptrType (arena: ArenaRuntime) tag fieldCount tagless name =
     name
-    |> emitArenaAlloc(context)(function_)(builder)(i64)(arena)((fieldCount + 1) * 8)
+    |> emitArenaAlloc(context)(function_)(builder)(i64)(arena)(adtAllocationSizeBytes(tagless)(fieldCount))
     |> (given (address) ->
-        Unit
-        |> (given (_) ->
-            name + "_tag"
-            |> memOffsetPtr(builder)(i64)(i8)(ptrType)(address)(0)
-            |> buildStore(builder)(arenaConst(i64)(tag)))
-        |> (given (_) -> address))
+        if tagless
+        then address
+        else
+            Unit
+            |> (given (_) ->
+                name + "_tag"
+                |> memOffsetPtr(builder)(i64)(i8)(ptrType)(address)(0)
+                |> buildStore(builder)(arenaConst(i64)(tag)))
+            |> (given (_) -> address))
 
 // Word-aligns a runtime `i64` byte count, as `alignArenaSize` does for a compile-time one.
 let alignArenaSizeDynamic builder i64 sizeRef name =

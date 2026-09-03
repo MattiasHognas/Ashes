@@ -2077,10 +2077,10 @@ let buildAdtFieldTagReadModule name context =
         [
             IrInstruction(instruction = LoadConstInt(0)(3), location = None),
             IrInstruction(instruction = LoadConstInt(1)(4), location = None),
-            IrInstruction(instruction = AllocAdt(2)(0)(2)(true), location = None),
-            IrInstruction(instruction = SetAdtField(2)(0)(0), location = None),
-            IrInstruction(instruction = SetAdtField(2)(1)(1), location = None),
-            IrInstruction(instruction = GetAdtField(3)(2)(0), location = None),
+            IrInstruction(instruction = AllocAdt(2)(0)(2)(true)(false), location = None),
+            IrInstruction(instruction = SetAdtField(2)(0)(0)(false), location = None),
+            IrInstruction(instruction = SetAdtField(2)(1)(1)(false), location = None),
+            IrInstruction(instruction = GetAdtField(3)(2)(0)(false), location = None),
             IrInstruction(instruction = GetAdtTag(4)(2), location = None),
             IrInstruction(instruction = AddInt(5)(3)(4), location = None),
             IrInstruction(instruction = PrintInt(5), location = None),
@@ -3163,6 +3163,117 @@ let testRunStaticExecutableForRecursiveAdtFieldModule unit = assertProgramPrints
 
 let testRunStaticExecutableForDeepMatchJoinLoopModule unit = assertProgramPrints(buildDeepMatchJoinLoopModule)("selfhostBackendRunDeepMatchJoinLoop")("selfhost_backend_deep_match_join_loop_e2e")("20000100000")
 
+// `assertProgramPrints` for a program that prints several lines: every expected line is read
+// from the executable's stdout in order before its exit code is checked.
+let recursive assertStdoutLines process expectedLines =
+    match expectedLines with
+        | [] -> Unit
+        | expected :: rest ->
+            match Ashes.IO.Process.readStdoutLine(process) with
+                | None -> test.fail("expected stdout line '" + expected + "' from the linked executable, got end of output")
+                | Some(line) ->
+                    Unit
+                    |> (given (_) -> test.assertEqual(expected)(line))
+                    |> (given (_) -> assertStdoutLines(process)(rest))
+
+let assertProgramPrintsLines buildModule name executablePath expectedLines =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            Unit
+                                            |> (given (_) -> assertStdoutLines(process)(expectedLines))
+                                            |> (given (_) ->
+                                                process
+                                                |> Ashes.IO.Process.waitForExit
+                                                |> test.assertEqual(0))
+
+// A single-constructor record is laid out without a tag word: constructed, matched positionally,
+// read through `.field`, and rebuilt with `with`, every field value read back at offset 0.
+let buildTaglessRecordModule name context = codegenRealSource("type Point =\n    | x: Int\n    | y: Int\n\nlet p = Point(x = 3, y = 4)\nlet q = p with y = 9\nlet _matched =\n    match p with\n        | Point(a, b) -> Ashes.IO.print(a * 10 + b)\nlet _updated = Ashes.IO.print(q.x * 10 + q.y)\nAshes.IO.print(p.x + p.y + q.y)")(name)(context)
+
+let testRunStaticExecutableForTaglessRecordModule unit = assertProgramPrintsLines(buildTaglessRecordModule)("selfhostBackendRunTaglessRecord")("selfhost_backend_tagless_record_e2e")(["34", "39", "16"])
+
+// A tagless cell nested inside a two-constructor cell: the outer cell keeps its tag and is
+// switched on, the inner cell's fields are read from offset 0.
+let buildTaglessNestedInTaggedModule name context = codegenRealSource("type Inner =\n    | a: Int\n    | b: Int\n\ntype Outer =\n    | Left(Inner)\n    | Right(Int)\n\nlet describe o =\n    match o with\n        | Left(Inner(a, b)) -> a * 10 + b\n        | Right(n) -> n\n\nlet _left = Ashes.IO.print(describe(Left(Inner(a = 1, b = 2))))\nAshes.IO.print(describe(Right(7)))")(name)(context)
+
+let testRunStaticExecutableForTaglessNestedInTaggedModule unit = assertProgramPrintsLines(buildTaglessNestedInTaggedModule)("selfhostBackendRunTaglessNestedInTagged")("selfhost_backend_tagless_nested_in_tagged_e2e")(["12", "7"])
+
+// A generic single-constructor type is tagless whatever its arguments: two instantiations of
+// `Pair` are matched and read through `.field`, and a `Box` nests another `Box`.
+let buildTaglessGenericModule name context = codegenRealSource("type Pair(a, b) =\n    | first: a\n    | second: b\n\ntype Box(a) =\n    | value: a\n\nlet p = Pair(first = 5, second = 7)\nlet q = Pair(first = 2, second = true)\nlet boxed = Box(value = Box(value = 6))\nlet _pair =\n    match p with\n        | Pair(f, s) -> Ashes.IO.print(f * 10 + s)\nlet _second = Ashes.IO.print(if q.second then q.first else 0)\nmatch boxed with\n    | Box(Box(v)) -> Ashes.IO.print(v)")(name)(context)
+
+let testRunStaticExecutableForTaglessGenericModule unit = assertProgramPrintsLines(buildTaglessGenericModule)("selfhostBackendRunTaglessGeneric")("selfhost_backend_tagless_generic_e2e")(["57", "2", "6"])
+
+// A tagless accumulator rebuilt and matched on every iteration of a tail-recursive loop, deep
+// enough that the loop must run as a real loop.
+let buildTaglessLoopModule name context = codegenOptimizedRealSource("type Acc =\n    | count: Int\n    | total: Int\n\nlet recursive loop n acc =\n    match acc with\n        | Acc(count, total) ->\n            if n == 0\n            then Ashes.IO.print(count * 100000 + total)\n            else loop(n - 1)(Acc(count = count + 1, total = total + n))\n\nloop(200000)(Acc(count = 0, total = 0))")(name)(context)
+
+let testRunStaticExecutableForTaglessLoopModule unit = assertProgramPrints(buildTaglessLoopModule)("selfhostBackendRunTaglessLoop")("selfhost_backend_tagless_loop_e2e")("40000100000")
+
+// A nullary single-constructor type keeps its tag word: its cell is allocated and matched through
+// the ordinary tag test.
+let buildNullarySingleConstructorModule name context = codegenRealSource("type Marker =\n    | Marker\n\nlet m = Marker\n\nmatch m with\n    | Marker -> Ashes.IO.print(1)")(name)(context)
+
+let testRunStaticExecutableForNullarySingleConstructorModule unit = assertProgramPrints(buildNullarySingleConstructorModule)("selfhostBackendRunNullarySingleConstructor")("selfhost_backend_nullary_single_constructor_e2e")("1")
+
+let recursive countAdtInstructionsWith (tagless: Bool) (instructions: List(IrInstruction)) =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = AllocAdt(_target, _tag, _fieldCount, _runtimeManaged, candidate) } :: rest ->
+            (if candidate == tagless
+            then 1
+            else 0) + countAdtInstructionsWith(tagless)(rest)
+        | IrInstruction { instruction = GetAdtField(_target, _ptr, _fieldIndex, candidate) } :: rest ->
+            (if candidate == tagless
+            then 1
+            else 0) + countAdtInstructionsWith(tagless)(rest)
+        | IrInstruction { instruction = SetAdtField(_ptr, _fieldIndex, _source, candidate) } :: rest ->
+            (if candidate == tagless
+            then 1
+            else 0) + countAdtInstructionsWith(tagless)(rest)
+        | _ :: rest -> countAdtInstructionsWith(tagless)(rest)
+
+let recursive countLiftedAdtInstructionsWith (tagless: Bool) (functions: List(IrFunction)) =
+    match functions with
+        | [] -> 0
+        | IrFunction { instructions = instructions } :: rest -> countAdtInstructionsWith(tagless)(instructions) + countLiftedAdtInstructionsWith(tagless)(rest)
+
+let countProgramAdtInstructionsWith (tagless: Bool) (program: IrProgram) =
+    match program with
+        | IrProgram { entryFunction = IrFunction { instructions = entry }, functions = functions } -> countAdtInstructionsWith(tagless)(entry) + countLiftedAdtInstructionsWith(tagless)(functions)
+
+// A resource-bearing record keeps its tag word: every ADT instruction the program lowers to
+// reads and writes the tagged layout.
+let testResourceBearingRecordLowersTagged unit =
+    (let program = lowerRealSource("type Holder =\n    | file: FileHandle\n    | count: Int\n\nlet countOf (holder: Holder) =\n    match holder with\n        | Holder(_, count) -> count\n\nAshes.IO.print(0)")("selfhostBackendResourceBearingRecord")
+    in
+        Unit
+        |> (given (_) ->
+            program
+            |> countProgramAdtInstructionsWith(true)
+            |> test.assertEqual(0))
+        |> (given (_) -> test.assertEqual(true)(countProgramAdtInstructionsWith(false)(program) >= 2)))
+
+// A tail call whose result flows through an `if` join into the enclosing `match` join: the `if`
+// join is reached only by a jump, and is still fused into a native tail call, so the loop runs
+// deep enough to overflow the stack otherwise.
+let buildDeepIfInsideMatchJoinLoopModule name context = codegenOptimizedRealSource("type Acc =\n    | Acc(Int, Int)\n    | Unused\n\nlet recursive loop n acc =\n    match acc with\n        | Acc(count, total) ->\n            if n == 0\n            then Ashes.IO.print(count * 100000 + total)\n            else loop(n - 1)(Acc(count + 1)(total + n))\n        | Unused -> Ashes.IO.print(0)\n\nloop(200000)(Acc(0)(0))")(name)(context)
+
+let testRunStaticExecutableForDeepIfInsideMatchJoinLoopModule unit = assertProgramPrints(buildDeepIfInsideMatchJoinLoopModule)("selfhostBackendRunDeepIfInsideMatchJoinLoop")("selfhost_backend_deep_if_inside_match_join_loop_e2e")("40000100000")
+
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
 let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
@@ -3442,12 +3553,12 @@ let handBuiltEntryFunction name instructions localCount tempCount =
 let buildArenaRestoreReusesCursorModule name context =
     [
         IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
-        IrInstruction(instruction = AllocAdt(0)(0)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(0)(0)(2)(false)(false), location = None),
         IrInstruction(instruction = LoadConstInt(1)(7), location = None),
-        IrInstruction(instruction = SetAdtField(0)(0)(1), location = None),
+        IrInstruction(instruction = SetAdtField(0)(0)(1)(false), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
-        IrInstruction(instruction = AllocAdt(2)(0)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(2)(0)(2)(false)(false), location = None),
         IrInstruction(instruction = CmpIntEq(3)(0)(2), location = None),
         IrInstruction(instruction = PrintBool(3), location = None),
         IrInstruction(instruction = LoadConstInt(4)(0), location = None),
@@ -3463,7 +3574,7 @@ let buildArenaRestoreReusesCursorModule name context =
 // Prints `true`.
 let buildArenaGrowAndReclaimModule name context =
     [
-        IrInstruction(instruction = AllocAdt(0)(0)(1)(false), location = None),
+        IrInstruction(instruction = AllocAdt(0)(0)(1)(false)(false), location = None),
         IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
         IrInstruction(instruction = Alloc(1)(6000000)(false), location = None),
         IrInstruction(instruction = StoreMemOffset(1)(5999992)(0), location = None),
@@ -3471,7 +3582,7 @@ let buildArenaGrowAndReclaimModule name context =
         IrInstruction(instruction = StoreMemOffset(2)(5999992)(0), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
-        IrInstruction(instruction = AllocAdt(3)(0)(1)(false), location = None),
+        IrInstruction(instruction = AllocAdt(3)(0)(1)(false)(false), location = None),
         IrInstruction(instruction = Alloc(4)(6000000)(false), location = None),
         IrInstruction(instruction = StoreMemOffset(4)(5999992)(0), location = None),
         IrInstruction(instruction = LoadConstInt(5)(16), location = None),
@@ -3498,16 +3609,16 @@ let buildCopyOutArenaRcAdtModule name context =
     [
         IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
         IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
-        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false)(false), location = None),
         IrInstruction(instruction = LoadConstInt(2)(7), location = None),
-        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2)(false), location = None),
         IrInstruction(instruction = LoadConstInt(3)(35), location = None),
-        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3)(false), location = None),
         IrInstruction(instruction = CopyOutArena(4)(1)(24)(true)(RcNormalization)(None), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
-        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
-        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0)(false), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1)(false), location = None),
         IrInstruction(instruction = AddInt(7)(5)(6), location = None),
         IrInstruction(instruction = PrintInt(7), location = None),
         IrInstruction(instruction = LoadConstInt(8)(0), location = None),
@@ -3523,16 +3634,16 @@ let buildCopyOutArenaScopedAdtModule name context =
     [
         IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
         IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
-        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false)(false), location = None),
         IrInstruction(instruction = LoadConstInt(2)(7), location = None),
-        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2)(false), location = None),
         IrInstruction(instruction = LoadConstInt(3)(35), location = None),
-        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3)(false), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = CopyOutArena(4)(1)(24)(false)(ArenaScopeBoundary)(None), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
-        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
-        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0)(false), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1)(false), location = None),
         IrInstruction(instruction = AddInt(7)(5)(6), location = None),
         IrInstruction(instruction = LoadLocal(8)(0), location = None),
         IrInstruction(instruction = CmpIntEq(9)(4)(8), location = None),
@@ -3551,17 +3662,17 @@ let buildCopyOutArenaScopedAdtModule name context =
 let buildCopyOutArenaOverlappingModule name context =
     [
         IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
-        IrInstruction(instruction = AllocAdt(0)(0)(1)(false), location = None),
-        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = AllocAdt(0)(0)(1)(false)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false)(false), location = None),
         IrInstruction(instruction = LoadConstInt(2)(7), location = None),
-        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2)(false), location = None),
         IrInstruction(instruction = LoadConstInt(3)(35), location = None),
-        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3)(false), location = None),
         IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
         IrInstruction(instruction = CopyOutArena(4)(1)(24)(false)(ArenaScopeBoundary)(None), location = None),
         IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
-        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
-        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0)(false), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1)(false), location = None),
         IrInstruction(instruction = AddInt(7)(5)(6), location = None),
         IrInstruction(instruction = PrintInt(7), location = None),
         IrInstruction(instruction = LoadConstInt(8)(0), location = None),
@@ -3775,6 +3886,420 @@ let testCopyOutListScopedStringHeads unit = assertProgramPrints(buildCopyOutList
 
 let testCopyOutListScopedInnerLists unit = assertProgramPrints(buildCopyOutListScopedInnerListsModule)("selfhostBackendCopyOutListScopedInnerLists")("selfhost_backend_copy_out_list_scoped_inner_lists_e2e")("123")
 
+// A hand-built lifted function: its `(env, arg, flag)` words arrive in local slots `0` and `1`
+// (`hasEnvAndArgParams`), so `localCount` is at least `2`.
+let handBuiltLiftedFunction label instructions localCount tempCount =
+    IrFunction(
+        label = label,
+        instructions = instructions,
+        localCount = localCount,
+        tempCount = tempCount,
+        hasEnvAndArgParams = true,
+        coroutine = None,
+        localNames = [],
+        localTypes = [],
+        origin = None,
+        lifetimesPlaced = false
+    )
+
+// An `IrProgram` around a hand-built entry function and its lifted helpers, with no string
+// literals or externals — the shape `codegenProgram` takes for a program with lifted functions.
+let handBuiltProgram entryFunction functions =
+    IrProgram(
+        entryFunction = entryFunction,
+        functions = functions,
+        stringLiterals = [],
+        externalFunctions = [],
+        externalOpaqueTypes = [],
+        usesPrintInt = true,
+        usesPrintStr = false,
+        usesPrintBool = true,
+        usesConcatStr = false,
+        usesClosures = true,
+        usesAsync = false,
+        capabilityHandlerGlobals = 0,
+        traitEvidence = emptyTraitEvidenceAnnotations
+    )
+
+let irOf kind = IrInstruction(instruction = kind, location = None)
+
+// Reads up to `count` stdout lines from `process` (fewer if it closes stdout first), then reaps
+// it: `(lines, exitCode)`. The process is a resource, so the reap happens here, at its last use.
+let recursive readStdoutLinesThenExit process count linesSoFar =
+    if count <= 0
+    then (Ashes.Collection.List.reverse(linesSoFar), Ashes.IO.Process.waitForExit(process))
+    else
+        match Ashes.IO.Process.readStdoutLine(process) with
+            | None -> (Ashes.Collection.List.reverse(linesSoFar), Ashes.IO.Process.waitForExit(process))
+            | Some(line) -> readStdoutLinesThenExit(process)(count - 1)(line :: linesSoFar)
+
+let buildRcDupDropModule name context =
+    [
+        3
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        false
+        |> RcDup(2)(1)(true)
+        |> irOf,
+        1
+        |> RcIsUnique(3)
+        |> irOf,
+        irOf(PrintBool(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        1
+        |> RcIsUnique(4)
+        |> irOf,
+        irOf(PrintBool(4)),
+        None
+        |> RcDrop(1)("Cell")(0)(true)(false)
+        |> irOf,
+        "s0"
+        |> LoadConstStr(5)
+        |> irOf,
+        false
+        |> RcDup(6)(5)(true)
+        |> irOf,
+        None
+        |> RcDrop(6)("Str")(0)(true)(false)
+        |> irOf,
+        None
+        |> RcDrop(5)("Str")(0)(true)(false)
+        |> irOf,
+        irOf(PrintStr(5)),
+        7
+        |> LoadConstInt(7)
+        |> irOf,
+        irOf(PrintInt(7)),
+        irOf(Return(7))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
+
+// The `mayBeEmpty` forms: `RcDup` and `RcDrop` on the null pointer (the empty list) touch no
+// header, and the same forms on a present cell still retain and release it (two drops after one
+// dup free it exactly once). Prints `7`.
+let buildRcMayBeEmptyModule name context =
+    [
+        0
+        |> LoadConstInt(0)
+        |> irOf,
+        true
+        |> RcDup(1)(0)(true)
+        |> irOf,
+        None
+        |> RcDrop(1)("List")(0)(true)(true)
+        |> irOf,
+        3
+        |> LoadConstInt(2)
+        |> irOf,
+        false
+        |> AllocAdt(3)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(3)(0)(2)
+        |> irOf,
+        true
+        |> RcDup(4)(3)(true)
+        |> irOf,
+        None
+        |> RcDrop(4)("List")(0)(true)(true)
+        |> irOf,
+        None
+        |> RcDrop(3)("List")(0)(true)(true)
+        |> irOf,
+        7
+        |> LoadConstInt(5)
+        |> irOf,
+        irOf(PrintInt(5)),
+        irOf(Return(5))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(6))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A structural `RcDrop` is one call of its dropper function with `(env = 0, value, flag = 0)` and
+// no local count change: the hand-written dropper reads the cell's field, prints it, and releases
+// the cell itself. Prints `42`, then `7`.
+let buildRcStructuralDropModule name context =
+    (let dropper =
+        ((given (instructions) -> handBuiltLiftedFunction("rc_cell_dropper")(instructions)(2)(3)))([
+            1
+            |> LoadLocal(0)
+            |> irOf,
+            false
+            |> GetAdtField(1)(0)(0)
+            |> irOf,
+            irOf(PrintInt(1)),
+            None
+            |> RcDrop(0)("Cell")(0)(true)(false)
+            |> irOf,
+            0
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(Return(2))
+        ])
+    in
+        [
+            42
+            |> LoadConstInt(0)
+            |> irOf,
+            false
+            |> AllocAdt(1)(0)(1)(true)
+            |> irOf,
+            false
+            |> SetAdtField(1)(0)(0)
+            |> irOf,
+            Some("rc_cell_dropper")
+            |> RcDrop(1)("Cell")(0)(true)(false)
+            |> irOf,
+            7
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(PrintInt(2)),
+            irOf(Return(2))
+        ]
+        |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(3))
+        |> (given (entryFunction) -> handBuiltProgram(entryFunction)([dropper]))
+        |> codegenProgram(name)(context))
+
+// `DropReuse` on a runtime-managed cell: a unique cell is its own token; a retained (shared) cell
+// yields the null token and is decremented, so its remaining owner's `RcDrop` still frees it; a
+// string literal's immortal header yields the null token untouched. Prints `true`, `true`, `true`,
+// `7`.
+let buildRcDropReuseModule name context =
+    [
+        5
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        true
+        |> DropReuse(2)(1)(1)
+        |> irOf,
+        1
+        |> CmpIntEq(3)(2)
+        |> irOf,
+        irOf(PrintBool(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        false
+        |> AllocAdt(4)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(4)(0)(0)
+        |> irOf,
+        false
+        |> RcDup(5)(4)(true)
+        |> irOf,
+        true
+        |> DropReuse(6)(5)(1)
+        |> irOf,
+        0
+        |> LoadConstInt(7)
+        |> irOf,
+        7
+        |> CmpIntEq(8)(6)
+        |> irOf,
+        irOf(PrintBool(8)),
+        None
+        |> RcDrop(4)("Cell")(0)(true)(false)
+        |> irOf,
+        "s0"
+        |> LoadConstStr(9)
+        |> irOf,
+        true
+        |> DropReuse(10)(9)(1)
+        |> irOf,
+        7
+        |> CmpIntEq(11)(10)
+        |> irOf,
+        irOf(PrintBool(11)),
+        7
+        |> LoadConstInt(12)
+        |> irOf,
+        irOf(PrintInt(12)),
+        irOf(Return(12))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(13))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
+
+// `AllocReusing` on a runtime-managed token: a unique cell's token is returned as the new cell's
+// own address with the new tag written, a list-cell token likewise without a tag store, and the
+// null token (a shared cell's `DropReuse`) allocates a fresh cell of the requested layout. Prints
+// `true`, `3`, `true`, `true`, `4`, `false`, `7`.
+let buildRcAllocReusingModule name context =
+    [
+        5
+        |> LoadConstInt(0)
+        |> irOf,
+        false
+        |> AllocAdt(1)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(1)(0)(0)
+        |> irOf,
+        true
+        |> DropReuse(2)(1)(1)
+        |> irOf,
+        false
+        |> AllocReusing(3)(3)(1)(2)(true)(false)
+        |> irOf,
+        1
+        |> CmpIntEq(4)(3)
+        |> irOf,
+        irOf(PrintBool(4)),
+        3
+        |> GetAdtTag(5)
+        |> irOf,
+        irOf(PrintInt(5)),
+        None
+        |> RcDrop(3)("Cell")(0)(true)(false)
+        |> irOf,
+        true
+        |> Alloc(6)(16)
+        |> irOf,
+        true
+        |> DropReuse(7)(6)(2)
+        |> irOf,
+        true
+        |> AllocReusing(8)(0)(2)(7)(true)(false)
+        |> irOf,
+        6
+        |> CmpIntEq(9)(8)
+        |> irOf,
+        irOf(PrintBool(9)),
+        None
+        |> RcDrop(8)("List")(0)(true)(false)
+        |> irOf,
+        false
+        |> AllocAdt(10)(0)(1)(true)
+        |> irOf,
+        false
+        |> SetAdtField(10)(0)(0)
+        |> irOf,
+        false
+        |> RcDup(11)(10)(true)
+        |> irOf,
+        true
+        |> DropReuse(12)(11)(1)
+        |> irOf,
+        0
+        |> LoadConstInt(13)
+        |> irOf,
+        13
+        |> CmpIntEq(14)(12)
+        |> irOf,
+        irOf(PrintBool(14)),
+        false
+        |> AllocReusing(15)(4)(1)(12)(true)(false)
+        |> irOf,
+        15
+        |> GetAdtTag(16)
+        |> irOf,
+        irOf(PrintInt(16)),
+        10
+        |> CmpIntEq(17)(15)
+        |> irOf,
+        irOf(PrintBool(17)),
+        None
+        |> RcDrop(15)("Cell")(0)(true)(false)
+        |> irOf,
+        None
+        |> RcDrop(10)("Cell")(0)(true)(false)
+        |> irOf,
+        7
+        |> LoadConstInt(18)
+        |> irOf,
+        irOf(PrintInt(18)),
+        irOf(Return(18))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(19))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A runtime-managed closure's `RcDrop` (type name `Function`) releases its RC environment block
+// and then the closure object; a closure with no environment releases only itself. The call
+// before the drop proves the closure and its environment were intact. Prints `42`, then `7`.
+let buildRcClosureDropModule name context =
+    (let closureFunction =
+        ((given (instructions) -> handBuiltLiftedFunction("rc_add_env")(instructions)(2)(3)))([
+            0
+            |> LoadEnv(0)
+            |> irOf,
+            1
+            |> LoadLocal(1)
+            |> irOf,
+            1
+            |> AddInt(2)(0)
+            |> irOf,
+            irOf(Return(2))
+        ])
+    in
+        [
+            true
+            |> Alloc(0)(8)
+            |> irOf,
+            40
+            |> LoadConstInt(1)
+            |> irOf,
+            1
+            |> StoreMemOffset(0)(0)
+            |> irOf,
+            false
+            |> MakeClosure(2)("rc_add_env")(0)(8)(true)(false)
+            |> irOf,
+            2
+            |> LoadConstInt(3)
+            |> irOf,
+            -1
+            |> CallClosure(4)(2)(3)
+            |> irOf,
+            irOf(PrintInt(4)),
+            None
+            |> RcDrop(2)("Function")(0)(true)(false)
+            |> irOf,
+            0
+            |> LoadConstInt(5)
+            |> irOf,
+            false
+            |> MakeClosure(6)("rc_add_env")(5)(0)(true)(false)
+            |> irOf,
+            None
+            |> RcDrop(6)("Function")(0)(true)(false)
+            |> irOf,
+            7
+            |> LoadConstInt(7)
+            |> irOf,
+            irOf(PrintInt(7)),
+            irOf(Return(7))
+        ]
+        |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+        |> (given (entryFunction) -> handBuiltProgram(entryFunction)([closureFunction]))
+        |> codegenProgram(name)(context))
+
+let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
+
+let testRcMayBeEmpty unit = assertProgramPrints(buildRcMayBeEmptyModule)("selfhostBackendRcMayBeEmpty")("selfhost_backend_rc_may_be_empty_e2e")("7")
+
+let testRcStructuralDrop unit = assertProgramPrintsLines(buildRcStructuralDropModule)("selfhostBackendRcStructuralDrop")("selfhost_backend_rc_structural_drop_e2e")(["42", "7"])
+
+let testRcDropReuse unit = assertProgramPrintsLines(buildRcDropReuseModule)("selfhostBackendRcDropReuse")("selfhost_backend_rc_drop_reuse_e2e")(["true", "true", "true", "7"])
+
+let testRcAllocReusing unit = assertProgramPrintsLines(buildRcAllocReusingModule)("selfhostBackendRcAllocReusing")("selfhost_backend_rc_alloc_reusing_e2e")(["true", "3", "true", "true", "4", "false", "7"])
+
+let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3853,6 +4378,13 @@ let run shipped =
     |> testRunStaticExecutableForStringAccumulatorDefaultModule
     |> testRunStaticExecutableForRecursiveAdtFieldModule
     |> testRunStaticExecutableForDeepMatchJoinLoopModule
+    |> testResourceBearingRecordLowersTagged
+    |> testRunStaticExecutableForTaglessRecordModule
+    |> testRunStaticExecutableForTaglessNestedInTaggedModule
+    |> testRunStaticExecutableForTaglessGenericModule
+    |> testRunStaticExecutableForTaglessLoopModule
+    |> testRunStaticExecutableForNullarySingleConstructorModule
+    |> testRunStaticExecutableForDeepIfInsideMatchJoinLoopModule
     |> testRunStaticExecutableForFloatScalarOpsModule
     |> testRunStaticExecutableForTextParseUnconsModule
     |> testRunStaticExecutableForBytesBuilderOpsModule
@@ -3871,6 +4403,12 @@ let run shipped =
     |> testCopyOutListScopedInline
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
+    |> testRcDupDrop
+    |> testRcMayBeEmpty
+    |> testRcStructuralDrop
+    |> testRcDropReuse
+    |> testRcAllocReusing
+    |> testRcClosureDrop
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with
