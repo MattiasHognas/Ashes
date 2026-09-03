@@ -755,7 +755,7 @@ public sealed partial class Lowering
         for (int i = 0; i < bindings.Count; i++)
         {
             recordTypes[i] = FindInnermostLambdaUnderLets(bindings[i].Value) is not null
-                ? new TypeRef.TFun(NewTypeVar(), NewTypeVar())
+                ? new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() }
                 : NewTypeVar();
         }
 
@@ -1172,7 +1172,7 @@ public sealed partial class Lowering
         var dispatchLambda = BuildDispatchLambda(bindings, lambdas, groupNames, tagOf, dispatchName, layout);
 
         int dispatchSlot = NewLocal();
-        var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar());
+        var dispatchRecursiveType = (TypeRef)new TypeRef.TFun(NewTypeVar(), NewTypeVar()) { Row = NewTypeVar() };
 
         // The dispatch body still contains every non-tail sibling reference of the member bodies
         // (RewriteGroupTailCalls only redirects tail calls). Those must resolve to the group's
