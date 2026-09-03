@@ -118,7 +118,7 @@ public static partial class IrOptimizer
         }
 
         var toRemove = new HashSet<int>();
-        var rewrites = new Dictionary<int, IrInst>();
+        var rewrites = new Dictionary<int, List<IrInst>>();
         for (int i = 0; i < instructions.Count; i++)
         {
             if (instructions[i] is not IrInst.ConcatStr root || consumedAsConcatLeft.Contains(root.Target))
@@ -141,7 +141,14 @@ public static partial class IrOptimizer
             {
                 continue;
             }
-            result.Add(rewrites.TryGetValue(i, out IrInst? replacement) ? replacement : instructions[i]);
+            if (rewrites.TryGetValue(i, out List<IrInst>? replacement))
+            {
+                result.AddRange(replacement);
+            }
+            else
+            {
+                result.Add(instructions[i]);
+            }
         }
         return result;
     }
@@ -157,7 +164,7 @@ public static partial class IrOptimizer
         int rootIndex,
         IrInst.ConcatStr root,
         HashSet<int> toRemove,
-        Dictionary<int, IrInst> rewrites)
+        Dictionary<int, List<IrInst>> rewrites)
     {
         List<int> chainIndices = CollectConcatChainIndices(instructions, defCount, defIndex, useCount, rootIndex, root);
         if (chainIndices.Count < 2)
@@ -178,6 +185,12 @@ public static partial class IrOptimizer
             return;
         }
 
+        List<int>? sunkReleases = CollectSinkableReleases(instructions, scanStart, rootIndex);
+        if (sunkReleases is null)
+        {
+            return;
+        }
+
         var parts = new List<int> { innermostLeft };
         for (int k = chainIndices.Count - 1; k >= 0; k--)
         {
@@ -187,7 +200,40 @@ public static partial class IrOptimizer
         {
             toRemove.Add(chainIndices[k]);
         }
-        rewrites[rootIndex] = new IrInst.ConcatStrN(root.Target, parts, root.RuntimeManaged);
+        var replacement = new List<IrInst>(1 + sunkReleases.Count)
+        {
+            new IrInst.ConcatStrN(root.Target, parts, root.RuntimeManaged),
+        };
+        foreach (int releaseIndex in sunkReleases)
+        {
+            toRemove.Add(releaseIndex);
+            replacement.Add(instructions[releaseIndex]);
+        }
+        rewrites[rootIndex] = replacement;
+    }
+
+    // The lifetime placement releases an owned part right after its last read, which in the
+    // unfolded chain is the link that consumes it: an RcDrop between two links. The fold reads
+    // every part at the root, so each such release moves to just after the folded instruction, in
+    // its original order; left in place it would free the part before the fold reads it (an
+    // unmapped block for any string past the RC cache size). A release-like instruction that
+    // yields a value or closes a resource (DropReuse, CleanupResource) is not moved; its presence
+    // declines the fold.
+    private static List<int>? CollectSinkableReleases(List<IrInst> instructions, int fromIndex, int toIndex)
+    {
+        var releases = new List<int>();
+        for (int i = fromIndex; i < toIndex; i++)
+        {
+            switch (instructions[i])
+            {
+                case IrInst.RcDrop:
+                    releases.Add(i);
+                    break;
+                case IrInst.DropReuse or IrInst.CleanupResource:
+                    return null;
+            }
+        }
+        return releases;
     }
 
     // A part read this instruction's position (rather than immediately after it was computed, as
