@@ -816,32 +816,35 @@ let describeInstruction instruction =
                     optionalIntOperand("SizeBytes")(sizeBytes)
                 ]
             )
-        | AllocAdt(target, tag, fieldCount, runtimeManaged) ->
+        | AllocAdt(target, tag, fieldCount, runtimeManaged, tagless) ->
             IrInstructionDescription(
                 opcode = "AllocAdt",
                 operands = [
                     optionalIntOperand("Target")(target),
                     optionalIntOperand("Tag")(tag),
                     optionalIntOperand("FieldCount")(fieldCount),
-                    boolOperand("RuntimeManaged")(runtimeManaged)
+                    boolOperand("RuntimeManaged")(runtimeManaged),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
-        | AllocAdtStack(target, tag, fieldCount) ->
+        | AllocAdtStack(target, tag, fieldCount, tagless) ->
             IrInstructionDescription(
                 opcode = "AllocAdtStack",
                 operands = [
                     optionalIntOperand("Target")(target),
                     optionalIntOperand("Tag")(tag),
-                    optionalIntOperand("FieldCount")(fieldCount)
+                    optionalIntOperand("FieldCount")(fieldCount),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
-        | AllocAdtToSpace(target, tag, fieldCount) ->
+        | AllocAdtToSpace(target, tag, fieldCount, tagless) ->
             IrInstructionDescription(
                 opcode = "AllocAdtToSpace",
                 operands = [
                     optionalIntOperand("Target")(target),
                     optionalIntOperand("Tag")(tag),
-                    optionalIntOperand("FieldCount")(fieldCount)
+                    optionalIntOperand("FieldCount")(fieldCount),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
         | DropReuse(target, sourceTemp, fieldCount, runtimeManaged) ->
@@ -854,7 +857,7 @@ let describeInstruction instruction =
                     boolOperand("RuntimeManaged")(runtimeManaged)
                 ]
             )
-        | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell) ->
+        | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell, tagless) ->
             IrInstructionDescription(
                 opcode = "AllocReusing",
                 operands = [
@@ -863,16 +866,18 @@ let describeInstruction instruction =
                     optionalIntOperand("FieldCount")(fieldCount),
                     optionalIntOperand("TokenTemp")(tokenTemp),
                     boolOperand("RuntimeManaged")(runtimeManaged),
-                    boolOperand("ListCell")(listCell)
+                    boolOperand("ListCell")(listCell),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
-        | SetAdtField(ptr, fieldIndex, source) ->
+        | SetAdtField(ptr, fieldIndex, source, tagless) ->
             IrInstructionDescription(
                 opcode = "SetAdtField",
                 operands = [
                     optionalIntOperand("Ptr")(ptr),
                     optionalIntOperand("FieldIndex")(fieldIndex),
-                    optionalIntOperand("Source")(source)
+                    optionalIntOperand("Source")(source),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
         | SaveStackPointer(slot) ->
@@ -897,13 +902,14 @@ let describeInstruction instruction =
                     optionalIntOperand("Ptr")(ptr)
                 ]
             )
-        | GetAdtField(target, ptr, fieldIndex) ->
+        | GetAdtField(target, ptr, fieldIndex, tagless) ->
             IrInstructionDescription(
                 opcode = "GetAdtField",
                 operands = [
                     optionalIntOperand("Target")(target),
                     optionalIntOperand("Ptr")(ptr),
-                    optionalIntOperand("FieldIndex")(fieldIndex)
+                    optionalIntOperand("FieldIndex")(fieldIndex),
+                    boolOperand("Tagless")(tagless)
                 ]
             )
         | PrintInt(source) ->

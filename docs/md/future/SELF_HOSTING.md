@@ -652,7 +652,8 @@ same public behavior.
 - [x] **OPT-18** Upgrade the advisory `tail` marker to `musttail` for proven-eligible non-loop tail calls,
   gated on a whole-function scan for native stack allocations; `IrCodegen.ash` fuses direct,
   stored-to-join-slot, and fallthrough-into-join shapes through arbitrarily deep copy-forwarding
-  chains (`computeTailJoins`), and currying-stage inlining heap-allocates a self-re-entering
+  chains (`computeTailJoins`, including an `if` join reached only by a jump that forwards into the
+  enclosing `match` join), and currying-stage inlining heap-allocates a self-re-entering
   chain's environment so recursive back edges stay fusable.
 - [ ] **OPT-19** Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups: one
   dispatch slot per agreeing parameter position plus one per distinct type elsewhere, non-callee
@@ -689,10 +690,23 @@ same public behavior.
   containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
   Deferred to reuse specialization: the borrowed-view projection of a capability and the consumer
   that reads the reuse flags (none exists yet).
-- [ ] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
+- [~] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
-  layout from the start rather than unboxing the tagged layout later.
+  layout from the start rather than unboxing the tagged layout later. Done: `TaglessAdtLayout.ash`
+  decides the flag once per type declaration (a sole constructor of arity at least one that is
+  not compiler-provided, zero-cost, a resource handle, or resource-bearing through any field, type
+  argument, list, or tuple) and owns the offset/size helpers the lowering and backend share;
+  `CoreConstructorLayout.tagless` carries the decision, and `CoreLowering.ash` emits it on
+  `AllocAdt`/`SetAdtField`/`GetAdtField` at construction, record access and update, and
+  pattern-field loads, skipping the tag compare (the `ptr != 0` guard stays) and the sole-group
+  `GetAdtTag`/`SwitchTag`; `IrText` prints `Tagless=true` as stage 0 does; the backend sizes the
+  cell, skips the tag store, offsets fields from 0, and refuses a `GetAdtTag` of a tagless cell
+  before emitting a function. Covered by `TaglessAdtLayoutTests.ash` and the tagless record,
+  nested, generic, tail-loop, and nullary programs in `selfhost/tests/backend/Main.ash`. Open:
+  `AllocAdtStack`/`AllocAdtToSpace`/`AllocReusing` carry the flag but are not lowered or emitted
+  yet; synthesized droppers/copiers must read `CoreConstructorLayout.tagless` and load the tag as
+  a literal; reuse-token layout exactness waits on reuse specialization.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
   brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the

@@ -44,6 +44,7 @@ import IrOptimizerTests
 import PerceusLifetimePlacementTests
 import OwnershipInferenceTests
 import HeapLayoutClassificationTests
+import TaglessAdtLayoutTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -88,6 +89,7 @@ let run unit =
     |> (given (_) -> PerceusLifetimePlacementTests.runPerceusLifetimePlacementTests(Unit))
     |> (given (_) -> OwnershipInferenceTests.runOwnershipInferenceTests(Unit))
     |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
+    |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)

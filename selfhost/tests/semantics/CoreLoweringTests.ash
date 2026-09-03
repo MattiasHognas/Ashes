@@ -66,7 +66,8 @@ let shadeLayout (name: Str) (tag: Int) =
         tag = tag,
         scheme = TypeScheme(quantified = [], body = shadeType, constraints = []),
         fieldNames = [],
-        isZeroCost = false
+        isZeroCost = false,
+        tagless = false
     )
 
 let structuralLayouts =
@@ -81,7 +82,8 @@ let structuralLayouts =
             tag = 0,
             scheme = TypeScheme(quantified = [], body = maybeIntType, constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Some",
@@ -92,7 +94,8 @@ let structuralLayouts =
                 constraints = []
             ),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Point",
@@ -103,7 +106,8 @@ let structuralLayouts =
                 constraints = []
             ),
             fieldNames = ["x", "y"],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "UserId",
@@ -114,7 +118,8 @@ let structuralLayouts =
                 constraints = []
             ),
             fieldNames = [],
-            isZeroCost = true
+            isZeroCost = true,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Pair",
@@ -125,7 +130,8 @@ let structuralLayouts =
                 constraints = []
             ),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         )
     ]
 
@@ -141,7 +147,7 @@ let recursive containsAlloc size instructions =
 let recursive containsAllocAdt tag fieldCount instructions =
     match instructions with
         | [] -> false
-        | IrInstruction { instruction = AllocAdt(_target, candidateTag, candidateFields, _managed) } :: rest ->
+        | IrInstruction { instruction = AllocAdt(_target, candidateTag, candidateFields, _managed, _tagless) } :: rest ->
             let matches =
                 if tag == candidateTag
                 then fieldCount == candidateFields
@@ -164,7 +170,7 @@ let recursive containsLoadOffset offset instructions =
 let recursive containsGetAdtField index instructions =
     match instructions with
         | [] -> false
-        | IrInstruction { instruction = GetAdtField(_target, _base, candidate) } :: rest ->
+        | IrInstruction { instruction = GetAdtField(_target, _base, candidate, _tagless) } :: rest ->
             if index == candidate
             then true
             else containsGetAdtField(index)(rest)
@@ -1001,7 +1007,8 @@ let builtinConstructorLayouts =
             tag = 0,
             scheme = TypeScheme(quantified = [], body = unitType, constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         )
     ]
 

@@ -329,7 +329,7 @@ let emitProcessWriteStdin context function_ i64 i8 ptrType builder arena process
                                                 buildStore(builder)(buildAdd(builder)(written)(writtenNow)("proc_write_new_written"))(writtenSlot))
                                             |> (given (_) -> buildBr(builder)(writeLoopBlock))))
                                     |> (given (_) -> positionBuilderAtEnd(builder)(writeDoneBlock))
-                                    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("proc_write_unit")))
+                                    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)("proc_write_unit")))
 
 // `Ashes.IO.Process.readStdoutLine`/`readStderrLine`: one line from the child's pipe as
 // `Maybe(Str)` — a fresh per-call 64 KiB stack buffer scanned one byte at a time (`\n` ends the
@@ -424,7 +424,7 @@ let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn malloc
                                                                             |> (given (finalLen) ->
                                                                                 emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(buffer)(i64)(prefix + "_buf_addr"))(finalLen)(prefix + "_string"))
                                                                             |> (given (stringRef) ->
-                                                                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(prefix + "_some")
+                                                                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)(prefix + "_some")
                                                                                 in
                                                                                     let _ =
                                                                                         prefix + "_some_field"
@@ -435,7 +435,7 @@ let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn malloc
                                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                                             |> (given (_) -> positionBuilderAtEnd(builder)(returnNoneBlock))
                                                                             |> (given (_) ->
-                                                                                buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(prefix + "_none"))(resultSlot))
+                                                                                buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)(prefix + "_none"))(resultSlot))
                                                                             |> (given (_) -> buildBr(builder)(continueBlock))
                                                                             |> (given (_) -> positionBuilderAtEnd(builder)(overflowBlock))
                                                                             |> (given (_) -> emitProcessPanicMessage(builder)(i64)(i8)(processReadLineTooLongCodes)(prefix))
@@ -504,4 +504,4 @@ let emitProcessKill context function_ builder i64 i8 ptrType arena processRef =
         false
         |> constInt(i64)(15u64)
         |> emitLinuxKill(builder)(i64)(pid))
-    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("proc_kill_unit"))
+    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)("proc_kill_unit"))

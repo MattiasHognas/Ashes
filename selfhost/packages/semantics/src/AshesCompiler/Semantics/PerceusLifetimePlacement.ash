@@ -404,7 +404,7 @@ let recursive callDupsAfterLoad (indexed: List((Int, IrInstruction))) (aliases: 
                     then
                         callDupsAfterLoad(rest)(sortedSetInsert(target)(aliases))(keepsLiveAfter)(anchor)(tempCount)(insertions)
                     else callDupsAfterLoad(rest)(aliases)(keepsLiveAfter)(anchor)(tempCount)(insertions)
-                | SetAdtField(_ptr, _fieldIndex, source) ->
+                | SetAdtField(_ptr, _fieldIndex, source, _tagless) ->
                     if sortedSetContains(source)(aliases)
                     then
                         [(index, IrInstruction(instruction = RcDup(tempCount)(source)(anchor.anchorRuntimeManaged)(anchor.anchorMayBeEmpty), location = location))]

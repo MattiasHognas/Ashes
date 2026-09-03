@@ -176,7 +176,7 @@ let emitConsoleRestore context function_ builder i64 ptrType (globals: ConsoleGl
 let emitConsolePollSome builder i64 i8 ptrType mallocFn mallocType memcpyFn memcpyType bufferAddr length resultSlot doneBlock name =
     (let stringRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(length)(name + "_string")
     in
-        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(name + "_some")
+        let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)(name + "_some")
         in
             let fieldPtr =
                 gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)(name + "_some_ptr"))(8)(name + "_some_field")
@@ -261,7 +261,7 @@ let emitConsolePoll context function_ builder i64 i8 ptrType mallocFn mallocType
                                                                     emitConsolePollSome(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(bufferAddr)(consoleWord(i64)(0u64))(resultSlot)(doneBlock)("console_poll_empty"))
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(noneBlock))
                                                                 |> (given (_) ->
-                                                                    buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("console_poll_none"))(resultSlot))
+                                                                    buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("console_poll_none"))(resultSlot))
                                                                 |> (given (_) -> buildBr(builder)(doneBlock))
                                                                 |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))
                                                                 |> (given (_) -> buildLoad(builder)(i64)(resultSlot)("console_poll_result_value")))

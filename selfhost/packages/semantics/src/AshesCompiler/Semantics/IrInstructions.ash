@@ -128,7 +128,11 @@ type IrInstructionKind =
     | RegexFind(IrTemp, IrTemp, IrTemp, IrTemp)
     | RegexCaptures(IrTemp, IrTemp, IrTemp, IrTemp)
     | RegexSubstitute(IrTemp, IrTemp, IrTemp, IrTemp)
-    // Closures, calls, allocation, and aggregate access.
+    // Closures, calls, allocation, and aggregate access. The trailing Bool on AllocAdt,
+    // AllocAdtStack, AllocAdtToSpace, AllocReusing, SetAdtField, and GetAdtField is the tagless
+    // flag: true for a single-constructor cell laid out with no tag word (payload at offset 0, see
+    // TaglessAdtLayout), false for the ordinary [tag, field0, ...] cell. GetAdtTag is never
+    // emitted for a tagless cell; its one constructor tag is loaded as a constant instead.
     | MakeClosure(IrTemp, Str, IrTemp, Int, Bool, Bool, Bool)
     | MakeClosureStack(IrTemp, Str, IrTemp, Int, Bool, Bool)
     | LoadFuncAddr(IrTemp, Str)
@@ -137,16 +141,16 @@ type IrInstructionKind =
     | LoadArgumentOwnership(IrTemp)
     | Alloc(IrTemp, Int, Bool)
     | AllocStack(IrTemp, Int)
-    | AllocAdt(IrTemp, Int, Int, Bool)
-    | AllocAdtStack(IrTemp, Int, Int)
-    | AllocAdtToSpace(IrTemp, Int, Int)
+    | AllocAdt(IrTemp, Int, Int, Bool, Bool)
+    | AllocAdtStack(IrTemp, Int, Int, Bool)
+    | AllocAdtToSpace(IrTemp, Int, Int, Bool)
     | DropReuse(IrTemp, IrTemp, Int, Bool)
-    | AllocReusing(IrTemp, Int, Int, IrTemp, Bool, Bool)
-    | SetAdtField(IrTemp, Int, IrTemp)
+    | AllocReusing(IrTemp, Int, Int, IrTemp, Bool, Bool, Bool)
+    | SetAdtField(IrTemp, Int, IrTemp, Bool)
     | SaveStackPointer(IrLocal)
     | RestoreStackPointer(IrLocal)
     | GetAdtTag(IrTemp, IrTemp)
-    | GetAdtField(IrTemp, IrTemp, Int)
+    | GetAdtField(IrTemp, IrTemp, Int, Bool)
     // Console, file, environment, text, network, bytes, and process intrinsics.
     | PrintInt(IrTemp)
     | PrintStr(IrTemp)

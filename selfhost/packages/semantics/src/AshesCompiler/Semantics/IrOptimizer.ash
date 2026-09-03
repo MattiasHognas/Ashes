@@ -1177,8 +1177,8 @@ let isNonAllocatingInst nonAllocatingFns inst =
         | LoadFuncAddr(_, _) -> true
         | GetAdtTag(_, _) -> true
         | LoadArgumentOwnership(_) -> true
-        | GetAdtField(_, _, _) -> true
-        | SetAdtField(_, _, _) -> true
+        | GetAdtField(_, _, _, _) -> true
+        | SetAdtField(_, _, _, _) -> true
         | Borrow(_, _) -> true
         | DropReuse(_, _, _, _) -> true
         | RcDup(_, _, _, _) -> true
@@ -1582,7 +1582,7 @@ let trackLocalCseAlias inst (state: LocalCseState) =
 // sentinel, which is only ever a key and must not be emitted.
 let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
     match inst with
-        | GetAdtField(target, ptr, field) ->
+        | GetAdtField(target, ptr, field, _tagless) ->
             let key = resolveCseValue(state.valueOf)(ptr)
             in
                 match lookupFieldCache(key)(field)(state.fieldCache) with
@@ -1601,9 +1601,9 @@ let eliminateLocalCseInstruction evaluable inst loc (state: LocalCseState) =
                                 | Some(cached) -> ((state with valueOf = setAssociation(dest)(cached)(state.valueOf)), IrInstruction(instruction = Borrow(dest)(cached), location = loc))
                                 | None -> ((state with callCache = ((label, env, arg, flag, stackAllocated), dest) :: state.callCache), IrInstruction(instruction = inst, location = loc))
             else (cseInvalidateCaches(state), IrInstruction(instruction = inst, location = loc))
-        | AllocAdt(target, _, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
-        | AllocAdtStack(target, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
-        | SetAdtField(ptr, field, source) ->
+        | AllocAdt(target, _, _, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
+        | AllocAdtStack(target, _, _, _) -> ((state with freshPointers = target :: state.freshPointers), IrInstruction(instruction = inst, location = loc))
+        | SetAdtField(ptr, field, source, _tagless) ->
             let key = resolveCseValue(state.valueOf)(ptr)
             in
                 if listContains(key)(state.freshPointers)

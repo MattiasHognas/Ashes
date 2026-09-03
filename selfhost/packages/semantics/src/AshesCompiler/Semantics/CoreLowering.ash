@@ -35,6 +35,7 @@ import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
 import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.SourceContext
+import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TraitEvidenceRewriting
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TypeInference
@@ -109,6 +110,7 @@ type CoreConstructorLayout =
     | scheme: TypeScheme
     | fieldNames: List(Str)
     | isZeroCost: Bool
+    | tagless: Bool
     deriving {Eq, Show}
 
 type CoreBindingLocation =
@@ -422,35 +424,40 @@ let standardConstructorLayouts =
             tag = 0,
             scheme = TypeScheme(quantified = [], body = SemNamed(0)("Unit")([]), constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "None",
             tag = 0,
             scheme = TypeScheme(quantified = [(1, "a")], body = maybeType, constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Some",
             tag = 1,
             scheme = TypeScheme(quantified = [(1, "a")], body = SemFunction(maybeElementType)(maybeType)(None), constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Ok",
             tag = 0,
             scheme = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(resultValueType)(resultType)(None), constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         ),
         CoreConstructorLayout(
             name = "Error",
             tag = 1,
             scheme = TypeScheme(quantified = [(2, "e"), (3, "a")], body = SemFunction(resultErrorType)(resultType)(None), constraints = []),
             fieldNames = [],
-            isZeroCost = false
+            isZeroCost = false,
+            tagless = false
         )
     ]
 
@@ -2716,23 +2723,23 @@ let lowerConsPattern headPattern tailPattern valueTemp valueType failLabel lower
     |> freshType
     |> finishConsPattern(headPattern)(tailPattern)(valueTemp)(valueType)(failLabel)(lowerPattern)
 
-let lowerAdtPatternField valueTemp index pattern semanticType failLabel lowerPattern result =
+let lowerAdtPatternField valueTemp index tagless pattern semanticType failLabel lowerPattern result =
     match result with
         | LoweredCorePattern { error = Some(_error) } -> result
         | LoweredCorePattern { state = state, error = None } ->
             match freshTemp(state) with
                 | FreshTemp { state = loadState, temp = fieldTemp } ->
                     loadState
-                    |> emit(GetAdtField(fieldTemp)(valueTemp)(index))
+                    |> emit(GetAdtField(fieldTemp)(valueTemp)(index)(tagless))
                     |> lowerPattern(pattern)(fieldTemp)(semanticType)(failLabel)
 
-let recursive lowerAdtPatternFields patterns types valueTemp index failLabel lowerPattern result =
+let recursive lowerAdtPatternFields patterns types valueTemp index tagless failLabel lowerPattern result =
     match (patterns, types) with
         | ([], []) -> result
         | (pattern :: patternRest, semanticType :: typeRest) ->
             result
-            |> lowerAdtPatternField(valueTemp)(index)(pattern)(semanticType)(failLabel)(lowerPattern)
-            |> lowerAdtPatternFields(patternRest)(typeRest)(valueTemp)(index + 1)(failLabel)(lowerPattern)
+            |> lowerAdtPatternField(valueTemp)(index)(tagless)(pattern)(semanticType)(failLabel)(lowerPattern)
+            |> lowerAdtPatternFields(patternRest)(typeRest)(valueTemp)(index + 1)(tagless)(failLabel)(lowerPattern)
         | _ -> result
 
 // An ordinary (tagged) constructor value is a heap pointer that may be null; stage 0 guards every
@@ -2753,7 +2760,7 @@ let requireNonZeroPattern valueTemp failLabel state =
 // THEN the expected constant — which is the reverse of every other pattern comparison (a literal
 // pattern lowers its constant first, then compares). `finishPatternComparison` would allocate the
 // compare temp last, so the tag test emits its own three instructions.
-let finishConstructorTag valueTemp tag failLabel state =
+let finishTaggedConstructorTag valueTemp tag failLabel state =
     match freshTemp(state) with
         | FreshTemp { state = tagState, temp = tagTemp } ->
             match freshTemp(tagState) with
@@ -2768,6 +2775,13 @@ let finishConstructorTag valueTemp tag failLabel state =
                                 |> emit(JumpIfFalse(compareTemp)(failLabel)),
                                 error = None
                             )
+
+// A tagless cell is always its type's one constructor: there is no tag to test, and no temp is
+// allocated, exactly as stage 0's `EmitRequireTagMatch` returns before allocating any.
+let finishConstructorTag valueTemp tag tagless failLabel state =
+    if tagless
+    then LoweredCorePattern(state = state, error = None)
+    else finishTaggedConstructorTag(valueTemp)(tag)(failLabel)(state)
 
 let lowerZeroCostPattern patterns parameterTypes valueTemp failLabel lowerPattern state =
     match (patterns, parameterTypes) with
@@ -2792,7 +2806,7 @@ let finishConstructorPattern patterns valueTemp valueType failLabel lowerPattern
                         lowerPattern,
                         typedState
                     )
-        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag }, parameterTypes = parameterTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
             if coreListLength(patterns) != coreListLength(parameterTypes)
             then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
             else
@@ -2801,8 +2815,8 @@ let finishConstructorPattern patterns valueTemp valueType failLabel lowerPattern
                     | (typedState, None) ->
                         typedState
                         |> requireNonZeroPattern(valueTemp)(failLabel)
-                        |> finishConstructorTag(valueTemp)(tag)(failLabel)
-                        |> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)
+                        |> finishConstructorTag(valueTemp)(tag)(tagless)(failLabel)
+                        |> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(tagless)(failLabel)(lowerPattern)
 
 let lowerConstructorPattern name patterns valueTemp valueType failLabel lowerPattern state =
     match constructorLayout(name)(state) with
@@ -2824,7 +2838,7 @@ let recursive findPatternField (name: Str) (fieldNames: List(Str)) (fieldTypes: 
             else findPatternField(name)(fieldRest)(typeRest)(index + 1)
         | _ -> None
 
-let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp failLabel lowerPattern result =
+let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp tagless failLabel lowerPattern result =
     match (fields, result) with
         | ([], _) -> result
         | (_fields, LoweredCorePattern { error = Some(_error) }) -> result
@@ -2836,18 +2850,18 @@ let recursive lowerRecordPatternFields fields fieldNames fieldTypes valueTemp fa
                     |> Some)
                 | Some(CorePatternField { index = index, semanticType = semanticType }) ->
                     result
-                    |> lowerAdtPatternField(valueTemp)(index)(pattern)(semanticType)(failLabel)(lowerPattern)
-                    |> lowerRecordPatternFields(rest)(fieldNames)(fieldTypes)(valueTemp)(failLabel)(lowerPattern)
+                    |> lowerAdtPatternField(valueTemp)(index)(tagless)(pattern)(semanticType)(failLabel)(lowerPattern)
+                    |> lowerRecordPatternFields(rest)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
 
 let finishRecordPattern fields valueTemp valueType failLabel lowerPattern shape =
     match shape with
-        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, fieldNames = fieldNames }, parameterTypes = fieldTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tag = tag, fieldNames = fieldNames, tagless = tagless }, parameterTypes = fieldTypes, resultType = resultType } ->
             match bindType(valueType)(resultType)(state) with
                 | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
                 | (typedState, None) ->
                     typedState
-                    |> finishConstructorTag(valueTemp)(tag)(failLabel)
-                    |> lowerRecordPatternFields(fields)(fieldNames)(fieldTypes)(valueTemp)(failLabel)(lowerPattern)
+                    |> finishConstructorTag(valueTemp)(tag)(tagless)(failLabel)
+                    |> lowerRecordPatternFields(fields)(fieldNames)(fieldTypes)(valueTemp)(tagless)(failLabel)(lowerPattern)
 
 let lowerRecordPattern name fields valueTemp valueType failLabel lowerPattern state =
     match constructorLayout(name)(state) with
@@ -3336,13 +3350,13 @@ let recursive nthMatchCase cases (index: Int) =
 let finishKnownTagConstructorPattern patterns valueTemp valueType failLabel lowerPattern shape =
     match shape with
         | CoreConstructorShape { layout = CoreConstructorLayout { isZeroCost = true } } -> finishConstructorPattern(patterns)(valueTemp)(valueType)(failLabel)(lowerPattern)(shape)
-        | CoreConstructorShape { state = state, parameterTypes = parameterTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tagless = tagless }, parameterTypes = parameterTypes, resultType = resultType } ->
             if coreListLength(patterns) != coreListLength(parameterTypes)
             then LoweredCorePattern(state = state, error = Some(UnsupportedCoreLoweringPattern("constructor arity")))
             else
                 match bindType(valueType)(resultType)(state) with
                     | (failedState, Some(error)) -> LoweredCorePattern(state = failedState, error = Some(error))
-                    | (typedState, None) -> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(failLabel)(lowerPattern)(LoweredCorePattern(state = typedState, error = None))
+                    | (typedState, None) -> lowerAdtPatternFields(patterns)(parameterTypes)(valueTemp)(0)(tagless)(failLabel)(lowerPattern)(LoweredCorePattern(state = typedState, error = None))
 
 let recursive lowerKnownTagPattern pattern valueTemp valueType failLabel state =
     match unwrapPatternAt(pattern) with
@@ -3442,6 +3456,27 @@ let lowerDefaultTagGroupArm cases (defaultIndex: Maybe(Int)) (defaultLabel: Str)
                         |> lowerMatchArm(pattern)(body)(guard)(plan.noMatchLabel)(None)(lower)
                         |> recastMatchPlan(labeled)
 
+// A single-constructor (tagless) scrutinee has exactly one group and nothing to switch on:
+// control falls straight into that group's label, and no tag temp is allocated. Its per-case
+// sub-pattern tests still run inside the group, and can still fall through to the default arm.
+let isSoleTaglessTagGroup (groups: List(CoreTagGroup)) state =
+    match groups with
+        | CoreTagGroup { constructorName = name } :: [] ->
+            match constructorLayout(name)(state) with
+                | Some(CoreConstructorLayout { tagless = tagless }) -> tagless
+                | None -> false
+        | _ -> false
+
+let emitTagGroupSwitch valueTemp switchCases defaultLabel (soleTagless: Bool) state =
+    if soleTagless
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = tagState, temp = tagTemp } ->
+                tagState
+                |> emit(GetAdtTag(tagTemp)(valueTemp))
+                |> emit(SwitchTag(tagTemp)(switchCases)(defaultLabel))
+
 let lowerMatchArmsViaTagGroups cases (groups: List(CoreTagGroup)) (defaultIndex: Maybe(Int)) lower (plan: CoreMatchPlan) =
     match freshGroupLabels(groups)(plan.state)([])([]) with
         | (labelState, groupLabels, switchCases) ->
@@ -3452,16 +3487,12 @@ let lowerMatchArmsViaTagGroups cases (groups: List(CoreTagGroup)) (defaultIndex:
             in
                 match defaultLabelled with
                     | FreshLabel { state = defaultState, label = defaultLabel } ->
-                        match freshTemp(defaultState) with
-                            | FreshTemp { state = tagState, temp = tagTemp } ->
-                                let switched =
-                                    tagState
-                                    |> emit(GetAdtTag(tagTemp)(plan.valueTemp))
-                                    |> emit(SwitchTag(tagTemp)(switchCases)(defaultLabel))
-                                in
-                                    (plan with state = switched)
-                                    |> lowerTagGroups(cases)(groups)(groupLabels)(defaultLabel)(lower)
-                                    |> lowerDefaultTagGroupArm(cases)(defaultIndex)(defaultLabel)(lower)
+                        let switched =
+                            emitTagGroupSwitch(plan.valueTemp)(switchCases)(defaultLabel)(isSoleTaglessTagGroup(groups)(defaultState))(defaultState)
+                        in
+                            (plan with state = switched)
+                            |> lowerTagGroups(cases)(groups)(groupLabels)(defaultLabel)(lower)
+                            |> lowerDefaultTagGroupArm(cases)(defaultIndex)(defaultLabel)(lower)
 
 // Dead-arm trimming. A trailing run of arms after a prefix that already matches every value is
 // unreachable and is dropped before any arm is lowered. The verdict is only trusted for pattern
@@ -4073,13 +4104,13 @@ let lowerListLiteral elements lower state =
     |> expectedOrFreshEmptyList
     |> finishListLiteral(elements)(lower)
 
-let recursive emitAdtFields baseTemp index temps state =
+let recursive emitAdtFields baseTemp index tagless temps state =
     match temps with
         | [] -> state
         | temp :: rest ->
             state
-            |> emit(SetAdtField(baseTemp)(index)(temp))
-            |> emitAdtFields(baseTemp)(index + 1)(rest)
+            |> emit(SetAdtField(baseTemp)(index)(temp)(tagless))
+            |> emitAdtFields(baseTemp)(index + 1)(tagless)(rest)
 
 let finishConstructorAllocation layout resultType runtimeManaged lowered =
     match (layout, lowered) with
@@ -4091,7 +4122,7 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
             |> coreListLength
             |> CoreConstructorArityMismatch(name)(1)
             |> failure(state)
-        | (CoreConstructorLayout { tag = tag }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
+        | (CoreConstructorLayout { tag = tag, tagless = tagless }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
             match freshTemp(state) with
                 | FreshTemp { state = allocatedState, temp = resultTemp } ->
                     let fieldCount = coreListLength(temps)
@@ -4100,8 +4131,8 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
                         // constructor shape (see `instantiateConstructor`); without one the cell is
                         // arena-placed, and any `RcDrop` the consumer pairs with an RC cell is its own.
                         allocatedState
-                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged))
-                        |> emitAdtFields(resultTemp)(0)(temps)
+                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
+                        |> emitAdtFields(resultTemp)(0)(tagless)(temps)
                         |> success(resultTemp)(resolveType(allocatedState)(resultType))
 
 let finishConstructorArguments arguments lower shape =
@@ -4563,14 +4594,14 @@ let lowerRecord name fields lower state =
                         state
                     )
 
-let emitRecordFieldLoad receiverTemp fieldType index fresh =
+let emitRecordFieldLoad receiverTemp fieldType index tagless fresh =
     match fresh with
         | FreshTemp { state = state, temp = fieldTemp } ->
             state
-            |> emit(GetAdtField(fieldTemp)(receiverTemp)(index))
+            |> emit(GetAdtField(fieldTemp)(receiverTemp)(index)(tagless))
             |> success(fieldTemp)(resolveType(state)(fieldType))
 
-let loadResolvedRecordField typeName fieldName receiverTemp fieldNames fieldTypes typed =
+let loadResolvedRecordField typeName fieldName receiverTemp fieldNames fieldTypes tagless typed =
     match typed with
         | (failedState, Some(error)) -> failure(failedState)(error)
         | (typedState, None) ->
@@ -4582,14 +4613,14 @@ let loadResolvedRecordField typeName fieldName receiverTemp fieldNames fieldType
                 | Some(CorePatternField { index = index, semanticType = fieldType }) ->
                     typedState
                     |> freshTemp
-                    |> emitRecordFieldLoad(receiverTemp)(fieldType)(index)
+                    |> emitRecordFieldLoad(receiverTemp)(fieldType)(index)(tagless)
 
 let finishRecordFieldShape typeName fieldName receiverTemp receiverType fieldNames shape =
     match shape with
-        | CoreConstructorShape { state = state, parameterTypes = fieldTypes, resultType = resultType } ->
+        | CoreConstructorShape { state = state, layout = CoreConstructorLayout { tagless = tagless }, parameterTypes = fieldTypes, resultType = resultType } ->
             state
             |> bindType(receiverType)(resultType)
-            |> loadResolvedRecordField(typeName)(fieldName)(receiverTemp)(fieldNames)(fieldTypes)
+            |> loadResolvedRecordField(typeName)(fieldName)(receiverTemp)(fieldNames)(fieldTypes)(tagless)
 
 let finishRecordFieldLayout typeName fieldName receiverTemp receiverType state layout =
     match layout with
@@ -4634,17 +4665,17 @@ let finishUpdatedRecordField expectedType reversedTemps reversedTypes lowered =
                         error = None
                     )
 
-let loadUnchangedRecordField targetTemp index fieldType state reversedTemps reversedTypes =
+let loadUnchangedRecordField targetTemp index tagless fieldType state reversedTemps reversedTypes =
     match freshTemp(state) with
         | FreshTemp { state = loadState, temp = temp } ->
             LoweredCoreValues(
-                state = emit(GetAdtField(temp)(targetTemp)(index))(loadState),
+                state = emit(GetAdtField(temp)(targetTemp)(index)(tagless))(loadState),
                 temps = temp :: reversedTemps,
                 semanticTypes = fieldType :: reversedTypes,
                 error = None
             )
 
-let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp index lower reversedTemps reversedTypes state =
+let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp index tagless lower reversedTemps reversedTypes state =
     match (fieldNames, fieldTypes) with
         | ([], []) -> finishCoreValues(state)(reversedTemps)(reversedTypes)
         | (fieldName :: fieldRest, fieldType :: typeRest) ->
@@ -4654,6 +4685,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                         loadUnchangedRecordField(
                             targetTemp,
                             index,
+                            tagless,
                             fieldType,
                             state,
                             reversedTemps,
@@ -4673,6 +4705,7 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
                             updates,
                             targetTemp,
                             index + 1,
+                            tagless,
                             lower,
                             nextTemps,
                             nextTypes,
@@ -4681,11 +4714,11 @@ let recursive lowerRecordUpdateFields fieldNames fieldTypes updates targetTemp i
         | _ -> failedCoreValues(state)(UnsupportedCoreLoweringExpression("record layout arity"))
 
 let lowerTypedRecordUpdate layout resultType runtimeManaged fieldNames fieldTypes fields targetTemp lower typed =
-    match typed with
-        | (failedState, Some(error)) -> failure(failedState)(error)
-        | (typedState, None) ->
+    match (layout, typed) with
+        | (_layout, (failedState, Some(error))) -> failure(failedState)(error)
+        | (CoreConstructorLayout { tagless = tagless }, (typedState, None)) ->
             typedState
-            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(lower)([])([])
+            |> lowerRecordUpdateFields(fieldNames)(fieldTypes)(fields)(targetTemp)(0)(tagless)(lower)([])([])
             |> finishConstructorAllocation(layout)(resultType)(runtimeManaged)
 
 let finishRecordUpdateShape layout fieldNames fields targetTemp targetType lower shape =
@@ -6649,7 +6682,8 @@ let buildUserConstructorLayout (resultType: SemanticType) (quantified: List((Int
                                 tag = tag,
                                 scheme = TypeScheme(quantified = quantified, body = buildConstructorSchemeBody(fieldTypes)(resultType), constraints = []),
                                 fieldNames = fieldNames,
-                                isZeroCost = false
+                                isZeroCost = false,
+                                tagless = false
                             ))
 
 let recursive buildUserConstructorLayoutsFromIndex (resultType: SemanticType) (quantified: List((Int, Str))) (parameterTypes: List((Str, SemanticType))) (index: Int) (layouts: List(CoreConstructorLayout)) (constructors: List(TypeConstructor)) =
@@ -6711,9 +6745,10 @@ let recursive typeParameterQuantified (namedIds: List((Str, Int))) =
 // language.md's "4. Algebraic Data Types" section: "canonical Ashes source should declare [type
 // parameters] explicitly," but for migration compatibility a payload name with no explicit
 // parameter list is an implicit type parameter "only when it denotes no known type" — a
-// self-recursive field, a primitive, or any other already-registered type stays concrete
-// (`type AppError = | Json(JsonError)` refers to the real `JsonError` type, not a fresh
-// parameter); only a genuinely unknown name, like `a` in `type Inner = | Inner(a)`, becomes one.
+// self-recursive field, a primitive, a compiler-provided runtime type, or any other
+// already-registered type stays concrete (`type AppError = | Json(JsonError)` refers to the real
+// `JsonError` type, not a fresh parameter; `type Holder = | file: FileHandle` holds the real
+// handle type); only a genuinely unknown name, like `a` in `type Inner = | Inner(a)`, becomes one.
 let isPrimitiveTypeName name =
     match name with
         | "Int" -> true
@@ -6733,11 +6768,15 @@ let recursive containsTypeName names target =
             then true
             else containsTypeName(tail)(target)
 
+// The ADTs and handle types the compiler seeds itself (`BuiltinRegistry.CreateBuiltinTypes`), which
+// no user `type` declaration registers a layout for.
+let isBuiltinRuntimeTypeName name = name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle"
+
 let isKnownTypeName name selfName layouts externalOpaqueTypes =
     if name == selfName
     then true
     else
-        if isPrimitiveTypeName(name)
+        if isPrimitiveTypeName(name) || isBuiltinRuntimeTypeName(name)
         then true
         else
             if containsTypeName(externalOpaqueTypes)(name)
@@ -6787,7 +6826,26 @@ let recursive namesToTypeParameters (names: List(Str)) =
 // `TlsSocket`/`Task`/`JoinHandle`/`Process`/`FileHandle` — plus the primitive type names
 // `BuiltinRegistry.PrimitiveTypeNames` reserves — `Float`/`Bytes`/`Rune`/`u8`/`u16`/`u32`/`u64`), so
 // user code may not redeclare it with a top-level `type`.
-let isReservedTypeName name = name == "Ashes" || name == "Unit" || name == "List" || name == "Maybe" || name == "Result" || name == "Socket" || name == "TlsSocket" || name == "Task" || name == "JoinHandle" || name == "Process" || name == "FileHandle" || name == "Float" || name == "Bytes" || name == "Rune" || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+let isReservedTypeName name = name == "Ashes" || isBuiltinRuntimeTypeName(name) || name == "Float" || name == "Bytes" || name == "Rune" || name == "u8" || name == "u16" || name == "u32" || name == "u64"
+
+let recursive layoutSchemes (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { scheme = scheme } :: rest -> scheme :: layoutSchemes(rest)
+
+let recursive markTaglessLayouts (state: CoreLoweringState) (schemes: List(TypeScheme)) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { scheme = scheme, isZeroCost = isZeroCost } as layout) :: rest ->
+            (layout with tagless = isTaglessAdtConstructor(given (name: Str) -> isDeclaredResourceName(name)(state))(schemes)(isZeroCost)(scheme)) :: markTaglessLayouts(state)(schemes)(rest)
+
+// The layouts of one type declaration with their tagless flag decided (see TaglessAdtLayout). The
+// sibling count and the resource walk see every registered constructor scheme, the declaration's
+// own included, so a self-referential field and an earlier resource-bearing type are both visible.
+let decideTaglessLayouts (state: CoreLoweringState) (existingLayouts: List(CoreConstructorLayout)) (newLayouts: List(CoreConstructorLayout)) =
+    markTaglessLayouts(state)(newLayouts
+    |> append(existingLayouts)
+    |> layoutSchemes)(newLayouts)
 
 let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLoweringState) =
     match declaration with
@@ -6818,7 +6876,8 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
                                             in
                                                 match buildUserConstructorLayoutsFromIndex(resultType)(quantified)(parameterTypes)(0)(existingLayouts)(constructors) with
                                                     | Error(error) -> Error(error)
-                                                    | Ok(newLayouts) -> Ok((state with constructorLayouts = append(existingLayouts)(newLayouts), typeSupply = nextSupply))
+                                                    | Ok(newLayouts) ->
+                                                        Ok((state with constructorLayouts = append(existingLayouts)(decideTaglessLayouts(state)(existingLayouts)(newLayouts)), typeSupply = nextSupply))
 
 // Lowers a whole program's top-level items one at a time, threading lowering state through them,
 // rather than desugaring into one big nested-let expression up front: a top-level
