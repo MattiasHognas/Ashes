@@ -4,6 +4,7 @@
 // - The occurs check rejects infinite types before extending a substitution.
 // - Capability rows are order-independent and open tails absorb only unmatched capabilities.
 // - Two open rows share one fresh tail so neither unmatched side is assigned twice.
+// - Never is the bottom type: it unifies with any type, at any depth, without extending the substitution.
 
 import AshesCompiler.Semantics.Types
 import Ashes.Collection.List.reverse
@@ -177,6 +178,8 @@ and unifyWith substitution left right =
             then unificationSuccess(substitution)
             else
                 match (resolvedLeft, resolvedRight) with
+                    | (SemNever, _) -> unificationSuccess(substitution)
+                    | (_, SemNever) -> unificationSuccess(substitution)
                     | (SemVariable(variableId), semanticType) -> bindVariable(variableId)(semanticType)(substitution)
                     | (semanticType, SemVariable(variableId)) -> bindVariable(variableId)(semanticType)(substitution)
                     | (SemUInt(leftBits), SemUInt(rightBits)) ->

@@ -53,6 +53,15 @@ let expectOpenRowTail left right =
             else test.fail("open row tail should contain the unmatched capability")
         | _ -> test.fail("open row should unify with a larger closed row")
 
+let expectNoSubstitution left right =
+    match unify(left)(right) with
+        | UnificationResult { substitution = [], error = None } -> Unit
+        | UnificationResult { substitution = _substitution, error = None } -> test.fail("Never should not extend the substitution")
+        | UnificationResult { substitution = _substitution, error = Some(error) } ->
+            test.fail(
+                "Never should unify: " + Ashes.Trait.Show.show(error)
+            )
+
 let clockCapability = SemCapability("Clock")([])
 
 let stateIntCapability = SemCapability("State")([SemInt])
@@ -104,6 +113,26 @@ let closedRowRejectsExtraCapability unit =
     |> SemRow([clockCapability, stateIntCapability])
     |> expectMismatch(SemRow([clockCapability])(None))
 
+let neverAbsorbsConcreteTypeOnLeft unit = expectNoSubstitution(SemNever)(SemInt)
+
+let neverAbsorbsConcreteTypeOnRight unit = expectNoSubstitution(SemString)(SemNever)
+
+let neverLeavesVariableUnboundOnLeft unit = expectNoSubstitution(SemNever)(SemVariable(0))
+
+let neverLeavesVariableUnboundOnRight unit = expectNoSubstitution(SemVariable(0))(SemNever)
+
+let neverAbsorbsListElement unit = expectNoSubstitution(SemList(SemNever))(SemList(SemInt))
+
+let neverAbsorbsNamedTypeArgument unit =
+    [SemInt, SemString]
+    |> SemNamed(7)("Result")
+    |> expectNoSubstitution(SemNamed(7)("Result")([SemNever, SemString]))
+
+let neverAbsorbsFunctionArgument unit =
+    None
+    |> SemFunction(SemInt)(SemString)
+    |> expectUnified("Never -> Str")(SemFunction(SemNever)(SemVariable(0))(None))
+
 let reportSuccess unit = Ashes.IO.print("all self-hosted row-aware unification tests passed")
 
 let runUnificationTests unit =
@@ -120,4 +149,11 @@ let runUnificationTests unit =
     |> parameterizedCapabilityUnifies
     |> openRowCapturesExtraCapability
     |> closedRowRejectsExtraCapability
+    |> neverAbsorbsConcreteTypeOnLeft
+    |> neverAbsorbsConcreteTypeOnRight
+    |> neverLeavesVariableUnboundOnLeft
+    |> neverLeavesVariableUnboundOnRight
+    |> neverAbsorbsListElement
+    |> neverAbsorbsNamedTypeArgument
+    |> neverAbsorbsFunctionArgument
     |> reportSuccess
