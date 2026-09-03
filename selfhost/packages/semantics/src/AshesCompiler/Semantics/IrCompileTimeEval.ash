@@ -122,11 +122,11 @@ let isModeledPureLeaf inst =
         | CmpStrEq(_, _, _) -> true
         | CmpStrNe(_, _, _) -> true
         | ConcatStr(_, _, _, _) -> true
-        | AllocAdt(_, _, _, _) -> true
-        | AllocAdtStack(_, _, _) -> true
-        | SetAdtField(_, _, _) -> true
+        | AllocAdt(_, _, _, _, _) -> true
+        | AllocAdtStack(_, _, _, _) -> true
+        | SetAdtField(_, _, _, _) -> true
         | GetAdtTag(_, _) -> true
-        | GetAdtField(_, _, _) -> true
+        | GetAdtField(_, _, _, _) -> true
         | Label(_) -> true
         | Jump(_) -> true
         | JumpIfFalse(_, _) -> true
@@ -752,7 +752,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
                 | _ -> None
-        | AllocAdt(target, tag, size, _) ->
+        | AllocAdt(target, tag, size, _, _) ->
             Some(
                 InterpreterState(
                     stepsLeft = state.stepsLeft,
@@ -760,7 +760,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     locals = state.locals
                 )
             )
-        | AllocAdtStack(target, tag, size) ->
+        | AllocAdtStack(target, tag, size, _) ->
             Some(
                 InterpreterState(
                     stepsLeft = state.stepsLeft,
@@ -768,7 +768,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                     locals = state.locals
                 )
             )
-        | SetAdtField(ptr, idx, src) ->
+        | SetAdtField(ptr, idx, src, _) ->
             match (lookupAssociation(ptr)(state.temps), lookupAssociation(src)(state.temps)) with
                 | (Some(CtAdt(tag, fields)), Some(srcVal)) ->
                     let updatedFields = updateAdtField(idx)(srcVal)(fields)(0)
@@ -792,7 +792,7 @@ let execPureInst (program: IrProgram) inst (state: InterpreterState) =
                         )
                     )
                 | _ -> None
-        | GetAdtField(target, ptr, idx) ->
+        | GetAdtField(target, ptr, idx, _) ->
             match lookupAssociation(ptr)(state.temps) with
                 | Some(CtAdt(_, fields)) ->
                     match getAdtFieldAt(idx)(fields)(0) with

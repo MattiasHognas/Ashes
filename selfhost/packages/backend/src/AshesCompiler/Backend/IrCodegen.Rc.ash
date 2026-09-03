@@ -205,9 +205,10 @@ let emitRuntimeDropReuse context function_ i64 i8 ptrType builder resultName val
                                     |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(resultName)))
 
-// Writes the constructor tag into word `0` of a reused ADT cell; a list cell has no tag word.
-let emitReuseTagStore builder i64 ptrType tokenRef tag listCell =
-    if listCell
+// Writes the constructor tag into word `0` of a reused ADT cell; a list cell and a tagless cell
+// have no tag word.
+let emitReuseTagStore builder i64 ptrType tokenRef tag listCell tagless =
+    if listCell || tagless
     then Unit
     else
         let _ =
@@ -217,14 +218,14 @@ let emitReuseTagStore builder i64 ptrType tokenRef tag listCell =
         in Unit
 
 // The fresh cell `AllocReusing` allocates when its runtime-managed token is null: a two-word
-// list cell, or a tagged `[tag][fields...]` ADT cell of the requested layout.
-let emitReuseFreshCell builder i64 i8 mallocFn mallocType tag fieldCount listCell =
+// list cell, or a `[tag][fields...]` (or tagless `[fields...]`) ADT cell of the requested layout.
+let emitReuseFreshCell builder i64 i8 mallocFn mallocType tag fieldCount listCell tagless =
     if listCell
     then
         buildPtrToInt(builder)(emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(rcListCellPayloadBytes)("rc_list_reuse"))(i64)("rc_list_reuse_word")
-    else emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)("rc_adt_reuse")
+    else emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(tagless)("rc_adt_reuse")
 
-let emitRuntimeAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount listCell resultName tokenRef =
+let emitRuntimeAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount listCell tagless resultName tokenRef =
     (let resultSlot = buildEntryAlloca(builder)(i64)("alloc_reuse_result_slot")
     in
         let takeBlock = appendBasicBlock(context)(function_)("alloc_reuse_take")
@@ -238,13 +239,13 @@ let emitRuntimeAllocReusing context function_ i64 i8 ptrType builder mallocFn ma
                     |> (given (hasToken) -> buildCondBr(builder)(hasToken)(takeBlock)(freshBlock))
                     |> (given (_) ->
                         emitRcArm(builder)(takeBlock)(continueBlock)(given (_) ->
-                            listCell
-                            |> emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)
+                            tagless
+                            |> emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)(listCell)
                             |> (given (_) -> buildStore(builder)(tokenRef)(resultSlot))))
                     |> (given (_) ->
                         emitRcArm(builder)(freshBlock)(continueBlock)(given (_) ->
-                            listCell
-                            |> emitReuseFreshCell(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)
+                            tagless
+                            |> emitReuseFreshCell(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(listCell)
                             |> (given (fresh) -> buildStore(builder)(fresh)(resultSlot))))
                     |> (given (_) -> positionBuilderAtEnd(builder)(continueBlock))
                     |> (given (_) -> buildLoad(builder)(i64)(resultSlot)(resultName)))
@@ -254,11 +255,11 @@ let emitRuntimeAllocReusing context function_ i64 i8 ptrType builder mallocFn ma
 // of the compatible layout, so that form is the tag store alone; a runtime-managed token is null
 // when `DropReuse` found the cell shared, in which case a fresh RC cell of the same layout is
 // allocated instead.
-let emitAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount runtimeManaged listCell resultName tokenRef =
+let emitAllocReusing context function_ i64 i8 ptrType builder mallocFn mallocType tag fieldCount runtimeManaged listCell tagless resultName tokenRef =
     if runtimeManaged
-    then emitRuntimeAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(listCell)(resultName)(tokenRef)
+    then emitRuntimeAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(listCell)(tagless)(resultName)(tokenRef)
     else
-        let _ = emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)(listCell)
+        let _ = emitReuseTagStore(builder)(i64)(ptrType)(tokenRef)(tag)(listCell)(tagless)
         in tokenRef
 
 // The runtime-managed `RcDup` instruction: a value that may be the empty list (the null pointer,

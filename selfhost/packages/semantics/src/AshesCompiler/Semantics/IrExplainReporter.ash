@@ -96,10 +96,10 @@ let countRcOperation (report: RcFunctionReport) (instruction: IrInstruction) =
         | IrInstruction { instruction = RcDup(_, _, _, _) } -> report with dups = report.dups + 1
         | IrInstruction { instruction = RcDrop(_, _, _, _, _, _) } -> report with drops = report.drops + 1
         | IrInstruction { instruction = RcIsUnique(_, _) } -> report with uniquenessChecks = report.uniquenessChecks + 1
-        | IrInstruction { instruction = AllocReusing(_, _, _, _, _, _) } -> report with reusedAllocations = report.reusedAllocations + 1
+        | IrInstruction { instruction = AllocReusing(_, _, _, _, _, _, _) } -> report with reusedAllocations = report.reusedAllocations + 1
         | IrInstruction { instruction = DropReuse(_, _, _, _) } -> report with reuseTokens = report.reuseTokens + 1
         | IrInstruction { instruction = Alloc(_, _, _) } -> report with allocations = report.allocations + 1
-        | IrInstruction { instruction = AllocAdt(_, _, _, _) } -> report with allocations = report.allocations + 1
+        | IrInstruction { instruction = AllocAdt(_, _, _, _, _) } -> report with allocations = report.allocations + 1
         | IrInstruction { instruction = CopyOutArena(_, _, _, _, _, _) } -> report with copies = report.copies + 1
         | IrInstruction { instruction = CopyOutList(_, _, _, _, _) } -> report with copies = report.copies + 1
         | _ -> report

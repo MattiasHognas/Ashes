@@ -318,7 +318,7 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder mallocFn mallocT
                                                 valueBlock
                                                 |> buildCondBr(builder)(emitEnvironmentPtrIsNull(builder)(i64)(value)("env_get_is_missing"))(missingBlock)
                                                 |> (given (_) -> positionBuilderAtEnd(builder)(missingBlock))
-                                                |> (given (_) -> emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("env_get_none"))
+                                                |> (given (_) -> emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("env_get_none"))
                                                 |> (given (noneValue) ->
                                                     buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(noneValue)("env_get_none_ok"))(resultSlot))
                                                 |> (given (_) -> buildBr(builder)(doneBlock))
@@ -331,7 +331,7 @@ let emitEnvironmentGet context function_ i64 i8 ptrType builder mallocFn mallocT
                                                 |> (given (_) ->
                                                     emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(buildPtrToInt(builder)(value)(i64)("env_get_value_addr"))(valueLength)("env_get_string"))
                                                 |> (given (stringValue) ->
-                                                    let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("env_get_some")
+                                                    let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("env_get_some")
                                                     in
                                                         let _ =
                                                             "env_get_some_field"

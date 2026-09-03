@@ -335,7 +335,7 @@ let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcp
                         in
                             let stringRef = emitHeapStringFromBytesAddr(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(scratch.bufferAddr)(finalLen)("read_line_string")
                             in
-                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)("read_line_some")
+                                let someValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(1)(1)(false)("read_line_some")
                                 in
                                     let someFieldPtr =
                                         gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(someValue)(ptrType)("read_line_some_ptr"))(8)("read_line_some_field_ptr")
@@ -349,7 +349,7 @@ let emitReadLineFinish i64 i8 ptrType builder mallocFn mallocType memcpyFn memcp
                                                     let _ = positionBuilderAtEnd(builder)(blocks.returnNoneBlock)
                                                     in
                                                         let _ =
-                                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)("read_line_none"))(scratch.resultSlot)
+                                                            buildStore(builder)(emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(0)(0)(false)("read_line_none"))(scratch.resultSlot)
                                                         in
                                                             let _ = buildBr(builder)(blocks.continueBlock)
                                                             in
@@ -549,7 +549,7 @@ let emitFilesystemStatusResult context function_ i64 i8 ptrType builder arena ma
                     |> buildCondBr(builder)(succeeded)(okBlock)
                     |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                     |> (given (_) ->
-                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
+                        buildStore(builder)(emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)(prefix + "_unit"))(prefix + "_ok"))(resultSlot))
                     |> (given (_) -> buildBr(builder)(continueBlock))
                     |> (given (_) -> positionBuilderAtEnd(builder)(errorBlock))
                     |> (given (_) ->
@@ -1320,7 +1320,7 @@ let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocTy
 let emitFileClose context function_ builder i64 i8 ptrType arena mallocFn mallocType handleVal =
     handleVal
     |> emitLinuxClose(builder)(i64)
-    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)("file_close_unit"))
+    |> (given (_) -> emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(0)(0)(false)("file_close_unit"))
     |> (given (unitValue) -> emitResultAdt(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(0)(unitValue)("file_close_ok"))
 
 // "Ashes.IO.File.readText() failed" — stage 0's `FileReadFailedMessage`, shared by `readText`,

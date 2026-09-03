@@ -211,12 +211,12 @@ let emitOutSlotMaterialization (slotTemp: Int) (elementType: ExternalAbiType) (c
                                                                 LoadConstInt(zeroTemp)(0),
                                                                 CmpIntEq(isNullTemp)(loadedTemp)(zeroTemp),
                                                                 JumpIfFalse(isNullTemp)(someLabel),
-                                                                AllocAdt(noneTemp)(0)(0)(false),
+                                                                AllocAdt(noneTemp)(0)(0)(false)(false),
                                                                 StoreLocal(resultSlot)(noneTemp),
                                                                 Jump(endLabel),
                                                                 Label(someLabel),
-                                                                AllocAdt(someTemp)(1)(1)(false),
-                                                                SetAdtField(someTemp)(0)(loadedTemp),
+                                                                AllocAdt(someTemp)(1)(1)(false)(false),
+                                                                SetAdtField(someTemp)(0)(loadedTemp)(false),
                                                                 StoreLocal(resultSlot)(someTemp),
                                                                 Label(endLabel),
                                                                 LoadLocal(resultTemp)(resultSlot)
@@ -253,7 +253,7 @@ let packageMaterializedResults returnInstrs startTemp components =
             let unitTemp = startTemp
             in
                 CoreExternalLoweringEmission(
-                    instructions = append(returnInstrs)([AllocAdt(unitTemp)(0)(0)(false)]),
+                    instructions = append(returnInstrs)([AllocAdt(unitTemp)(0)(0)(false)(false)]),
                     nextTemp = startTemp + 1,
                     nextLocal = 0,
                     resultTemp = unitTemp,

@@ -11,6 +11,7 @@
 // built on them), which reach `IrCodegen.Syscalls.LinuxX64` for `write` — they are the first
 // helpers a second target has to route through a primitive seam rather than a direct call.
 
+import AshesCompiler.Semantics.TaglessAdtLayout.adtAllocationSizeBytes
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import Ashes.Number.UInt
@@ -582,11 +583,20 @@ let emitRcAllocPayloadPtr builder i64 i8 mallocFn mallocType payloadSizeBytes na
                         buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(payloadSizeBytes))(false))(sizePtr)
                     in gepBytes(builder)(i64)(i8)(headerPtr)(16)(name + "_payload_ptr"))
 
-let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount resultName =
-    (let payloadPtr = emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)((fieldCount + 1) * 8)("adt")
+// A runtime-managed (RC) ADT cell: the payload behind the RC header is `[tag][fields...]`, or
+// `[fields...]` with no tag word when `tagless` (a single-constructor cell, see TaglessAdtLayout).
+let emitAllocAdtRuntimeManaged builder i64 i8 mallocFn mallocType tag fieldCount tagless resultName =
+    (let payloadPtr =
+        emitRcAllocPayloadPtr(builder)(i64)(i8)(mallocFn)(mallocType)(adtAllocationSizeBytes(tagless)(fieldCount))("adt")
     in
         let _ =
-            buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr)
+            if tagless
+            then Unit
+            else
+                Unit
+                |> (given (_) ->
+                    buildStore(builder)(constInt(i64)(Ashes.Number.UInt.fromInt64(tag))(false))(payloadPtr))
+                |> (given (_) -> Unit)
         in buildPtrToInt(builder)(payloadPtr)(i64)(resultName))
 
 // `sizeBytes` of stack storage as `[n x i64]` (`AllocStack`/`MakeClosureStack`: lowering only
@@ -800,7 +810,7 @@ let emitAsciiHeapString builder i64 i8 ptrType mallocFn mallocType memcpyFn memc
 // `Ok(value)` (tag 0) / `Error(value)` (tag 1): one field stored past the tag word — stage 0's
 // `EmitResultOk`/`EmitResultError` tags exactly.
 let emitResultAdt builder i64 i8 ptrType mallocFn mallocType tag fieldValue name =
-    (let adtValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(1)(name)
+    (let adtValue = emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(1)(false)(name)
     in
         let adtPtr = buildIntToPtr(builder)(adtValue)(ptrType)(name + "_ptr")
         in
