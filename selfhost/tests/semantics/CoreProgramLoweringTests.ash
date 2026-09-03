@@ -273,6 +273,51 @@ let expectCaptureFreeClosureHasNoNormalizer unit =
         |> containsLine("function lambda_0$env_normalize  [ClosureEnvironmentNormalizer from constant]")
         |> test.assertEqual(false))
 
+// A general call keeps its chain's intermediates in an arena window of its own: saved before the
+// callee is read, and reset after the last application when the result survives the reset. The
+// inner `f(2)` window closes before the outer application consumes its result; the outer one
+// closes after its own call. Builtin applications open no window.
+let expectCallSpinesGetArenaWindows unit =
+    "let f x = x + 1\n\nf(f(2))"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=6")
+            |> test.assertEqual(true)))
+
+// A call whose result is a closure cannot be copied out yet, so its window stays open.
+let expectClosureResultKeepsCallWindowOpen unit =
+    "let makeAdder x =\n    given (y) -> x + y\n\nlet add5 = makeAdder(5)\n\nadd5(10)"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3")
+            |> test.assertEqual(false))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7")
+            |> test.assertEqual(true)))
+
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
     "(given (x) -> x + 1)(41)"
     |> dumpSource
@@ -401,5 +446,7 @@ let runCoreProgramLoweringTests unit =
     |> expectLambdaOriginsNameTheirBinding
     |> expectScalarCaptureClosureGetsEnvironmentNormalizer
     |> expectCaptureFreeClosureHasNoNormalizer
+    |> expectCallSpinesGetArenaWindows
+    |> expectClosureResultKeepsCallWindowOpen
     |> expectAnonymousLambdaIsAnAnonymousClosureHelper
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))
