@@ -2280,6 +2280,48 @@ let buildOptimizedIrRecursiveHelperModule name context = codegenOptimizedRealSou
 
 let buildOptimizedIrDeepTailLoopModule name context = codegenOptimizedRealSource("let recursive loop n acc = if n == 0 then acc else loop(n - 1)(acc + 1)\nAshes.IO.print(loop(2000000)(0))")(name)(context)
 
+// A hand-built `Label`/`Jump` loop whose body calls a builtin with a fixed-size scratch `alloca`
+// (`MonotonicMillis`'s 16-byte `timespec`): unoptimized code reclaims a loop-body `alloca` only
+// at function return, so two million iterations overflow the native stack unless the slot is
+// hoisted to the entry block and reused by every iteration. Built directly because every loop
+// the lowering produces today is a `musttail` self call, whose frame is reset per iteration and
+// so never shows the leak; the lowering's own `lambda_N_body` back edges have this exact shape.
+let buildScratchAllocaLoopModule name context =
+    (let instructions =
+        [
+            IrInstruction(instruction = LoadConstInt(0)(2000000), location = None),
+            IrInstruction(instruction = StoreLocal(0)(0), location = None),
+            IrInstruction(instruction = Label("loop_body"), location = None),
+            IrInstruction(instruction = LoadLocal(1)(0), location = None),
+            IrInstruction(instruction = LoadConstInt(2)(0), location = None),
+            IrInstruction(instruction = CmpIntGt(3)(1)(2), location = None),
+            IrInstruction(instruction = JumpIfFalse(3)("loop_done"), location = None),
+            IrInstruction(instruction = MonotonicMillis(4), location = None),
+            IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+            IrInstruction(instruction = SubInt(6)(1)(5), location = None),
+            IrInstruction(instruction = StoreLocal(0)(6), location = None),
+            IrInstruction(instruction = Jump("loop_body"), location = None),
+            IrInstruction(instruction = Label("loop_done"), location = None),
+            IrInstruction(instruction = LoadConstInt(7)(7), location = None),
+            IrInstruction(instruction = PrintInt(7), location = None),
+            IrInstruction(instruction = Return(7), location = None)
+        ]
+    in
+        let irFunction =
+            IrFunction(
+                label = name,
+                instructions = instructions,
+                localCount = 1,
+                tempCount = 8,
+                hasEnvAndArgParams = false,
+                coroutine = None,
+                localNames = [],
+                localTypes = [],
+                origin = None,
+                lifetimesPlaced = false
+            )
+        in codegenEntryFunction(name)(context)(irFunction)([]))
+
 let buildOptimizedIrDeepMutualRecursionModule name context = codegenOptimizedRealSource("let recursive isEven n = if n == 0 then true else isOdd(n - 1) and isOdd n = if n == 0 then false else isEven(n - 1)\nAshes.IO.print(isEven(2000000))")(name)(context)
 
 let resolveHostTargetMachine triple =
@@ -3125,6 +3167,8 @@ let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProg
 
 let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
 
+let testRunStaticExecutableForScratchAllocaLoopModule unit = assertProgramPrints(buildScratchAllocaLoopModule)("selfhostBackendRunOptimizedScratchAllocaLoop")("selfhost_backend_scratch_alloca_loop_e2e")("7")
+
 // A file handle bound by a match arm is closed at the arm's exit: opening the same file more
 // times than the default per-process fd limit only succeeds when every earlier handle was closed.
 let buildOptimizedIrFileHandleAutoCloseModule name context = codegenOptimizedRealSource("let recursive loop n =\n    if n == 0\n    then 0\n    else\n        match Ashes.IO.File.open(\"lib/Ashes/Text.ash\") with\n            | Error(_) -> 1\n            | Ok(fh) ->\n                match Ashes.IO.File.readChunk(fh)(1) with\n                    | Error(_) -> 2\n                    | Ok(_) -> loop(n - 1)\nAshes.IO.print(loop(3000))")(name)(context)
@@ -3499,6 +3543,7 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrCurriedHelperModule
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
     |> testRunStaticExecutableForOptimizedIrDeepTailLoopModule
+    |> testRunStaticExecutableForScratchAllocaLoopModule
     |> testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule
     |> testRunStaticExecutableForOptimizedIrConsolePollModule
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule

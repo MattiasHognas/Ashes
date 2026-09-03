@@ -173,7 +173,7 @@ let emitArenaReclaimBody context builder i64 i8 ptrType (arena: ArenaRuntime) =
         | (entryBlock, loopBlock, chunkBlock, doneBlock) ->
             Unit
             |> (given (_) -> positionBuilderAtEnd(builder)(entryBlock))
-            |> (given (_) -> buildAlloca(builder)(i64)("reclaim_current"))
+            |> (given (_) -> buildEntryAlloca(builder)(i64)("reclaim_current"))
             |> (given (currentSlot) ->
                 Unit
                 |> (given (_) ->
