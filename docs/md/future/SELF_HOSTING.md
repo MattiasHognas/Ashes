@@ -25,7 +25,7 @@ changed merely to make the self-hosted port easier.
 | Expression/program inference | Core and structural expressions, operators, records, guarded matches, Result pipelines, `let?`, annotations, constructors, recursive groups, aliases, zero-cost types, sequential top-level inference, and package-aware inference of dependency-ordered stitched modules | Implemented for the listed surface |
 | Capabilities | Declaration and operation schemes, effect propagation, handlers and `resume`, provider registration, exact concrete provider satisfaction, abstract requirement preservation, and provider/handler ambiguity rejection | Implemented for inference; lowering and code generation remain |
 | Traits | Operator constraints; trait declaration/method registration; forward supertrait validation; cycle rejection; qualified method schemes; default-body type checking; ordinary implementation registration with rigid heads, requirements, optional defaults, and type-checked supplied methods; deterministic duplicate/structural-overlap rejection; package orphan ownership for traits and nominal head types; decreasing conditional requirements; selected-default dependency validation; canonical constraints with transitive supertrait elimination; written binding-requirement boundary validation; recursive concrete instance evidence resolution; canonical failure traces; deterministic hidden-dictionary ABI shape planning; ABI-ordered call-site evidence argument planning; constrained-function application/partial-capture planning; active evidence forwarding with deterministic supertrait paths; active trait-method slot planning; concrete dictionary-construction input planning with supplied/default method selection; dependency-aware selected-method construction order; evidence transport destinations for direct functions, closures, aggregates, and async frames; constrained-value rewriting with hidden parameters, dictionary destructuring, and unambiguous method binding; constrained-reference rewriting with exact or inherited active evidence; concrete dictionary-value rewriting with selected method bindings and nested supertrait values; the shipped standard trait ABI plus primitive/structural implementation heads bound to rewritten `Ashes.Trait` source bodies; and deterministic, declaration-aware `deriving` expansion for ordinary and zero-cost nominal types | Declaration, ordinary implementation, coherence, termination, default-cycle, constraint-canonicalization, written `requires` validation, evidence-plan resolution, structured resolution failures, dictionary ABI layouts, call-site evidence arguments, constrained-function application plans, recursive/sibling evidence-forwarding plans, active method-access plans, concrete construction inputs, selected-method build order, value-transport plans, constrained-value/reference rewriting, concrete dictionary-value rewriting, standard implementation evidence/source binding, syntax-level deriving expansion, and semantic deriving eligibility validation implemented; physical IR lowering remains |
-| IR, optimizer, ownership, backend, linker | Complete IR model/text form plus core lowering for constants, lexical locals, calls, closures, captures, control flow, recursion, structural values and patterns, operators, BigInt literals, and the shipped non-async/non-FFI builtin operations | In progress; external/evidence/async lowering, optimization, ownership, backend, and linking remain |
+| IR, optimizer, ownership, backend, linker | Complete IR model/text form plus core lowering for constants, lexical locals, calls, closures, captures, control flow, recursion, structural values and patterns, operators, BigInt literals, and the shipped non-async/non-FFI builtin operations; arena brackets, call windows, and lifetime placement over six byte-exact IR parity fixtures; a linux-x64 LLVM backend and pure-Ashes ELF linker producing real executables | In progress; trait-evidence/provider/async lowering, Perceus dup/drop emission, reuse, optimization levels, and the other three targets remain |
 | CLI, LSP, DAP, TestRunner, fuzzing runner, registry commands | Package boundaries are defined; `fmt` and `init` are ported (see the checklist below) | Started |
 | Bootstrap | No stage-1/stage-2 compiler build or equivalence comparison yet | Not started |
 
@@ -640,7 +640,11 @@ same public behavior.
 - [ ] **OPT-19** Widen mutual-recursion loop merging past same-arity/identical-parameter-type groups: one
   dispatch slot per agreeing parameter position plus one per distinct type elsewhere, non-callee
   slots filled with the slot type's default literal; a slot type with no constructible default, or
-  differing result types, declines the group.
+  differing result types, declines the group. The base same-arity merge itself is not ported yet
+  (stage 0's `TryLowerMutualRecursionTco` through `RewriteGroupTailCalls` in
+  `Lowering.TopLevel.cs`: the merged `lambda_N` loop body, `__recgroup_dispatch_N`, and the
+  `MutualRecursionWrapper` members); the `mutual_recursion` IR parity fixture, whose `recgroup_*`
+  members and entry already match, joins the parity runner with it.
 - [ ] **OPT-20** Resolve a member body's **non-tail** sibling references inside the merged dispatch: bind
   every member name to its already-emitted closure slot while lowering the synthesized dispatch
   body, or a well-formed program hits the forward-reference diagnostic (`ASH014`).
@@ -691,10 +695,10 @@ same public behavior.
   `ownerless_match`, `pattern_match`, and `closure_capture` fixtures match stage 0
   byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`;
   the backend fuses it into a `musttail` when the instruction past the call's own window close
-  stores or returns its result. Open: the mutual-recursion loop merge (`mutual_recursion` stays
-  out of the parity runner: its `recgroup_*` members and entry already match, the merged
-  `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing),
-  per-arm brackets on the tag-group dispatch and capability-operation arm paths,
+  stores or returns its result. Open: the mutual-recursion loop merge (milestone 5's OPT-19;
+  `mutual_recursion` stays out of the parity runner until then: its `recgroup_*` members and entry
+  already match, the merged `lambda_N` body, `__recgroup_dispatch_N`, and the
+  `MutualRecursionWrapper`s are missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
   `CopyOutArena`/`CopyOutList` for heap-escaping results, coroutine/async back edges, entry
   normalization of a parameter reaching the result, the owner-alias walk across curried chains,
   borrowed reads of owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop`
@@ -834,10 +838,10 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: `CopyOutArena` (panics; lowering
-  brackets only provably-scalar scopes and never emits it), the rest of Perceus placement
-  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
-  async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). Open: `CopyOutArena`/`CopyOutList`
+  (panic; the lowering leaves a window open rather than emit them, see OPT-25), the rest of
+  Perceus placement (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and
+  the async/parallel/net/FFI instruction families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
@@ -972,9 +976,12 @@ same public behavior.
   takes the initial stack pointer as its one parameter and captures the environment vector base
   (`sp + 8 * (argc + 2)`) into `__ashes_envp` for `Process.spawn`. Open: the argc/argv half —
   program arguments remain unported.
-- [ ] **LNK-7** Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
+- [~] **LNK-7** Lay out and relocate x86-64 ELF64 images and emit the Linux entry trampoline and executable mode
   (`LlvmImageLinkerElf.cs`; [Linux x86-64](../internals/architecture.md#linux-x86-64-elf64) lists the relocation set and
-  the trampoline).
+  the trampoline). Done under CG-7 and LNK-6: static and eager-dynamic image layout, `.text`/
+  multi-`.rodata*`/`.bss` segments, the documented relocation set plus `R_X86_64_64`/`PLT32`/
+  `GLOB_DAT`, the entry trampoline, and the executable mode bit. Open: CG-7's tail (TLS sections,
+  initialized `.data`) and LNK-6's argc/argv half.
 - [ ] **LNK-8** Lay out and relocate AArch64 ELF64 images with the complete supported relocation set
   (`LlvmImageLinkerElfArm64.cs`; [Linux AArch64](../internals/architecture.md#linux-aarch64-elf64)).
 - [ ] **LNK-9** Lay out AMD64 PE32+ images, imports, BSS, entry trampoline, stack probing, and relocations
@@ -983,8 +990,10 @@ same public behavior.
 - [ ] **LNK-10** Lay out ARM64 PE32+ images, imports, unwind/runtime requirements, entry code, and relocations
   (`LlvmImageLinkerPeArm64.cs`; validated structurally on x64 hosts, see the win-arm64 note in
   [Development](../guide/development.md)).
-- [ ] **LNK-11** Resolve compiler runtime symbols, platform APIs, linked bitcode symbols, external libraries, and
-  embedded resources deterministically.
+- [~] **LNK-11** Resolve compiler runtime symbols, platform APIs, linked bitcode symbols, external libraries, and
+  embedded resources deterministically. Done: local `.text` symbols against the final text base
+  and the per-symbol `libc.so.6` whitelist over GOT stubs (CG-7), an unrecognized symbol being an
+  `Error`. Open: linked bitcode symbols (CG-13), external libraries, and embedded resources.
 - [ ] **LNK-12** Write final executables atomically, preserve installed-layout behavior, and produce deterministic
   structural diagnostics for malformed or unsupported objects.
 - [ ] **LNK-13** Execute host-target outputs and preserve the current Wine/QEMU/native/structural validation policy
