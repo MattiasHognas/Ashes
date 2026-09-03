@@ -5,10 +5,9 @@
 // fixed 64 KiB stack buffer, `Maybe(Str)`), `waitForExit` (`wait4` + `WEXITSTATUS`), and `kill`
 // (`SIGTERM`) — `LlvmCodegenBuiltins.Process.cs`'s Linux arms emitter for emitter, message
 // constants included. A `Process` value is a 32-byte RC payload
-// `{stdinWriteFd@0, stdoutReadFd@8, stderrReadFd@16, pid@24}` (stage 0's exact layout). The
-// resource-side contract (closing the pipes and reaping the child when a `Process` is dropped)
-// is the same SEM-14 ownership tail `FileHandle` carries — an unwaited process leaks its fds and
-// a zombie until program exit. Depends only on the LLVM bindings and `IrCodegen.Support`.
+// `{stdinWriteFd@0, stdoutReadFd@8, stderrReadFd@16, pid@24}` (stage 0's exact layout). A
+// `Process` dropped at its scope exit (`emitProcessDrop`) closes the pipes and reaps the child.
+// Depends only on the LLVM bindings and `IrCodegen.Support`.
 
 import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
@@ -22,6 +21,7 @@ export (
     value emitProcessReadLine,
     value emitProcessWaitForExit,
     value emitProcessKill,
+    value emitProcessDrop,
 )
 
 // "Process.spawn: fork failed" — stage 0's spawn error string.
@@ -460,6 +460,40 @@ let emitProcessWaitForExit builder i64 i8 ptrType processRef =
                 buildLShr(builder)(status)(constInt(i64)(8u64)(false))("proc_exit_shifted"))
             |> (given (shifted) ->
                 buildAnd(builder)(shifted)(constInt(i64)(255u64)(false))("proc_exit_code")))
+
+// A dropped `Process` (its `CleanupResource` at scope exit): close the three pipe ends, reap the
+// child with a non-blocking `wait4`, and when it is still running, `SIGKILL` it and wait —
+// stage 0's `EmitProcessDrop`. Fire-and-forget: a closed pipe or an already-reaped child is
+// harmless.
+let emitProcessDrop context function_ builder i64 i8 ptrType processRef =
+    (let terminateBlock = appendBasicBlock(context)(function_)("proc_drop_terminate")
+    in
+        let doneBlock = appendBasicBlock(context)(function_)("proc_drop_done")
+        in
+            let zero = constInt(i64)(0u64)(false)
+            in
+                "proc_drop_stdin"
+                |> emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(0)
+                |> emitLinuxClose(builder)(i64)
+                |> (given (_) -> emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(8)("proc_drop_stdout"))
+                |> emitLinuxClose(builder)(i64)
+                |> (given (_) -> emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(16)("proc_drop_stderr"))
+                |> emitLinuxClose(builder)(i64)
+                |> (given (_) -> emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(24)("proc_drop_pid"))
+                |> (given (pid) ->
+                    false
+                    |> constInt(i64)(1u64)
+                    |> emitLinuxWait4(builder)(i64)(pid)(zero)
+                    |> (given (waitResult) -> buildICmp(builder)(intPredicateEq)(waitResult)(zero)("proc_drop_running"))
+                    |> (given (stillRunning) -> buildCondBr(builder)(stillRunning)(terminateBlock)(doneBlock))
+                    |> (given (_) -> positionBuilderAtEnd(builder)(terminateBlock))
+                    |> (given (_) ->
+                        false
+                        |> constInt(i64)(9u64)
+                        |> emitLinuxKill(builder)(i64)(pid))
+                    |> (given (_) -> emitLinuxWait4(builder)(i64)(pid)(zero)(zero))
+                    |> (given (_) -> buildBr(builder)(doneBlock))
+                    |> (given (_) -> positionBuilderAtEnd(builder)(doneBlock))))
 
 // `Ashes.IO.Process.kill(process)`: `SIGTERM` the child, returning `Unit` — stage 0's
 // `EmitProcessKill`.

@@ -351,6 +351,70 @@ let expectSiblingClosureTempPrecedesEnvironmentTemp unit =
             |> containsLine("    MakeClosure           Target=4 FuncLabel=recgroup_1_isOdd EnvPtrTemp=5 EnvSizeBytes=0")
             |> test.assertEqual(true)))
 
+let recursive countFileHandleCleanups (lines: List(Str)) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.startsWith(line)("    CleanupResource       ") && Ashes.Text.contains(line)("TypeName=FileHandle")
+            then 1 + countFileHandleCleanups(rest)
+            else countFileHandleCleanups(rest)
+
+let openedHandleProgram (armBody: Str) = "match Ashes.IO.File.open(\"input.txt\") with\n    | Error(_) -> Ashes.IO.print(\"error\")\n    | Ok(fh) ->\n" + armBody
+
+let readLineArm = "        match Ashes.IO.File.readLine(fh) with\n            | None -> Ashes.IO.print(\"none\")\n            | Some(line) -> Ashes.IO.print(line)"
+
+// Reading a handle after an explicit close is use-after-close, with stage 0's message.
+let expectFileReadAfterCloseIsRejected unit =
+    match "        let _ = Ashes.IO.File.close(fh)\n        in\n" + readLineArm
+    |> openedHandleProgram
+    |> loweringErrorFor with
+        | ResourceUseAfterClose(message) -> test.assertEqual("Resource 'fh' has already been closed. Using a resource after it has been closed is not allowed.")(message)
+        | other -> test.fail("expected ResourceUseAfterClose, got " + Ashes.Trait.Show.show(other))
+
+// Storing a handle into an aggregate moves it; reading it afterwards is use-after-move.
+let expectStoredResourceIsMoved unit =
+    match "        let wrapped = Some(fh)\n        in\n" + readLineArm
+    |> openedHandleProgram
+    |> loweringErrorFor with
+        | ResourceUseAfterMove(message) -> test.assertEqual("Resource 'fh' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.")(message)
+        | other -> test.fail("expected ResourceUseAfterMove, got " + Ashes.Trait.Show.show(other))
+
+// A helper that stores the handle consumes it: the call moves the argument.
+let expectConsumingHelperMovesResource unit =
+    match loweringErrorFor("let stash =\n    given (h) -> Some(h)\nin\n" + openedHandleProgram("        let _ = stash(fh)\n        in\n" + readLineArm)) with
+        | ResourceUseAfterMove(_message) -> Unit
+        | other -> test.fail("expected ResourceUseAfterMove, got " + Ashes.Trait.Show.show(other))
+
+// A helper that closes the handle consumes it as well.
+let expectClosingHelperMovesResource unit =
+    match loweringErrorFor("let closeIt =\n    given (h) -> Ashes.IO.File.close(h)\nin\n" + openedHandleProgram("        let done = closeIt(fh)\n        in\n" + readLineArm)) with
+        | ResourceUseAfterMove(_message) -> Unit
+        | other -> test.fail("expected ResourceUseAfterMove, got " + Ashes.Trait.Show.show(other))
+
+// A helper that only reads the handle borrows it: the caller keeps using it and its arm closes it
+// exactly once at scope exit.
+let expectReadingHelperBorrowsResource unit =
+    "let peek =\n    given (h) -> Ashes.IO.File.readChunk(h)(2)\nin\n" + openedHandleProgram("        let head = peek(fh)\n        in\n" + readLineArm)
+    |> dumpSource
+    |> countFileHandleCleanups
+    |> test.assertEqual(1)
+
+// A handle closed explicitly or moved into an aggregate gets no scope-exit cleanup.
+let expectClosedOrMovedResourceIsNotCleanedUp unit =
+    Unit
+    |> (given (_) ->
+        "        let _ = Ashes.IO.File.close(fh)\n        in Ashes.IO.print(\"closed\")"
+        |> openedHandleProgram
+        |> dumpSource
+        |> countFileHandleCleanups
+        |> test.assertEqual(0))
+    |> (given (_) ->
+        "        let wrapped = Some(fh)\n        in Ashes.IO.print(\"moved\")"
+        |> openedHandleProgram
+        |> dumpSource
+        |> countFileHandleCleanups
+        |> test.assertEqual(0))
+
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
     "(given (x) -> x + 1)(41)"
     |> dumpSource
@@ -494,5 +558,11 @@ let runCoreProgramLoweringTests unit =
     |> expectClosureResultKeepsCallWindowOpen
     |> expectElseBranchCallResetsUnderThenType
     |> expectSiblingClosureTempPrecedesEnvironmentTemp
+    |> expectFileReadAfterCloseIsRejected
+    |> expectStoredResourceIsMoved
+    |> expectConsumingHelperMovesResource
+    |> expectClosingHelperMovesResource
+    |> expectReadingHelperBorrowsResource
+    |> expectClosedOrMovedResourceIsNotCleanedUp
     |> expectAnonymousLambdaIsAnAnonymousClosureHelper
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))

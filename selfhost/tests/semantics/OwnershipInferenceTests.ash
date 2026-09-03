@@ -35,6 +35,28 @@ let testBorrowReadResourceParameter unit =
         let isBorrow = isParamUsedOnlyAsBorrowRead(callExpr)("h")
         in test.assertEqual(true)(isBorrow))
 
+// The same read through a parsed tree, where the root and the argument carry source spans.
+let testBorrowReadResourceParameterThroughSpans unit =
+    (let callExpr =
+        ExprAt(
+            TextSpan(start = 0, end = 30),
+            ExprCall(
+                ExprAt(
+                    TextSpan(start = 0, end = 26),
+                    ExprQualifiedVar("Ashes.IO.File")("readChunk")
+                )
+            )(
+                ExprAt(TextSpan(start = 27, end = 28))(ExprVar("h"))
+            )(
+                false
+            )(
+                callArgumentsInline
+            )
+        )
+    in
+        let isBorrow = isParamUsedOnlyAsBorrowRead(callExpr)("h")
+        in test.assertEqual(true)(isBorrow))
+
 let testUnusedParameterIsBorrow unit =
     (let body = ExprInt(42)
     in
@@ -434,6 +456,7 @@ let reportOwnershipInferenceSuccess unit = Ashes.IO.print("all self-hosted owner
 let runOwnershipInferenceTests unit =
     unit
     |> testBorrowReadResourceParameter
+    |> testBorrowReadResourceParameterThroughSpans
     |> testUnusedParameterIsBorrow
     |> testConsumedArithmeticParameter
     |> testConsumedReturnedParameter

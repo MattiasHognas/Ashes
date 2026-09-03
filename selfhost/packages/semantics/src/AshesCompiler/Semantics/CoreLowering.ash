@@ -31,6 +31,8 @@ import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
+import AshesCompiler.Semantics.OwnershipSummary
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TraitEvidenceRewriting
 import AshesCompiler.Semantics.TraitEvidenceThreading
@@ -82,6 +84,16 @@ type CoreLoweringError =
     | CoreMatchCoverageError(Str)
     | ReservedTypeName(Str)
     | PerformTargetNotCapabilityOperation(Str)
+    | ResourceUseAfterClose(Str)
+    | ResourceUseAfterMove(Str)
+    deriving {Eq, Show}
+
+// How a resource binding stopped being its scope's responsibility: closed by an explicit close
+// builtin, or moved into an aggregate, a consuming callee, or the arm result it escapes through. A
+// binding with neither is live and closed at its scope exit.
+type ResourceReleaseKind =
+    | ResourceClosed
+    | ResourceMoved
     deriving {Eq, Show}
 
 type CoreLoweringResult =
@@ -143,6 +155,8 @@ type CoreLoweringState =
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
     | expectedType: Maybe(SemanticType)
+    | resourceStates: List((Int, ResourceReleaseKind))
+    | letLambdas: List((Str, List(Str), Expr))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -358,7 +372,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         pendingSourceFunction = None,
         activeFunctionOrigin = None,
         pendingClosureNormalizers = [],
-        expectedType = None
+        expectedType = None,
+        resourceStates = [],
+        letLambdas = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -553,10 +569,23 @@ let recursive letValueIsLambda (value: Expr) =
 // Arms a `let` whose value is a lambda so the lambda lowered next is lifted as that name's
 // `SourceFunction`; any other value leaves the lambda origins alone. A lambda under `let ... in`
 // wrappers inside the value is not armed and lifts as a closure helper.
+// The parameter chain and innermost body of a curried lambda value.
+let recursive lambdaParameterChain (value: Expr) (parameters: List(Str)) =
+    match value with
+        | ExprAt(_span, inner) -> lambdaParameterChain(inner)(parameters)
+        | ExprLambda(parameter, body, _annotation) -> lambdaParameterChain(body)(parameter :: parameters)
+        | body -> (reverse(parameters), body)
+
+// A let-bound lambda is remembered by name so a later call through it can ask which of its
+// parameters it only borrows (stage 0's per-function ownership summary).
+let recordLetLambda (name: Str) (value: Expr) (state: CoreLoweringState) =
+    match lambdaParameterChain(value)([]) with
+        | (parameters, body) -> state with letLambdas = (name, parameters, body) :: state.letLambdas
+
 let armSourceFunction (name: Str) (value: Expr) (stackClosure: Bool) (state: CoreLoweringState) =
     if letValueIsLambda(value)
     then
-        state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state)), pendingStackClosure = stackClosure
+        recordLetLambda(name)(value)((state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state)), pendingStackClosure = stackClosure))
     else state
 
 let sourceFunctionOrigin (label: Str) (source: SourceFunctionOrigin) (state: CoreLoweringState) =
@@ -938,6 +967,151 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
                 | None -> Some(name)
         | _ -> None
 
+// The compiler-provided resource types (§16 of the language reference) the lowering tracks.
+let isResourceTypeName (name: Str) = name == "FileHandle" || name == "Process"
+
+let recursive unspanArgument (expression: Expr) =
+    match expression with
+        | ExprAt(_span, inner) -> unspanArgument(inner)
+        | other -> other
+
+// The resource a variable names: the slot and resource type of an owned local binding whose
+// resolved type is a resource, through zero-cost wrappers.
+let resourceBindingOf (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot), ownedRead = true, scheme = TypeScheme { body = bindingType } }) ->
+            match ownedTypeNameOf(resolveType(state)(bindingType))(state.constructorLayouts) with
+                | Some(typeName) ->
+                    if isResourceTypeName(typeName)
+                    then Some((slot, typeName))
+                    else None
+                | None -> None
+        | _ -> None
+
+let recursive lookupResourceState (slot: Int) (states: List((Int, ResourceReleaseKind))) =
+    match states with
+        | [] -> None
+        | (candidate, kind) :: rest ->
+            if candidate == slot
+            then Some(kind)
+            else lookupResourceState(slot)(rest)
+
+let resourceStateOf (slot: Int) (state: CoreLoweringState) = lookupResourceState(slot)(state.resourceStates)
+
+let markResourceReleased (slot: Int) (kind: ResourceReleaseKind) (state: CoreLoweringState) = state with resourceStates = (slot, kind) :: state.resourceStates
+
+// The state of the resource a variable argument names, when it names one: `Some(None)` for a live
+// resource, `Some(Some(kind))` for a released one, `None` for anything else.
+let resourceArgumentState (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match resourceBindingOf(name)(state) with
+                | Some((slot, _typeName)) -> Some((name, slot, resourceStateOf(slot)(state)))
+                | None -> None
+        | _ -> None
+
+// Stage 0's `MarkResourceArgMoved`: a variable argument naming a live resource is moved.
+let markResourceArgumentMoved (argument: Expr) (state: CoreLoweringState) =
+    match resourceArgumentState(argument)(state) with
+        | Some((_name, slot, None)) -> markResourceReleased(slot)(ResourceMoved)(state)
+        | _ -> state
+
+let recursive markResourceArgumentsMoved (arguments: List(Expr)) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | argument :: rest ->
+            state
+            |> markResourceArgumentMoved(argument)
+            |> markResourceArgumentsMoved(rest)
+
+// Stage 0's `TryMarkDropped`: an explicit close releases a live resource binding.
+let markResourceArgumentClosed (argument: Expr) (state: CoreLoweringState) =
+    match resourceArgumentState(argument)(state) with
+        | Some((_name, slot, None)) -> markResourceReleased(slot)(ResourceClosed)(state)
+        | _ -> state
+
+// Stage 0's `CheckUseAfterDrop`: using a released resource is use-after-move or use-after-close.
+let checkResourceArgumentUse (argument: Expr) (state: CoreLoweringState) =
+    match resourceArgumentState(argument)(state) with
+        | Some((name, _slot, Some(ResourceMoved))) -> Some(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))
+        | Some((name, _slot, Some(ResourceClosed))) -> Some(ResourceUseAfterClose("Resource '" + name + "' has already been closed. Using a resource after it has been closed is not allowed."))
+        | _ -> None
+
+// Whether a builtin reads its first argument as a resource, closes it, or neither.
+type BuiltinResourceRole =
+    | BuiltinUsesResource
+    | BuiltinClosesResource
+    | BuiltinNoResource
+
+let builtinResourceRole (kind: CoreBuiltinKind) =
+    match kind with
+        | CoreFileReadChunk -> BuiltinUsesResource
+        | CoreFileReadLine -> BuiltinUsesResource
+        | CoreFileClose -> BuiltinClosesResource
+        | CoreProcessWriteStdin -> BuiltinUsesResource
+        | CoreProcessReadStdoutLine -> BuiltinUsesResource
+        | CoreProcessReadStderrLine -> BuiltinUsesResource
+        | CoreProcessWaitForExit -> BuiltinUsesResource
+        | CoreProcessKill -> BuiltinUsesResource
+        | _ -> BuiltinNoResource
+
+// Which of a let-bound lambda's parameters a call through it only borrows: stage 0's parameter
+// ownership summary, computed from the lambda's body. An unknown callee consumes everything.
+let recursive lookupLetLambda (name: Str) (lambdas: List((Str, List(Str), Expr))) =
+    match lambdas with
+        | [] -> None
+        | (candidate, parameters, body) :: rest ->
+            if candidate == name
+            then Some((parameters, body))
+            else lookupLetLambda(name)(rest)
+
+let recursive parameterAtIndex (index: Int) (ownership: List((Str, ParameterOwnership))) =
+    match ownership with
+        | [] -> Consumed
+        | (_parameter, kind) :: rest ->
+            if index == 0
+            then kind
+            else parameterAtIndex(index - 1)(rest)
+
+let recursive markConsumedArguments (arguments: List(Expr)) (index: Int) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
+    match arguments with
+        | [] -> state
+        | argument :: rest ->
+            match parameterAtIndex(index)(ownership) with
+                | Borrowed -> markConsumedArguments(rest)(index + 1)(ownership)(state)
+                | Consumed ->
+                    state
+                    |> markResourceArgumentMoved(argument)
+                    |> markConsumedArguments(rest)(index + 1)(ownership)
+
+// Stage 0's per-argument `borrowsOnly` decision for a general call: an argument naming a live
+// resource moves unless the callee is a let-bound lambda proven to only read that parameter.
+let markCallArgumentsMoved (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            match lookupLetLambda(callee)(state.letLambdas) with
+                | Some((parameters, body)) ->
+                    markConsumedArguments(spine.arguments)(0)(classifyParameterOwnership(parameters)(body)([]))(state)
+                | None -> markResourceArgumentsMoved(spine.arguments)(state)
+        | _ -> markResourceArgumentsMoved(spine.arguments)(state)
+
+let markLoweredCallArgumentsMoved (spine: CoreCallSpine) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state } -> lowered with state = markCallArgumentsMoved(spine)(state)
+
+// Stage 0's `EmitResourceCleanup`: a live resource binding is closed at its scope exit by a
+// `CleanupResource` naming its type; a closed or moved one is left alone.
+let emitResourceCleanup (typeName: Str) (slot: Int) (state: CoreLoweringState) =
+    match resourceStateOf(slot)(state) with
+        | Some(_kind) -> state
+        | None ->
+            match freshTemp(state) with
+                | FreshTemp { state = loadState, temp = loadTemp } ->
+                    loadState
+                    |> emit(LoadLocal(loadTemp)(slot))
+                    |> emit(CleanupResource(loadTemp)(typeName)(None))
+
 // Stage 0's compiler-inferred borrowing (`LowerVar`): reading an owned binding yields a `Borrow`
 // alias of the loaded value, so the owning scope keeps the drop obligation. Ownership is decided
 // from the binding's resolved type at the read, since a pattern binding's type is a fresh variable
@@ -1212,16 +1386,19 @@ let loweredValueOwnedTypeName lowered =
 // which `PerceusLifetimePlacement` later moves to the binding's last use on each path. A closure
 // is released with `CleanupResource` instead, which stays at the scope exit.
 let emitOwnedLetRelease typeName ownerSlot state =
-    match freshTemp(state) with
-        | FreshTemp { state = loadState, temp = loadTemp } ->
-            loadState
-            |> emit(LoadLocal(loadTemp)(ownerSlot))
-            |> (given (loaded) ->
-                if typeName == "Function"
-                then
-                    emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
-                else
-                    emit(RcDrop(loadTemp)(typeName)(ownerSlot)(false)(false)(None))(loaded))
+    if isResourceTypeName(typeName)
+    then emitResourceCleanup(typeName)(ownerSlot)(state)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = loadState, temp = loadTemp } ->
+                loadState
+                |> emit(LoadLocal(loadTemp)(ownerSlot))
+                |> (given (loaded) ->
+                    if typeName == "Function"
+                    then
+                        emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
+                    else
+                        emit(RcDrop(loadTemp)(typeName)(ownerSlot)(false)(false)(None))(loaded))
 
 let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
     state
@@ -1648,6 +1825,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
+        |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 // A capture that a runtime-managed copy of the closure environment re-establishes by copying its
@@ -2691,6 +2869,43 @@ let lowerMatchGuard guard failLabel lower patternResult =
 // slot and label ordering against. Both still owe stage 0 their per-arm bracket (OPT-25).
 // An arm's bracket closes on its success path under the scope rule: the arm result that dies at
 // the reset keeps the arm's window open.
+// The bindings a match arm added over the bindings outside it.
+let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> []
+        | binding :: rest ->
+            if count <= 0
+            then []
+            else binding :: armBindings(count - 1)(rest)
+
+// An arm result that is the pattern-bound resource itself carries it out of the arm.
+let armResultIsBinding (name: Str) (body: Expr) =
+    match unspanArgument(body) with
+        | ExprVar(candidate) -> candidate == name
+        | _ -> false
+
+let recursive emitArmBindingCleanups (bindings: List(CoreBinding)) (body: Expr) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> state
+        | CoreBinding { name = name } :: rest ->
+            match resourceBindingOf(name)(state) with
+                | Some((slot, typeName)) ->
+                    if armResultIsBinding(name)(body)
+                    then
+                        state
+                        |> markResourceReleased(slot)(ResourceMoved)
+                        |> emitArmBindingCleanups(rest)(body)
+                    else
+                        state
+                        |> emitResourceCleanup(typeName)(slot)
+                        |> emitArmBindingCleanups(rest)(body)
+                | None -> emitArmBindingCleanups(rest)(body)(state)
+
+// Stage 0's scope-exit drops for a match arm, restricted to resources: every live resource the
+// arm's pattern bound is closed after the arm result is stored, before the arm bracket closes.
+let emitArmResourceCleanups (outerBindings: List(CoreBinding)) (body: Expr) (state: CoreLoweringState) =
+    emitArmBindingCleanups(armBindings(length(state.bindings) - length(outerBindings))(state.bindings))(body)(state)
+
 let closeArmBracketForResult bracket resultType state =
     match bracket with
         | None -> state
@@ -2710,6 +2925,7 @@ let finishMatchArm body resultSlot endLabel resultType expected outerBindings br
                         | (typedState, None) ->
                             typedState
                             |> emit(StoreLocal(resultSlot)(temp))
+                            |> emitArmResourceCleanups(outerBindings)(body)
                             |> closeArmBracketForResult(bracket)(bodyType)
                             |> emit(Jump(endLabel))
                             |> restoreBindings(outerBindings)
@@ -3382,6 +3598,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
+        |> (given (current: CoreLoweringState) -> current with resourceStates = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
@@ -3619,8 +3836,10 @@ let finishTupleLowering lowered =
                     |> emitTupleFields(tupleTemp)(0)(temps)
                     |> success(tupleTemp)(SemTuple(semanticTypes))
 
+// A resource stored into a tuple, list, cons cell, or constructor moves into it.
 let lowerTuple elements lower state =
     state
+    |> markResourceArgumentsMoved(elements)
     |> lowerCoreValues(elements)(lower)
     |> finishTupleLowering
 
@@ -3664,6 +3883,7 @@ let expectedListElementType state =
 
 let lowerCons head tail lower state =
     state
+    |> markResourceArgumentsMoved([head, tail])
     |> withExpectedType(expectedListElementType(state))
     |> lower(head)
     |> finishConsTail(lower)(tail)
@@ -3723,6 +3943,7 @@ let expectedOrFreshEmptyList state =
 
 let lowerListLiteral elements lower state =
     state
+    |> markResourceArgumentsMoved(elements)
     |> expectedOrFreshEmptyList
     |> finishListLiteral(elements)(lower)
 
@@ -3783,6 +4004,7 @@ let finishConstructorArguments arguments lower shape =
 
 let lowerConstructor layout arguments lower state =
     state
+    |> markResourceArgumentsMoved(arguments)
     |> instantiateConstructor(layout)
     |> finishConstructorArguments(arguments)(lower)
 
@@ -3912,10 +4134,32 @@ let finishBuiltinArguments arguments lower shape =
                 coreListLength(arguments)
             )
 
-let lowerBuiltin layout arguments lower state =
-    state
-    |> instantiateBuiltin(layout)
-    |> finishBuiltinArguments(arguments)(lower)
+// A builtin reading a resource argument is checked for use after its release before anything is
+// lowered; a closing builtin releases the binding once the call is lowered.
+let builtinResourceArgument (arguments: List(Expr)) =
+    match arguments with
+        | first :: _rest -> Some(first)
+        | [] -> None
+
+let checkBuiltinResourceUse (kind: CoreBuiltinKind) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match (builtinResourceRole(kind), builtinResourceArgument(arguments)) with
+        | (BuiltinUsesResource, Some(argument)) -> checkResourceArgumentUse(argument)(state)
+        | (BuiltinClosesResource, Some(argument)) -> checkResourceArgumentUse(argument)(state)
+        | _ -> None
+
+let releaseClosedBuiltinArgument (kind: CoreBuiltinKind) (arguments: List(Expr)) (lowered: LoweredCoreValue) =
+    match (builtinResourceRole(kind), builtinResourceArgument(arguments), lowered) with
+        | (BuiltinClosesResource, Some(argument), LoweredCoreValue { state = state, error = None }) -> lowered with state = markResourceArgumentClosed(argument)(state)
+        | _ -> lowered
+
+let lowerBuiltin (layout: CoreBuiltinLayout) arguments lower state =
+    match checkBuiltinResourceUse(layout.kind)(arguments)(state) with
+        | Some(error) -> failure(state)(error)
+        | None ->
+            state
+            |> instantiateBuiltin(layout)
+            |> finishBuiltinArguments(arguments)(lower)
+            |> releaseClosedBuiltinArgument(layout.kind)(arguments)
 
 let recursive collectCallSpine expression =
     match expression with
@@ -5708,6 +5952,7 @@ let lowerCallExpression expression function argument lower state =
                             state
                             |> clearExpectedType
                             |> lowerCall(function)(argument)(expectedTypeOf(state))(lower)
+                            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 let lowerCoreDispatch expression lowerCore state =
     match expression with

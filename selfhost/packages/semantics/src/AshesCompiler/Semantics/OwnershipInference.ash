@@ -22,6 +22,7 @@ export (
     value reachJoin,
     value reachSum,
     value isParamUsedOnlyAsBorrowRead,
+    value classifyParameterOwnership,
     value analyzeExprReach,
     value computeCaptures,
     value inferFunctionOwnership,
@@ -191,6 +192,12 @@ let isBorrowReadResourceOp (moduleName: Str) (name: Str) =
                                         if fullName == "Ashes.IO.Process.readStdoutLine"
                                         then true
                                         else fullName == "Ashes.IO.Process.readStderrLine")
+
+// A parsed tree wraps every node in its source span; the shape checks below look through it.
+let recursive stripSpan (expr: Expr) =
+    match expr with
+        | ExprAt(_span, inner) -> stripSpan(inner)
+        | other -> other
 
 let recursive collectCallArgsAndRoot (expr: Expr) (argsAcc: List(Expr)) =
     match expr with
@@ -639,13 +646,13 @@ let recursive isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) =
 and checkCallUsesParamOnlyAsBorrowRead (call: Expr) (param: Str) =
     match collectCallArgsAndRoot(call)([]) with
         | (root, args) ->
-            match root with
+            match stripSpan(root) with
                 | ExprQualifiedVar(mod, name) ->
                     if isBorrowReadResourceOp(mod)(name)
                     then
                         match args with
                             | firstArg :: otherArgs ->
-                                match firstArg with
+                                match stripSpan(firstArg) with
                                     | ExprVar(vName) ->
                                         if vName == param
                                         then checkExprListBorrow(otherArgs)(param)
