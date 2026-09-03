@@ -27,6 +27,7 @@ import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.SourceContext
@@ -139,6 +140,7 @@ type CoreLoweringState =
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
+    | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType)))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -351,7 +353,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         pendingOperatorDefaults = [],
         sealedOperatorDefaults = [],
         pendingSourceFunction = None,
-        activeFunctionOrigin = None
+        activeFunctionOrigin = None,
+        pendingClosureNormalizers = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -1636,6 +1639,7 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with typeSupply = typeSupply)
             |> (given (current: CoreLoweringState) -> current with substitution = substitution)
             |> (given (current: CoreLoweringState) -> current with sealedOperatorDefaults = sealedOperatorDefaults)
+            |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -1670,6 +1674,140 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
+// A capture that a runtime-managed copy of the closure environment re-establishes by copying its
+// word: the scalars. Strings, bytes, big integers, lists, tuples, and named types need the copy-out
+// and closure-dropper helpers that are not ported yet, so a closure capturing one gets no
+// normalizer here.
+let scalarCaptureText (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> Some("Int")
+        | SemUInt(bits) -> Some("u" + Ashes.Text.fromInt(bits))
+        | SemFloat -> Some("Float")
+        | SemRune -> Some("Rune")
+        | SemBool -> Some("Bool")
+        | _ -> None
+
+// `(environment offset, type text)` per capture, in environment order, when every capture is a
+// scalar.
+// A type variable that a deferred `+` default owns resolves to `Int` at finalization, the type
+// the deferred add itself falls back to.
+let recursive operatorDefaultedVariables (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> []
+        | semanticType :: rest ->
+            match resolveType(state)(semanticType) with
+                | SemVariable(id) -> id :: operatorDefaultedVariables(rest)(state)
+                | _ -> operatorDefaultedVariables(rest)(state)
+
+let finalCaptureType (defaulted: List(Int)) (state: CoreLoweringState) (captureType: SemanticType) =
+    match resolveType(state)(captureType) with
+        | SemVariable(id) ->
+            if containsInt(id)(defaulted)
+            then SemInt
+            else SemVariable(id)
+        | resolved -> resolved
+
+// `(environment offset, type text)` per capture, in environment order, when every capture is a
+// scalar.
+let recursive scalarCaptureLayout (types: List(SemanticType)) (index: Int) (defaulted: List(Int)) (state: CoreLoweringState) =
+    match types with
+        | [] -> Some([])
+        | captureType :: rest ->
+            match (captureType
+            |> finalCaptureType(defaulted)(state)
+            |> scalarCaptureText, scalarCaptureLayout(rest)(index + 1)(defaulted)(state)) with
+                | (Some(text), Some(layout)) -> Some((index * 8, text) :: layout)
+                | _ -> None
+
+let recursive captureTypes (captures: List(CoreBinding)) =
+    match captures with
+        | [] -> []
+        | CoreBinding { scheme = TypeScheme { body = captureType } } :: rest -> captureType :: captureTypes(rest)
+
+let recursive captureLayoutText (layout: List((Int, Str))) =
+    match layout with
+        | [] -> ""
+        | (offset, text) :: rest ->
+            match rest with
+                | [] -> Ashes.Text.fromInt(offset) + ":" + text
+                | _ -> Ashes.Text.fromInt(offset) + ":" + text + ";" + captureLayoutText(rest)
+
+let machineryInstruction kind = IrInstruction(instruction = kind, location = None)
+
+// The word copies of the normalizer body: capture `i` is read from the source environment (temp
+// 0) at its offset and stored into the target environment (temp 1) at the same offset, on temps
+// from 2 upward.
+let recursive normalizerCopies (layout: List((Int, Str))) (temp: Int) =
+    match layout with
+        | [] -> []
+        | (offset, _text) :: rest ->
+            machineryInstruction(LoadMemOffset(temp)(0)(offset)) :: machineryInstruction(StoreMemOffset(1)(offset)(temp)) :: normalizerCopies(rest)(temp + 1)
+
+let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layoutText: Str) =
+    IrFunctionOrigin(
+        generatedLabel = label,
+        originKind = ClosureEnvironmentNormalizerOrigin,
+        sourceOrigin = closureOrigin.sourceOrigin,
+        parentGeneratedLabel = Some(closureLabel),
+        compilerOwner = None,
+        stableDiscriminator = Some(layoutText),
+        generationLocation = None
+    )
+
+// Stage 0's `lambda$env_normalize` helper for a closure whose captures are all scalars: called
+// with the source environment in slot 0 and the target environment in slot 1, it copies every
+// capture across and returns 0, the "no dropper" address, since scalar captures own nothing.
+let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str))) =
+    ((given (labelled) ->
+        match labelled with
+            | (label, resultTemp) ->
+                IrFunction(
+                    label = label,
+                    instructions = append(machineryInstruction(LoadLocal(0)(0)) :: machineryInstruction(LoadLocal(1)(1)) :: normalizerCopies(layout)(2))([0
+                    |> LoadConstInt(resultTemp)
+                    |> machineryInstruction, machineryInstruction(Return(resultTemp))]),
+                    localCount = 2,
+                    tempCount = resultTemp + 1,
+                    hasEnvAndArgParams = true,
+                    coroutine = None,
+                    localNames = [],
+                    localTypes = [],
+                    origin = layout
+                    |> captureLayoutText
+                    |> closureNormalizerOrigin(label)(closureLabel)(closureOrigin)
+                    |> Some,
+                    lifetimesPlaced = false
+                )))((closureLabel + "$env_normalize", 2 + length(layout)))
+
+// Records a capturing closure for a normalizer decided at program finalization, when the
+// substitution and the deferred operator defaults are final; a capture-free closure needs none.
+let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (closureOrigin: IrFunctionOrigin) (state: CoreLoweringState) =
+    match captures with
+        | [] -> state
+        | _ -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures)) :: state.pendingClosureNormalizers
+
+let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
+    match functions with
+        | [] -> [inserted]
+        | (IrFunction { label = candidate } as function) :: rest ->
+            if candidate == label
+            then function :: inserted :: rest
+            else function :: insertAfterLabel(label)(inserted)(rest)
+
+// Places each recorded closure's normalizer right after the closure's own function, as stage 0
+// synthesizes it when the closure is emitted, for the closures whose captures all resolve to
+// scalars.
+let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, List(SemanticType)))) (defaulted: List(Int)) (state: CoreLoweringState) (functions: List(IrFunction)) =
+    match pending with
+        | [] -> functions
+        | (closureLabel, closureOrigin, types) :: rest ->
+            match scalarCaptureLayout(types)(0)(defaulted)(state) with
+                | Some(layout) ->
+                    functions
+                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(layout))
+                    |> insertClosureNormalizers(rest)(defaulted)(state)
+                | None -> insertClosureNormalizers(rest)(defaulted)(state)(functions)
+
 let finishClosureResult parameterType bodyType finishedBody closure =
     match closure with
         | (closureState, closureTemp) ->
@@ -1677,13 +1815,12 @@ let finishClosureResult parameterType bodyType finishedBody closure =
             in
                 success(closureTemp)(SemFunction(parameterType)(resultType)(None))(closureState)
 
-let emitPrunedClosure label captures stackAllocate parameterType bodyType finishedBody allocated =
+let emitPrunedClosure label origin captures stackAllocate parameterType bodyType finishedBody allocated =
     match allocated with
         | LoweredCoreValue { state = environmentState, error = Some(error) } -> failure(environmentState)(error)
         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
-            environmentState
-            |> emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)
-            |> finishClosureResult(parameterType)(bodyType)(finishedBody)
+            match emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)(environmentState) with
+                | (closureState, closureTemp) -> finishClosureResult(parameterType)(bodyType)(finishedBody)((recordClosureNormalizer(label)(captures)(origin)(closureState), closureTemp))
 
 let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered with
@@ -1698,7 +1835,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                             finishedBody
                             |> restoreOuterFrame(typedOuter)
                             |> allocateEnvironment(survivors)(stackAllocate)
-                            |> emitPrunedClosure(label)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
+                            |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
 // explicit lambda parameter's) is resolved against exactly the scalar primitives listed here, plus
@@ -6274,7 +6411,12 @@ let buildProgram lowered =
                         |> entryInstructions(temp)
                         |> applyDeferredAdds(state)(pendingOperatorDefaults)
                     in
-                        let resolvedFunctions = applySealedDeferredAdds(state)(sealedOperatorDefaults)(functions)
+                        let resolvedFunctions =
+                            functions
+                            |> applySealedDeferredAdds(state)(sealedOperatorDefaults)
+                            |> insertClosureNormalizers(reverse(state.pendingClosureNormalizers))(operatorDefaultedVariables([]
+                            |> sealedOperatorTypes(sealedOperatorDefaults)
+                            |> append(pendingOperatorTypes(pendingOperatorDefaults)([])))(state))(state)
                         in
                             let entry =
                                 IrFunction(

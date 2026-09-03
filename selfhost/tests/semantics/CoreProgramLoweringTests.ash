@@ -242,6 +242,37 @@ let expectLambdaOriginsNameTheirBinding unit =
             |> containsLine("function lambda_2  [SourceFunction from apply]")
             |> test.assertEqual(true)))
 
+// A closure whose captures are all scalars gets stage 0's environment normalizer right after its
+// own function: it copies each capture word from the source environment (slot 0) to the target
+// environment (slot 1) and returns the no-dropper address. `x`'s type is settled only by the
+// deferred `+` default, so the helper is decided at program finalization.
+let expectScalarCaptureClosureGetsEnvironmentNormalizer unit =
+    "let makeAdder x =\n    given (y) -> x + y\n\nlet add5 = makeAdder(5)\n\nadd5(10)"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from makeAdder]")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2")
+            |> test.assertEqual(true)))
+
+// A closure with no captures needs no normalizer, and one capturing a non-scalar gets none here.
+let expectCaptureFreeClosureHasNoNormalizer unit =
+    "let constant = (given (x) -> 1)\n\nconstant(2)"
+    |> dumpSource
+    |> (given (lines) ->
+        lines
+        |> containsLine("function lambda_0$env_normalize  [ClosureEnvironmentNormalizer from constant]")
+        |> test.assertEqual(false))
+
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
     "(given (x) -> x + 1)(41)"
     |> dumpSource
@@ -368,5 +399,7 @@ let runCoreProgramLoweringTests unit =
     |> expectCallSiteForwardingLowersWithEnvironment
     |> expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches
     |> expectLambdaOriginsNameTheirBinding
+    |> expectScalarCaptureClosureGetsEnvironmentNormalizer
+    |> expectCaptureFreeClosureHasNoNormalizer
     |> expectAnonymousLambdaIsAnAnonymousClosureHelper
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))
