@@ -37,7 +37,11 @@
 // - Locals get one `buildAlloca`'d `i64` slot each, allocated up front from `IrFunction`'s own
 //   `localCount` — looked up by index the same way temps are, in a separate, fixed
 //   (never-appended-to) environment: which local index maps to which alloca pointer never changes
-//   once the function's slots are built, only the value stored at that pointer does.
+//   once the function's slots are built, only the value stored at that pointer does. Every other
+//   fixed-size scratch slot an emitter needs (syscall scratch, branch-merging result slots, read
+//   buffers) goes through `buildEntryAlloca`, which hoists it to the entry block so a `Jump`-based
+//   loop body reuses one frame slot per iteration instead of growing the native stack; only
+//   `emitStackAlloc` (`AllocStack`/`MakeClosureStack`) allocates at the current position.
 // - Labels need a block PRE-CREATED before the main codegen pass, since a `Jump`/`JumpIfFalse` can
 //   name a label that appears later in the instruction stream than the branch itself —
 //   `collectLabelNames` walks the instruction list once up front to find every `Label`, and
@@ -949,7 +953,7 @@ let codegenInstructionKind cx builder kind state =
                                             in
                                                 let pathAddr = buildPtrToInt(builder)(pathCstr)(i64)("file_exists_path_addr")
                                                 in
-                                                    let resultSlot = buildAlloca(builder)(i64)("file_exists_result")
+                                                    let resultSlot = buildEntryAlloca(builder)(i64)("file_exists_result")
                                                     in
                                                         let foundBlock = appendBasicBlock(context)(function_)("file_exists_found")
                                                         in

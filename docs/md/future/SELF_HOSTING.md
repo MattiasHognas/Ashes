@@ -901,14 +901,21 @@ same public behavior.
   KERNEL32/WS2_32/SHELL32/CRYPT32 import surface the PE linker must provide (an import is added in
   three places of `LlvmImageLinkerPe.cs`, see [Linking](../internals/architecture.md#windows-pe32)). Source of truth:
   the `Windows` branches of `LlvmCodegenBuiltins.*.cs` and `LlvmCodegenBuiltins.Directory.Windows.cs`.
-- [ ] **CG-10** Emit every fixed-size runtime-helper scratch `alloca` (RC-block acquisition, free-list bin
-  lookup, dynamic allocation, copy-out/reclaim, BigInt formatting, and any future helper with the same
-  shape) positioned in the function's **entry block**, never at the current insertion point inside a
-  loop body — a fixed-size alloca emitted elsewhere is lowered at `-O0` as a runtime stack-pointer
-  adjustment that only function return reclaims, so one inside a TCO loop body leaks native stack
-  every iteration, and `-O2` (the test default) hides this completely — only an explicit `-O0` C#
-  test can guard it. The genuine `AllocStack` path (managed by its own save/restore bracket)
-  correctly stays a loop-body alloca — do not route it through the same hoist.
+- [x] **CG-10** Every fixed-size runtime-helper scratch `alloca` (syscall scratch such as `timespec`/
+  `pollfd`/`termios`/`stat` buffers, the read-line and subprocess pipe buffers, `spawn`'s argv
+  vector, print/format buffers, arena copy-out/reclaim slots, and the branch-merging result slots
+  the `phi`-free codegen uses) goes through `Llvm.ash`'s `buildEntryAlloca`, which places it in the
+  current function's **entry block** and restores the builder to the block it was emitting — the
+  self-hosted backend emits at optimization level none, where a fixed-size alloca in any other
+  block is a runtime stack-pointer adjustment that only function return reclaims, so one inside a
+  jump-based loop body leaks native stack every iteration. The helper derives the function from
+  the builder's current block rather than from a threaded `function_`, so a runtime helper
+  synthesized into its own function hoists into that function's entry. The genuine `AllocStack`/
+  `MakeClosureStack` path (`emitStackAlloc`, managed by its own save/restore bracket) keeps its
+  loop-body alloca on purpose. Guarded by the backend suite's hand-built `Label`/`Jump` loop around
+  `MonotonicMillis` (two million iterations, a stack overflow before the hoist); every loop the
+  self-hosted lowering produces today is a `musttail` self call, so a source-level program cannot
+  yet observe the leak.
 - [~] **CG-11** Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
   terminal raw/poll operations, files/directories/memory maps, subprocesses, clocks/entropy, sockets,
   HTTP/TLS, regex, math, and BigInt. Done on linux-x64: process exit, environment, files/

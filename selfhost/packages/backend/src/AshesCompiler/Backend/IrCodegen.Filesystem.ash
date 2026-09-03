@@ -190,7 +190,7 @@ let declareDirectoryExternalFunctions module_ context types =
 let emitReadLinePanicMessage builder i64 i8 =
     (let bufferType = arrayType(i8)(24u64)
     in
-        let buffer = buildAlloca(builder)(bufferType)("read_line_panic_msg")
+        let buffer = buildEntryAlloca(builder)(bufferType)("read_line_panic_msg")
         in
             // "readLine input too long\n"
             let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)([114, 101, 97, 100, 76, 105, 110, 101, 32, 105, 110, 112, 117, 116, 32, 116, 111, 111, 32, 108, 111, 110, 103, 10])
@@ -219,17 +219,17 @@ type ReadLineScratch =
 
 let emitReadLineScratch builder i64 i8 =
     (let buffer =
-        buildAlloca(builder)(arrayType(i8)(65536u64))("read_line_buf")
+        buildEntryAlloca(builder)(arrayType(i8)(65536u64))("read_line_buf")
     in
-        let byteSlot = buildAlloca(builder)(i8)("read_line_byte")
+        let byteSlot = buildEntryAlloca(builder)(i8)("read_line_byte")
         in
             ReadLineScratch(
                 buffer = buffer,
                 bufferAddr = buildPtrToInt(builder)(buffer)(i64)("read_line_buf_addr"),
-                lenSlot = buildAlloca(builder)(i64)("read_line_len"),
+                lenSlot = buildEntryAlloca(builder)(i64)("read_line_len"),
                 byteSlot = byteSlot,
                 byteAddr = buildPtrToInt(builder)(byteSlot)(i64)("read_line_byte_addr"),
-                resultSlot = buildAlloca(builder)(i64)("read_line_result")
+                resultSlot = buildEntryAlloca(builder)(i64)("read_line_result")
             ))
 
 // The ten-block control-flow skeleton `emitReadLine`'s three phases share: read a byte and check
@@ -495,9 +495,9 @@ let emitValidateUtf8LoopHead context function_ i64 i8 builder bytesPtr len index
 // exactly — needed by `Directory.entries`, which (unlike `File.readText`'s validated decode, not
 // yet ported here either) must reject a non-UTF-8 directory entry name rather than propagate it.
 let emitValidateUtf8 context function_ i64 i8 builder bytesPtr len prefix =
-    (let indexSlot = buildAlloca(builder)(i64)(prefix + "_index")
+    (let indexSlot = buildEntryAlloca(builder)(i64)(prefix + "_index")
     in
-        let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+        let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
         in
             let loopBlock = appendBasicBlock(context)(function_)(prefix + "_loop")
             in
@@ -537,7 +537,7 @@ let emitValidateUtf8 context function_ i64 i8 builder bytesPtr len prefix =
 // success") counterpart of stage 0's own `EmitFilesystemStatusResult`, shared by every filesystem
 // builtin below that reports a plain "did it work" outcome.
 let emitFilesystemStatusResult context function_ i64 i8 ptrType builder arena mallocFn mallocType memcpyFn memcpyType succeeded codes prefix =
-    (let resultSlot = buildAlloca(builder)(i64)(prefix + "_status_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_status_result")
     in
         let okBlock = appendBasicBlock(context)(function_)(prefix + "_status_ok")
         in
@@ -606,7 +606,7 @@ let emitFileReplace context function_ i64 i8 ptrType builder arena mallocFn mall
     in
         let joinBlock = appendBasicBlock(context)(function_)("file_replace_join")
         in
-            let statusSlot = buildAlloca(builder)(i64)("file_replace_status")
+            let statusSlot = buildEntryAlloca(builder)(i64)("file_replace_status")
             in
                 let sourceAddr =
                     "file_replace_source"
@@ -742,9 +742,9 @@ let emitDirectoryCreateAll context function_ i64 i8 ptrType builder arena malloc
                     in
                         let joinBlock = appendBasicBlock(context)(function_)("dir_create_join")
                         in
-                            let indexSlot = buildAlloca(builder)(i64)("dir_create_index")
+                            let indexSlot = buildEntryAlloca(builder)(i64)("dir_create_index")
                             in
-                                let statusSlot = buildAlloca(builder)(i64)("dir_create_status_slot")
+                                let statusSlot = buildEntryAlloca(builder)(i64)("dir_create_status_slot")
                                 in
                                     let pathCstr = emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)("dir_create_path")
                                     in
@@ -1119,11 +1119,11 @@ let emitDirectoryEntriesResult context function_ i64 i8 i32 ptrType builder mall
             in
                 let status = buildLoad(builder)(i64)(statusSlot)(prefix + "_status_read")
                 in
-                    let resultSlot = buildAlloca(builder)(i64)(prefix + "_result_slot")
+                    let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result_slot")
                     in
-                        let listSlot = buildAlloca(builder)(i64)(prefix + "_list_slot")
+                        let listSlot = buildEntryAlloca(builder)(i64)(prefix + "_list_slot")
                         in
-                            let indexSlot = buildAlloca(builder)(i64)(prefix + "_index_slot")
+                            let indexSlot = buildEntryAlloca(builder)(i64)(prefix + "_index_slot")
                             in
                                 listSlot
                                 |> buildStore(builder)(constInt(i64)(0u64)(false))
@@ -1162,11 +1162,11 @@ let emitDirectoryEntries moduleRef context function_ i64 i8 i32 ptrType builder 
                                 let arraySlot =
                                     resumeBlock
                                     |> positionBuilderAtEnd(builder)
-                                    |> (given (_) -> buildAlloca(builder)(ptrType)(prefix + "_array"))
+                                    |> (given (_) -> buildEntryAlloca(builder)(ptrType)(prefix + "_array"))
                                 in
-                                    let countSlot = buildAlloca(builder)(i64)(prefix + "_count")
+                                    let countSlot = buildEntryAlloca(builder)(i64)(prefix + "_count")
                                     in
-                                        let statusSlot = buildAlloca(builder)(i64)(prefix + "_status")
+                                        let statusSlot = buildEntryAlloca(builder)(i64)(prefix + "_status")
                                         in
                                             let pathAddr =
                                                 prefix + "_path"
@@ -1210,10 +1210,10 @@ let emitDirectoryRemoveTree moduleRef context function_ i64 i8 i32 ptrType build
                             |> positionBuilderAtEnd(builder)
                             |> (given (_) -> emitStringToCString(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)(pathRef)(prefix + "_path"))
                         in
-                            let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+                            let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
                             in
                                 let statBuffer =
-                                    buildAlloca(builder)(arrayType(i8)(256u64))(prefix + "_stat")
+                                    buildEntryAlloca(builder)(arrayType(i8)(256u64))(prefix + "_stat")
                                 in
                                     prefix + "_lstat"
                                     |> buildCall(builder)(dirExt.lstatType)(dirExt.lstatFn)([pathCstr, statBuffer])(2u32)
@@ -1247,7 +1247,7 @@ let fileReadChunkErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 105, 
 // diagnostics) is ownership work this codegen does not carry yet — an unclosed handle leaks its
 // fd until process exit.
 let emitFileOpen context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
-    (let resultSlot = buildAlloca(builder)(i64)("file_open_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)("file_open_result")
     in
         let okBlock = appendBasicBlock(context)(function_)("file_open_ok")
         in
@@ -1281,7 +1281,7 @@ let emitFileOpen context function_ i64 i8 ptrType builder mallocFn mallocType me
 // RC string sized by the caller's count; `n < 0` is `Error`, `n == 0` (EOF) an empty-string `Ok`,
 // exactly stage 0's `EmitFileReadChunk`.
 let emitFileReadChunk context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType handleVal countVal =
-    (let resultSlot = buildAlloca(builder)(i64)("file_chunk_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)("file_chunk_result")
     in
         let okBlock = appendBasicBlock(context)(function_)("file_chunk_ok")
         in
@@ -1501,11 +1501,11 @@ let emitFileReadFinish context function_ i64 i8 ptrType builder mallocFn mallocT
 // wrap — stage 0's `EmitLinuxFileReadText` phase for phase, with `validateUtf8` selecting the
 // `readText` (capped, validated `Str`) or `readAllBytes` (uncapped, raw `Bytes`) flavor.
 let emitFileReadWhole context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType validateUtf8 pathRef prefix =
-    (let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
-        let remainingSlot = buildAlloca(builder)(i64)(prefix + "_remaining")
+        let remainingSlot = buildEntryAlloca(builder)(i64)(prefix + "_remaining")
         in
-            let cursorSlot = buildAlloca(builder)(i64)(prefix + "_cursor")
+            let cursorSlot = buildEntryAlloca(builder)(i64)(prefix + "_cursor")
             in
                 let blocks = emitFileReadBlocks(context)(function_)(prefix)
                 in
@@ -1526,7 +1526,7 @@ let emitFileReadAllBytes context function_ i64 i8 ptrType builder mallocFn mallo
 // `Ok` of an empty owned value (nothing to map), and a mapping failure (any result unsigned-above
 // `-4096`) reports the shared read-failed message.
 let emitFileMmap context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType pathRef =
-    (let resultSlot = buildAlloca(builder)(i64)("file_mmap_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)("file_mmap_result")
     in
         let measureBlock = appendBasicBlock(context)(function_)("file_mmap_measure")
         in
@@ -1622,10 +1622,10 @@ let fileMakeExecutableErrorCodes = [65, 115, 104, 101, 115, 46, 73, 79, 46, 70, 
 // `EmitLinuxFileMakeExecutable`, with the `chmod` as a raw syscall rather than a second libc
 // import.
 let emitFileMakeExecutable context function_ i64 i8 i32 ptrType builder arena mallocFn mallocType memcpyFn memcpyType dirExt pathRef =
-    (let statusSlot = buildAlloca(builder)(i64)("file_executable_status")
+    (let statusSlot = buildEntryAlloca(builder)(i64)("file_executable_status")
     in
         let statBuffer =
-            buildAlloca(builder)(arrayType(i8)(256u64))("file_executable_stat")
+            buildEntryAlloca(builder)(arrayType(i8)(256u64))("file_executable_stat")
         in
             let chmodBlock = appendBasicBlock(context)(function_)("file_executable_chmod")
             in

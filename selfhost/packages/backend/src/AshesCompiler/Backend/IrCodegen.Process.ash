@@ -39,7 +39,7 @@ let emitProcessPanicMessage builder i64 i8 codes prefix =
     (let length = Ashes.Collection.List.length(codes)
     in
         let buffer =
-            buildAlloca(builder)(length
+            buildEntryAlloca(builder)(length
             |> Ashes.Number.UInt.fromInt64
             |> arrayType(i8))(prefix + "_panic_msg")
         in
@@ -92,16 +92,16 @@ type SpawnScratch =
 
 let emitSpawnScratch builder i64 i8 i32 =
     (let argvArray =
-        buildAlloca(builder)(arrayType(i64)(258u64))("spawn_argv")
+        buildEntryAlloca(builder)(arrayType(i64)(258u64))("spawn_argv")
     in
         SpawnScratch(
-            spawnStdinPipe = buildAlloca(builder)(arrayType(i32)(2u64))("spawn_stdin_pipe"),
-            spawnStdoutPipe = buildAlloca(builder)(arrayType(i32)(2u64))("spawn_stdout_pipe"),
-            spawnStderrPipe = buildAlloca(builder)(arrayType(i32)(2u64))("spawn_stderr_pipe"),
-            spawnResultSlot = buildAlloca(builder)(i64)("spawn_result"),
+            spawnStdinPipe = buildEntryAlloca(builder)(arrayType(i32)(2u64))("spawn_stdin_pipe"),
+            spawnStdoutPipe = buildEntryAlloca(builder)(arrayType(i32)(2u64))("spawn_stdout_pipe"),
+            spawnStderrPipe = buildEntryAlloca(builder)(arrayType(i32)(2u64))("spawn_stderr_pipe"),
+            spawnResultSlot = buildEntryAlloca(builder)(i64)("spawn_result"),
             spawnArgvBase = buildPtrToInt(builder)(argvArray)(i64)("spawn_argv_base"),
-            spawnArgcSlot = buildAlloca(builder)(i64)("spawn_argc"),
-            spawnCursorSlot = buildAlloca(builder)(i64)("spawn_list_cursor")
+            spawnArgcSlot = buildEntryAlloca(builder)(i64)("spawn_argc"),
+            spawnCursorSlot = buildEntryAlloca(builder)(i64)("spawn_list_cursor")
         ))
 
 // argv[0] = the executable, argv[1..] = the args list (each NUL-terminated), argv[n] = null —
@@ -294,7 +294,7 @@ let emitSpawnProcess context function_ i64 i8 i32 ptrType builder mallocFn mallo
 // pipe (a pipe accepts at most a buffer's worth per `write`), stopping on any non-positive
 // count — stage 0's `EmitProcessWriteStdin`. Returns `Unit`.
 let emitProcessWriteStdin context function_ i64 i8 ptrType builder arena processRef textRef =
-    (let writtenSlot = buildAlloca(builder)(i64)("proc_write_written")
+    (let writtenSlot = buildEntryAlloca(builder)(i64)("proc_write_written")
     in
         let writeLoopBlock = appendBasicBlock(context)(function_)("proc_write_loop")
         in
@@ -349,13 +349,13 @@ let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn malloc
             else 16
         in
             let buffer =
-                buildAlloca(builder)(arrayType(i8)(65536u64))(prefix + "_buf")
+                buildEntryAlloca(builder)(arrayType(i8)(65536u64))(prefix + "_buf")
             in
-                let byteSlot = buildAlloca(builder)(i8)(prefix + "_byte")
+                let byteSlot = buildEntryAlloca(builder)(i8)(prefix + "_byte")
                 in
-                    let lenSlot = buildAlloca(builder)(i64)(prefix + "_len")
+                    let lenSlot = buildEntryAlloca(builder)(i64)(prefix + "_len")
                     in
-                        let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+                        let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
                         in
                             let loopBlock = appendBasicBlock(context)(function_)(prefix + "_loop")
                             in
@@ -445,7 +445,7 @@ let emitProcessReadLine context function_ i64 i8 ptrType builder mallocFn malloc
 // `Ashes.IO.Process.waitForExit(process)`: block in `wait4` and return `WEXITSTATUS`
 // (`(status >> 8) & 0xff`) — stage 0's `EmitProcessWaitForExit`.
 let emitProcessWaitForExit builder i64 i8 ptrType processRef =
-    (let statusSlot = buildAlloca(builder)(i64)("proc_wait_status")
+    (let statusSlot = buildEntryAlloca(builder)(i64)("proc_wait_status")
     in
         let pid = emitLoadProcessField(builder)(i64)(i8)(ptrType)(processRef)(24)("proc_wait_pid")
         in

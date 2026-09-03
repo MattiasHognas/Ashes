@@ -136,7 +136,7 @@ let emitWriteStrBytesToFd builder i64 ptrType fd stringRef =
 // A single `\n` byte written to `fd` via the raw `write` syscall, from a one-byte stack slot.
 // Shared by `print`/`panic`'s stdout newline and `Ashes.IO.writeLine`/`writeErrorLine`'s own.
 let emitWriteNewlineToFd builder i64 i8 fd =
-    (let newlineBuf = buildAlloca(builder)(i8)("write_newline")
+    (let newlineBuf = buildEntryAlloca(builder)(i8)("write_newline")
     in
         let _ =
             buildStore(builder)(constInt(i8)(10u64)(false))(newlineBuf)
@@ -243,7 +243,7 @@ let emitStrCmpEqualPath builder i64 resultSlot blocks =
 // this codegen — so `CmpStrNe` can invert it with a plain `1 - result` rather than re-deriving the
 // comparison.
 let emitStringEquals context function_ i64 ptrType builder memcmpFn memcmpType leftRef rightRef =
-    (let resultSlot = buildAlloca(builder)(i64)("str_cmp_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)("str_cmp_result")
     in
         match emitStringParts(builder)(i64)(ptrType)(leftRef)("str_cmp_left") with
             | (leftLen, leftBytesAddr) ->
@@ -302,7 +302,7 @@ let recursive storeAsciiBytes builder i64 i8 bufferType buffer index codes =
 let emitPrintBoolBranch builder i64 i8 bufferType codes block continueBlock =
     (let _ = positionBuilderAtEnd(builder)(block)
     in
-        let buffer = buildAlloca(builder)(bufferType)("bool_buf")
+        let buffer = buildEntryAlloca(builder)(bufferType)("bool_buf")
         in
             let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)(codes)
             in
@@ -348,11 +348,11 @@ let emitPrintBool context function_ i64 i8 builder value =
 let printIntPrologue builder i64 i8 value =
     (let bufferType = arrayType(i8)(32u64)
     in
-        let buffer = buildAlloca(builder)(bufferType)("print_buf")
+        let buffer = buildEntryAlloca(builder)(bufferType)("print_buf")
         in
-            let indexSlot = buildAlloca(builder)(i64)("print_idx")
+            let indexSlot = buildEntryAlloca(builder)(i64)("print_idx")
             in
-                let workSlot = buildAlloca(builder)(i64)("print_work")
+                let workSlot = buildEntryAlloca(builder)(i64)("print_work")
                 in
                     let zero = constInt(i64)(0u64)(false)
                     in
@@ -425,7 +425,7 @@ let printIntWriteAndNewline builder i64 i8 printState =
                                 in
                                     let _ = emitLinuxWrite(builder)(i64)(stdoutFd)(dataAddr)(count)
                                     in
-                                        let newlineByte = buildAlloca(builder)(i8)("print_newline")
+                                        let newlineByte = buildEntryAlloca(builder)(i8)("print_newline")
                                         in
                                             let _ =
                                                 buildStore(builder)(constInt(i8)(10u64)(false))(newlineByte)
@@ -827,7 +827,7 @@ let emitAsciiHeapString builder i64 i8 ptrType mallocFn mallocType memcpyFn memc
             |> Ashes.Number.UInt.fromInt64
             |> arrayType(i8)
         in
-            let buffer = buildAlloca(builder)(bufferType)(name + "_buf")
+            let buffer = buildEntryAlloca(builder)(bufferType)(name + "_buf")
             in
                 let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)(codes)
                 in

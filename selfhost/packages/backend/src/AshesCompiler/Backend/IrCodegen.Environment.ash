@@ -68,7 +68,7 @@ let emitEnvironmentRawGetNamed builder i64 i8 ptrType mallocFn mallocType memcpy
 // short-circuiting to `Error(read-failed)` and an invalid buffer landing on `Error(invalid-UTF-8)`,
 // stage 0's `EmitEnvironmentUtf8Result` block for block.
 let emitEnvironmentUtf8Result context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType bufferPtr length failed prefix =
-    (let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
         let validateBlock = appendBasicBlock(context)(function_)(prefix + "_validate")
         in
@@ -106,7 +106,7 @@ let emitEnvironmentUtf8Result context function_ i64 i8 ptrType builder mallocFn 
 // Trim an executable path to its parent directory: scan backward for the last `/` (or `\`),
 // keeping index `1` when the separator is the root itself — stage 0's `EmitParentPathLength`.
 let emitParentPathLength context function_ i64 i8 builder bufferPtr length prefix =
-    (let cursorSlot = buildAlloca(builder)(i64)(prefix + "_cursor")
+    (let cursorSlot = buildEntryAlloca(builder)(i64)(prefix + "_cursor")
     in
         let checkBlock = appendBasicBlock(context)(function_)(prefix + "_check")
         in
@@ -157,7 +157,7 @@ let emitEnvironmentPlatformDirectory context function_ i64 i8 ptrType builder ma
         else "env_cwd"
     in
         let bufferPtr =
-            buildAlloca(builder)(arrayType(i8)(4096u64))(prefix + "_buffer")
+            buildEntryAlloca(builder)(arrayType(i8)(4096u64))(prefix + "_buffer")
         in
             let _ =
                 buildStore(builder)(constInt(i8)(0u64)(false))(bufferPtr)
@@ -218,7 +218,7 @@ let emitEnvironmentFallbackValue context function_ i64 i8 ptrType builder malloc
 // otherwise to env `fallbackCodes` + `suffixCodes` (`XDG_CACHE_HOME` else `HOME` + `/.cache`) —
 // stage 0's `EmitEnvironmentFallbackDirectory`.
 let emitEnvironmentFallbackDirectory context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt preferredCodes fallbackCodes suffixCodes prefix =
-    (let resultSlot = buildAlloca(builder)(i64)(prefix + "_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)(prefix + "_result")
     in
         let preferredBlock = appendBasicBlock(context)(function_)(prefix + "_preferred_value")
         in
@@ -286,7 +286,7 @@ let emitEnvironmentCacheDirectory context function_ i64 i8 ptrType builder mallo
 // `Ashes.IO.Environment.get(name)`: empty name is an `Error`, an unset variable `Ok(None)`, a set
 // one `Ok(Some(value))` after UTF-8 validation — stage 0's `EmitEnvironmentGet` block for block.
 let emitEnvironmentGet context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType dirExt nameRef =
-    (let resultSlot = buildAlloca(builder)(i64)("env_get_result")
+    (let resultSlot = buildEntryAlloca(builder)(i64)("env_get_result")
     in
         let invalidNameBlock = appendBasicBlock(context)(function_)("env_get_invalid_name")
         in

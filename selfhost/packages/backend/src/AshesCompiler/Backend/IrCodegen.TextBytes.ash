@@ -114,7 +114,7 @@ let emitTextFromInt context function_ i64 builder mallocFn mallocType memcpyFn m
 let emitBytesGetPanicMessage builder i64 i8 =
     (let bufferType = arrayType(i8)(31u64)
     in
-        let buffer = buildAlloca(builder)(bufferType)("bytes_get_panic_msg")
+        let buffer = buildEntryAlloca(builder)(bufferType)("bytes_get_panic_msg")
         in
             // "Bytes.get: index out of bounds\n"
             let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)([66, 121, 116, 101, 115, 46, 103, 101, 116, 58, 32, 105, 110, 100, 101, 120, 32, 111, 117, 116, 32, 111, 102, 32, 98, 111, 117, 110, 100, 115, 10])
@@ -212,9 +212,9 @@ let emitBytesIndexOf context function_ i64 i8 ptrType builder bytesRef needleVal
                         in
                             let needle8 = buildTrunc(builder)(needleVal)(i8)("bytes_idx_needle")
                             in
-                                let idxSlot = buildAlloca(builder)(i64)("bytes_idx_slot")
+                                let idxSlot = buildEntryAlloca(builder)(i64)("bytes_idx_slot")
                                 in
-                                    let resultSlot = buildAlloca(builder)(i64)("bytes_idx_result")
+                                    let resultSlot = buildEntryAlloca(builder)(i64)("bytes_idx_result")
                                     in
                                         let _ = buildStore(builder)(fromStart)(idxSlot)
                                         in
@@ -367,7 +367,7 @@ let emitBytesSubView builder i64 i8 ptrType mallocFn mallocType bytesRef startVa
 let emitTextUnconsText context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("text_uncons") with
         | (len, bytesAddr) ->
-            let resultSlot = buildAlloca(builder)(i64)("text_uncons_result")
+            let resultSlot = buildEntryAlloca(builder)(i64)("text_uncons_result")
             in
                 let emptyBlock = appendBasicBlock(context)(function_)("text_uncons_empty")
                 in
@@ -463,13 +463,13 @@ let emitTextParseInt context function_ i64 i8 ptrType builder mallocFn mallocTyp
         | (len, bytesAddr) ->
             let bytesPtr = buildIntToPtr(builder)(bytesAddr)(ptrType)("tpi_bytes_ptr")
             in
-                let indexSlot = buildAlloca(builder)(i64)("tpi_index")
+                let indexSlot = buildEntryAlloca(builder)(i64)("tpi_index")
                 in
-                    let accSlot = buildAlloca(builder)(i64)("tpi_acc")
+                    let accSlot = buildEntryAlloca(builder)(i64)("tpi_acc")
                     in
-                        let negativeSlot = buildAlloca(builder)(i64)("tpi_negative")
+                        let negativeSlot = buildEntryAlloca(builder)(i64)("tpi_negative")
                         in
-                            let resultSlot = buildAlloca(builder)(i64)("tpi_result")
+                            let resultSlot = buildEntryAlloca(builder)(i64)("tpi_result")
                             in
                                 let _ =
                                     buildStore(builder)(constInt(i64)(0u64)(false))(indexSlot)
@@ -622,7 +622,7 @@ let emitTextParseInt context function_ i64 i8 ptrType builder mallocFn mallocTyp
 // The byte at fixed `index` when the string is long enough, else 0 — a branch, never a
 // speculative read past the payload (`EmitLoadRuneByteOrZero`).
 let emitRuneByteOrZero context function_ i64 i8 builder bytesPtr len index name =
-    (let slot = buildAlloca(builder)(i64)(name + "_slot")
+    (let slot = buildEntryAlloca(builder)(i64)(name + "_slot")
     in
         let loadBlock = appendBasicBlock(context)(function_)(name + "_load")
         in
@@ -665,7 +665,7 @@ let emitRuneByteRange builder i64 value lower upper name =
 let emitTextUncons context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType textRef =
     match emitStringParts(builder)(i64)(ptrType)(textRef)("runeu") with
         | (len, bytesAddr) ->
-            let resultSlot = buildAlloca(builder)(i64)("runeu_result")
+            let resultSlot = buildEntryAlloca(builder)(i64)("runeu_result")
             in
                 let emptyBlock = appendBasicBlock(context)(function_)("runeu_empty")
                 in
@@ -796,9 +796,9 @@ let emitBytesHash context function_ i64 i8 ptrType builder bytesRef =
         | (len, dataAddr) ->
             let dataPtr = buildIntToPtr(builder)(dataAddr)(ptrType)("bytes_hash_data")
             in
-                let hashSlot = buildAlloca(builder)(i64)("bytes_hash_acc")
+                let hashSlot = buildEntryAlloca(builder)(i64)("bytes_hash_acc")
                 in
-                    let idxSlot = buildAlloca(builder)(i64)("bytes_hash_idx")
+                    let idxSlot = buildEntryAlloca(builder)(i64)("bytes_hash_idx")
                     in
                         let _ =
                             buildStore(builder)(constInt(i64)(14695981039346656037u64)(false))(hashSlot)
@@ -883,7 +883,7 @@ let emitBytesAppendByte builder i64 i8 ptrType mallocFn mallocType memcpyFn memc
 let emitBytesAllocatePanicMessage builder i64 i8 =
     (let bufferType = arrayType(i8)(56u64)
     in
-        let buffer = buildAlloca(builder)(bufferType)("bytes_allocate_panic_msg")
+        let buffer = buildEntryAlloca(builder)(bufferType)("bytes_allocate_panic_msg")
         in
             // "Bytes.allocate: length must be between 0 and 1073741824\n"
             let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)([66, 121, 116, 101, 115, 46, 97, 108, 108, 111, 99, 97, 116, 101, 58, 32, 108, 101, 110, 103, 116, 104, 32, 109, 117, 115, 116, 32, 98, 101, 32, 98, 101, 116, 119, 101, 101, 110, 32, 48, 32, 97, 110, 100, 32, 49, 48, 55, 51, 55, 52, 49, 56, 50, 52, 10])
@@ -941,7 +941,7 @@ let emitBytesAllocate context function_ i64 i8 builder mallocFn mallocType lengt
                                                                 in
                                                                     let dataPtr = gepBytes(builder)(i64)(i8)(headerPtr)(24)("bytes_allocate_data")
                                                                     in
-                                                                        let idxSlot = buildAlloca(builder)(i64)("bytes_allocate_idx")
+                                                                        let idxSlot = buildEntryAlloca(builder)(i64)("bytes_allocate_idx")
                                                                         in
                                                                             let _ =
                                                                                 buildStore(builder)(constInt(i64)(0u64)(false))(idxSlot)
@@ -980,13 +980,13 @@ let emitBytesAllocate context function_ i64 i8 builder mallocFn mallocType lengt
 // `Byte.fromList(list)`: two passes over the cons cells — count, then allocate and fill each
 // byte in order (`EmitBytesFromList`'s exact shape; cons layout head at 0, tail at 8, nil = 0).
 let emitBytesFromList context function_ i64 i8 ptrType builder mallocFn mallocType listRef =
-    (let countSlot = buildAlloca(builder)(i64)("bfl_count")
+    (let countSlot = buildEntryAlloca(builder)(i64)("bfl_count")
     in
-        let curSlot = buildAlloca(builder)(i64)("bfl_cur")
+        let curSlot = buildEntryAlloca(builder)(i64)("bfl_cur")
         in
-            let idxSlot = buildAlloca(builder)(i64)("bfl_idx")
+            let idxSlot = buildEntryAlloca(builder)(i64)("bfl_idx")
             in
-                let resultSlot = buildAlloca(builder)(i64)("bfl_result")
+                let resultSlot = buildEntryAlloca(builder)(i64)("bfl_result")
                 in
                     let _ =
                         buildStore(builder)(constInt(i64)(0u64)(false))(countSlot)
@@ -1110,7 +1110,7 @@ let emitBytesPanicLine builder i64 i8 codes =
             |> Ashes.Number.UInt.fromInt64
             |> arrayType(i8)
         in
-            let buffer = buildAlloca(builder)(bufferType)("bytes_panic_msg")
+            let buffer = buildEntryAlloca(builder)(bufferType)("bytes_panic_msg")
             in
                 let _ = storeAsciiBytes(builder)(i64)(i8)(bufferType)(buffer)(0)(codes)
                 in
@@ -1308,11 +1308,11 @@ let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocTy
                         in
                             let fromStart = buildSelect(builder)(fromNeg)(zero)(fromVal)("bytes_sh_from")
                             in
-                                let idxSlot = buildAlloca(builder)(i64)("bytes_sh_idx")
+                                let idxSlot = buildEntryAlloca(builder)(i64)("bytes_sh_idx")
                                 in
-                                    let hashSlot = buildAlloca(builder)(i64)("bytes_sh_hash")
+                                    let hashSlot = buildEntryAlloca(builder)(i64)("bytes_sh_hash")
                                     in
-                                        let foundSlot = buildAlloca(builder)(i64)("bytes_sh_found")
+                                        let foundSlot = buildEntryAlloca(builder)(i64)("bytes_sh_found")
                                         in
                                             let _ = buildStore(builder)(fromStart)(idxSlot)
                                             in
@@ -1393,11 +1393,11 @@ let emitBytesScanHash context function_ i64 i8 ptrType builder mallocFn mallocTy
 let emitTextToHex context function_ i64 i8 ptrType builder mallocFn mallocType memcpyFn memcpyType value =
     (let bufferType = arrayType(i8)(32u64)
     in
-        let buffer = buildAlloca(builder)(bufferType)("tth_buffer")
+        let buffer = buildEntryAlloca(builder)(bufferType)("tth_buffer")
         in
-            let indexSlot = buildAlloca(builder)(i64)("tth_index")
+            let indexSlot = buildEntryAlloca(builder)(i64)("tth_index")
             in
-                let workSlot = buildAlloca(builder)(i64)("tth_work")
+                let workSlot = buildEntryAlloca(builder)(i64)("tth_work")
                 in
                     let zero = constInt(i64)(0u64)(false)
                     in
@@ -1534,19 +1534,19 @@ let emitTextParseFloat context function_ i64 i8 ptrType builder mallocFn mallocT
                                 let maxFloat =
                                     buildBitCast(builder)(constInt(i64)(9218868437227405311u64)(false))(f64)("tpf_max_float")
                                 in
-                                    let indexSlot = buildAlloca(builder)(i64)("tpf_index")
+                                    let indexSlot = buildEntryAlloca(builder)(i64)("tpf_index")
                                     in
-                                        let valueSlot = buildAlloca(builder)(f64)("tpf_value")
+                                        let valueSlot = buildEntryAlloca(builder)(f64)("tpf_value")
                                         in
-                                            let fractionPlaceSlot = buildAlloca(builder)(f64)("tpf_fraction_place")
+                                            let fractionPlaceSlot = buildEntryAlloca(builder)(f64)("tpf_fraction_place")
                                             in
-                                                let negativeSlot = buildAlloca(builder)(i64)("tpf_negative")
+                                                let negativeSlot = buildEntryAlloca(builder)(i64)("tpf_negative")
                                                 in
-                                                    let exponentSlot = buildAlloca(builder)(i64)("tpf_exponent")
+                                                    let exponentSlot = buildEntryAlloca(builder)(i64)("tpf_exponent")
                                                     in
-                                                        let exponentNegativeSlot = buildAlloca(builder)(i64)("tpf_exponent_negative")
+                                                        let exponentNegativeSlot = buildEntryAlloca(builder)(i64)("tpf_exponent_negative")
                                                         in
-                                                            let resultSlot = buildAlloca(builder)(i64)("tpf_result")
+                                                            let resultSlot = buildEntryAlloca(builder)(i64)("tpf_result")
                                                             in
                                                                 let _ = buildStore(builder)(zero)(indexSlot)
                                                                 in

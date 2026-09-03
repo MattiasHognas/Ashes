@@ -131,6 +131,7 @@ export (
     value buildUnreachable,
     value getInlineAsm,
     value buildAlloca,
+    value buildEntryAlloca,
     value buildStore,
     value buildLoad,
     value buildCall,
@@ -236,6 +237,11 @@ external LLVMBuildBr(LLVMBuilderRef, LLVMBasicBlockRef) -> LLVMValueRef = "LLVMB
 external LLVMBuildUnreachable(LLVMBuilderRef) -> LLVMValueRef = "LLVMBuildUnreachable@libLLVM.so"
 external LLVMGetInlineAsm(LLVMTypeRef, Str, u64, Str, u64, Bool, Bool, u32, Bool) -> LLVMValueRef = "LLVMGetInlineAsm@libLLVM.so"
 external LLVMBuildAlloca(LLVMBuilderRef, LLVMTypeRef, Str) -> LLVMValueRef = "LLVMBuildAlloca@libLLVM.so"
+external LLVMGetInsertBlock(LLVMBuilderRef) -> LLVMBasicBlockRef = "LLVMGetInsertBlock@libLLVM.so"
+external LLVMGetBasicBlockParent(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetBasicBlockParent@libLLVM.so"
+external LLVMGetEntryBasicBlock(LLVMValueRef) -> LLVMBasicBlockRef = "LLVMGetEntryBasicBlock@libLLVM.so"
+external LLVMGetFirstInstruction(LLVMBasicBlockRef) -> LLVMValueRef = "LLVMGetFirstInstruction@libLLVM.so"
+external LLVMPositionBuilder(LLVMBuilderRef, LLVMBasicBlockRef, LLVMValueRef) -> void = "LLVMPositionBuilder@libLLVM.so"
 external LLVMBuildStore(LLVMBuilderRef, LLVMValueRef, LLVMValueRef) -> LLVMValueRef = "LLVMBuildStore@libLLVM.so"
 external LLVMBuildLoad2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, Str) -> LLVMValueRef = "LLVMBuildLoad2@libLLVM.so"
 external LLVMBuildCall2(LLVMBuilderRef, LLVMTypeRef, LLVMValueRef, FfiBuffer(LLVMValueRef), u32, Str) -> LLVMValueRef = "LLVMBuildCall2@libLLVM.so"
@@ -507,6 +513,46 @@ let getInlineAsm functionType asmString constraints hasSideEffects isAlignStack 
 // `buildAlloca` before the branch instead, written with `buildStore` in each arm and read back
 // with `buildLoad` after the arms rejoin.
 let buildAlloca builder type_ name = LLVMBuildAlloca(builder)(type_)(name)
+
+let getInsertBlock builder = LLVMGetInsertBlock(builder)
+
+let getBasicBlockParent block = LLVMGetBasicBlockParent(block)
+
+let getEntryBasicBlock function = LLVMGetEntryBasicBlock(function)
+
+let getFirstInstruction block = LLVMGetFirstInstruction(block)
+
+// Positions the builder before `instruction`, or at the end of `block` when `instruction` is the
+// null handle (`LLVMPositionBuilder` accepts either; `getFirstInstruction` on an empty block
+// returns the null handle, so the pair needs no host-side null check).
+let positionBuilder builder block instruction = LLVMPositionBuilder(builder)(block)(instruction)
+
+// A fixed-size scratch slot allocated in the current function's entry block, with the builder
+// restored to the block it was emitting afterwards. Every scratch `alloca` belongs in the entry
+// block: at optimization level none, an `alloca` in any other block is a runtime stack-pointer
+// adjustment that only the function's return reclaims, so one emitted inside a `Jump`-based loop
+// body leaks native stack every iteration, whereas an entry-block `alloca` is one fixed frame
+// slot reused by every iteration. The slot goes before the entry block's first instruction (or
+// at its end while the block is still empty), and the function is the one owning the builder's
+// current block rather than a threaded `function_`, so a runtime helper synthesized into its own
+// function hoists into that function's entry. Every scratch slot is written before it is read at
+// its use site, so sharing one slot across iterations is sound. The `AllocStack` form
+// (`emitStackAlloc`) keeps its loop-body position on purpose: its own save/restore bracket
+// reclaims it.
+let buildEntryAlloca builder type_ name =
+    (let currentBlock = getInsertBlock(builder)
+    in
+        currentBlock
+        |> getBasicBlockParent
+        |> getEntryBasicBlock
+        |> (given (entryBlock) ->
+            entryBlock
+            |> getFirstInstruction
+            |> positionBuilder(builder)(entryBlock))
+        |> (given (_) -> buildAlloca(builder)(type_)(name))
+        |> (given (slot) ->
+            let _ = positionBuilderAtEnd(builder)(currentBlock)
+            in slot))
 
 let buildStore builder value ptr = LLVMBuildStore(builder)(value)(ptr)
 

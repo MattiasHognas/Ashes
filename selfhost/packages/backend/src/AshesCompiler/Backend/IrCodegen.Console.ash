@@ -111,7 +111,7 @@ let emitConsoleEnableRaw context function_ builder i64 i8 i32 ptrType (globals: 
             in
                 let doneBlock = appendBasicBlock(context)(function_)("console_raw_done")
                 in
-                    let resultSlot = buildAlloca(builder)(i64)("console_raw_result")
+                    let resultSlot = buildEntryAlloca(builder)(i64)("console_raw_result")
                     in
                         let savedPtr =
                             buildIntToPtr(builder)(buildPtrToInt(builder)(globals.consoleSavedTermios)(i64)("console_saved_addr"))(ptrType)("console_saved_ptr")
@@ -119,7 +119,7 @@ let emitConsoleEnableRaw context function_ builder i64 i8 i32 ptrType (globals: 
                             let savedAddr = buildPtrToInt(builder)(savedPtr)(i64)("console_saved_termios_addr")
                             in
                                 let workTermios =
-                                    buildAlloca(builder)(arrayType(i8)(termiosSizeBytes))("console_work_termios")
+                                    buildEntryAlloca(builder)(arrayType(i8)(termiosSizeBytes))("console_work_termios")
                                 in
                                     let workAddr = buildPtrToInt(builder)(workTermios)(i64)("console_work_termios_addr")
                                     in
@@ -200,19 +200,19 @@ let emitConsolePoll context function_ builder i64 i8 ptrType mallocFn mallocType
                 in
                     let doneBlock = appendBasicBlock(context)(function_)("console_poll_done")
                     in
-                        let resultSlot = buildAlloca(builder)(i64)("console_poll_result")
+                        let resultSlot = buildEntryAlloca(builder)(i64)("console_poll_result")
                         in
                             let buffer =
-                                buildAlloca(builder)(consolePollBufferSize
+                                buildEntryAlloca(builder)(consolePollBufferSize
                                 |> Ashes.Number.UInt.fromInt64
                                 |> arrayType(i8))("console_poll_buf")
                             in
                                 let bufferAddr = buildPtrToInt(builder)(buffer)(i64)("console_poll_buf_addr")
                                 in
-                                    let pollFd = buildAlloca(builder)(i64)("console_pollfd")
+                                    let pollFd = buildEntryAlloca(builder)(i64)("console_pollfd")
                                     in
                                         let timespec =
-                                            buildAlloca(builder)(arrayType(i64)(2u64))("console_poll_ts")
+                                            buildEntryAlloca(builder)(arrayType(i64)(2u64))("console_poll_ts")
                                         in
                                             let timespecAddr = buildPtrToInt(builder)(timespec)(i64)("console_poll_ts_addr")
                                             in
@@ -269,7 +269,7 @@ let emitConsolePoll context function_ builder i64 i8 ptrType mallocFn mallocType
 // `Ashes.IO.Console.monotonicMillis()`: `clock_gettime(CLOCK_MONOTONIC)` as whole milliseconds.
 let emitMonotonicMillis builder i64 i8 =
     (let timespec =
-        buildAlloca(builder)(arrayType(i64)(2u64))("monotonic_timespec")
+        buildEntryAlloca(builder)(arrayType(i64)(2u64))("monotonic_timespec")
     in
         let timespecAddr = buildPtrToInt(builder)(timespec)(i64)("monotonic_timespec_addr")
         in
