@@ -488,6 +488,7 @@ let testDecisionSnapshot unit =
                         CompilationDecisionSnapshot(
                             functionOwnership = [ownershipRec],
                             valuePlacements = [placementRec],
+                            reuseDecisions = [],
                             coroutineRepresentations = [],
                             patternBindings = [],
                             externalResources = [],

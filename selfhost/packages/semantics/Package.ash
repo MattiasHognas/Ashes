@@ -46,7 +46,11 @@ import AshesCompiler.Semantics.CoroutineFrame
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.FunctionOrigins
 import AshesCompiler.Semantics.HoverTypeInfo
+import AshesCompiler.Semantics.ReuseDecision
 import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.ExplainReport
+import AshesCompiler.Semantics.IrExplainReporter
+import AshesCompiler.Semantics.ExplainReportFormatter
 import AshesCompiler.Semantics.IrValidation
 import AshesCompiler.Semantics.IrCompileTimeEval
 import AshesCompiler.Semantics.IrOptimizer
