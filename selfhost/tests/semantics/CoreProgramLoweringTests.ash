@@ -222,6 +222,34 @@ let recursive containsLine (needle: Str) (lines: List(Str)) =
             then true
             else containsLine(needle)(rest)
 
+// A let-bound lambda is lifted as that name's source function; a lambda nested inside it is a
+// closure helper of the same name; a lambda bound nowhere is an anonymous closure helper.
+let expectLambdaOriginsNameTheirBinding unit =
+    "let makeAdder x =\n    given (y) -> x + y\n\nlet apply = (given (f) -> f(1))\n\napply(makeAdder(5))"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("function lambda_0  [SourceFunction from makeAdder]")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("function lambda_1  [ClosureHelper from makeAdder]")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("function lambda_2  [SourceFunction from apply]")
+            |> test.assertEqual(true)))
+
+let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
+    "(given (x) -> x + 1)(41)"
+    |> dumpSource
+    |> (given (lines) ->
+        lines
+        |> containsLine("function lambda_0  [ClosureHelper]")
+        |> test.assertEqual(true))
+
 let constructorLetProgramSource unit = "type Option(a) =\n    | NoVal\n    | HasVal(a)\n\nlet value = HasVal(42)\n\nmatch value with\n    | HasVal(n) -> n + 1\n    | NoVal -> 0"
 
 // A `let` bound to a saturated constructor of scalar arguments, consumed only by a `match` whose
@@ -339,4 +367,6 @@ let runCoreProgramLoweringTests unit =
     |> expectTraitConstrainedBindingFailsWithoutEnvironment
     |> expectCallSiteForwardingLowersWithEnvironment
     |> expectUnguardedConcreteCallStaysUnrewrittenAndTypeMismatches
+    |> expectLambdaOriginsNameTheirBinding
+    |> expectAnonymousLambdaIsAnAnonymousClosureHelper
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))
