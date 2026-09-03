@@ -1,0 +1,5 @@
+let shout n =
+    let text = Ashes.Text.fromInt(n)
+    in text
+
+Ashes.IO.print(shout(7))

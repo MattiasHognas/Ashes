@@ -196,50 +196,50 @@ let recursive heapParameterMapping (resultArguments: List(SemanticType)) (concre
 
 // Every constructor of the named type identified by symbolId, in declaration order, paired with
 // its own fields substituted for this use site's concrete type arguments.
-let recursive heapNamedTypeSubstitutedFields (symbolId: Int) (arguments: List(SemanticType)) (constructors: List(ConstructorInferenceDefinition)) =
+let recursive heapNamedTypeSubstitutedFields (symbolId: Int) (typeName: Str) (arguments: List(SemanticType)) (constructors: List(ConstructorInferenceDefinition)) =
     match constructors with
         | [] -> []
         | ConstructorInferenceDefinition { name = constructorName, scheme = TypeScheme { body = body } } :: rest ->
             match heapConstructorFieldShape(body)([]) with
-                | (fieldTypes, SemNamed(candidateId, _candidateName, resultArguments)) ->
-                    if candidateId == symbolId
+                | (fieldTypes, SemNamed(candidateId, candidateName, resultArguments)) ->
+                    if candidateId == symbolId && candidateName == typeName
                     then
                         let mapping = heapParameterMapping(resultArguments)(arguments)
                         in
                             let substitutedFields =
                                 map(applySubstitution(mapping))(fieldTypes)
-                            in (constructorName, substitutedFields) :: heapNamedTypeSubstitutedFields(symbolId)(arguments)(rest)
-                    else heapNamedTypeSubstitutedFields(symbolId)(arguments)(rest)
-                | _ -> heapNamedTypeSubstitutedFields(symbolId)(arguments)(rest)
+                            in (constructorName, substitutedFields) :: heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
+                    else heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
+                | _ -> heapNamedTypeSubstitutedFields(symbolId)(typeName)(arguments)(rest)
 
 // The named type's constructors with their fields instantiated at this use site, or an empty list
 // for a type whose constructors are not visible in the environment (a compiler-provided handle).
 let heapNamedTypeConstructors (named: SemanticType) (environment: TypeEnvironment) =
     match named with
-        | SemNamed(symbolId, _name, arguments) ->
+        | SemNamed(symbolId, name, arguments) ->
             environment
             |> heapEnvironmentConstructors
-            |> heapNamedTypeSubstitutedFields(symbolId)(arguments)
+            |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments)
         | _ -> []
 
 // Whether the named type's first constructor declares record field names.
-let recursive heapNamedTypeHasFieldNames (symbolId: Int) (constructors: List(ConstructorInferenceDefinition)) =
+let recursive heapNamedTypeHasFieldNames (symbolId: Int) (typeName: Str) (constructors: List(ConstructorInferenceDefinition)) =
     match constructors with
         | [] -> false
         | ConstructorInferenceDefinition { scheme = TypeScheme { body = body }, fieldNames = fieldNames } :: rest ->
             match heapConstructorFieldShape(body)([]) with
-                | (_fieldTypes, SemNamed(candidateId, _candidateName, _resultArguments)) ->
-                    if candidateId == symbolId
+                | (_fieldTypes, SemNamed(candidateId, candidateName, _resultArguments)) ->
+                    if candidateId == symbolId && candidateName == typeName
                     then length(fieldNames) >= 1
-                    else heapNamedTypeHasFieldNames(symbolId)(rest)
-                | _ -> heapNamedTypeHasFieldNames(symbolId)(rest)
+                    else heapNamedTypeHasFieldNames(symbolId)(typeName)(rest)
+                | _ -> heapNamedTypeHasFieldNames(symbolId)(typeName)(rest)
 
 let heapNamedTypeIsRecord (named: SemanticType) (environment: TypeEnvironment) =
     match named with
-        | SemNamed(symbolId, _name, _arguments) ->
+        | SemNamed(symbolId, name, _arguments) ->
             environment
             |> heapEnvironmentConstructors
-            |> heapNamedTypeHasFieldNames(symbolId)
+            |> heapNamedTypeHasFieldNames(symbolId)(name)
         | _ -> false
 
 let recursive heapExternalTypeHasDestructor (name: Str) (context: TypeResolutionContext) =
@@ -288,7 +288,7 @@ and heapContainsResource (semanticType: SemanticType) (environment: TypeEnvironm
                     else
                         heapAnyGroupedResource(environment
                         |> heapEnvironmentConstructors
-                        |> heapNamedTypeSubstitutedFields(symbolId)(arguments))(environment)(symbolId :: path)
+                        |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments))(environment)(symbolId :: path)
             | SemTuple(elements) -> heapAnyResource(elements)(environment)(path)
             | SemList(element) -> heapContainsResource(element)(environment)(path)
             | _ -> false)
@@ -317,7 +317,7 @@ and heapContainsUnresolvedType (semanticType: SemanticType) (environment: TypeEn
             | SemParameter(_id, _name) -> true
             | SemList(element) -> heapContainsUnresolvedType(element)(environment)(path)
             | SemTuple(elements) -> heapAnyUnresolved(elements)(environment)(path)
-            | SemNamed(symbolId, _name, arguments) ->
+            | SemNamed(symbolId, name, arguments) ->
                 if containsIntId(symbolId)(path)
                 then false
                 else
@@ -328,7 +328,7 @@ and heapContainsUnresolvedType (semanticType: SemanticType) (environment: TypeEn
                         else
                             heapAnyGroupedUnresolved(environment
                             |> heapEnvironmentConstructors
-                            |> heapNamedTypeSubstitutedFields(symbolId)(arguments))(environment)(extendedPath)
+                            |> heapNamedTypeSubstitutedFields(symbolId)(name)(arguments))(environment)(extendedPath)
             | _ -> false)
 
 // A named type the runtime may never manage as an ordinary reuse cell: a built-in resource handle

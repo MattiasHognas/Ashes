@@ -721,18 +721,33 @@ same public behavior.
   either. Closures carry stage 0's origins (`SourceFunction from <let name>`, `ClosureHelper` with
   the `lambda:<start>:<length>:<param>` discriminator, anonymous helpers), a scalar-capture
   environment normalizer (`<label>$env_normalize`), and a let-bound lambda used only as a direct
-  callee is a `MakeClosureStack`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
-  `ownerless_match`, `pattern_match`, and `closure_capture` fixtures match stage 0
-  byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`;
-  the backend fuses it into a `musttail` when the instruction past the call's own window close
-  stores or returns its result. Open: the mutual-recursion loop merge (milestone 5's OPT-19;
-  `mutual_recursion` stays out of the parity runner until then: its `recgroup_*` members and entry
-  already match, the merged `lambda_N` body, `__recgroup_dispatch_N`, and the
-  `MutualRecursionWrapper`s are missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
-  `CopyOutArena`/`CopyOutList` for heap-escaping results, coroutine/async back edges, entry
-  normalization of a parameter reaching the result, the owner-alias walk across curried chains,
-  borrowed reads of owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop`
-  emission itself (only the provably-dead top-level constructor drop is emitted so far).
+  callee is a `MakeClosureStack`. Runtime-managed strings follow stage 0's
+  `LoweredValueRequest`: a consumer that keeps a fresh string alive (a direct binding result, an
+  immediate `Text.length`/`byteLength`/`IO.print` use) asks the fresh-string builtins
+  (`fromInt`/`fromFloat`/`formatFloat`/`fromBigInt`/`toHex`/ASCII case/`Rune.toText`/
+  `Bytes.subText`) for an RC result (`RuntimeManaged=true`), the consumed operand of a
+  print/write/`byteLength`/concat is released right after the use (`RcDrop ... RuntimeManaged`
+  on a newly produced temp), a `let` adopts its RC value as an owner released at scope exit
+  unless its body tail-forwards the binding (the read then transfers ownership without a
+  `Borrow`), a lambda whose body produces an RC value is a `MakeClosure ReturnsRuntimeManaged`
+  and a single-argument call to it marks its result newly produced, and a scope that owned and
+  released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
+  cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
+  same-arity scalar-field ADT) is copied past the reset as an RC-normalized
+  `CopyOutArena`/`CopyOutList`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
+  `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
+  `heap_result_let`, and `heap_result_list` fixtures match stage 0 byte-for-byte, source
+  locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  into a `musttail` when the instruction past the call's own window close stores or returns its
+  result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
+  out of the parity runner until then: its `recgroup_*` members and entry already match, the
+  merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
+  missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
+  copy-out at call windows and match arms, the runtime flag on `ConcatStr` (the deferred-add
+  sealing), curried known-call results, coroutine/async back edges, entry normalization of a
+  parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
+  owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
+  aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
@@ -868,10 +883,9 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: `CopyOutArena`/`CopyOutList`
-  (panic; the lowering leaves a window open rather than emit them, see OPT-25), the rest of
-  Perceus placement (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and
-  the async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). Open: the rest of Perceus placement
+  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
+  async/parallel/net/FFI instruction families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
