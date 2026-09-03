@@ -318,6 +318,39 @@ let expectClosureResultKeepsCallWindowOpen unit =
             |> containsLine("    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11")
             |> test.assertEqual(true)))
 
+// The else branch of an `if` is lowered expecting the then branch's type, and a call there has its
+// result constrained to it before its arguments are lowered: the sibling call inside a recursive
+// group member has a result type still unresolved on its own, yet its window resets under the
+// then branch's Bool.
+let expectElseBranchCallResetsUnderThenType unit =
+    "let recursive isEven n =\n    if n == 0\n    then true\n    else isOdd(n - 1)\nand isOdd n =\n    if n == 0\n    then false\n    else isEven(n - 1)\n\nisEven(4)"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("    CallClosure           Target=9 ClosureTemp=4 ArgTemp=8")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+            |> test.assertEqual(true)))
+
+// A reference to a recursive-group sibling allocates the closure temp before the environment temp.
+let expectSiblingClosureTempPrecedesEnvironmentTemp unit =
+    "let recursive isEven n =\n    if n == 0\n    then true\n    else isOdd(n - 1)\nand isOdd n =\n    if n == 0\n    then false\n    else isEven(n - 1)\n\nisEven(4)"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> containsLine("    LoadLocal             Target=5 Slot=0")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    MakeClosure           Target=4 FuncLabel=recgroup_1_isOdd EnvPtrTemp=5 EnvSizeBytes=0")
+            |> test.assertEqual(true)))
+
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
     "(given (x) -> x + 1)(41)"
     |> dumpSource
@@ -459,5 +492,7 @@ let runCoreProgramLoweringTests unit =
     |> expectCaptureFreeClosureHasNoNormalizer
     |> expectCallSpinesGetArenaWindows
     |> expectClosureResultKeepsCallWindowOpen
+    |> expectElseBranchCallResetsUnderThenType
+    |> expectSiblingClosureTempPrecedesEnvironmentTemp
     |> expectAnonymousLambdaIsAnAnonymousClosureHelper
     |> (given (_) -> Ashes.IO.print("all self-hosted core program lowering tests passed"))

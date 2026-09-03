@@ -661,40 +661,43 @@ same public behavior.
   layout from the start rather than unboxing the tagged layout later.
 - [~] **OPT-25** Insert Perceus duplication/drop operations and deterministic resource cleanup across
   ordinary, exceptional, handler, and coroutine control flow. Done: arena save/restore/reclaim
-  brackets around flat top-level `let` scopes, nested `let` chains (per-binding brackets closing
-  LIFO after the innermost body, stage 0's chain-ambient store spans included), and every `match`
-  arm on the linear dispatch path (save before the pattern test; restore/reclaim on both exits —
-  before the jump to the join and in the arm's own `match_arm_cleanup_N` block, which then jumps
-  to the real fail target). The `let_bindings`, `nested_let_scopes`, `scalar_match`, and
-  `ownerless_match` IR parity fixtures match stage 0 byte-for-byte; the last one covers an
-  arena-placed constructor scrutinee: a constructor allocates in the arena unless its consumer
-  requests an RC cell (`runtimeAdtRequested`, consumed at instantiation so nested constructor
-  arguments stay arena-placed), and the dead top-level `let` path is the one requester today. The
-  brackets are gated by the conservative syntactic
-  provably-arena-safe whitelist, which now also admits a `match` whose scrutinee, guards, and arm
-  bodies are scalar and whose patterns bind nothing heap-derived, and a `let` bound to a
-  saturated non-zero-cost constructor of scalar arguments (an arena-confined cell) that is only
-  ever matched by constructor, variable, or wildcard patterns binding its scalar fields
-  (`ArenaSafeScope`). Reads of owned bindings (`let` and pattern bindings whose resolved type is
-  heap-represented, `ownedTypeNameOf`) emit stage 0's `Borrow` alias, and a bracketed `let` that
-  owns its binding spills the body result to a slot across the closing restore
-  (`closeOwnedLetBracket`) and anchors the binding's release at the scope exit (`RcDrop` naming
-  its slot, `CleanupResource` for a closure). The ported `PerceusLifetimePlacement` (blocks and
-  dominators from `IrControlFlowGraph`) then removes each single anchor and re-inserts the drop
-  at the control-flow precise last use per block, at the definition when never used, or at the
-  entry of a block reached from a live branch, with compensating `RcDup`s for borrowed closure
-  arguments and record-field stores; the `pattern_match` fixture now matches stage 0
-  byte-for-byte. Every ordinary (tagged)
-  constructor pattern on the linear path now guards its tag test with stage 0's `ptr != 0`
-  check, and the tag test allocates its temps in stage 0's order (tag, compare, expected
-  constant); the tag-group path binds fields under the switch without either, as stage 0 does.
-  Open: per-arm brackets on the tag-group dispatch and capability-operation arm paths (no parity
-  fixture yet, so they still pass `None`), the `Borrow` a match emits when its scrutinee is an
-  owned binding (that comes from owned-binding reads in variable lowering, i.e. the ownership
-  tracking below, not from the match itself), `CopyOutArena` and the general heap-escaping case,
-  coroutine/async back edges,
-  entry normalization of a parameter reaching the result, the owner-alias walk across curried
-  chains, borrowed reads of owned bindings at call sites, and the actual `RcDup`/`RcDrop`
+  brackets around every flat top-level `let`, nested `let` chain binding (closing LIFO after the
+  innermost body), `match` arm on the linear dispatch path (save before the pattern test;
+  restore/reclaim on both exits, the arm's own `match_arm_cleanup_N` block jumping on to the real
+  fail target), and general call spine (opened before the callee, closed after the last
+  application), each closed under stage 0's scope rule: reset when the result's resolved type
+  survives a reset (scalars and zero-cost wrappers of them; an operator-defaulted variable counts
+  as `Int`), otherwise left open (copy-out is not ported). The rule is type-directed, so the
+  context's expected type is threaded through the lowering state as stage 0's
+  `LoweredValueRequest.ExpectedType`: a `let`, recursive binding, lambda, `if`, `match`, `handle`,
+  call, list literal, and cons forward it to the parts stage 0 forwards it to (the else branch
+  expects the then branch's type, a call argument its parameter type, a list element its element
+  type, a lambda pins its parameter type from it), every other expression is unified with it
+  afterwards, and a general call constrains its spine's result with it before any argument is
+  lowered — so a sibling call inside a recursive-group member, whose result type is unresolved on
+  its own, still resets its window. A constructor allocates in the arena unless its consumer
+  requests an RC cell (`runtimeAdtRequested`, consumed at instantiation), the dead top-level `let`
+  path being the one requester. Reads of owned bindings emit stage 0's `Borrow` alias; a bracketed
+  `let` that owns its binding spills the body result to a slot across the closing restore
+  (`closeOwnedLetBracket`) and anchors the release at the scope exit; the ported
+  `PerceusLifetimePlacement` (over `IrControlFlowGraph`) re-inserts each drop at the control-flow
+  precise last use per block, with compensating `RcDup`s for borrowed closure arguments and
+  record-field stores. Tagged constructor patterns on the linear path guard the tag test with
+  `ptr != 0` in stage 0's temp order; the tag-group path binds fields under the switch without
+  either. Closures carry stage 0's origins (`SourceFunction from <let name>`, `ClosureHelper` with
+  the `lambda:<start>:<length>:<param>` discriminator, anonymous helpers), a scalar-capture
+  environment normalizer (`<label>$env_normalize`), and a let-bound lambda used only as a direct
+  callee is a `MakeClosureStack`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
+  `ownerless_match`, `pattern_match`, and `closure_capture` fixtures match stage 0
+  byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`;
+  the backend fuses it into a `musttail` when the instruction past the call's own window close
+  stores or returns its result. Open: the mutual-recursion loop merge (`mutual_recursion` stays
+  out of the parity runner: its `recgroup_*` members and entry already match, the merged
+  `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing),
+  per-arm brackets on the tag-group dispatch and capability-operation arm paths,
+  `CopyOutArena`/`CopyOutList` for heap-escaping results, coroutine/async back edges, entry
+  normalization of a parameter reaching the result, the owner-alias walk across curried chains,
+  borrowed reads of owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop`
   emission itself (only the provably-dead top-level constructor drop is emitted so far).
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request

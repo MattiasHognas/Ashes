@@ -1226,12 +1226,25 @@ let emitKnownCallValue cx builder tempEnv funcLabel envTemp argTemp flagTemp tar
 let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack tailJoins instructions state =
     match instructions with
         | [] -> state
-        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = Return(source) } :: restAfterReturn as returnAndRest) ->
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: afterCall -> codegenKnownCall(cx)(builder)(allocatesStack)(tailJoins)(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated)(afterCall)(state)
+        | instruction :: rest ->
+            match instruction with
+                | IrInstruction { instruction = kind } ->
+                    state
+                    |> codegenInstructionKind(cx)(builder)(kind)
+                    |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(rest)
+// A `CallKnown` whose result the next instruction past any arena bookkeeping returns or stores
+// into a tail join's slot is fused into a tail call. The lowerer closes a call's own arena window
+// between the call and that return or store; on the fused path the window's restore can never
+// run, and the ordinary path emits it as written.
+and codegenKnownCall (cx: CodegenContext) builder allocatesStack tailJoins target funcLabel envTemp argTemp flagTemp environmentIsStackAllocated afterCall state =
+    match skipArenaBookkeeping(afterCall) with
+        | IrInstruction { instruction = Return(source) } :: restAfterReturn ->
             if environmentIsStackAllocated || source != target || cx.isEntry
             then
                 state
                 |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
-                |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(returnAndRest)
+                |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)
             else
                 match state with
                     | (tempEnv, _terminated) ->
@@ -1240,27 +1253,27 @@ let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack ta
                             if allocatesStack
                             then
                                 let _ = setTailCallKind(call)(tailCallKindTail)
-                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(returnAndRest)(((target, call) :: tempEnv, false))
+                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)(((target, call) :: tempEnv, false))
                             else
                                 let _ = setTailCallKind(call)(tailCallKindMustTail)
                                 in
                                     let _ = buildRet(builder)(call)
                                     in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(restAfterReturn)(((target, call) :: tempEnv, true))
-        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: (IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: afterStore as storeAndRest) ->
+        | IrInstruction { instruction = StoreLocal(storeSlot, storeSource) } :: afterStore ->
             match afterStore
             |> skipArenaBookkeeping
             |> tailJoinFusionPlan(cx)(tailJoins)(allocatesStack)(environmentIsStackAllocated)(target)(storeSlot)(storeSource) with
                 | None ->
                     state
                     |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
-                    |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)
+                    |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)
                 | Some(TailJoinFusion { fusionMustTail = false }) ->
                     match state with
                         | (tempEnv, _terminated) ->
                             let call = emitKnownCallValue(cx)(builder)(tempEnv)(funcLabel)(envTemp)(argTemp)(flagTemp)(target)
                             in
                                 let _ = setTailCallKind(call)(tailCallKindTail)
-                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(storeAndRest)(((target, call) :: tempEnv, false))
+                                in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)(((target, call) :: tempEnv, false))
                 | Some(TailJoinFusion { fusionContinuation = continuation }) ->
                     match state with
                         | (tempEnv, _terminated) ->
@@ -1270,12 +1283,10 @@ let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack ta
                                 in
                                     let _ = buildRet(builder)(call)
                                     in codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(continuation)(((target, call) :: tempEnv, true))
-        | instruction :: rest ->
-            match instruction with
-                | IrInstruction { instruction = kind } ->
-                    state
-                    |> codegenInstructionKind(cx)(builder)(kind)
-                    |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(rest)
+        | _ ->
+            state
+            |> codegenInstructionKind(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
+            |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(afterCall)
 
 // Builds one function's own scaffolding (entry block, local slots, label blocks) once its
 // `irFunction`'s instructions are known and returns the `CodegenContext` its body is emitted
