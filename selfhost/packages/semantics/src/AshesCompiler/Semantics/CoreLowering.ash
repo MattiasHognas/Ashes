@@ -35,6 +35,7 @@ import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
+import AshesCompiler.Semantics.PerceusLifetimePlacement
 import AshesCompiler.Semantics.Unification
 export (
     type CoreLoweringError(..),
@@ -1158,43 +1159,67 @@ let stripChainedLetAt body =
 // was already proven provably-arena-safe by `topLevelLetChainProvablyArenaSafe`, which recursed
 // through every nested `let` (see `isProvablyArenaSafeExpr`'s own `ExprLet` case), so no separate
 // per-site proof is needed here.
-// Whether a lowered `let` value is owned (`ownedTypeNameOf`), in which case its scope carries a
-// drop obligation the closing bracket must respect.
-let loweredValueIsOwned lowered =
+// The owned type name of a lowered `let` value (`ownedTypeNameOf`), `None` when the value is a
+// copy type; an owned binding's scope carries a drop obligation the closing bracket discharges.
+let loweredValueOwnedTypeName lowered =
     match lowered with
         | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
             match state with
                 | CoreLoweringState { constructorLayouts = layouts } ->
-                    match ownedTypeNameOf(resolveType(state)(semanticType))(layouts) with
-                        | Some(_typeName) -> true
-                        | None -> false
-        | _ -> false
+                    ownedTypeNameOf(resolveType(state)(semanticType))(layouts)
+        | _ -> None
+
+// The lexical release of an owned `let` binding at its scope exit, stage 0's
+// `EmitOwnedValueDrop`: the owner is loaded back and released with an `RcDrop` naming its slot,
+// which `PerceusLifetimePlacement` later moves to the binding's last use on each path. A closure
+// is released with `CleanupResource` instead, which stays at the scope exit.
+let emitOwnedLetRelease typeName ownerSlot state =
+    match freshTemp(state) with
+        | FreshTemp { state = loadState, temp = loadTemp } ->
+            loadState
+            |> emit(LoadLocal(loadTemp)(ownerSlot))
+            |> (given (loaded) ->
+                if typeName == "Function"
+                then
+                    emit(CleanupResource(loadTemp)(typeName)(None))(loaded)
+                else
+                    emit(RcDrop(loadTemp)(typeName)(ownerSlot)(false)(false)(None))(loaded))
+
+let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
+    state
+    |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
 
 // Closes a `let`'s arena bracket and returns the closed state with the result temp. A scope that
-// owns its binding spills the body result to a slot across the restore and reloads it afterwards
-// (stage 0's result preservation: the drops emitted at scope exit may overwrite the result
-// temp); a scope owning nothing returns the body temp directly.
-let closeOwnedLetBracket ownedLet cursorSlot endSlot resultTemp state =
-    if ownedLet
-    then
-        match freshLocal(state) with
-            | FreshLocal { state = resultAllocated, local = resultSlot } ->
-                match resultAllocated
-                |> emit(StoreLocal(resultSlot)(resultTemp))
-                |> freshLocal with
-                    | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                        match preRestoreAllocated
-                        |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                        |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
-                        |> freshTemp with
-                            | FreshTemp { state = reloadState, temp = reloadTemp } ->
-                                (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
-    else
-        match freshLocal(state) with
-            | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                (preRestoreAllocated
-                |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
-                |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false)), resultTemp)
+// owns its binding spills the body result to a slot, releases the binding, restores, and reloads
+// the result afterwards (stage 0's result preservation: the release could otherwise overwrite the
+// result temp); a scope owning nothing restores and returns the body temp directly.
+let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp state =
+    match ownedTypeName with
+        | Some(typeName) ->
+            match freshLocal(state) with
+                | FreshLocal { state = resultAllocated, local = resultSlot } ->
+                    match resultAllocated
+                    |> emit(StoreLocal(resultSlot)(resultTemp))
+                    |> emitOwnedLetRelease(typeName)(ownerSlot)
+                    |> freshLocal with
+                        | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
+                            match preRestoreAllocated
+                            |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                            |> freshTemp with
+                                | FreshTemp { state = reloadState, temp = reloadTemp } ->
+                                    (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
+        | None ->
+            match freshLocal(state) with
+                | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } -> (emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(preRestoreAllocated), resultTemp)
+
+// `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it.
+let finishLetValueInSlot name body lower outerBindings lowered =
+    match lowered with
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> (failure(failedState)(error), -1)
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match freshLocal(state) with
+                | FreshLocal { local = local } as fresh -> (lowerStoredLet(name)(body)(lower)(outerBindings)(temp)(semanticType)(fresh), local)
 
 let lowerArenaBracketedNestedLet name value body lower outerBindings state =
     match freshLocal(state) with
@@ -1206,10 +1231,10 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                     |> lower(value) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
-                            match finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings)(loweredValue) with
-                                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                                | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
-                                    match closeOwnedLetBracket(loweredValueIsOwned(loweredValue))(cursorSlot)(endSlot)(resultTemp)(bodyState) with
+                            match finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings)(loweredValue) with
+                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
+                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(bodyState) with
                                         | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
 
 let lowerLet name value body lower state =
@@ -5590,10 +5615,10 @@ let lowerArenaBracketedTopLevelLet name value environment continuation outerBind
                                 match lowerCore(rewrittenValue)(saved) with
                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
                                     | LoweredCoreValue { error = None } as loweredValue ->
-                                        match finishLetValue(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
-                                            | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
-                                            | LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None } ->
-                                                match closeOwnedLetBracket(loweredValueIsOwned(loweredValue))(cursorSlot)(endSlot)(resultTemp)(bodyState) with
+                                        match finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
+                                            | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
+                                            | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                                match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(bodyState) with
                                                     | (closed, finalTemp) -> success(finalTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
@@ -6184,7 +6209,7 @@ let buildProgram lowered =
                                 ) with
                                     | CoreProgramUses { printInt = usesPrintInt, printStr = usesPrintStr, printBool = usesPrintBool, concatStr = usesConcatStr } ->
                                         CoreLoweringResult(
-                                            program = Some(IrProgram(
+                                            program = IrProgram(
                                                 entryFunction = entry,
                                                 functions = resolvedFunctions,
                                                 stringLiterals = stringLiterals,
@@ -6198,7 +6223,9 @@ let buildProgram lowered =
                                                 usesAsync = false,
                                                 capabilityHandlerGlobals = 0,
                                                 traitEvidence = emptyTraitEvidenceAnnotations
-                                            )),
+                                            )
+                                            |> placeLifetimes
+                                            |> Some,
                                             semanticType = resolveType(state)(semanticType),
                                             error = None
                                         )

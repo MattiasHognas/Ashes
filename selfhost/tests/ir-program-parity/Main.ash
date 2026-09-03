@@ -55,5 +55,6 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("nested_let_scopes"))
         |> (given (_) -> checkFixture(root)("scalar_match"))
         |> (given (_) -> checkFixture(root)("ownerless_match"))
+        |> (given (_) -> checkFixture(root)("pattern_match"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
