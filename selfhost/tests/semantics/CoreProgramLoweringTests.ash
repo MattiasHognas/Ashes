@@ -415,6 +415,45 @@ let expectClosedOrMovedResourceIsNotCleanedUp unit =
         |> countFileHandleCleanups
         |> test.assertEqual(0))
 
+// A top-level wrapper that only hands the handle to a reading helper: the whole-program fixpoint
+// proves the hand-off borrows where the wrapper's own summary saw a consuming call, so the caller
+// keeps reading the handle and its arm still closes it exactly once.
+let expectProvenInspectingHandOffBorrowsResource unit =
+    "let peek h = Ashes.IO.File.readChunk(h)(2)\nlet peekTwice h = (let a = peek(h) in peek(h))\n" + openedHandleProgram("        let head = peekTwice(fh)\n        in\n" + readLineArm)
+    |> dumpSource
+    |> countFileHandleCleanups
+    |> test.assertEqual(1)
+
+let recursive anyLineContains (fragment: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> false
+        | line :: rest -> Ashes.Text.contains(line)(fragment) || anyLineContains(fragment)(rest)
+
+// A dead top-level constructor binding whose payload reaches past its cell names the type's
+// structural dropper on its release; the dropper walks the list payload and is registered as a
+// function of its own.
+let expectDeadConstructorBindingNamesStructuralDropper unit =
+    "type Box =\n    | Wrap(List(Int))\n\nlet dead = Wrap([1, 2])\n\nAshes.IO.print(\"done\")"
+    |> dumpSource
+    |> (given (lines) ->
+        Unit
+        |> (given (_) ->
+            lines
+            |> anyLineContains("TypeName=Wrap RuntimeManaged=true StructuralDropperLabel=__rcdrop_structural_0")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("function __rcdrop_structural_0  [StructuralOwnerDropper]")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> anyLineContains("TypeName=Box RuntimeManaged=true")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> anyLineContains("TypeName=List RuntimeManaged=true")
+            |> test.assertEqual(true)))
+
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
     "(given (x) -> x + 1)(41)"
     |> dumpSource

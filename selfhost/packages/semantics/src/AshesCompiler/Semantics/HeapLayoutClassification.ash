@@ -34,6 +34,7 @@ export (
     type HeapLayoutRejections(..),
     type HeapLayoutFacts(..),
     value canArenaResetLayout,
+    value heapRuntimeRecursiveCopyAdtLayout,
     value classifyHeapLayout,
 )
 

@@ -771,12 +771,13 @@ let codegenInstructionKind cx builder kind state =
                                                 buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
                                             in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // See `emitRcDrop` above for the release itself. `CoreLowering.ash`'s
-                        // `lowerDeadRcTopLevelLet` only ever emits this with `runtimeManaged =
-                        // true`, `mayBeEmpty = false`, `structuralDropperLabel = None` (every
-                        // constructor it can currently fire on wraps one plain scalar field,
-                        // nothing to cascade into) — any other combination panics rather than
-                        // silently dropping the wrong thing or leaking a child that needed its own
-                        // release first.
+                        // `lowerDeadRcTopLevelLet` emits this with `runtimeManaged = true` and
+                        // `mayBeEmpty = false`; a release that reaches past the cell (a list
+                        // spine, an aggregate with managed children) names its synthesized
+                        // structural dropper, and the drop is then that helper's call with a zero
+                        // environment, exactly as `LlvmCodegen.cs`'s `EmitDropCountedValue` makes
+                        // it. Any other combination panics rather than silently dropping the wrong
+                        // thing or leaking a child that needed its own release first.
                                         | RcDrop(sourceTemp, _typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
                                             if runtimeManaged == false
                                             then (tempEnv, terminated)
@@ -785,13 +786,29 @@ let codegenInstructionKind cx builder kind state =
                                                 then Ashes.IO.panic("codegen: mayBeEmpty RcDrop not yet supported")
                                                 else
                                                     match structuralDropperLabel with
-                                                        | Some(_label) -> Ashes.IO.panic("codegen: cascading RcDrop (structuralDropperLabel) not yet supported")
+                                                        | Some(label) ->
+                                                            let _ =
+                                                                buildCall(builder)(closureFunctionType)(lookupIndexed(label)(liftedFunctions))([constInt(i64)(0u64)(false), lookupIndexed(sourceTemp)(tempEnv), constInt(i64)(0u64)(false)])(3u32)(
+                                                                    "rc_drop_structural"
+                                                                )
+                                                            in (tempEnv, false)
                                                         | None ->
                                                             let _ =
                                                                 tempEnv
                                                                 |> lookupIndexed(sourceTemp)
                                                                 |> emitRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)
                                                             in (tempEnv, false)
+                        // The synthesized droppers test whether a cell is uniquely referenced
+                        // before releasing its children: the count word sits 16 bytes before the
+                        // payload pointer (`emitRcDrop`'s header walk), and the answer is the
+                        // `Bool` word `CmpIntNe` produces.
+                                        | RcIsUnique(target, sourceTemp) ->
+                                            let headerPtr =
+                                                gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(lookupIndexed(sourceTemp)(tempEnv))(ptrType)("rc_unique_value_ptr"))(-16)("rc_unique_header_ptr")
+                                            in
+                                                let isUnique =
+                                                    buildICmp(builder)(intPredicateEq)(buildLoad(builder)(i64)(headerPtr)("rc_unique_count"))(constInt(i64)(1u64)(false))("t" + Ashes.Text.fromInt(target) + "_i1")
+                                                in ((target, buildZExt(builder)(isUnique)(i64)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other
                         // RC-managed allocation here has (so a future closure drop can walk back to
