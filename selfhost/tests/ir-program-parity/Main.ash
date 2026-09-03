@@ -58,5 +58,8 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("ownerless_match"))
         |> (given (_) -> checkFixture(root)("pattern_match"))
         |> (given (_) -> checkFixture(root)("closure_capture"))
+        |> (given (_) -> checkFixture(root)("heap_result_builtin"))
+        |> (given (_) -> checkFixture(root)("heap_result_let"))
+        |> (given (_) -> checkFixture(root)("heap_result_list"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

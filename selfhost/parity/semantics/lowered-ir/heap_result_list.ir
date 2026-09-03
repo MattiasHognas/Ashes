@@ -1,0 +1,83 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from wrap]
+  locals=7 temps=8
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadLocal             Target=0 Slot=1   (heap_result_list.ash:2:22)
+    AllocAdt              Target=1 Tag=1 FieldCount=1   (heap_result_list.ash:2:17)
+    SetAdtField           Ptr=1 FieldIndex=0 Source=0   (heap_result_list.ash:2:17)
+    StoreLocal            Slot=4 Source=1   (heap_result_list.ash:2:5)
+    LoadConstInt          Target=2 Value=0   (heap_result_list.ash:3:8)
+    LoadLocal             Target=3 Slot=4   (heap_result_list.ash:3:9)
+    Borrow                Target=4 SourceTemp=3
+    Alloc                 Target=5 SizeBytes=16   (heap_result_list.ash:3:8)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (heap_result_list.ash:3:8)
+    RcDrop                SourceTemp=1 TypeName=Maybe OwnerSlot=4
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=2   (heap_result_list.ash:3:8)
+    StoreLocal            Slot=5 Source=5   (heap_result_list.ash:2:5)
+    LoadLocal             Target=7 Slot=5   (heap_result_list.ash:2:5)
+    Return                Source=7
+
+function _start_main  [ProgramEntry]
+  locals=18 temps=26
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (heap_result_list.ash:5:7)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=1   (heap_result_list.ash:5:12)
+    CallClosure           Target=5 ClosureTemp=3 ArgTemp=4   (heap_result_list.ash:5:7)
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=6 Value=0   (heap_result_list.ash:5:1)
+    CmpIntNe              Target=7 Left=5 Right=6   (heap_result_list.ash:5:1)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_3   (heap_result_list.ash:5:1)
+    LoadMemOffset         Target=8 BasePtr=5 OffsetBytes=0   (heap_result_list.ash:5:1)
+    LoadMemOffset         Target=9 BasePtr=5 OffsetBytes=8   (heap_result_list.ash:5:1)
+    LoadConstInt          Target=10 Value=0   (heap_result_list.ash:5:1)
+    CmpIntNe              Target=11 Left=8 Right=10   (heap_result_list.ash:5:1)
+    JumpIfFalse           CondTemp=11 Target=match_arm_cleanup_3   (heap_result_list.ash:5:1)
+    GetAdtTag             Target=12 Ptr=8   (heap_result_list.ash:5:1)
+    LoadConstInt          Target=14 Value=1   (heap_result_list.ash:5:1)
+    CmpIntEq              Target=13 Left=12 Right=14   (heap_result_list.ash:5:1)
+    JumpIfFalse           CondTemp=13 Target=match_arm_cleanup_3   (heap_result_list.ash:5:1)
+    GetAdtField           Target=15 Ptr=8 FieldIndex=0   (heap_result_list.ash:5:1)
+    StoreLocal            Slot=9 Source=15   (heap_result_list.ash:5:1)
+    LoadConstInt          Target=16 Value=0   (heap_result_list.ash:5:1)
+    CmpIntEq              Target=17 Left=9 Right=16   (heap_result_list.ash:5:1)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_3   (heap_result_list.ash:5:1)
+    LoadConstStr          Target=18 StrLabel=str_0   (heap_result_list.ash:6:39)
+    PrintStr              Source=18   (heap_result_list.ash:6:24)
+    AllocAdt              Target=19 Tag=0 FieldCount=0   (heap_result_list.ash:6:24)
+    StoreLocal            Slot=6 Source=19   (heap_result_list.ash:5:1)
+    Jump                  Target=match_end_0   (heap_result_list.ash:5:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
+    Jump                  Target=match_next_2   (heap_result_list.ash:5:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstStr          Target=20 StrLabel=str_1   (heap_result_list.ash:7:27)
+    PrintStr              Source=20   (heap_result_list.ash:7:12)
+    AllocAdt              Target=21 Tag=0 FieldCount=0   (heap_result_list.ash:7:12)
+    StoreLocal            Slot=6 Source=21   (heap_result_list.ash:5:1)
+    Jump                  Target=match_end_0   (heap_result_list.ash:5:1)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=15
+    Jump                  Target=match_none_1   (heap_result_list.ash:5:1)
+  match_none_1:
+    LoadConstInt          Target=22 Value=0   (heap_result_list.ash:5:1)
+    StoreLocal            Slot=6 Source=22   (heap_result_list.ash:5:1)
+  match_end_0:
+    LoadLocal             Target=23 Slot=6   (heap_result_list.ash:5:1)
+    StoreLocal            Slot=16 Source=23
+    LoadLocal             Target=24 Slot=2
+    CleanupResource       SourceTemp=24 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=17
+    CopyOutArena          DestTemp=25 SrcTemp=23 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=17
+    Return                Source=25
+

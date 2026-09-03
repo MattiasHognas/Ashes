@@ -520,6 +520,40 @@ let testUnresolvedTypeParameterInsideListIsDetected unit =
 
 let reportSuccess unit = Ashes.IO.print("all self-hosted heap layout classification tests passed")
 
+let recursive curriedConstructorType (fields: List(SemanticType)) (result: SemanticType) =
+    match fields with
+        | [] -> result
+        | field :: rest ->
+            SemFunction(field)(curriedConstructorType(rest)(result))(None)
+
+let factsStructuralCopy (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { structuralCopy = structuralCopy } -> structuralCopy
+
+// The intrinsic layouts all carry symbol id 0, so a type's constructors are the ones whose
+// result carries its NAME as well as its id: the nullary `Unit` next to a two-field `Pair` is
+// still a shallow-copyable cell of its own arity.
+let sharedIdConstructor (constructorName: Str) (typeName: Str) (fields: List(SemanticType)) =
+    ConstructorInferenceDefinition(
+        name = constructorName,
+        scheme = TypeScheme(quantified = [], body = []
+        |> SemNamed(0)(typeName)
+        |> curriedConstructorType(fields), constraints = []),
+        fieldNames = []
+    )
+
+let testSharedSymbolIdTypesAreToldApartByName unit =
+    (let environment =
+        emptyTypeEnvironment(Unit) with constructors = [
+            sharedIdConstructor("Unit")("Unit")([]),
+            sharedIdConstructor("Pair")("Pair")([SemInt, SemInt])
+        ]
+    in
+        environment
+        |> classifyHeapLayout(SemNamed(0)("Unit")([]))
+        |> factsStructuralCopy
+        |> test.assertEqual(ShallowCopy))
+
 let runHeapLayoutClassificationTests unit =
     unit
     |> testScalarIsNeverOwned
@@ -541,4 +575,5 @@ let runHeapLayoutClassificationTests unit =
     |> testUnresolvedTypeVariableIsDetected
     |> testUnresolvedTypeVariableIsRejectedWithUnresolvedFlag
     |> testUnresolvedTypeParameterInsideListIsDetected
+    |> testSharedSymbolIdTypesAreToldApartByName
     |> reportSuccess

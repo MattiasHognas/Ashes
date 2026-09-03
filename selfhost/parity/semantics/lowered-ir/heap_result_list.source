@@ -1,0 +1,7 @@
+let wrap n =
+    let inner = Some(n)
+    in [inner]
+
+match wrap(1) with
+    | Some(x) :: [] -> Ashes.IO.print("one")
+    | _ -> Ashes.IO.print("other")
