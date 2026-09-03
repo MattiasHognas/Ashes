@@ -27,6 +27,7 @@ import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
@@ -1967,11 +1968,44 @@ let ensureFunctionType semanticType state =
             |> finishFreshFunctionType(semanticType)
         | other -> failedFunctionType(state)(CoreCallRequiresFunction(other))
 
-let recursive lowerCallFunction expression lower state =
-    match expression with
-        | ExprAt(_span, inner) -> lowerCallFunction(inner)(lower)(state)
-        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(true)(lower)(state)
-        | _ -> lower(expression)(state)
+// Whether a call's result survives the arena reset that closes the call's window: stage 0's
+// `CanArenaReset`, a scalar seen through a zero-cost wrapper. A type variable that a deferred `+`
+// default owns is the `Int` that default resolves to.
+let callResultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(id) ->
+            []
+            |> sealedOperatorTypes(state.sealedOperatorDefaults)
+            |> pendingOperatorTypes(state.pendingOperatorDefaults)
+            |> (given (types) ->
+                state
+                |> operatorDefaultedVariables(types)
+                |> containsInt(id))
+        | SemNamed(_symbolId, name, _arguments) ->
+            match zeroCostPayloadType(name)(state.constructorLayouts) with
+                | Some(payload) ->
+                    payload
+                    |> resolveType(state)
+                    |> canArenaResetLayout
+                | None -> false
+        | resolved -> canArenaResetLayout(resolved)
+
+// Closes a call's arena window after its last application: the pre-restore end slot is
+// allocated either way, as stage 0 does, and the window is reset only when the result survives
+// it. A heap result keeps the window open, since the copy-out that would preserve it is not
+// ported yet.
+let closeCallWindow cursorSlot endSlot lowered =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match freshLocal(state) with
+                | FreshLocal { state = allocated, local = preRestoreSlot } ->
+                    if callResultSurvivesReset(semanticType)(allocated)
+                    then
+                        allocated
+                        |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                        |> success(temp)(semanticType)
+                    else success(temp)(semanticType)(allocated)
 
 let finishCoreCall functionTemp argumentTemp resultType binding =
     match binding with
@@ -2007,10 +2041,29 @@ let lowerCoreCallFunction argument lower loweredFunction =
             |> ensureFunctionType(functionType)
             |> lowerCoreCallTyped(argument)(lower)(functionTemp)
 
-let lowerCall function argument lower state =
+// The callee of one application inside a call spine `f(a)(b)`: a further application is another
+// stage of the same spine, an applied lambda literal is lowered as a stack closure, and anything
+// else is an ordinary expression. The stages share the window `lowerCall` opened around the
+// whole spine; a call inside an argument opens its own.
+let recursive lowerCallSpineCallee expression lower state =
+    match expression with
+        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(lower)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(lower)(state)
+        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(true)(lower)(state)
+        | _ -> lower(expression)(state)
+and lowerCallSpineStage function argument lower state =
     state
-    |> lowerCallFunction(function)(lower)
+    |> lowerCallSpineCallee(function)(lower)
     |> lowerCoreCallFunction(argument)(lower)
+
+// A general call keeps its chain's intermediates in an arena window of its own, saved before the
+// callee and arguments are lowered and closed after the last application.
+let lowerCall function argument lower state =
+    match openArenaBracket(state) with
+        | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
+            opened
+            |> lowerCallSpineStage(function)(argument)(lower)
+            |> closeCallWindow(cursorSlot)(endSlot)
 
 let failedIfPlan state error =
     CoreIfPlan(
