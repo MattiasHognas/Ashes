@@ -137,6 +137,8 @@ type CoreLoweringState =
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
+    | pendingSourceFunction: Maybe(SourceFunctionOrigin)
+    | activeFunctionOrigin: Maybe(IrFunctionOrigin)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -347,7 +349,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         arenaBracketingArmed = false,
         runtimeAdtRequested = false,
         pendingOperatorDefaults = [],
-        sealedOperatorDefaults = []
+        sealedOperatorDefaults = [],
+        pendingSourceFunction = None,
+        activeFunctionOrigin = None
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -506,6 +510,94 @@ let success temp semanticType state =
         semanticType = semanticType,
         error = None
     )
+
+// The innermost enclosing span resolved the way emitted instructions resolve theirs.
+let currentLocation (state: CoreLoweringState) =
+    match (state.currentSpan, state.sourceContext) with
+        | (Some(span), Some(context)) -> resolveItemSpanLocation(context)(state.currentItem)(span)
+        | _ -> None
+
+let spanStart (span: Maybe(TextSpan)) =
+    match span with
+        | Some(TextSpan { start = start }) -> start
+        | None -> 0
+
+let lambdaSiteDiscriminator (parameter: Str) (span: Maybe(TextSpan)) =
+    match span with
+        | Some(TextSpan { start = start, end = end }) -> "lambda:" + Ashes.Text.fromInt(start) + ":" + Ashes.Text.fromInt(end - start) + ":" + parameter
+        | None -> "lambda:0:0:" + parameter
+
+// A let-bound name as the source function its lambda value is lifted from. The qualified name
+// stage 0 maps from module-qualified binding names is not tracked here.
+let sourceFunctionOriginFor (name: Str) (state: CoreLoweringState) =
+    SourceFunctionOrigin(
+        functionSourceName = name,
+        functionQualifiedName = None,
+        declarationLocation = currentLocation(state),
+        declarationOffset = spanStart(state.currentSpan)
+    )
+
+let recursive letValueIsLambda (value: Expr) =
+    match value with
+        | ExprAt(_span, inner) -> letValueIsLambda(inner)
+        | ExprLambda(_parameter, _body, _annotation) -> true
+        | _ -> false
+
+// Arms a `let` whose value is a lambda so the lambda lowered next is lifted as that name's
+// `SourceFunction`; any other value leaves the lambda origins alone. A lambda under `let ... in`
+// wrappers inside the value is not armed and lifts as a closure helper.
+let armSourceFunction (name: Str) (value: Expr) (state: CoreLoweringState) =
+    if letValueIsLambda(value)
+    then
+        state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state))
+    else state
+
+let sourceFunctionOrigin (label: Str) (source: SourceFunctionOrigin) (state: CoreLoweringState) =
+    IrFunctionOrigin(
+        generatedLabel = label,
+        originKind = SourceFunctionOriginKind,
+        sourceOrigin = Some(source),
+        parentGeneratedLabel = None,
+        compilerOwner = None,
+        stableDiscriminator = None,
+        generationLocation = currentLocation(state)
+    )
+
+let closureHelperOrigin (label: Str) (parameter: Str) (parent: Maybe(IrFunctionOrigin)) (state: CoreLoweringState) =
+    match parent with
+        | Some(IrFunctionOrigin { generatedLabel = parentLabel, sourceOrigin = source }) ->
+            IrFunctionOrigin(
+                generatedLabel = label,
+                originKind = ClosureHelperOrigin,
+                sourceOrigin = source,
+                parentGeneratedLabel = Some(parentLabel),
+                compilerOwner = None,
+                stableDiscriminator = state.currentSpan
+                |> lambdaSiteDiscriminator(parameter)
+                |> Some,
+                generationLocation = currentLocation(state)
+            )
+        | None ->
+            IrFunctionOrigin(
+                generatedLabel = label,
+                originKind = ClosureHelperOrigin,
+                sourceOrigin = None,
+                parentGeneratedLabel = None,
+                compilerOwner = Some(CompilerFunctionOwner(ownerKind = ProgramFunctionOwner, ownerName = "anonymous source function")),
+                stableDiscriminator = state.currentSpan
+                |> lambdaSiteDiscriminator(parameter)
+                |> Some,
+                generationLocation = currentLocation(state)
+            )
+
+// The origin of the lambda about to be lifted as `label`: the armed let name's source function,
+// else a closure helper of the enclosing source function, else an anonymous closure helper.
+let lambdaOriginFor (label: Str) (parameter: Str) (state: CoreLoweringState) =
+    match state.pendingSourceFunction with
+        | Some(source) -> sourceFunctionOrigin(label)(source)(state)
+        | None -> closureHelperOrigin(label)(parameter)(state.activeFunctionOrigin)(state)
+
+let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) = state with pendingSourceFunction = None, activeFunctionOrigin = Some(origin)
 
 // One scoped-arena bracket's two watermark slots, carried from its `SaveArenaState` to the
 // matching restore. Every bracket stage 0 emits — around a top-level `let`, a nested `let`, and
@@ -1228,6 +1320,7 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                 | FreshLocal { state = endAllocated, local = endSlot } ->
                     match endAllocated
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
+                    |> armSourceFunction(name)(value)
                     |> lower(value) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
@@ -1244,6 +1337,7 @@ let lowerLet name value body lower state =
             then lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
             else
                 state
+                |> armSourceFunction(name)(value)
                 |> lower(value)
                 |> finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings)
 
@@ -1503,17 +1597,6 @@ let recursive capturedScope captures index =
             let binding = CoreBinding(name = name, scheme = scheme, location = CoreEnvironment(index), ownedRead = false)
             in binding :: capturedScope(rest)(index + 1)
 
-let lambdaOrigin label =
-    IrFunctionOrigin(
-        generatedLabel = label,
-        originKind = ClosureHelperOrigin,
-        sourceOrigin = None,
-        parentGeneratedLabel = None,
-        compilerOwner = None,
-        stableDiscriminator = None,
-        generationLocation = None
-    )
-
 let recursive sealOperatorDefaults label pending sealed =
     match pending with
         | [] -> sealed
@@ -1569,7 +1652,7 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
                         |> (given (instruction) -> emit(instruction)(tempState))
                 in (closureState, closureTemp)
 
-let prepareLambdaBodyState parameter parameterType captures lambdaId state =
+let prepareLambdaBodyState parameter parameterType captures lambdaId origin state =
     (let functionBindings =
         CoreBinding(
             name = parameter,
@@ -1579,6 +1662,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId state =
         ) :: capturedScope(captures)(0)
     in
         state
+        |> enterFunctionOrigin(origin)
         |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
@@ -1601,7 +1685,7 @@ let emitPrunedClosure label captures stackAllocate parameterType bodyType finish
             |> emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)
             |> finishClosureResult(parameterType)(bodyType)(finishedBody)
 
-let finishLambdaBody label captures stackAllocate typedOuter parameterType lowered =
+let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = loweredBody, temp = bodyTemp, semanticType = bodyType, error = None } ->
@@ -1609,8 +1693,7 @@ let finishLambdaBody label captures stackAllocate typedOuter parameterType lower
             in
                 match pruneDeadCaptures(captures)(returned.reversedInstructions) with
                     | (survivors, prunedInstructions) ->
-                        let finishedBody =
-                            finishLiftedFunction(label)(lambdaOrigin(label))((returned with reversedInstructions = prunedInstructions))
+                        let finishedBody = finishLiftedFunction(label)(origin)((returned with reversedInstructions = prunedInstructions))
                         in
                             finishedBody
                             |> restoreOuterFrame(typedOuter)
@@ -1694,29 +1777,26 @@ let lowerLambdaParameterType annotation parameterType state =
                 | None -> (state, None)
                 | Some(annotationType) -> bindType(parameterType)(annotationType)(state)
 
-let lowerLambdaBody parameter body stackAllocate lower lambdaId captures fresh =
+let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
-            let label = "lambda_" + Ashes.Text.fromInt(lambdaId)
-            in
-                let bodyState = prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(typedOuter)
-                in
-                    bodyState
-                    |> lower(body)
-                    |> finishLambdaBody(label)(captures)(stackAllocate)(typedOuter)(parameterType)
+            typedOuter
+            |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
+            |> lower(body)
+            |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
 
+// The lambda's origin is decided against the armed let name before the outer frame forgets it:
+// the outer continuation must not hand the same name to a later lambda.
 let lowerLambda parameter body annotation stackAllocate lower state =
     match state with
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
-            let freeNames = collectFree(body)([parameter])([])
-            in
-                let captures = capturedBindings(freeNames)(outerBindings)([])
-                in
-                    match freshType(state) with
+            match (capturedBindings(collectFree(body)([parameter])([]))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
+                | (captures, origin) ->
+                    match freshType((state with pendingSourceFunction = None)) with
                         | FreshType { state = freshState, semanticType = parameterType } ->
                             match lowerLambdaParameterType(annotation)(parameterType)(freshState) with
                                 | (checkedState, Some(error)) -> failure(checkedState)(error)
-                                | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(FreshType(state = checkedState, semanticType = parameterType))
+                                | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = checkedState, semanticType = parameterType))
 
 let resolvedFunctionType state argumentType resultType =
     FunctionTypeResolution(
@@ -3098,7 +3178,7 @@ let recursive lambdaParts expression =
         | ExprLambda(parameter, body, _annotation) -> Some((parameter, body))
         | _ -> None
 
-let prepareRecursiveBodyState parameter parameterType captures selfBindings state =
+let prepareRecursiveBodyState parameter parameterType captures selfBindings origin state =
     (let functionBindings =
         CoreBinding(
             name = parameter,
@@ -3108,13 +3188,14 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings stat
         ) :: append(selfBindings)(capturedScope(captures)(0))
     in
         state
+        |> enterFunctionOrigin(origin)
         |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
-let finishRecursiveLambdaBody prepared captures environmentTemp typedOuter lowered =
+let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
     match (prepared, lowered) with
         | (_prepared, LoweredCoreValue { state = failedState, error = Some(error) }) -> failure(failedState)(error)
         | (PreparedCoreRecursiveBinding { label = label, semanticType = semanticType, resultType = resultType }, LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None }) ->
@@ -3124,7 +3205,7 @@ let finishRecursiveLambdaBody prepared captures environmentTemp typedOuter lower
                     let finishedBody =
                         typedBody
                         |> emit(Return(bodyTemp))
-                        |> finishLiftedFunction(label)(lambdaOrigin(label))
+                        |> finishLiftedFunction(label)(origin)
                     in
                         let restored = restoreOuterFrame(typedOuter)(finishedBody)
                         in
@@ -3134,11 +3215,14 @@ let finishRecursiveLambdaBody prepared captures environmentTemp typedOuter lower
 
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower state =
     match prepared with
-        | PreparedCoreRecursiveBinding { parameter = parameter, body = body, parameterType = parameterType } ->
+        | PreparedCoreRecursiveBinding { name = name, label = label, parameter = parameter, body = body, parameterType = parameterType } ->
             state
-            |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)
-            |> lower(body)
-            |> finishRecursiveLambdaBody(prepared)(captures)(environmentTemp)(state)
+            |> sourceFunctionOrigin(label)(sourceFunctionOriginFor(name)(state))
+            |> (given (origin) ->
+                state
+                |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
+                |> lower(body)
+                |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(state))
 
 let preparedSelfBinding environmentSize prepared =
     match prepared with
@@ -4990,6 +5074,7 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                         match state with
                             | CoreLoweringState { bindings = outerBindings } ->
                                 state
+                                |> armSourceFunction(name)(value)
                                 |> lower(value)
                                 |> finishLetValue(
                                     name,
@@ -5612,7 +5697,9 @@ let lowerArenaBracketedTopLevelLet name value environment continuation outerBind
                         match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
                             | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure((saved with arenaBracketingArmed = restoreArmedTo))(UnresolvedTraitEvidenceForwarding(error))
                             | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-                                match lowerCore(rewrittenValue)(saved) with
+                                match saved
+                                |> armSourceFunction(name)(rewrittenValue)
+                                |> lowerCore(rewrittenValue) with
                                     | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
                                     | LoweredCoreValue { error = None } as loweredValue ->
                                         match finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
@@ -5800,6 +5887,7 @@ let lowerOrdinaryTopLevelLet name value environment continuation outerBindings s
         | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
         | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
             state
+            |> armSourceFunction(name)(rewrittenValue)
             |> lowerCore(rewrittenValue)
             |> finishLetValue(
                 name,
