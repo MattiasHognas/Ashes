@@ -1,4 +1,5 @@
 import Ashes.Test as test
+import AshesCompiler.Frontend.Parser
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.CoreLowering
@@ -410,6 +411,111 @@ let testCleanupResourceEmission unit =
             | CleanupResource(5, "Resource", None) -> Unit
             | _ -> test.fail("unexpected cleanup resource instruction"))
 
+// A declared external resource `Counted` with an opening function, a borrowing reader, a
+// consuming transfer, and its destructor.
+let countedParameter ownership =
+    ExternalParameterAbi(
+        parameterIndex = 0,
+        abiType = ExternalAbiOpaque("Counted"),
+        source = dummyParamSource with ownership = ownership
+    )
+
+let countedAbi name symbolName parameters returnType destructorFor = makeExternalFunctionAbi(name)(symbolName)(Some("libcounted.so"))(parameters)(returnType)(false) with destructorForResource = destructorFor
+
+let countedAbis =
+    [
+        countedAbi("openCounted")("counted_open")([ExternalParameterAbi(parameterIndex = 0, abiType = ExternalAbiInt, source = dummyParamSource)])(ExternalAbiOpaque("Counted"))(None),
+        countedAbi("readCounted")("counted_read")([countedParameter(ExternalOwnershipBorrow)])(ExternalAbiInt)(None),
+        countedAbi("transferCounted")("counted_transfer")([countedParameter(ExternalOwnershipConsume)])(ExternalAbiVoid)(None),
+        countedAbi("closeCounted")("counted_close")([countedParameter(ExternalOwnershipConsume)])(ExternalAbiVoid)(Some("Counted"))
+    ]
+
+let recursive layoutsOf abis =
+    match abis with
+        | [] -> []
+        | abi :: rest -> makeLayout(abi) :: layoutsOf(rest)
+
+let parsedBody source =
+    match parseProgram(source) with
+        | ProgramParseResult { program = ProgramSyntax { body = Some(body) }, diagnostics = [] } -> body
+        | _ -> test.fail("expected a cleanly parsed trailing expression in: " + source)
+
+let countedProgram source =
+    source
+    |> parsedBody
+    |> loweredProgramWithExternal(layoutsOf(countedAbis))(countedAbis)(["Counted"])
+
+let countedError source =
+    match source
+    |> parsedBody
+    |> loweredResultWithExternal(layoutsOf(countedAbis))(countedAbis)(["Counted"]) with
+        | CoreLoweringResult { error = Some(error) } -> error
+        | _ -> test.fail("expected lowering to fail for: " + source)
+
+let recursive countCountedCleanups instructions =
+    match instructions with
+        | [] -> 0
+        | IrInstruction { instruction = CleanupResource(_temp, "Counted", Some(ExternalFunctionAbi { name = "closeCounted" })) } :: rest -> 1 + countCountedCleanups(rest)
+        | _ :: rest -> countCountedCleanups(rest)
+
+// A live declared resource is closed at its let's exit by a `CleanupResource` carrying the
+// destructor; a borrowing read leaves it live.
+let testDeclaredResourceIsCleanedUpWithItsDestructor unit =
+    "let r = openCounted(1) in readCounted(r)"
+    |> countedProgram
+    |> entryInstructions
+    |> countCountedCleanups
+    |> test.assertEqual(1)
+
+// Closing through the destructor releases the binding: no scope-exit cleanup, and a later read
+// is use-after-close.
+let testDestructorCloseReleasesTheBinding unit =
+    Unit
+    |> (given (_) ->
+        "let r = openCounted(1) in let _ = closeCounted(r) in 0"
+        |> countedProgram
+        |> entryInstructions
+        |> countCountedCleanups
+        |> test.assertEqual(0))
+    |> (given (_) ->
+        match countedError("let r = openCounted(1) in let _ = closeCounted(r) in readCounted(r)") with
+            | ResourceUseAfterClose(message) -> test.assertEqual("Resource 'r' has already been closed. Using a resource after it has been closed is not allowed.")(message)
+            | other -> test.fail("expected ResourceUseAfterClose, got " + Ashes.Trait.Show.show(other)))
+
+// Closing twice through the destructor is a double close.
+let testDestructorDoubleCloseIsRejected unit =
+    match countedError("let r = openCounted(1) in let _ = closeCounted(r) in closeCounted(r)") with
+        | ResourceDoubleClose(message) -> test.assertEqual("Resource 'r' has already been closed. Closing a resource twice is not allowed.")(message)
+        | other -> test.fail("expected ResourceDoubleClose, got " + Ashes.Trait.Show.show(other))
+
+// A consuming external that is not the destructor moves the resource: no cleanup, and a later
+// read or close is use-after-move.
+let testConsumingExternalMovesTheResource unit =
+    Unit
+    |> (given (_) ->
+        "let r = openCounted(1) in let _ = transferCounted(r) in 0"
+        |> countedProgram
+        |> entryInstructions
+        |> countCountedCleanups
+        |> test.assertEqual(0))
+    |> (given (_) ->
+        match countedError("let r = openCounted(1) in let _ = transferCounted(r) in readCounted(r)") with
+            | ResourceUseAfterMove(_message) -> Unit
+            | other -> test.fail("expected ResourceUseAfterMove, got " + Ashes.Trait.Show.show(other)))
+    |> (given (_) ->
+        match countedError("let r = openCounted(1) in let _ = transferCounted(r) in closeCounted(r)") with
+            | ResourceUseAfterMove(message) -> test.assertEqual("Resource 'r' has been moved and can no longer be closed here. Ownership was transferred when it was passed to a function or stored in a data structure.")(message)
+            | other -> test.fail("expected ResourceUseAfterMove, got " + Ashes.Trait.Show.show(other)))
+
+// A resource a closure captures moves into the closure rather than being closed at the scope
+// exit the closure outlives.
+let testCapturedResourceMovesIntoTheClosure unit =
+    "let r = openCounted(1) in let f = given (x) -> readCounted(r) + x in f(1)"
+    |> countedProgram
+    |> entryInstructions
+    |> countCountedCleanups
+    |> test.assertEqual(0)
+
 let runCoreExternalLoweringTests unit =
     Unit
     |> testExternalParameterCount
@@ -422,3 +528,8 @@ let runCoreExternalLoweringTests unit =
     |> testDirectOnlyRejection
     |> testExternalProgramMetadata
     |> testCleanupResourceEmission
+    |> testDeclaredResourceIsCleanedUpWithItsDestructor
+    |> testDestructorCloseReleasesTheBinding
+    |> testDestructorDoubleCloseIsRejected
+    |> testConsumingExternalMovesTheResource
+    |> testCapturedResourceMovesIntoTheClosure
