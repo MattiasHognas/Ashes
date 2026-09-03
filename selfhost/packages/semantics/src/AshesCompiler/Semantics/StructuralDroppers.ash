@@ -181,10 +181,7 @@ let emitRcDrop (valueTemp: Int) (typeName: Str) (body: DropperBody) =
 
 // The whole-value release of a named type, under the type's own name.
 let emitTypeDrop (valueTemp: Int) (named: SemanticType) (body: DropperBody) =
-    match named with
-        | SemNamed(_symbolId, name, _arguments) -> emitRcDrop(valueTemp)(name)(body)
-        | _ ->
-            emitRcDrop(valueTemp)(dropperTypeName(named))(body)
+    emitRcDrop(valueTemp)(dropperTypeName(named))(body)
 
 // `RcIsUnique` on the value, branching to `sharedLabel` when it is shared.
 let emitUniqueTest (valueTemp: Int) (sharedLabel: Str) (body: DropperBody) =
