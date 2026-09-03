@@ -107,6 +107,7 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Arena
+import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
@@ -587,12 +588,19 @@ let codegenInstructionKind cx builder kind state =
                         // it is exactly an alias of the same SSA value under a new temp number.
                                         | Borrow(target, sourceTemp) -> ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
                         // An ordinary (arena) `RcDup` is a placement marker with no count to
-                        // retain: an alias, like `Borrow`. The RC-managed form needs the retain
-                        // this codegen has not implemented yet.
-                                        | RcDup(target, sourceTemp, runtimeManaged, _mayBeEmpty) ->
+                        // retain: an alias, like `Borrow`. The RC-managed form is the real retain
+                        // (`IrCodegen.Rc`), identity-preserving so the target is the same word.
+                                        | RcDup(target, sourceTemp, runtimeManaged, mayBeEmpty) ->
                                             if runtimeManaged
-                                            then Ashes.IO.panic("codegen: RC-managed RcDup not yet supported")
+                                            then
+                                                ((target, tempEnv
+                                                |> lookupIndexed(sourceTemp)
+                                                |> emitRuntimeManagedDup(context)(function_)(i64)(i8)(ptrType)(builder)(mayBeEmpty)) :: tempEnv, terminated)
                                             else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                        | RcIsUnique(target, sourceTemp) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(sourceTemp)
+                                            |> emitRuntimeRcIsUnique(builder)(i64)(i8)(ptrType)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // A closure's `CleanupResource` releases nothing, as in stage 0; a
                         // `FileHandle` closes its fd and a `Process` closes its pipes and reaps
                         // the child (`EmitResourceCleanup`). Sockets and declared external
@@ -745,6 +753,21 @@ let codegenInstructionKind cx builder kind state =
                                                 if runtimeManaged
                                                 then ((target, emitAllocAdtRuntimeManaged(builder)(i64)(i8)(mallocFn)(mallocType)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
                                                 else ((target, emitArenaAllocAdt(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(tag)(fieldCount)(resultName)) :: tempEnv, terminated)
+                        // The reuse pair (`IrCodegen.Rc`): an arena `DropReuse` is statically
+                        // unique, so its token is the cell itself; the RC-managed form consumes
+                        // the source and yields the cell only when its count is `1`, else the null
+                        // token that makes `AllocReusing` allocate a fresh cell.
+                                        | DropReuse(target, sourceTemp, _fieldCount, runtimeManaged) ->
+                                            if runtimeManaged
+                                            then
+                                                ((target, tempEnv
+                                                |> lookupIndexed(sourceTemp)
+                                                |> emitRuntimeDropReuse(context)(function_)(i64)(i8)(ptrType)(builder)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                            else ((target, lookupIndexed(sourceTemp)(tempEnv)) :: tempEnv, terminated)
+                                        | AllocReusing(target, tag, fieldCount, tokenTemp, runtimeManaged, listCell) ->
+                                            ((target, tempEnv
+                                            |> lookupIndexed(tokenTemp)
+                                            |> emitAllocReusing(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(tag)(fieldCount)(runtimeManaged)(listCell)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
                         // Stores one field into an already-allocated ADT's payload (word `1 + fieldIndex`,
                         // since word `0` is the tag — see `AllocAdt`'s own layout comment above). The
                         // `ptr` operand arrives as this codegen's universal `i64` word representation, so
@@ -770,28 +793,28 @@ let codegenInstructionKind cx builder kind state =
                                             let basePtr =
                                                 buildIntToPtr(builder)(lookupIndexed(ptr)(tempEnv))(ptrType)("adt_tag_base")
                                             in ((target, buildLoad(builder)(i64)(basePtr)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
-                        // See `emitRcDrop` above for the release itself. `CoreLowering.ash`'s
-                        // `lowerDeadRcTopLevelLet` only ever emits this with `runtimeManaged =
-                        // true`, `mayBeEmpty = false`, `structuralDropperLabel = None` (every
-                        // constructor it can currently fire on wraps one plain scalar field,
-                        // nothing to cascade into) — any other combination panics rather than
-                        // silently dropping the wrong thing or leaking a child that needed its own
-                        // release first.
-                                        | RcDrop(sourceTemp, _typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
+                        // An arena `RcDrop` is a placement marker with nothing to release. The
+                        // RC-managed form is `IrCodegen.Rc`'s release: a structural dropper label
+                        // resolves to the lifted function that owns the whole cascade, a `Function`
+                        // releases its environment with itself, and `mayBeEmpty` guards the null
+                        // empty list.
+                                        | RcDrop(sourceTemp, typeName, _ownerSlot, runtimeManaged, mayBeEmpty, structuralDropperLabel) ->
                                             if runtimeManaged == false
                                             then (tempEnv, terminated)
                                             else
-                                                if mayBeEmpty
-                                                then Ashes.IO.panic("codegen: mayBeEmpty RcDrop not yet supported")
-                                                else
+                                                let structuralDropper =
                                                     match structuralDropperLabel with
-                                                        | Some(_label) -> Ashes.IO.panic("codegen: cascading RcDrop (structuralDropperLabel) not yet supported")
-                                                        | None ->
-                                                            let _ =
-                                                                tempEnv
-                                                                |> lookupIndexed(sourceTemp)
-                                                                |> emitRcDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)
-                                                            in (tempEnv, false)
+                                                        | Some(label) ->
+                                                            liftedFunctions
+                                                            |> lookupIndexed(label)
+                                                            |> Some
+                                                        | None -> None
+                                                in
+                                                    let _ =
+                                                        tempEnv
+                                                        |> lookupIndexed(sourceTemp)
+                                                        |> emitRuntimeManagedDrop(context)(function_)(i64)(i8)(ptrType)(builder)(freeFn)(freeType)(closureFunctionType)(structuralDropper)(typeName == "Function")(mayBeEmpty)
+                                                    in (tempEnv, false)
                         // See `closureSizeBytes`/`emitStoreClosureWords` above for the object's
                         // layout. The RC-managed form gets the same 16-byte header every other
                         // RC-managed allocation here has (so a future closure drop can walk back to

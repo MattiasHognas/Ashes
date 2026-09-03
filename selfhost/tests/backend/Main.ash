@@ -3775,6 +3775,449 @@ let testCopyOutListScopedStringHeads unit = assertProgramPrints(buildCopyOutList
 
 let testCopyOutListScopedInnerLists unit = assertProgramPrints(buildCopyOutListScopedInnerListsModule)("selfhostBackendCopyOutListScopedInnerLists")("selfhost_backend_copy_out_list_scoped_inner_lists_e2e")("123")
 
+// A hand-built lifted function: its `(env, arg, flag)` words arrive in local slots `0` and `1`
+// (`hasEnvAndArgParams`), so `localCount` is at least `2`.
+let handBuiltLiftedFunction label instructions localCount tempCount =
+    IrFunction(
+        label = label,
+        instructions = instructions,
+        localCount = localCount,
+        tempCount = tempCount,
+        hasEnvAndArgParams = true,
+        coroutine = None,
+        localNames = [],
+        localTypes = [],
+        origin = None,
+        lifetimesPlaced = false
+    )
+
+// An `IrProgram` around a hand-built entry function and its lifted helpers, with no string
+// literals or externals — the shape `codegenProgram` takes for a program with lifted functions.
+let handBuiltProgram entryFunction functions =
+    IrProgram(
+        entryFunction = entryFunction,
+        functions = functions,
+        stringLiterals = [],
+        externalFunctions = [],
+        externalOpaqueTypes = [],
+        usesPrintInt = true,
+        usesPrintStr = false,
+        usesPrintBool = true,
+        usesConcatStr = false,
+        usesClosures = true,
+        usesAsync = false,
+        capabilityHandlerGlobals = 0,
+        traitEvidence = emptyTraitEvidenceAnnotations
+    )
+
+let irOf kind = IrInstruction(instruction = kind, location = None)
+
+// Reads up to `count` stdout lines from `process` (fewer if it closes stdout first), then reaps
+// it: `(lines, exitCode)`. The process is a resource, so the reap happens here, at its last use.
+let recursive readStdoutLinesThenExit process count linesSoFar =
+    if count <= 0
+    then (Ashes.Collection.List.reverse(linesSoFar), Ashes.IO.Process.waitForExit(process))
+    else
+        match Ashes.IO.Process.readStdoutLine(process) with
+            | None -> (Ashes.Collection.List.reverse(linesSoFar), Ashes.IO.Process.waitForExit(process))
+            | Some(line) -> readStdoutLinesThenExit(process)(count - 1)(line :: linesSoFar)
+
+// `assertProgramPrints` for a program whose stdout is several lines: every expected line must
+// arrive, in order, before a `0` exit code.
+let assertProgramPrintsLines buildModule name executablePath expectedLines =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            match readStdoutLinesThenExit(process)(Ashes.Collection.List.length(expectedLines))([]) with
+                                                | (lines, exitCode) ->
+                                                    let _ = test.assertEqual(expectedLines)(lines)
+                                                    in test.assertEqual(0)(exitCode)
+
+// The RC runtime (`IrCodegen.Rc`) end to end, over hand-built IR so every instruction form is
+// reached directly. A retained cell (`RcDup`) is not unique until its first `RcDrop`, and the
+// second `RcDrop` frees it exactly once — a double free aborts under libc, so the `7` printed
+// afterwards proves the count reached zero only on the last release. A string literal's immortal
+// header makes the same retain and release pair a no-op, so the literal prints intact after it.
+// Prints `false`, `true`, `immortal`, `7`.
+let buildRcDupDropModule name context =
+    [
+        3
+        |> LoadConstInt(0)
+        |> irOf,
+        true
+        |> AllocAdt(1)(0)(1)
+        |> irOf,
+        0
+        |> SetAdtField(1)(0)
+        |> irOf,
+        false
+        |> RcDup(2)(1)(true)
+        |> irOf,
+        1
+        |> RcIsUnique(3)
+        |> irOf,
+        irOf(PrintBool(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        1
+        |> RcIsUnique(4)
+        |> irOf,
+        irOf(PrintBool(4)),
+        None
+        |> RcDrop(1)("Cell")(0)(true)(false)
+        |> irOf,
+        "s0"
+        |> LoadConstStr(5)
+        |> irOf,
+        false
+        |> RcDup(6)(5)(true)
+        |> irOf,
+        None
+        |> RcDrop(6)("Str")(0)(true)(false)
+        |> irOf,
+        None
+        |> RcDrop(5)("Str")(0)(true)(false)
+        |> irOf,
+        irOf(PrintStr(5)),
+        7
+        |> LoadConstInt(7)
+        |> irOf,
+        irOf(PrintInt(7)),
+        irOf(Return(7))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
+
+// The `mayBeEmpty` forms: `RcDup` and `RcDrop` on the null pointer (the empty list) touch no
+// header, and the same forms on a present cell still retain and release it (two drops after one
+// dup free it exactly once). Prints `7`.
+let buildRcMayBeEmptyModule name context =
+    [
+        0
+        |> LoadConstInt(0)
+        |> irOf,
+        true
+        |> RcDup(1)(0)(true)
+        |> irOf,
+        None
+        |> RcDrop(1)("List")(0)(true)(true)
+        |> irOf,
+        3
+        |> LoadConstInt(2)
+        |> irOf,
+        true
+        |> AllocAdt(3)(0)(1)
+        |> irOf,
+        2
+        |> SetAdtField(3)(0)
+        |> irOf,
+        true
+        |> RcDup(4)(3)(true)
+        |> irOf,
+        None
+        |> RcDrop(4)("List")(0)(true)(true)
+        |> irOf,
+        None
+        |> RcDrop(3)("List")(0)(true)(true)
+        |> irOf,
+        7
+        |> LoadConstInt(5)
+        |> irOf,
+        irOf(PrintInt(5)),
+        irOf(Return(5))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(6))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A structural `RcDrop` is one call of its dropper function with `(env = 0, value, flag = 0)` and
+// no local count change: the hand-written dropper reads the cell's field, prints it, and releases
+// the cell itself. Prints `42`, then `7`.
+let buildRcStructuralDropModule name context =
+    (let dropper =
+        ((given (instructions) -> handBuiltLiftedFunction("rc_cell_dropper")(instructions)(2)(3)))([
+            1
+            |> LoadLocal(0)
+            |> irOf,
+            0
+            |> GetAdtField(1)(0)
+            |> irOf,
+            irOf(PrintInt(1)),
+            None
+            |> RcDrop(0)("Cell")(0)(true)(false)
+            |> irOf,
+            0
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(Return(2))
+        ])
+    in
+        [
+            42
+            |> LoadConstInt(0)
+            |> irOf,
+            true
+            |> AllocAdt(1)(0)(1)
+            |> irOf,
+            0
+            |> SetAdtField(1)(0)
+            |> irOf,
+            Some("rc_cell_dropper")
+            |> RcDrop(1)("Cell")(0)(true)(false)
+            |> irOf,
+            7
+            |> LoadConstInt(2)
+            |> irOf,
+            irOf(PrintInt(2)),
+            irOf(Return(2))
+        ]
+        |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(3))
+        |> (given (entryFunction) -> handBuiltProgram(entryFunction)([dropper]))
+        |> codegenProgram(name)(context))
+
+// `DropReuse` on a runtime-managed cell: a unique cell is its own token; a retained (shared) cell
+// yields the null token and is decremented, so its remaining owner's `RcDrop` still frees it; a
+// string literal's immortal header yields the null token untouched. Prints `true`, `true`, `true`,
+// `7`.
+let buildRcDropReuseModule name context =
+    [
+        5
+        |> LoadConstInt(0)
+        |> irOf,
+        true
+        |> AllocAdt(1)(0)(1)
+        |> irOf,
+        0
+        |> SetAdtField(1)(0)
+        |> irOf,
+        true
+        |> DropReuse(2)(1)(1)
+        |> irOf,
+        1
+        |> CmpIntEq(3)(2)
+        |> irOf,
+        irOf(PrintBool(3)),
+        None
+        |> RcDrop(2)("Cell")(0)(true)(false)
+        |> irOf,
+        true
+        |> AllocAdt(4)(0)(1)
+        |> irOf,
+        0
+        |> SetAdtField(4)(0)
+        |> irOf,
+        false
+        |> RcDup(5)(4)(true)
+        |> irOf,
+        true
+        |> DropReuse(6)(5)(1)
+        |> irOf,
+        0
+        |> LoadConstInt(7)
+        |> irOf,
+        7
+        |> CmpIntEq(8)(6)
+        |> irOf,
+        irOf(PrintBool(8)),
+        None
+        |> RcDrop(4)("Cell")(0)(true)(false)
+        |> irOf,
+        "s0"
+        |> LoadConstStr(9)
+        |> irOf,
+        true
+        |> DropReuse(10)(9)(1)
+        |> irOf,
+        7
+        |> CmpIntEq(11)(10)
+        |> irOf,
+        irOf(PrintBool(11)),
+        7
+        |> LoadConstInt(12)
+        |> irOf,
+        irOf(PrintInt(12)),
+        irOf(Return(12))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(13))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "immortal")]))
+
+// `AllocReusing` on a runtime-managed token: a unique cell's token is returned as the new cell's
+// own address with the new tag written, a list-cell token likewise without a tag store, and the
+// null token (a shared cell's `DropReuse`) allocates a fresh cell of the requested layout. Prints
+// `true`, `3`, `true`, `true`, `4`, `false`, `7`.
+let buildRcAllocReusingModule name context =
+    [
+        5
+        |> LoadConstInt(0)
+        |> irOf,
+        true
+        |> AllocAdt(1)(0)(1)
+        |> irOf,
+        0
+        |> SetAdtField(1)(0)
+        |> irOf,
+        true
+        |> DropReuse(2)(1)(1)
+        |> irOf,
+        false
+        |> AllocReusing(3)(3)(1)(2)(true)
+        |> irOf,
+        1
+        |> CmpIntEq(4)(3)
+        |> irOf,
+        irOf(PrintBool(4)),
+        3
+        |> GetAdtTag(5)
+        |> irOf,
+        irOf(PrintInt(5)),
+        None
+        |> RcDrop(3)("Cell")(0)(true)(false)
+        |> irOf,
+        true
+        |> Alloc(6)(16)
+        |> irOf,
+        true
+        |> DropReuse(7)(6)(2)
+        |> irOf,
+        true
+        |> AllocReusing(8)(0)(2)(7)(true)
+        |> irOf,
+        6
+        |> CmpIntEq(9)(8)
+        |> irOf,
+        irOf(PrintBool(9)),
+        None
+        |> RcDrop(8)("List")(0)(true)(false)
+        |> irOf,
+        true
+        |> AllocAdt(10)(0)(1)
+        |> irOf,
+        0
+        |> SetAdtField(10)(0)
+        |> irOf,
+        false
+        |> RcDup(11)(10)(true)
+        |> irOf,
+        true
+        |> DropReuse(12)(11)(1)
+        |> irOf,
+        0
+        |> LoadConstInt(13)
+        |> irOf,
+        13
+        |> CmpIntEq(14)(12)
+        |> irOf,
+        irOf(PrintBool(14)),
+        false
+        |> AllocReusing(15)(4)(1)(12)(true)
+        |> irOf,
+        15
+        |> GetAdtTag(16)
+        |> irOf,
+        irOf(PrintInt(16)),
+        10
+        |> CmpIntEq(17)(15)
+        |> irOf,
+        irOf(PrintBool(17)),
+        None
+        |> RcDrop(15)("Cell")(0)(true)(false)
+        |> irOf,
+        None
+        |> RcDrop(10)("Cell")(0)(true)(false)
+        |> irOf,
+        7
+        |> LoadConstInt(18)
+        |> irOf,
+        irOf(PrintInt(18)),
+        irOf(Return(18))
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(19))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A runtime-managed closure's `RcDrop` (type name `Function`) releases its RC environment block
+// and then the closure object; a closure with no environment releases only itself. The call
+// before the drop proves the closure and its environment were intact. Prints `42`, then `7`.
+let buildRcClosureDropModule name context =
+    (let closureFunction =
+        ((given (instructions) -> handBuiltLiftedFunction("rc_add_env")(instructions)(2)(3)))([
+            0
+            |> LoadEnv(0)
+            |> irOf,
+            1
+            |> LoadLocal(1)
+            |> irOf,
+            1
+            |> AddInt(2)(0)
+            |> irOf,
+            irOf(Return(2))
+        ])
+    in
+        [
+            true
+            |> Alloc(0)(8)
+            |> irOf,
+            40
+            |> LoadConstInt(1)
+            |> irOf,
+            1
+            |> StoreMemOffset(0)(0)
+            |> irOf,
+            false
+            |> MakeClosure(2)("rc_add_env")(0)(8)(true)(false)
+            |> irOf,
+            2
+            |> LoadConstInt(3)
+            |> irOf,
+            -1
+            |> CallClosure(4)(2)(3)
+            |> irOf,
+            irOf(PrintInt(4)),
+            None
+            |> RcDrop(2)("Function")(0)(true)(false)
+            |> irOf,
+            0
+            |> LoadConstInt(5)
+            |> irOf,
+            false
+            |> MakeClosure(6)("rc_add_env")(5)(0)(true)(false)
+            |> irOf,
+            None
+            |> RcDrop(6)("Function")(0)(true)(false)
+            |> irOf,
+            7
+            |> LoadConstInt(7)
+            |> irOf,
+            irOf(PrintInt(7)),
+            irOf(Return(7))
+        ]
+        |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+        |> (given (entryFunction) -> handBuiltProgram(entryFunction)([closureFunction]))
+        |> codegenProgram(name)(context))
+
+let testRcDupDrop unit = assertProgramPrintsLines(buildRcDupDropModule)("selfhostBackendRcDupDrop")("selfhost_backend_rc_dup_drop_e2e")(["false", "true", "immortal", "7"])
+
+let testRcMayBeEmpty unit = assertProgramPrints(buildRcMayBeEmptyModule)("selfhostBackendRcMayBeEmpty")("selfhost_backend_rc_may_be_empty_e2e")("7")
+
+let testRcStructuralDrop unit = assertProgramPrintsLines(buildRcStructuralDropModule)("selfhostBackendRcStructuralDrop")("selfhost_backend_rc_structural_drop_e2e")(["42", "7"])
+
+let testRcDropReuse unit = assertProgramPrintsLines(buildRcDropReuseModule)("selfhostBackendRcDropReuse")("selfhost_backend_rc_drop_reuse_e2e")(["true", "true", "true", "7"])
+
+let testRcAllocReusing unit = assertProgramPrintsLines(buildRcAllocReusingModule)("selfhostBackendRcAllocReusing")("selfhost_backend_rc_alloc_reusing_e2e")(["true", "3", "true", "true", "4", "false", "7"])
+
+let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3871,6 +4314,12 @@ let run shipped =
     |> testCopyOutListScopedInline
     |> testCopyOutListScopedStringHeads
     |> testCopyOutListScopedInnerLists
+    |> testRcDupDrop
+    |> testRcMayBeEmpty
+    |> testRcStructuralDrop
+    |> testRcDropReuse
+    |> testRcAllocReusing
+    |> testRcClosureDrop
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with
