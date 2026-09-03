@@ -27,6 +27,10 @@ export (
     value computeCaptures,
     value inferFunctionOwnership,
     value inferProgramOwnership,
+    type ProgramParameterOwnership,
+    value inferProgramParameterOwnership,
+    value lookupProgramParameterOwnership,
+    value topLevelFunctions,
 )
 
 type ResultReachState =
@@ -40,6 +44,9 @@ type FunctionSignature =
     | origin: SourceFunctionOrigin
     | parameters: List(Str)
     | body: Expr
+
+// Each registered function name with the ownership of each of its parameters, in parameter order.
+type alias ProgramParameterOwnership = List((Str, List((Str, ParameterOwnership))))
 
 let notBool (b: Bool) =
     if b
@@ -496,11 +503,79 @@ and collectFreeVarsArms (arms: List((Pattern, Expr, Maybe(Expr)))) (bound: List(
 // The free variables of a function body other than its own parameters, in first-use order. A
 // program-level pass (`inferProgramOwnership`) further excludes every other whole-program function
 // name, leaving only genuine closure captures from an enclosing scope.
-let computeCaptures (body: Expr) (params: List(Str)) = reverse(collectFreeVars(body)(params)([]))
+let computeCaptures (body: Expr) (params: List(Str)) =
+    []
+    |> collectFreeVars(body)(params)
+    |> reverse
 
-let recursive isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) =
+// --- Borrow-read walk ---
+// A parameter is used only as a borrow read when every mention of it is the resource argument of
+// a read-only resource builtin, or the whole parameter handed at position i to a registered
+// function whose parameter i is currently borrowed in `table`. Any other mention consumes it:
+// returned, stored in a constructor, compared, captured by a lambda, or passed to a call the table
+// does not resolve. `shadowed` holds the names bound between the function body and the current
+// expression, so a locally rebound function name never resolves to the registered function.
+let recursive patternBoundNames (pattern: Pattern) (names: List(Str)) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternBoundNames(inner)(names)
+        | PatternVar(name) -> name :: names
+        | PatternCons(head, tail) ->
+            names
+            |> patternBoundNames(head)
+            |> patternBoundNames(tail)
+        | PatternTuple(patterns) -> patternListBoundNames(patterns)(names)
+        | PatternConstructor(_name, patterns) -> patternListBoundNames(patterns)(names)
+        | PatternRecord(_name, fields) -> patternFieldBoundNames(fields)(names)
+        | PatternAs(inner, name) -> patternBoundNames(inner)(name :: names)
+        | PatternOr(patterns) -> patternListBoundNames(patterns)(names)
+        | _ -> names
+and patternListBoundNames (patterns: List(Pattern)) (names: List(Str)) =
+    match patterns with
+        | [] -> names
+        | pattern :: rest ->
+            names
+            |> patternBoundNames(pattern)
+            |> patternListBoundNames(rest)
+and patternFieldBoundNames (fields: List((Str, Pattern))) (names: List(Str)) =
+    match fields with
+        | [] -> names
+        | (_field, pattern) :: rest ->
+            names
+            |> patternBoundNames(pattern)
+            |> patternFieldBoundNames(rest)
+
+// The registered function `name` resolves to exactly one table entry whose arity matches the
+// call; a shadowed, unregistered, ambiguous, or partially applied callee resolves to nothing.
+let recursive lookupUniqueOwnership (name: Str) (table: ProgramParameterOwnership) (found: Maybe(List((Str, ParameterOwnership)))) =
+    match table with
+        | [] -> found
+        | (candidate, ownership) :: rest ->
+            if candidate != name
+            then lookupUniqueOwnership(name)(rest)(found)
+            else
+                match found with
+                    | Some(_) -> None
+                    | None -> lookupUniqueOwnership(name)(rest)(Some(ownership))
+
+let handOffOwnership (table: ProgramParameterOwnership) (shadowed: List(Str)) (callee: Str) (argumentCount: Int) =
+    if listContainsStr(shadowed)(callee)
+    then None
+    else
+        match lookupUniqueOwnership(callee)(table)(None) with
+            | Some(ownership) ->
+                if length(ownership) == argumentCount
+                then Some(ownership)
+                else None
+            | None -> None
+
+let isWholeParameter (expr: Expr) (param: Str) =
+    match stripSpan(expr) with
+        | ExprVar(name) -> name == param
+        | _ -> false
+
+let recursive borrowReadWalk (table: ProgramParameterOwnership) (shadowed: List(Str)) (expr: Expr) (param: Str) =
     match expr with
-        | ExprAt(_span, inner) -> isParamUsedOnlyAsBorrowRead(inner)(param)
+        | ExprAt(_span, inner) -> borrowReadWalk(table)(shadowed)(inner)(param)
         | ExprInt(_) -> true
         | ExprBigInt(_) -> true
         | ExprUInt(_, _, _) -> true
@@ -511,139 +586,80 @@ let recursive isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) =
         | ExprVar(name) -> name != param
         | ExprQualifiedVar(_, _) -> true
         | ExprIf(cond, thenE, elseE) ->
-            if isParamUsedOnlyAsBorrowRead(cond)(param)
-            then
-                if isParamUsedOnlyAsBorrowRead(thenE)(param)
-                then isParamUsedOnlyAsBorrowRead(elseE)(param)
-                else false
+            if borrowReadWalk(table)(shadowed)(cond)(param)
+            then borrowReadPair(table)(shadowed)(thenE)(elseE)(param)
             else false
         | ExprLet(name, val, body, _params, _ann, _traits) ->
             if name == param
             then false
             else
-                if isParamUsedOnlyAsBorrowRead(val)(param)
-                then isParamUsedOnlyAsBorrowRead(body)(param)
+                if borrowReadWalk(table)(shadowed)(val)(param)
+                then borrowReadWalk(table)(name :: shadowed)(body)(param)
                 else false
         | ExprLetResult(name, val, body) ->
             if name == param
             then false
             else
-                if isParamUsedOnlyAsBorrowRead(val)(param)
-                then isParamUsedOnlyAsBorrowRead(body)(param)
+                if borrowReadWalk(table)(shadowed)(val)(param)
+                then borrowReadWalk(table)(name :: shadowed)(body)(param)
                 else false
         | ExprLetRecursive(name, val, body, _params, _ann, _traits) ->
             if name == param
             then false
-            else
-                if isParamUsedOnlyAsBorrowRead(val)(param)
-                then isParamUsedOnlyAsBorrowRead(body)(param)
-                else false
+            else borrowReadPair(table)(name :: shadowed)(val)(body)(param)
         | ExprLambda(p, body, _ann) ->
             if p == param
             then true
-            else notBool(mentionsVar(body)(param))
-        | ExprCall(_, _, _, _) -> checkCallUsesParamOnlyAsBorrowRead(expr)(param)
+            else
+                param
+                |> mentionsVar(body)
+                |> notBool
+        | ExprCall(_, _, _, _) -> borrowReadCall(table)(shadowed)(expr)(param)
         | ExprMatch(scrutinee, arms, _defaultArm) ->
-            if isParamUsedOnlyAsBorrowRead(scrutinee)(param)
-            then checkMatchArmsBorrow(arms)(param)
+            if borrowReadWalk(table)(shadowed)(scrutinee)(param)
+            then borrowReadArms(table)(shadowed)(arms)(param)
             else false
-        | ExprTuple(elements) -> checkExprListBorrow(elements)(param)
-        | ExprList(elements, _isMultiline) -> checkExprListBorrow(elements)(param)
-        | ExprCons(head, tail) ->
-            if isParamUsedOnlyAsBorrowRead(head)(param)
-            then isParamUsedOnlyAsBorrowRead(tail)(param)
-            else false
-        | ExprRecord(_, fields, _isMultiline) -> checkRecordFieldsBorrow(fields)(param)
+        | ExprTuple(elements) -> borrowReadList(table)(shadowed)(elements)(param)
+        | ExprList(elements, _isMultiline) -> borrowReadList(table)(shadowed)(elements)(param)
+        | ExprCons(head, tail) -> borrowReadPair(table)(shadowed)(head)(tail)(param)
+        | ExprRecord(_, fields, _isMultiline) -> borrowReadFields(table)(shadowed)(fields)(param)
         | ExprRecordUpdate(record, fields) ->
-            if isParamUsedOnlyAsBorrowRead(record)(param)
-            then checkRecordFieldsBorrow(fields)(param)
+            if borrowReadWalk(table)(shadowed)(record)(param)
+            then borrowReadFields(table)(shadowed)(fields)(param)
             else false
-        | ExprAdd(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprSubtract(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprMultiply(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprDivide(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprModulo(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprBitwiseAnd(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprBitwiseOr(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprBitwiseXor(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprShiftLeft(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprShiftRight(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprBitwiseNot(operand) -> isParamUsedOnlyAsBorrowRead(operand)(param)
-        | ExprLogicalNot(operand) -> isParamUsedOnlyAsBorrowRead(operand)(param)
-        | ExprLogicalAnd(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprLogicalOr(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprEqual(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprNotEqual(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprLessThan(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprLessOrEqual(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprGreaterThan(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprGreaterOrEqual(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprResultPipe(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprResultMapErrorPipe(left, right) ->
-            if isParamUsedOnlyAsBorrowRead(left)(param)
-            then isParamUsedOnlyAsBorrowRead(right)(param)
-            else false
-        | ExprAwait(e) -> isParamUsedOnlyAsBorrowRead(e)(param)
-        | ExprPerform(e) -> isParamUsedOnlyAsBorrowRead(e)(param)
-        | _ -> notBool(mentionsVar(expr)(param))
-and checkCallUsesParamOnlyAsBorrowRead (call: Expr) (param: Str) =
+        | ExprAdd(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprSubtract(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprMultiply(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprDivide(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprModulo(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprBitwiseAnd(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprBitwiseOr(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprBitwiseXor(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprShiftLeft(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprShiftRight(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprBitwiseNot(operand) -> borrowReadWalk(table)(shadowed)(operand)(param)
+        | ExprLogicalNot(operand) -> borrowReadWalk(table)(shadowed)(operand)(param)
+        | ExprLogicalAnd(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprLogicalOr(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprEqual(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprNotEqual(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprLessThan(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprLessOrEqual(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprGreaterThan(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprGreaterOrEqual(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprResultPipe(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprResultMapErrorPipe(left, right) -> borrowReadPair(table)(shadowed)(left)(right)(param)
+        | ExprAwait(e) -> borrowReadWalk(table)(shadowed)(e)(param)
+        | ExprPerform(e) -> borrowReadWalk(table)(shadowed)(e)(param)
+        | _ ->
+            param
+            |> mentionsVar(expr)
+            |> notBool
+and borrowReadPair (table: ProgramParameterOwnership) (shadowed: List(Str)) (left: Expr) (right: Expr) (param: Str) =
+    if borrowReadWalk(table)(shadowed)(left)(param)
+    then borrowReadWalk(table)(shadowed)(right)(param)
+    else false
+and borrowReadCall (table: ProgramParameterOwnership) (shadowed: List(Str)) (call: Expr) (param: Str) =
     match collectCallArgsAndRoot(call)([]) with
         | (root, args) ->
             match stripSpan(root) with
@@ -652,62 +668,166 @@ and checkCallUsesParamOnlyAsBorrowRead (call: Expr) (param: Str) =
                     then
                         match args with
                             | firstArg :: otherArgs ->
-                                match stripSpan(firstArg) with
-                                    | ExprVar(vName) ->
-                                        if vName == param
-                                        then checkExprListBorrow(otherArgs)(param)
-                                        else
-                                            if isParamUsedOnlyAsBorrowRead(root)(param)
-                                            then checkExprListBorrow(args)(param)
-                                            else false
-                                    | _ ->
-                                        if isParamUsedOnlyAsBorrowRead(root)(param)
-                                        then checkExprListBorrow(args)(param)
-                                        else false
-                            | [] -> isParamUsedOnlyAsBorrowRead(root)(param)
+                                if isWholeParameter(firstArg)(param)
+                                then borrowReadList(table)(shadowed)(otherArgs)(param)
+                                else borrowReadList(table)(shadowed)(args)(param)
+                            | [] -> true
+                    else borrowReadList(table)(shadowed)(args)(param)
+                | ExprVar(callee) ->
+                    if callee == param
+                    then false
                     else
-                        if isParamUsedOnlyAsBorrowRead(root)(param)
-                        then checkExprListBorrow(args)(param)
-                        else false
+                        match args
+                        |> length
+                        |> handOffOwnership(table)(shadowed)(callee) with
+                            | Some(ownership) -> borrowReadHandOff(table)(shadowed)(args)(ownership)(param)
+                            | None -> borrowReadList(table)(shadowed)(args)(param)
                 | _ ->
-                    if isParamUsedOnlyAsBorrowRead(root)(param)
-                    then checkExprListBorrow(args)(param)
+                    if borrowReadWalk(table)(shadowed)(root)(param)
+                    then borrowReadList(table)(shadowed)(args)(param)
                     else false
-and checkExprListBorrow (list: List(Expr)) (param: Str) =
+and borrowReadHandOff (table: ProgramParameterOwnership) (shadowed: List(Str)) (args: List(Expr)) (ownership: List((Str, ParameterOwnership))) (param: Str) =
+    match args with
+        | [] -> true
+        | arg :: restArgs ->
+            match ownership with
+                | (_name, Borrowed) :: restOwnership ->
+                    if isWholeParameter(arg)(param)
+                    then borrowReadHandOff(table)(shadowed)(restArgs)(restOwnership)(param)
+                    else
+                        if borrowReadWalk(table)(shadowed)(arg)(param)
+                        then borrowReadHandOff(table)(shadowed)(restArgs)(restOwnership)(param)
+                        else false
+                | (_name, Consumed) :: restOwnership ->
+                    if borrowReadWalk(table)(shadowed)(arg)(param)
+                    then borrowReadHandOff(table)(shadowed)(restArgs)(restOwnership)(param)
+                    else false
+                | [] -> borrowReadList(table)(shadowed)(args)(param)
+and borrowReadList (table: ProgramParameterOwnership) (shadowed: List(Str)) (list: List(Expr)) (param: Str) =
     match list with
         | [] -> true
         | head :: tail ->
-            if isParamUsedOnlyAsBorrowRead(head)(param)
-            then checkExprListBorrow(tail)(param)
+            if borrowReadWalk(table)(shadowed)(head)(param)
+            then borrowReadList(table)(shadowed)(tail)(param)
             else false
-and checkRecordFieldsBorrow (fields: List((Str, Expr))) (param: Str) =
+and borrowReadFields (table: ProgramParameterOwnership) (shadowed: List(Str)) (fields: List((Str, Expr))) (param: Str) =
     match fields with
         | [] -> true
-        | field :: tail ->
-            match field with
-                | (_, expr) ->
-                    if isParamUsedOnlyAsBorrowRead(expr)(param)
-                    then checkRecordFieldsBorrow(tail)(param)
-                    else false
-and checkMatchArmsBorrow (arms: List((Pattern, Expr, Maybe(Expr)))) (param: Str) =
+        | (_field, expr) :: tail ->
+            if borrowReadWalk(table)(shadowed)(expr)(param)
+            then borrowReadFields(table)(shadowed)(tail)(param)
+            else false
+and borrowReadArms (table: ProgramParameterOwnership) (shadowed: List(Str)) (arms: List((Pattern, Expr, Maybe(Expr)))) (param: Str) =
     match arms with
         | [] -> true
-        | arm :: tail ->
-            match arm with
-                | (_pat, body, guard) ->
-                    let guardOk =
-                        match guard with
-                            | None -> true
-                            | Some(g) -> isParamUsedOnlyAsBorrowRead(g)(param)
-                    in
-                        let bodyOk = isParamUsedOnlyAsBorrowRead(body)(param)
-                        in
-                            if guardOk
-                            then
-                                if bodyOk
-                                then checkMatchArmsBorrow(tail)(param)
-                                else false
-                            else false
+        | (pattern, body, guard) :: tail ->
+            let armShadowed = patternBoundNames(pattern)(shadowed)
+            in
+                let guardOk =
+                    match guard with
+                        | None -> true
+                        | Some(g) -> borrowReadWalk(table)(armShadowed)(g)(param)
+                in
+                    if guardOk
+                    then
+                        if borrowReadWalk(table)(armShadowed)(body)(param)
+                        then borrowReadArms(table)(shadowed)(tail)(param)
+                        else false
+                    else false
+
+// The single-function verdict: no other function is known, so every hand-off consumes.
+let isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) = borrowReadWalk([])([])(expr)(param)
+
+// --- Whole-program inspect-only parameters ---
+// `inferProgramParameterOwnership` refines the single-function verdict with every other registered
+// function's: the table starts with every parameter borrowed, each pass re-classifies every
+// function against the current table (a parameter is demoted to consumed as soon as one mention
+// is not a borrow read, and never recovers), and the pass repeats until no parameter changes. The
+// consumed set is therefore the least fixpoint of the demotion rule, so a hand-off through a
+// chain or a cycle of purely inspecting functions stays borrowed, while a single retaining member
+// of a cycle demotes everyone that hands the parameter to it. Termination is bounded by the
+// finite parameter count: every non-final pass demotes at least one parameter.
+let recursive lookupProgramParameterOwnership (name: Str) (table: ProgramParameterOwnership) =
+    match table with
+        | [] -> None
+        | (candidate, ownership) :: rest ->
+            if candidate == name
+            then Some(ownership)
+            else lookupProgramParameterOwnership(name)(rest)
+
+let recursive allBorrowed (params: List(Str)) =
+    match params with
+        | [] -> []
+        | param :: rest -> (param, Borrowed) :: allBorrowed(rest)
+
+let recursive optimisticProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
+    match funcs with
+        | [] -> []
+        | (name, params, _body) :: rest -> (name, allBorrowed(params)) :: optimisticProgramParameterOwnership(rest)
+
+let recursive demoteParameters (table: ProgramParameterOwnership) (shadowed: List(Str)) (body: Expr) (previous: List((Str, ParameterOwnership))) =
+    match previous with
+        | [] -> []
+        | (param, Consumed) :: rest -> (param, Consumed) :: demoteParameters(table)(shadowed)(body)(rest)
+        | (param, Borrowed) :: rest ->
+            let own =
+                if borrowReadWalk(table)(shadowed)(body)(param)
+                then Borrowed
+                else Consumed
+            in (param, own) :: demoteParameters(table)(shadowed)(body)(rest)
+
+let recursive refineProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) (previous: ProgramParameterOwnership) =
+    match funcs with
+        | [] -> []
+        | (name, params, body) :: restFuncs ->
+            match previous with
+                | (_name, ownership) :: restPrevious -> (name, demoteParameters(table)(params)(body)(ownership)) :: refineProgramParameterOwnership(restFuncs)(table)(restPrevious)
+                | [] -> []
+
+let recursive runInspectOnlyFixpoint (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) =
+    (let next = refineProgramParameterOwnership(funcs)(table)(table)
+    in
+        if next == table
+        then table
+        else runInspectOnlyFixpoint(funcs)(next))
+
+// The parameter ownership of every registered function, one `(name, parameters, body)` triple per
+// function, after the whole-program fixpoint; entries keep the registration order.
+let inferProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
+    funcs
+    |> optimisticProgramParameterOwnership
+    |> runInspectOnlyFixpoint(funcs)
+
+// The innermost body of a curried lambda value and its parameter chain.
+let recursive lambdaParameters (value: Expr) (parameters: List(Str)) =
+    match value with
+        | ExprAt(_span, inner) -> lambdaParameters(inner)(parameters)
+        | ExprLambda(parameter, body, _annotation) -> lambdaParameters(body)(parameter :: parameters)
+        | body -> (reverse(parameters), body)
+
+let registeredFunction (binding: LetBindingSyntax) =
+    match lambdaParameters(binding.value)([]) with
+        | (parameters, body) -> (binding.name, parameters, body)
+
+let recursive registeredGroup (bindings: List(LetBindingSyntax)) (acc: List((Str, List(Str), Expr))) =
+    match bindings with
+        | [] -> acc
+        | binding :: rest -> registeredGroup(rest)(registeredFunction(binding) :: acc)
+
+let recursive registerTopLevelItems (items: List(TopLevelItem)) (acc: List((Str, List(Str), Expr))) =
+    match items with
+        | [] -> reverse(acc)
+        | TopLevelAt(_span, inner) :: rest -> registerTopLevelItems(inner :: rest)(acc)
+        | TopLevelLet(binding, _isRecursive) :: rest -> registerTopLevelItems(rest)(registeredFunction(binding) :: acc)
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            acc
+            |> registeredGroup(bindings)
+            |> registerTopLevelItems(rest)
+        | _ :: rest -> registerTopLevelItems(rest)(acc)
+
+// Every top-level `let` of a parsed program as a `(name, parameters, body)` triple, a plain value
+// binding contributing an empty parameter list.
+let topLevelFunctions (program: ProgramSyntax) = registerTopLevelItems(program.items)([])
 
 // --- Result Reachability Analysis for an Expression ---
 let recursive lookupEnv (name: Str) (env: List((Str, ResultReachState))) =
@@ -956,7 +1076,7 @@ let recursive reachedParameterNames (entries: List(ParameterReachEntry)) =
         | [] -> []
         | ParameterReachEntry { parameterName = name } :: rest -> name :: reachedParameterNames(rest)
 
-let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) =
+let inferFunctionOwnershipWith (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) (paramOwnership: List((Str, ParameterOwnership))) =
     match sig with
         | FunctionSignature { name = fName, origin = origin, parameters = params, body = body } ->
             let initialEnv = buildInitialEnv(params)([])
@@ -973,37 +1093,43 @@ let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, Functio
                                     wholeParameterReach = reachedParameterNames(counts)
                                 )
                     in
-                        let paramOwnership = classifyParameterOwnership(params)(body)([])
+                        let borrowed = getBorrowedParameters(paramOwnership)
                         in
-                            let borrowed = getBorrowedParameters(paramOwnership)
+                            let consumed = getConsumedParameters(paramOwnership)
                             in
-                                let consumed = getConsumedParameters(paramOwnership)
+                                let census = FunctionCallCensus(directCallCount = 1, causes = [CensusCauseNone])
                                 in
-                                    let census = FunctionCallCensus(directCallCount = 1, causes = [CensusCauseNone])
+                                    let moveProofs = makeMoveSafetyProofs(params)([])
                                     in
-                                        let moveProofs = makeMoveSafetyProofs(params)([])
+                                        let prov =
+                                            match lookupProvenance(fName)(provMap) with
+                                                | Some(p) -> p
+                                                | None -> FunctionResultProvenance(rcEligible = true, forwardsTo = None, bytesProvenance = BytesProvenanceUnknown)
                                         in
-                                            let prov =
-                                                match lookupProvenance(fName)(provMap) with
-                                                    | Some(p) -> p
-                                                    | None -> FunctionResultProvenance(rcEligible = true, forwardsTo = None, bytesProvenance = BytesProvenanceUnknown)
-                                            in
-                                                FunctionOwnershipSummary(
-                                                    functionName = fName,
-                                                    origin = origin,
-                                                    parameters = params,
-                                                    parameterOwnership = paramOwnership,
-                                                    borrowedParameters = borrowed,
-                                                    consumedParameters = consumed,
-                                                    uniqueParameters = params,
-                                                    callCensus = census,
-                                                    parameterMoveSafety = moveProofs,
-                                                    capturedValues = computeCaptures(body)(params),
-                                                    resultReachFacts = reachFacts,
-                                                    resultProvenance = prov,
-                                                    tcoParamFacts = [],
-                                                    mayExecuteUnderLiveHandlerPost = false
-                                                )
+                                            FunctionOwnershipSummary(
+                                                functionName = fName,
+                                                origin = origin,
+                                                parameters = params,
+                                                parameterOwnership = paramOwnership,
+                                                borrowedParameters = borrowed,
+                                                consumedParameters = consumed,
+                                                uniqueParameters = params,
+                                                callCensus = census,
+                                                parameterMoveSafety = moveProofs,
+                                                capturedValues = computeCaptures(body)(params),
+                                                resultReachFacts = reachFacts,
+                                                resultProvenance = prov,
+                                                tcoParamFacts = [],
+                                                mayExecuteUnderLiveHandlerPost = false
+                                            )
+
+// The single-function summary: parameter ownership from the body alone.
+let inferFunctionOwnership (sig: FunctionSignature) (provMap: List((Str, FunctionResultProvenance))) =
+    match sig with
+        | FunctionSignature { parameters = params, body = body } ->
+            []
+            |> classifyParameterOwnership(params)(body)
+            |> inferFunctionOwnershipWith(sig)(provMap)
 
 let recursive collectFunctionNames (funcs: List(FunctionSignature)) (acc: List(Str)) =
     match funcs with
@@ -1020,21 +1146,42 @@ let recursive filterOutNames (names: List(Str)) (excluded: List(Str)) =
             then filterOutNames(rest)(excluded)
             else name :: filterOutNames(rest)(excluded)
 
-let recursive inferProgramOwnershipAux (funcs: List(FunctionSignature)) (provMap: List((Str, FunctionResultProvenance))) (programNames: List(Str)) (acc: List(FunctionOwnershipSummary)) =
+let recursive signatureFunctions (funcs: List(FunctionSignature)) =
+    match funcs with
+        | [] -> []
+        | FunctionSignature { name = name, parameters = params, body = body } :: rest -> (name, params, body) :: signatureFunctions(rest)
+
+let programOwnershipOf (sig: FunctionSignature) (table: ProgramParameterOwnership) =
+    match sig with
+        | FunctionSignature { name = name, parameters = params, body = body } ->
+            match lookupProgramParameterOwnership(name)(table) with
+                | Some(ownership) -> ownership
+                | None -> classifyParameterOwnership(params)(body)([])
+
+let recursive inferProgramOwnershipAux (funcs: List(FunctionSignature)) (provMap: List((Str, FunctionResultProvenance))) (programNames: List(Str)) (table: ProgramParameterOwnership) (acc: List(FunctionOwnershipSummary)) =
     match funcs with
         | [] -> reverse(acc)
         | func :: rest ->
-            let rawSummary = inferFunctionOwnership(func)(provMap)
+            let rawSummary =
+                table
+                |> programOwnershipOf(func)
+                |> inferFunctionOwnershipWith(func)(provMap)
             in
                 match rawSummary with
                     | FunctionOwnershipSummary { capturedValues = caps } ->
                         let summary = rawSummary with capturedValues = filterOutNames(caps)(programNames)
-                        in inferProgramOwnershipAux(rest)(provMap)(programNames)(summary :: acc)
+                        in inferProgramOwnershipAux(rest)(provMap)(programNames)(table)(summary :: acc)
 
 // Every top-level function name is excluded from `capturedValues`: an ordinary call to another
 // whole-program function is not a closure capture, only a free reference into an enclosing scope is.
+// Parameter ownership comes from the whole-program inspect-only fixpoint over every signature.
 let inferProgramOwnership (funcs: List(FunctionSignature)) (provNodes: List(ProvenanceFunctionNode)) =
     (let provMap = resolveResultProvenances(provNodes)
     in
         let programNames = collectFunctionNames(funcs)([])
-        in inferProgramOwnershipAux(funcs)(provMap)(programNames)([]))
+        in
+            let table =
+                funcs
+                |> signatureFunctions
+                |> inferProgramParameterOwnership
+            in inferProgramOwnershipAux(funcs)(provMap)(programNames)(table)([]))

@@ -667,10 +667,17 @@ same public behavior.
   body, or a well-formed program hits the forward-reference diagnostic (`ASH014`).
 - [x] **OPT-21** Infer parameter/capture ownership, result reachability and freshness, moves, borrows,
   forwarding, and whole-program SCC provenance summaries.
-- [ ] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
+- [~] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
   function, so in-place reuse borrowing survives a hand-off to a proven read-only helper
   (`FunctionOwnershipSummary.ParameterOwnership` cannot answer this — it classifies a plain
   inspecting helper's parameter as consumed).
+  Done (`OwnershipInference.ash`): `inferProgramParameterOwnership` classifies every registered
+  function's parameters as a whole-program fixpoint (every parameter starts borrowed, a
+  non-read mention demotes it to consumed for good, passes repeat until stable), so a hand-off
+  to a proven inspecting helper, a chain of them, or a cycle of them stays borrowed while a
+  shadowed, unregistered, ambiguous, or partially applied callee still consumes;
+  `inferProgramOwnership` reports the fixpoint verdict. Deferred: `CoreLowering`'s call-site
+  borrow decision still asks the single-function `classifyParameterOwnership`.
 - [~] **OPT-23** Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts.
   Done (`HeapLayoutClassification.ash`): resource-bearing and unresolved-type detection
   (cycle-guarded) and per-child drop kinds for list/tuple/ADT shapes, with constructor fields
