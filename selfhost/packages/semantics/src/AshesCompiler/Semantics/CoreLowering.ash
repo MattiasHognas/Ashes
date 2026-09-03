@@ -142,6 +142,7 @@ type CoreLoweringState =
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
     | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
+    | expectedType: Maybe(SemanticType)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -197,6 +198,7 @@ type CoreMatchPlan =
     | endLabel: Str
     | noMatchLabel: Str
     | resultType: SemanticType
+    | expectedType: Maybe(SemanticType)
     | error: Maybe(CoreLoweringError)
 
 // The cases of one match that share an outer constructor tag, in first-seen order. A group is a
@@ -355,7 +357,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         sealedOperatorDefaults = [],
         pendingSourceFunction = None,
         activeFunctionOrigin = None,
-        pendingClosureNormalizers = []
+        pendingClosureNormalizers = [],
+        expectedType = None
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -682,6 +685,41 @@ let bindType left right state =
                     (withSubstitution(append(added)(existing))(state), None)
                 | UnificationResult { error = Some(error) } -> (state, Some(CoreCallTypeMismatch(error)))
 
+// The type the context expects of the next expression lowered, threaded through the state:
+// `lowerCore` consumes it. A let, recursive binding, lambda, if, match, handle, call, list
+// literal, or cons forwards it to the parts stage 0 forwards it to; every other expression is
+// lowered without it and unified with it afterwards. The result state never carries one.
+let withExpectedType expected (state: CoreLoweringState) = state with expectedType = expected
+
+let clearExpectedType (state: CoreLoweringState) = state with expectedType = None
+
+let expectedTypeOf (state: CoreLoweringState) = state.expectedType
+
+let withLoweredExpectedType expected (lowered: LoweredCoreValue) = lowered with state = withExpectedType(expected)(lowered.state)
+
+let unifyExpectedResult expected lowered =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
+            match bindType(expected)(semanticType)(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (typedState, None) ->
+                    success(temp)(resolveType(typedState)(semanticType))(typedState)
+
+let recursive expectedTypeForwards expression =
+    match expression with
+        | ExprAt(_span, inner) -> expectedTypeForwards(inner)
+        | ExprLet(_, _, _, _, _, _) -> true
+        | ExprLetRecursive(_, _, _, _, _, _) -> true
+        | ExprLambda(_, _, _) -> true
+        | ExprIf(_, _, _) -> true
+        | ExprMatch(_, _, _) -> true
+        | ExprHandle(_, _) -> true
+        | ExprCall(_, _, _, _) -> true
+        | ExprList(_, _) -> true
+        | ExprCons(_, _) -> true
+        | _ -> false
+
 let recursive findConstructorLayout (name: Str) (layouts: List(CoreConstructorLayout)) =
     match layouts with
         | [] -> None
@@ -931,9 +969,9 @@ and lowerBoundVariable binding state =
             match binding with
                 | CoreBinding { location = CoreSelf(label, environmentSize) } ->
                     match freshTemp(instantiatedState) with
-                        | FreshTemp { state = environmentState, temp = environmentTemp } ->
-                            match freshTemp(environmentState) with
-                                | FreshTemp { state = closureState, temp = closureTemp } ->
+                        | FreshTemp { state = closureAllocated, temp = closureTemp } ->
+                            match freshTemp(closureAllocated) with
+                                | FreshTemp { state = closureState, temp = environmentTemp } ->
                                     closureState
                                     |> emit(LoadLocal(environmentTemp)(0))
                                     |> emit(MakeClosure(
@@ -1264,12 +1302,15 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
             match freshLocal(cursorAllocated) with
                 | FreshLocal { state = endAllocated, local = endSlot } ->
                     match endAllocated
+                    |> clearExpectedType
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
                     |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
                     |> lower(value) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
-                            match finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings)(loweredValue) with
+                            match loweredValue
+                            |> withLoweredExpectedType(expectedTypeOf(state))
+                            |> finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
                                     match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
@@ -1849,19 +1890,6 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             |> lower(body)
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
 
-// The lambda's origin is decided against the armed let name before the outer frame forgets it:
-// the outer continuation must not hand the same name to a later lambda.
-let lowerLambda parameter body annotation stackAllocate lower state =
-    match state with
-        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
-            match (capturedBindings(collectFree(body)([parameter])([]))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
-                | (captures, origin) ->
-                    match freshType((state with pendingSourceFunction = None, pendingStackClosure = false)) with
-                        | FreshType { state = freshState, semanticType = parameterType } ->
-                            match lowerLambdaParameterType(annotation)(parameterType)(freshState) with
-                                | (checkedState, Some(error)) -> failure(checkedState)(error)
-                                | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = checkedState, semanticType = parameterType))
-
 let resolvedFunctionType state argumentType resultType =
     FunctionTypeResolution(
         state = state,
@@ -1894,6 +1922,34 @@ let ensureFunctionType semanticType state =
             |> finishFreshFunctionType(semanticType)
         | other -> failedFunctionType(state)(CoreCallRequiresFunction(other))
 
+// An expected function type pins the parameter type before the body is lowered; its result type
+// meets the body's type through the context's own unification afterwards.
+let applyExpectedLambdaType parameterType state =
+    match expectedTypeOf(state) with
+        | None -> (clearExpectedType(state), None)
+        | Some(expected) ->
+            match state
+            |> clearExpectedType
+            |> ensureFunctionType(expected) with
+                | FunctionTypeResolution { state = failedState, error = Some(error) } -> (failedState, Some(error))
+                | FunctionTypeResolution { state = functionState, argumentType = argumentType, error = None } -> bindType(argumentType)(parameterType)(functionState)
+
+// The lambda's origin is decided against the armed let name before the outer frame forgets it:
+// the outer continuation must not hand the same name to a later lambda.
+let lowerLambda parameter body annotation stackAllocate lower state =
+    match state with
+        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
+            match (capturedBindings(collectFree(body)([parameter])([]))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
+                | (captures, origin) ->
+                    match freshType((state with pendingSourceFunction = None, pendingStackClosure = false)) with
+                        | FreshType { state = freshState, semanticType = parameterType } ->
+                            match applyExpectedLambdaType(parameterType)(freshState) with
+                                | (expectedFailed, Some(error)) -> failure(expectedFailed)(error)
+                                | (expectedState, None) ->
+                                    match lowerLambdaParameterType(annotation)(parameterType)(expectedState) with
+                                        | (checkedState, Some(error)) -> failure(checkedState)(error)
+                                        | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = checkedState, semanticType = parameterType))
+
 // Closes a call's arena window after its last application under the scope rule.
 let closeCallWindow cursorSlot endSlot lowered =
     match lowered with
@@ -1921,11 +1977,13 @@ let lowerCoreCallArgument functionTemp expectedArgumentType resultType loweredAr
             |> bindType(expectedArgumentType)(argumentType)
             |> finishCoreCall(functionTemp)(argumentTemp)(resultType)
 
+// An argument is expected to have the callee's parameter type.
 let lowerCoreCallTyped argument lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } -> failure(typedState)(error)
         | FunctionTypeResolution { state = typedState, argumentType = expectedType, resultType = resultType, error = None } ->
             typedState
+            |> withExpectedType(Some(expectedType))
             |> lower(argument)
             |> lowerCoreCallArgument(functionTemp)(expectedType)(resultType)
 
@@ -1937,28 +1995,55 @@ let lowerCoreCallFunction argument lower loweredFunction =
             |> ensureFunctionType(functionType)
             |> lowerCoreCallTyped(argument)(lower)(functionTemp)
 
+// Unifies the result a spine of `arity` applications of the callee produces with the type the
+// context expects of the call, before any argument is lowered: a callee type that is still a
+// variable at some arrow is made a function type on the way.
+let recursive preconstrainCallResultType functionType arity expected state =
+    if arity == 0
+    then bindType(functionType)(expected)(state)
+    else
+        match ensureFunctionType(functionType)(state) with
+            | FunctionTypeResolution { state = failedState, error = Some(_error) } -> (failedState, None)
+            | FunctionTypeResolution { state = functionState, resultType = resultType, error = None } -> preconstrainCallResultType(resultType)(arity - 1)(expected)(functionState)
+
+let preconstrainCallResult expected arity loweredCallee =
+    match (expected, loweredCallee) with
+        | (None, _) -> loweredCallee
+        | (_, LoweredCoreValue { error = Some(_error) }) -> loweredCallee
+        | (Some(expectedType), LoweredCoreValue { state = state, temp = temp, semanticType = functionType, error = None }) ->
+            match preconstrainCallResultType(functionType)(arity)(expectedType)(state) with
+                | (failedState, Some(error)) -> failure(failedState)(error)
+                | (constrainedState, None) -> success(temp)(functionType)(constrainedState)
+
 // The callee of one application inside a call spine `f(a)(b)`: a further application is another
 // stage of the same spine, an applied lambda literal is lowered as a stack closure, and anything
 // else is an ordinary expression. The stages share the window `lowerCall` opened around the
-// whole spine; a call inside an argument opens its own.
-let recursive lowerCallSpineCallee expression lower state =
+// whole spine; a call inside an argument opens its own. The root callee's result after the
+// spine's `arity` applications is constrained to the expected type before the arguments.
+let recursive lowerCallSpineCallee expression expected arity lower state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(lower)(state)
-        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(lower)(state)
-        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(true)(lower)(state)
-        | _ -> lower(expression)(state)
-and lowerCallSpineStage function argument lower state =
+        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(expected)(arity)(lower)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(expected)(arity + 1)(lower)(state)
+        | ExprLambda(parameter, body, annotation) ->
+            state
+            |> lowerLambda(parameter)(body)(annotation)(true)(lower)
+            |> preconstrainCallResult(expected)(arity)
+        | _ ->
+            state
+            |> lower(expression)
+            |> preconstrainCallResult(expected)(arity)
+and lowerCallSpineStage function argument expected arity lower state =
     state
-    |> lowerCallSpineCallee(function)(lower)
+    |> lowerCallSpineCallee(function)(expected)(arity)(lower)
     |> lowerCoreCallFunction(argument)(lower)
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
-let lowerCall function argument lower state =
+let lowerCall function argument expected lower state =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> lowerCallSpineStage(function)(argument)(lower)
+            |> lowerCallSpineStage(function)(argument)(expected)(1)(lower)
             |> closeCallWindow(cursorSlot)(endSlot)
 
 let failedIfPlan state error =
@@ -2011,7 +2096,7 @@ let prepareIfPlan loweredCondition =
             |> bindType(SemBool)(conditionType)
             |> prepareTypedIfPlan(conditionTemp)
 
-let lowerIfThenBranch thenBranch lower plan =
+let lowerIfThenBranch thenBranch expected lower plan =
     match plan with
         | CoreIfPlan { state = failedState, error = Some(error) } ->
             CoreIfThen(
@@ -2022,7 +2107,9 @@ let lowerIfThenBranch thenBranch lower plan =
                 error = Some(error)
             )
         | CoreIfPlan { state = thenState, resultSlot = resultSlot, elseLabel = elseLabel, endLabel = endLabel, error = None } ->
-            match lower(thenBranch)(thenState) with
+            match thenState
+            |> withExpectedType(expected)
+            |> lower(thenBranch) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } ->
                     CoreIfThen(
                         state = failedState,
@@ -2047,7 +2134,9 @@ let finishIfElseBranch elseBranch lower loweredThen =
     match loweredThen with
         | CoreIfThen { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | CoreIfThen { state = elseState, resultSlot = resultSlot, endLabel = endLabel, thenType = thenType, error = None } ->
-            match lower(elseBranch)(elseState) with
+            match elseState
+            |> withExpectedType(Some(thenType))
+            |> lower(elseBranch) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = elseType, error = None } ->
                     match bindType(thenType)(elseType)(resultState) with
@@ -2061,11 +2150,14 @@ let finishIfElseBranch elseBranch lower loweredThen =
                                     |> emit(LoadLocal(target)(resultSlot))
                                     |> success(target)(resolveType(typedState)(thenType))
 
+// The then branch inherits the context's expected type; the else branch is expected to have the
+// then branch's type.
 let lowerIf condition thenBranch elseBranch lower state =
     state
+    |> clearExpectedType
     |> lower(condition)
     |> prepareIfPlan
-    |> lowerIfThenBranch(thenBranch)(lower)
+    |> lowerIfThenBranch(thenBranch)(expectedTypeOf(state))(lower)
     |> finishIfElseBranch(elseBranch)(lower)
 
 let patternName pattern =
@@ -2604,11 +2696,13 @@ let closeArmBracketForResult bracket resultType state =
         | None -> state
         | Some(opened) -> closeScopeForResult(resultType)(opened.bracketCursorSlot)(opened.bracketEndSlot)(state)
 
-let finishMatchArm body resultSlot endLabel resultType outerBindings bracket lower guarded =
+let finishMatchArm body resultSlot endLabel resultType expected outerBindings bracket lower guarded =
     match guarded with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = bodyState, error = None } ->
-            match lower(body)(bodyState) with
+            match bodyState
+            |> withExpectedType(expected)
+            |> lower(body) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = bodyType, error = None } ->
                     match bindType(resultType)(bodyType)(resultState) with
@@ -2627,18 +2721,18 @@ let finishMatchArm body resultSlot endLabel resultType outerBindings bracket low
 // target. Stage 0 emits the cleanup block for every arm, including one whose pattern cannot fail.
 let lowerMatchArm pattern body guard cleanupLabel bracket lower plan =
     match plan with
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType } ->
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, expectedType = expected } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
                     |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(cleanupLabel)
                     |> lowerMatchGuard(guard)(cleanupLabel)(lower)
-                    |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(outerBindings)(bracket)(lower)
+                    |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(expected)(outerBindings)(bracket)(lower)
 
 let recastMatchPlan plan lowered =
     match (plan, lowered) with
-        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType }, LoweredCoreValue { state = state, error = error }) ->
+        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, expectedType = expected }, LoweredCoreValue { state = state, error = error }) ->
             CoreMatchPlan(
                 state = state,
                 valueTemp = valueTemp,
@@ -2647,6 +2741,7 @@ let recastMatchPlan plan lowered =
                 endLabel = endLabel,
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
+                expectedType = expected,
                 error = error
             )
 
@@ -2701,6 +2796,7 @@ let failedMatchPlan state error =
         endLabel = "",
         noMatchLabel = "",
         resultType = SemNever,
+        expectedType = None,
         error = Some(error)
     )
 
@@ -2715,8 +2811,11 @@ let finishPreparedMatch valueTemp valueType resultType resultSlot endLabel fresh
                 endLabel = endLabel,
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
+                expectedType = None,
                 error = None
             )
+
+let withPlanExpectedType expected (plan: CoreMatchPlan) = plan with expectedType = expected
 
 let prepareMatchEndLabel valueTemp valueType resultType resultSlot fresh =
     match fresh with
@@ -2926,7 +3025,7 @@ let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPla
             |> preparePattern(pattern)
             |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
             |> lowerMatchGuard(guard)(failLabel)(lower)
-            |> finishMatchArm(body)(plan.resultSlot)(plan.endLabel)(plan.resultType)(outerBindings)(None)(lower)
+            |> finishMatchArm(body)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.expectedType)(outerBindings)(None)(lower)
 
 // The group's cases in their original order; the last one fails to the group's fail target.
 let recursive lowerTagGroupCasesLinearly cases (indices: List(Int)) (groupFailLabel: Str) lower (plan: CoreMatchPlan) =
@@ -3254,8 +3353,10 @@ let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
 
 let lowerMatch value cases lower state =
     state
+    |> clearExpectedType
     |> lower(value)
     |> prepareMatchPlan
+    |> withPlanExpectedType(expectedTypeOf(state))
     |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
     |> finishMatchPlan
@@ -3421,13 +3522,15 @@ let recursive addRecursiveGroupContinuationBindings members outerBindings state 
                 |> addBinding(name)(scheme)(CoreLocal(slot))
                 |> addRecursiveGroupContinuationBindings(rest)(outerBindings)
 
-let finishRecursiveGroupContinuation members outerBindings body lower loweredMembers =
+let finishRecursiveGroupContinuation members outerBindings body expected lower loweredMembers =
     match loweredMembers with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = groupState, error = None } ->
             let continuationState = addRecursiveGroupContinuationBindings(members)(outerBindings)(groupState)
             in
-                match lower(body)(continuationState) with
+                match continuationState
+                |> withExpectedType(expected)
+                |> lower(body) with
                     | LoweredCoreValue { state = resultState, temp = temp, semanticType = semanticType, error = error } ->
                         LoweredCoreValue(
                             state = restoreBindings(outerBindings)(resultState),
@@ -3452,7 +3555,9 @@ let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower 
                     |> collectRecursiveGroupFree(bindings)(groupNames)
                     |> (given (names) -> capturedBindings(names)(outerBindings)([]))
                 in
-                    match allocateEnvironment(captures)(false)(preparedState) with
+                    match preparedState
+                    |> clearExpectedType
+                    |> allocateEnvironment(captures)(false) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
                             let selfBindings =
@@ -3466,7 +3571,7 @@ let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower 
                                     environmentTemp,
                                     memberLower
                                 )
-                                |> finishRecursiveGroupContinuation(members)(outerBindings)(body)(continuationLower)
+                                |> finishRecursiveGroupContinuation(members)(outerBindings)(body)(expectedTypeOf(preparedState))(continuationLower)
 
 let lowerPreparedRecursiveGroup bindings body lower outerBindings prepared = lowerPreparedRecursiveGroupWith(bindings)(body)(lower)(lower)(outerBindings)(prepared)
 
@@ -3542,13 +3647,24 @@ let finishCons head tail =
 let finishConsTail lower tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | LoweredCoreValue { state = headState } ->
+        | LoweredCoreValue { state = headState, semanticType = headType } ->
             headState
+            |> withExpectedType(Some(SemList(headType)))
             |> lower(tailExpression)
             |> finishCons(head)
 
+// The element type an expected list type asks of a list literal's elements or a cons head.
+let expectedListElementType state =
+    match expectedTypeOf(state) with
+        | None -> None
+        | Some(expected) ->
+            match resolveType(state)(expected) with
+                | SemList(elementType) -> Some(elementType)
+                | _ -> None
+
 let lowerCons head tail lower state =
     state
+    |> withExpectedType(expectedListElementType(state))
     |> lower(head)
     |> finishConsTail(lower)(tail)
 
@@ -3564,7 +3680,9 @@ let recursive lowerListElements elements elementType tailTemp lower state =
             |> resolveType(state)
             |> SemList)(state)
         | expression :: rest ->
-            match lower(expression)(state) with
+            match state
+            |> withExpectedType(Some(elementType))
+            |> lower(expression) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
@@ -3592,9 +3710,20 @@ let finishListLiteral elements lower empty =
                 UnsupportedCoreLoweringExpression("invalid empty list type")
             )
 
+let expectedOrFreshEmptyList state =
+    match expectedListElementType(state) with
+        | Some(elementType) ->
+            state
+            |> clearExpectedType
+            |> lowerConstant(given (target) -> LoadConstInt(target)(0))(SemList(elementType))
+        | None ->
+            state
+            |> clearExpectedType
+            |> emptyList
+
 let lowerListLiteral elements lower state =
     state
-    |> emptyList
+    |> expectedOrFreshEmptyList
     |> finishListLiteral(elements)(lower)
 
 let recursive emitAdtFields baseTemp index temps state =
@@ -5147,7 +5276,11 @@ let lowerOneShotPost resumeArgument postName postBody lower postRegisterIndex st
 // resumed value via a fresh synthetic parameter, becomes the single post continuation (reusing
 // lowerOneShotPost unchanged), and every case's body/guard must not itself resume again
 // (multi-shot rejected, matchCasesReferenceResume).
-let recursive resolveOperationArmBody body lower postRegisterIndex capName opName state =
+let recursive resolveOperationArmBody body lower postRegisterIndex capName opName armState =
+    armState
+    |> clearExpectedType
+    |> resolveOperationArmBodyIn(body)(lower)(postRegisterIndex)(capName)(opName)
+and resolveOperationArmBodyIn body lower postRegisterIndex capName opName state =
     match unspanForResumeCheck(body) with
         | ExprLet(name, value, letBody, _parameters, _annotation, _requirements) ->
             match tailResumeArgument(value) with
@@ -5205,7 +5338,7 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                     state
                     |> lower(condition)
                     |> prepareIfPlan
-                    |> lowerIfThenBranch(thenBranch)(branchLower)
+                    |> lowerIfThenBranch(thenBranch)(None)(branchLower)
                     |> finishIfElseBranch(elseBranch)(branchLower)
         // A scrutinee that IS itself a resume call (`match resume(v) with | ...`) is the one-shot
         // scrutinee shape (stage-0's TryRewriteResumeOneShotMatch): `v` returns to the perform
@@ -5291,7 +5424,7 @@ and resolveOperationArmMatchArm pattern body guard failLabel lower postRegisterI
                                 |> preparePattern(pattern)
                                 |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
                                 |> lowerMatchGuard(guard)(failLabel)(lower)
-                                |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(outerBindings)(None)(bodyLower)
+                                |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(None)(outerBindings)(None)(bodyLower)
 and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
     match (cases, plan) with
         | (_cases, CoreMatchPlan { error = Some(_error) }) -> plan
@@ -5462,7 +5595,7 @@ and finishCapabilityPostsFold resultLocal resultType state =
             |> emit(LoadLocal(finalResultTemp)(resultLocal))
             |> success(finalResultTemp)(resultType)
 
-let lowerHandle body arms lower state =
+let lowerHandleWithExpected body arms expected lower state =
     match splitHandlerArms(arms) with
         | ParsedHandlerArms { opArms = opArms, returnArm = returnArm } ->
             match state with
@@ -5480,10 +5613,16 @@ let lowerHandle body arms lower state =
                                             |> emit(StoreMemOffset(postsHeadPtrTemp)(0)(zeroTemp))
                                         in
                                             match opArms with
-                                                | [] -> lower(body)(prepState)
+                                                | [] ->
+                                                    prepState
+                                                    |> withExpectedType(expected)
+                                                    |> lower(body)
                                                 | (capName, _opName, _pats, _armBody) :: _ ->
                                                     match findCapabilityLayout(capName)(capLayouts) with
-                                                        | None -> lower(body)(prepState)
+                                                        | None ->
+                                                            prepState
+                                                            |> withExpectedType(expected)
+                                                            |> lower(body)
                                                         | Some(CoreCapabilityLayout { index = capIdx, operations = ops }) ->
                                                             let opCount = coreListLength(ops)
                                                             in
@@ -5501,7 +5640,9 @@ let lowerHandle body arms lower state =
                                                                                 match installOperationArmClosures(capName)(ops)(opArms)(frameTemp)(globalCount)(lower)(frameInitState) with
                                                                                     | LoweredCoreValue { state = _armsFailedState, error = Some(error) } -> failure(frameInitState)(error)
                                                                                     | LoweredCoreValue { state = armsInstalledState, error = None } ->
-                                                                                        match lower(body)(armsInstalledState) with
+                                                                                        match armsInstalledState
+                                                                                        |> withExpectedType(expected)
+                                                                                        |> lower(body) with
                                                                                             | LoweredCoreValue { state = bodyState, temp = bodyTemp, semanticType = bodyType, error = None } ->
                                                                                                 let uninstallState =
                                                                                                     match freshTemp(bodyState) with
@@ -5527,13 +5668,48 @@ let lowerHandle body arms lower state =
                                                                                                             | LoweredCoreValue { state = resultState, temp = resultTemp, semanticType = resultType, error = None } -> foldCapabilityPosts(postsHeadPtrTemp)(resultTemp)(resultType)(resultState)
                                                                                             | failed -> failed
 
+// The handled body inherits the context's expected type; the operation arms do not.
+let lowerHandle body arms lower state =
+    state
+    |> clearExpectedType
+    |> lowerHandleWithExpected(body)(arms)(expectedTypeOf(state))(lower)
+
 let expressionName expression =
     match expression with
         | ExprBigInt(_) -> "BigInt"
         | ExprQualifiedVar(_, _) -> "qualified variable"
         | _ -> "non-core expression"
 
-let recursive lowerCore expression state =
+// A constructor call's arguments are lowered without the expected type and its result unified
+// with it; a builtin or external call ignores it; a general call constrains its result with it
+// and lowers each argument against the callee's parameter type.
+let unifyOptionalExpectedResult expected lowered =
+    match expected with
+        | None -> lowered
+        | Some(expectedType) -> unifyExpectedResult(expectedType)(lowered)
+
+let lowerCallExpression expression function argument lower state =
+    match state
+    |> clearExpectedType
+    |> tryLowerConstructorCall(expression)(lower) with
+        | Some(lowered) ->
+            unifyOptionalExpectedResult(expectedTypeOf(state))(lowered)
+        | None ->
+            match state
+            |> clearExpectedType
+            |> tryLowerBuiltinCall(expression)(lower) with
+                | Some(lowered) -> lowered
+                | None ->
+                    match state
+                    |> clearExpectedType
+                    |> tryLowerExternalCall(expression)(lower) with
+                        | Some(lowered) -> lowered
+                        | None ->
+                            state
+                            |> clearExpectedType
+                            |> lowerCall(function)(argument)(expectedTypeOf(state))(lower)
+
+let lowerCoreDispatch expression lowerCore state =
     match expression with
         | ExprAt(span, inner) ->
             match state with
@@ -5600,16 +5776,7 @@ let recursive lowerCore expression state =
             )
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
         | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(state.pendingStackClosure)(lowerCore)(state)
-        | ExprCall(function, argument, _whitespace, _layout) ->
-            match tryLowerConstructorCall(expression)(lowerCore)(state) with
-                | Some(lowered) -> lowered
-                | None ->
-                    match tryLowerBuiltinCall(expression)(lowerCore)(state) with
-                        | Some(lowered) -> lowered
-                        | None ->
-                            match tryLowerExternalCall(expression)(lowerCore)(state) with
-                                | Some(lowered) -> lowered
-                                | None -> lowerCall(function)(argument)(lowerCore)(state)
+        | ExprCall(function, argument, _whitespace, _layout) -> lowerCallExpression(expression)(function)(argument)(lowerCore)(state)
         | ExprTuple(elements) -> lowerTuple(elements)(lowerCore)(state)
         | ExprList(elements, _isMultiline) -> lowerListLiteral(elements)(lowerCore)(state)
         | ExprCons(head, tail) -> lowerCons(head)(tail)(lowerCore)(state)
@@ -5622,6 +5789,21 @@ let recursive lowerCore expression state =
             failure(state)(unsupported
             |> expressionName
             |> UnsupportedCoreLoweringExpression)
+
+let recursive lowerCore expression state =
+    match expectedTypeOf(state) with
+        | None -> lowerCoreDispatch(expression)(lowerCore)(state)
+        | Some(expected) ->
+            if expectedTypeForwards(expression)
+            then
+                state
+                |> lowerCoreDispatch(expression)(lowerCore)
+                |> withLoweredExpectedType(None)
+            else
+                state
+                |> clearExpectedType
+                |> lowerCoreDispatch(expression)(lowerCore)
+                |> unifyExpectedResult(expected)
 
 let entryOrigin =
     IrFunctionOrigin(
