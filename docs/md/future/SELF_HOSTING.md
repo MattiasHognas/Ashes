@@ -352,20 +352,25 @@ same public behavior.
   for match/handler arm attachment — a nested match silently swallowed the enclosing match's
   remaining arms; `parserLeadingPipeColumn` now ends an arm list at any `|` dedented past the
   first arm's column, as stage 0 does.
-- [~] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
-  diagnostics at the semantic boundary. Done for the compiler-provided `FileHandle` and `Process`
-  handles in `CoreLowering.ash`: every owned `let` or pattern binding of a resource type is live,
-  closed (an explicit `File.close`), or moved (stored into a constructor, tuple, list, or cons
-  cell; passed to `Ashes.Task.spawn`-free consuming callees — a let-bound lambda borrows a
-  parameter only when stage 0's `isParamUsedOnlyAsBorrowRead` proves it reads it, any other
-  callee consumes; or returned as its arm's result); a resource builtin reading a released
-  binding reports stage 0's use-after-close/use-after-move messages, and a live binding gets
-  stage 0's `CleanupResource` at its `let` or arm exit, which the backend lowers to `close` for a
-  handle and pipe-close plus reap for a process. Open: declared external resources (`consume`
-  transfer and destructor closes), sockets, resources captured by an escaping closure, a
-  resource-bearing aggregate's recursive cleanup, and the cleanup a tail self-call must run
-  before its back edge (today the arm's cleanup follows the call, which keeps that call an
-  ordinary call rather than a fused tail call).
+- [x] **SEM-14** Enforce resource move/borrow/consume rules, deterministic cleanup constraints, and use-after-move
+  diagnostics at the semantic boundary. In `CoreLowering.ash`, every owned `let` or pattern
+  binding whose resolved type is a resource — the compiler-provided `FileHandle` and `Process`,
+  or a declared `external type T resource destructor f` by its opaque name — is live, closed, or
+  moved. Closed: an explicit `File.close`, or a `consume` argument of the resource's own
+  destructor (closing a moved or closed binding is reported: moved-close, double close). Moved:
+  stored into a constructor, tuple, list, or cons cell; passed to a consuming callee (a let-bound
+  lambda borrows a parameter only when stage 0's `isParamUsedOnlyAsBorrowRead` proves it reads
+  it, any other callee and any non-destructor `consume` external consumes; a `borrow` external
+  only reads); captured by a closure; or returned as its arm's result. A resource builtin or
+  external reading a released binding reports stage 0's use-after-close/use-after-move messages,
+  and a live binding gets stage 0's `CleanupResource` at its `let` or arm exit — naming the
+  destructor ABI for a declared resource — which the backend lowers to `close` for a handle and
+  pipe-close plus reap for a process (the destructor call itself is CG-8's). Residue tracked
+  elsewhere: sockets join the resource names with milestone 6's net builtins; the recursive
+  cleanup of a resource-bearing aggregate and the dropper of a resource-capturing closure are
+  OPT-25's; the cleanup a tail self-call must run before its back edge is OPT-25's TCO tail
+  (today the arm's cleanup follows the call, which keeps that call an ordinary call rather than
+  a fused tail call).
 - [~] **SEM-15** Seed the shipped standard trait/type identities and primitive/structural implementation heads so
   ordinary evidence resolution no longer depends only on focused test declarations. The remaining
   builtin and standard-library value/type environment must be populated through module stitching.
@@ -884,7 +889,9 @@ same public behavior.
   Open: TLS sections, initialized `.data`, program arguments, and growing the recognized-symbol
   surface alongside codegen.
 - [ ] **CG-8** Implement platform ABIs, stack handling, external calls, native arrays/strings/buffers/out
-  parameters, resources, destructors, and debug-safe symbol naming. Source of truth:
+  parameters, resources, destructors, and debug-safe symbol naming. The lowering already emits
+  `CallExternal` for a user external and a scope-exit `CleanupResource` carrying a declared
+  resource's destructor ABI (SEM-14); the backend has neither call yet. Source of truth:
   `LlvmCodegenPlatform.cs` and the external-call paths of `LlvmCodegenBuiltins.cs`; per-platform
   rules live in the [Linking](../internals/architecture.md#linking) sections (Linux syscalls go through
   `ResolveSyscallNr`, with the AArch64 `clone`/`wait4` quirks recorded there; Windows `HANDLE`

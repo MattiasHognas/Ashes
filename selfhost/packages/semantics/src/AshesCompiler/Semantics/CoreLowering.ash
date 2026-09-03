@@ -26,6 +26,7 @@ import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
 import AshesCompiler.Semantics.ExternalAbi
+import AshesCompiler.Semantics.ExternalTyping
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
@@ -86,6 +87,7 @@ type CoreLoweringError =
     | PerformTargetNotCapabilityOperation(Str)
     | ResourceUseAfterClose(Str)
     | ResourceUseAfterMove(Str)
+    | ResourceDoubleClose(Str)
     deriving {Eq, Show}
 
 // How a resource binding stopped being its scope's responsibility: closed by an explicit close
@@ -970,21 +972,55 @@ let recursive ownedTypeNameOf (semanticType: SemanticType) (layouts: List(CoreCo
 // The compiler-provided resource types (§16 of the language reference) the lowering tracks.
 let isResourceTypeName (name: Str) = name == "FileHandle" || name == "Process"
 
+// The destructor of a declared external resource (`external type T resource destructor f`): the
+// external function naming `T` as the resource it destroys.
+let recursive findResourceDestructor (typeName: Str) (functions: List(ExternalFunctionAbi)) =
+    match functions with
+        | [] -> None
+        | (ExternalFunctionAbi { destructorForResource = Some(resource) } as abi) :: rest ->
+            if resource == typeName
+            then Some(abi)
+            else findResourceDestructor(typeName)(rest)
+        | _ :: rest -> findResourceDestructor(typeName)(rest)
+
+let declaredResourceDestructor (typeName: Str) (state: CoreLoweringState) = findResourceDestructor(typeName)(state.externalFunctions)
+
+let isDeclaredResourceName (typeName: Str) (state: CoreLoweringState) =
+    match declaredResourceDestructor(typeName)(state) with
+        | Some(_abi) -> true
+        | None -> false
+
+// A resource type name: a compiler-provided handle or a declared external resource.
+let isResourceTypeNameIn (typeName: Str) (state: CoreLoweringState) = isResourceTypeName(typeName) || isDeclaredResourceName(typeName)(state)
+
+// The resource type a resolved type is, through zero-cost wrappers: a compiler-provided handle
+// by its owned type name, a declared external resource by its opaque name.
+let resourceTypeNameOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match semanticType with
+        | SemOpaque(name) ->
+            if isDeclaredResourceName(name)(state)
+            then Some(name)
+            else None
+        | other ->
+            match ownedTypeNameOf(other)(state.constructorLayouts) with
+                | Some(typeName) ->
+                    if isResourceTypeName(typeName)
+                    then Some(typeName)
+                    else None
+                | None -> None
+
 let recursive unspanArgument (expression: Expr) =
     match expression with
         | ExprAt(_span, inner) -> unspanArgument(inner)
         | other -> other
 
 // The resource a variable names: the slot and resource type of an owned local binding whose
-// resolved type is a resource, through zero-cost wrappers.
+// resolved type is a resource.
 let resourceBindingOf (name: Str) (state: CoreLoweringState) =
     match lookupBinding(name)(state.bindings) with
         | Some(CoreBinding { location = CoreLocal(slot), ownedRead = true, scheme = TypeScheme { body = bindingType } }) ->
-            match ownedTypeNameOf(resolveType(state)(bindingType))(state.constructorLayouts) with
-                | Some(typeName) ->
-                    if isResourceTypeName(typeName)
-                    then Some((slot, typeName))
-                    else None
+            match resourceTypeNameOf(resolveType(state)(bindingType))(state) with
+                | Some(typeName) -> Some((slot, typeName))
                 | None -> None
         | _ -> None
 
@@ -1036,6 +1072,70 @@ let checkResourceArgumentUse (argument: Expr) (state: CoreLoweringState) =
         | Some((name, _slot, Some(ResourceMoved))) -> Some(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership."))
         | Some((name, _slot, Some(ResourceClosed))) -> Some(ResourceUseAfterClose("Resource '" + name + "' has already been closed. Using a resource after it has been closed is not allowed."))
         | _ -> None
+
+// Stage 0's `CheckExplicitExternalResourceClose`: closing a released resource through its
+// destructor is closing a moved one or closing twice.
+let checkResourceArgumentClose (argument: Expr) (state: CoreLoweringState) =
+    match resourceArgumentState(argument)(state) with
+        | Some((name, _slot, Some(ResourceMoved))) -> Some(ResourceUseAfterMove("Resource '" + name + "' has been moved and can no longer be closed here. Ownership was transferred when it was passed to a function or stored in a data structure."))
+        | Some((name, _slot, Some(ResourceClosed))) -> Some(ResourceDoubleClose("Resource '" + name + "' has already been closed. Closing a resource twice is not allowed."))
+        | _ -> None
+
+// An external call's resource contract per input parameter (stage 0's
+// `CheckExternalResourceArgument`/`ApplyExternalResourceTransfer`): a `consume` parameter of the
+// resource's own destructor closes the argument, any other `consume` moves it, a `borrow` only
+// reads it, and each is checked against the binding's state first.
+let recursive externalInputParameters (parameters: List(ExternalParameterAbi)) =
+    match parameters with
+        | [] -> []
+        | parameter :: rest ->
+            if isOutParameterAbi(parameter)
+            then externalInputParameters(rest)
+            else parameter :: externalInputParameters(rest)
+
+let externalParameterOwnership (parameter: ExternalParameterAbi) =
+    match parameter with
+        | ExternalParameterAbi { source = ExternalParameterTyping { ownership = ownership } } -> ownership
+
+let recursive checkExternalResourceArguments (abi: ExternalFunctionAbi) (parameters: List(ExternalParameterAbi)) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match (parameters, arguments) with
+        | (parameter :: parameterRest, argument :: argumentRest) ->
+            match (externalParameterOwnership(parameter), abi.destructorForResource) with
+                | (ExternalOwnershipConsume, Some(_resource)) ->
+                    match checkResourceArgumentClose(argument)(state) with
+                        | Some(error) -> Some(error)
+                        | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
+                | (ExternalOwnershipConsume, None) ->
+                    match checkResourceArgumentUse(argument)(state) with
+                        | Some(error) -> Some(error)
+                        | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
+                | (ExternalOwnershipBorrow, _destructor) ->
+                    match checkResourceArgumentUse(argument)(state) with
+                        | Some(error) -> Some(error)
+                        | None -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
+                | _ -> checkExternalResourceArguments(abi)(parameterRest)(argumentRest)(state)
+        | _ -> None
+
+let recursive applyExternalResourceTransfers (abi: ExternalFunctionAbi) (parameters: List(ExternalParameterAbi)) (arguments: List(Expr)) (state: CoreLoweringState) =
+    match (parameters, arguments) with
+        | (parameter :: parameterRest, argument :: argumentRest) ->
+            match (externalParameterOwnership(parameter), abi.destructorForResource) with
+                | (ExternalOwnershipConsume, Some(_resource)) ->
+                    state
+                    |> markResourceArgumentClosed(argument)
+                    |> applyExternalResourceTransfers(abi)(parameterRest)(argumentRest)
+                | (ExternalOwnershipConsume, None) ->
+                    state
+                    |> markResourceArgumentMoved(argument)
+                    |> applyExternalResourceTransfers(abi)(parameterRest)(argumentRest)
+                | _ -> applyExternalResourceTransfers(abi)(parameterRest)(argumentRest)(state)
+        | _ -> state
+
+let applyLoweredExternalResourceTransfers (abi: ExternalFunctionAbi) (arguments: List(Expr)) (lowered: LoweredCoreValue) =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = state } ->
+            lowered with state = applyExternalResourceTransfers(abi)(externalInputParameters(abi.parameters))(arguments)(state)
 
 // Whether a builtin reads its first argument as a resource, closes it, or neither.
 type BuiltinResourceRole =
@@ -1101,7 +1201,8 @@ let markLoweredCallArgumentsMoved (spine: CoreCallSpine) (lowered: LoweredCoreVa
         | LoweredCoreValue { state = state } -> lowered with state = markCallArgumentsMoved(spine)(state)
 
 // Stage 0's `EmitResourceCleanup`: a live resource binding is closed at its scope exit by a
-// `CleanupResource` naming its type; a closed or moved one is left alone.
+// `CleanupResource` naming its type and, for a declared external resource, its destructor; a
+// closed or moved one is left alone.
 let emitResourceCleanup (typeName: Str) (slot: Int) (state: CoreLoweringState) =
     match resourceStateOf(slot)(state) with
         | Some(_kind) -> state
@@ -1110,7 +1211,26 @@ let emitResourceCleanup (typeName: Str) (slot: Int) (state: CoreLoweringState) =
                 | FreshTemp { state = loadState, temp = loadTemp } ->
                     loadState
                     |> emit(LoadLocal(loadTemp)(slot))
-                    |> emit(CleanupResource(loadTemp)(typeName)(None))
+                    |> emit(state
+                    |> declaredResourceDestructor(typeName)
+                    |> CleanupResource(loadTemp)(typeName))
+
+// Stage 0's closure-capture transfer for resources: a live resource a closure captures is
+// reachable through the closure after this scope, so it moves into the closure instead of being
+// closed at the scope exit.
+let recursive markCapturedResourcesMoved (captures: List(CoreBinding)) (state: CoreLoweringState) =
+    match captures with
+        | [] -> state
+        | CoreBinding { name = name } :: rest ->
+            match resourceBindingOf(name)(state) with
+                | Some((slot, _typeName)) ->
+                    match resourceStateOf(slot)(state) with
+                        | None ->
+                            state
+                            |> markResourceReleased(slot)(ResourceMoved)
+                            |> markCapturedResourcesMoved(rest)
+                        | Some(_kind) -> markCapturedResourcesMoved(rest)(state)
+                | None -> markCapturedResourcesMoved(rest)(state)
 
 // Stage 0's compiler-inferred borrowing (`LowerVar`): reading an owned binding yields a `Borrow`
 // alias of the loaded value, so the owning scope keeps the drop obligation. Ownership is decided
@@ -1373,12 +1493,17 @@ let nameUsedOnlyAsDirectCallee (name: Str) (body: Expr) = nameHasNonCalleeUse(na
 // when the scope closes, so no syntactic proof is needed up front.
 // The owned type name of a lowered `let` value (`ownedTypeNameOf`), `None` when the value is a
 // copy type; an owned binding's scope carries a drop obligation the closing bracket discharges.
+// The owned type name a `let`'s value releases under, a declared external resource counting as
+// owned by its opaque name.
 let loweredValueOwnedTypeName lowered =
     match lowered with
         | LoweredCoreValue { state = state, semanticType = semanticType, error = None } ->
-            match state with
-                | CoreLoweringState { constructorLayouts = layouts } ->
-                    ownedTypeNameOf(resolveType(state)(semanticType))(layouts)
+            match resolveType(state)(semanticType) with
+                | SemOpaque(name) ->
+                    if isDeclaredResourceName(name)(state)
+                    then Some(name)
+                    else None
+                | resolved -> ownedTypeNameOf(resolved)(state.constructorLayouts)
         | _ -> None
 
 // The lexical release of an owned `let` binding at its scope exit, stage 0's
@@ -1386,7 +1511,7 @@ let loweredValueOwnedTypeName lowered =
 // which `PerceusLifetimePlacement` later moves to the binding's last use on each path. A closure
 // is released with `CleanupResource` instead, which stays at the scope exit.
 let emitOwnedLetRelease typeName ownerSlot state =
-    if isResourceTypeName(typeName)
+    if isResourceTypeNameIn(typeName)(state)
     then emitResourceCleanup(typeName)(ownerSlot)(state)
     else
         match freshTemp(state) with
@@ -1980,6 +2105,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                         in
                             finishedBody
                             |> restoreOuterFrame(typedOuter)
+                            |> markCapturedResourcesMoved(survivors)
                             |> allocateEnvironment(survivors)(stackAllocate)
                             |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
@@ -4350,6 +4476,16 @@ let lowerExternalCallArguments abi arguments lower state =
                                 |> withNextLocal(endLocal)
                             in success(resTemp)(resType)(emittedState)
 
+// A direct external call under the resource contract of its parameters: the arguments are
+// checked before lowering and their bindings released after it.
+let lowerExternalCallWithResources (abi: ExternalFunctionAbi) arguments lower state =
+    match checkExternalResourceArguments(abi)(externalInputParameters(abi.parameters))(arguments)(state) with
+        | Some(error) -> failure(state)(error)
+        | None ->
+            state
+            |> lowerExternalCallArguments(abi)(arguments)(lower)
+            |> applyLoweredExternalResourceTransfers(abi)(arguments)
+
 let tryLowerExternalCall expression lower state =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
@@ -4367,7 +4503,7 @@ let tryLowerExternalCall expression lower state =
                                             if coreListLength(normalizedArgs) == expectedCount
                                             then
                                                 state
-                                                |> lowerExternalCallArguments(abi)(normalizedArgs)(lower)
+                                                |> lowerExternalCallWithResources(abi)(normalizedArgs)(lower)
                                                 |> Some
                                             else None
         | CoreCallSpine { root = ExprQualifiedVar(_moduleName, name), arguments = arguments } ->

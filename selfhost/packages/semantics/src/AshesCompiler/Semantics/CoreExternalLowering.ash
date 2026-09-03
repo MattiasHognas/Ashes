@@ -19,6 +19,7 @@ export (
     type CoreExternalLoweringEmission(..),
     type CoreExternalCallShape(..),
     value externalInputParameterCount,
+    value isOutParameterAbi,
     value fromExternalAbiType,
     value emitDirectExternalCall,
     value tryFindExternalLayout,
