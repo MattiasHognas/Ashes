@@ -2984,6 +2984,41 @@ let assertProgramPrints buildModule name executablePath expectedLine =
                                                         let _ = test.assertEqual(expectedLine)(line)
                                                         in test.assertEqual(0)(exitCode)
 
+// `assertProgramPrints` with `stdinText` written to the program's stdin before its first line
+// of stdout is read.
+let assertProgramPrintsWithStdin buildModule name executablePath stdinText expectedLine =
+    match emitModule(buildModule)(name)(objectFileType) with
+        | Error(message) -> test.fail(message)
+        | Ok(objectBytes) ->
+            match linkLinuxExecutable(objectBytes)(name) with
+                | Error(message) -> test.fail(message)
+                | Ok(executableBytes) ->
+                    match Ashes.IO.File.writeBytes(executablePath)(executableBytes) with
+                        | Error(message) -> test.fail(message)
+                        | Ok(_) ->
+                            match Ashes.IO.File.makeExecutable(executablePath) with
+                                | Error(message) -> test.fail(message)
+                                | Ok(_) ->
+                                    match Ashes.IO.Process.spawn("./" + executablePath)([]) with
+                                        | Error(message) -> test.fail(message)
+                                        | Ok(process) ->
+                                            let _ = Ashes.IO.Process.writeStdin(process)(stdinText)
+                                            in
+                                                match Ashes.IO.Process.readStdoutLine(process) with
+                                                    | None -> test.fail("expected one line of stdout from the linked executable, got none")
+                                                    | Some(line) ->
+                                                        let exitCode = Ashes.IO.Process.waitForExit(process)
+                                                        in
+                                                            let _ = test.assertEqual(expectedLine)(line)
+                                                            in test.assertEqual(0)(exitCode)
+
+// `Ashes.IO.Console` on a piped stdin: `enableRawInput` reports `false` and changes nothing,
+// `pollInput` returns the pending bytes, the monotonic clock never goes backwards, and
+// `restoreInput` is a no-op.
+let buildOptimizedIrConsolePollModule name context = codegenOptimizedRealSource("let rawLabel =\n    if Ashes.IO.Console.enableRawInput(Unit)\n    then \"raw yes\"\n    else \"raw no\"\nlet startMillis = Ashes.IO.Console.monotonicMillis(Unit)\nlet collected =\n    match Ashes.IO.Console.pollInput(5000) with\n        | None -> \"none\"\n        | Some(chunk) -> chunk\nlet _restored = Ashes.IO.Console.restoreInput(Unit)\nlet clockLabel =\n    if Ashes.IO.Console.monotonicMillis(Unit) >= startMillis\n    then \"clock ok\"\n    else \"clock bad\"\nAshes.IO.print(rawLabel + \"|got \" + collected + \"|\" + clockLabel)")(name)(context)
+
+let testRunStaticExecutableForOptimizedIrConsolePollModule unit = assertProgramPrintsWithStdin(buildOptimizedIrConsolePollModule)("selfhostBackendRunOptimizedConsolePoll")("selfhost_backend_console_poll_e2e")("ping")("raw no|got ping|clock ok")
+
 let testRunStaticExecutableForRealIrHelperFunctionModule unit = assertProgramPrints(buildRealIrHelperFunctionModule)("selfhostBackendRunHelperFunction")("selfhost_backend_helper_function_e2e")("42")
 
 let testRunStaticExecutableForRealIrCurriedHelperModule unit = assertProgramPrints(buildRealIrCurriedHelperModule)("selfhostBackendRunCurriedHelper")("selfhost_backend_curried_helper_e2e")("42")
@@ -3465,6 +3500,7 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrRecursiveHelperModule
     |> testRunStaticExecutableForOptimizedIrDeepTailLoopModule
     |> testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule
+    |> testRunStaticExecutableForOptimizedIrConsolePollModule
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule

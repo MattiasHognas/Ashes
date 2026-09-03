@@ -141,8 +141,8 @@ when those IDs are `[x]` (or their named "Open:" tail is closed, for a shared `[
    cleanup stage 0 already proves; it unblocks `File.open`/`readChunk`/`readLine`/`close` and the
    resource-alias diagnostics at once), then the File read family (landed:
    `readText`/`readAllBytes`/`mmap`/`writeBytes`/`makeExecutable` over the proven raw-syscall
-   helpers), `Environment` (landed: all five members over libc imports), `Console` basics, the
-   real buffered-stdout ring with
+   helpers), `Environment` (landed: all five members over libc imports), `Console` basics
+   (landed: all four members), the real buffered-stdout ring with
    flush-on-exit (`writeBuffered`/`flush` currently write immediately — sound but unbatched), and
    `Process.*` (landed: all six members over raw `pipe2`/`fork`/`execve`/`wait4`/`kill`
    syscalls, with the entry-captured `__ashes_envp` and the linker's new `.bss` segment carrying
@@ -902,9 +902,14 @@ same public behavior.
   every iteration, and `-O2` (the test default) hides this completely — only an explicit `-O0` C#
   test can guard it. The genuine `AllocStack` path (managed by its own save/restore bracket)
   correctly stays a loop-body alloca — do not route it through the same hoist.
-- [ ] **CG-11** Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
+- [~] **CG-11** Emit the runtime support for buffered stdout/stderr, program arguments, process exit, environment,
   terminal raw/poll operations, files/directories/memory maps, subprocesses, clocks/entropy, sockets,
-  HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
+  HTTP/TLS, regex, math, and BigInt. Done on linux-x64: process exit, environment, files/
+  directories/memory maps, subprocesses (LNK-4), and the terminal (`IrCodegen.Console.ash`:
+  `enableRawInput`/`restoreInput` over `TCGETS`/`TCSETS` with the saved termios and raw-active
+  flag as module globals, `pollInput` over `ppoll` plus one `read`, `monotonicMillis` over
+  `clock_gettime`). Open: the buffered stdout ring (writes are immediate), program arguments,
+  entropy and the wall clock, sockets, HTTP/TLS, regex, math, and BigInt. Source of truth: one `LlvmCodegenBuiltins.<Area>.cs` file per
   area (`Console`, `File`, `Directory`, `Environment`, `Process`, `Net`, `Http`, `Tls`, `Regex`,
   `Text`, `Bytes`, `BigInt`) plus `LlvmCodegenBufferedStdout.cs`; contracts in the
   [Standard Library reference](../reference/standard-library.md) and the architecture sections on
