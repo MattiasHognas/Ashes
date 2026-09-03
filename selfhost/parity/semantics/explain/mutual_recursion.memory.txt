@@ -1,0 +1,25 @@
+Memory report
+=============
+
+Function: isEven
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  representation [recgroup_0_isEven]
+    region:               1
+    copy value:           9
+  representation [lambda_4]
+    conservative unknown: 2
+    copy value:           3
+
+Function: isOdd
+  ownership
+    n: consumed, move-safe yes
+    result fresh: yes
+  representation [recgroup_1_isOdd]
+    region:               1
+    copy value:           9
+  representation [lambda_5]
+    conservative unknown: 2
+    copy value:           3
+

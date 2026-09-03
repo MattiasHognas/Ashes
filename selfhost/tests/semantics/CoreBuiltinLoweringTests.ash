@@ -140,7 +140,7 @@ let builtinCases =
 let expectBuiltinCase case unit =
     match case with
         | (kind, arguments, argumentTypes) ->
-            match emitCoreBuiltin(kind)(20)(arguments)(argumentTypes) with
+            match emitCoreBuiltin(kind)(false)(20)(arguments)(argumentTypes) with
                 | CoreBuiltinEmission { error = None } -> unit
                 | CoreBuiltinEmission { error = Some(error) } -> test.fail("builtin lowering failed: " + error)
 
@@ -155,26 +155,26 @@ let recursive expectBuiltinCases cases unit =
 let expectRepresentativeInstructions unit =
     unit
     |> (given (_) ->
-        match emitCoreBuiltin(CoreRegexFind)(10)(ternaryArguments)(ternaryTypes) with
+        match emitCoreBuiltin(CoreRegexFind)(false)(10)(ternaryArguments)(ternaryTypes) with
             | CoreBuiltinEmission { instructions = RegexFind(10, 1, 2, 3) :: [], error = None } -> Unit
             | _ -> test.fail("regex find did not emit its stage-0 instruction"))
     |> (given (_) ->
-        match emitCoreBuiltin(CoreTlsConnect)(10)(binaryArguments)(binaryTypes) with
+        match emitCoreBuiltin(CoreTlsConnect)(false)(10)(binaryArguments)(binaryTypes) with
             | CoreBuiltinEmission { instructions = CreateTlsConnectTask(10, 1, 2) :: [], error = None } -> Unit
             | _ -> test.fail("TLS connect did not emit its task instruction"))
     |> (given (_) ->
-        match emitCoreBuiltin(CoreTcpForkWorkers)(10)(binaryArguments)(binaryTypes) with
+        match emitCoreBuiltin(CoreTcpForkWorkers)(false)(10)(binaryArguments)(binaryTypes) with
             | CoreBuiltinEmission { instructions = CreateForkWorkersTask(10, 2, 1) :: [], error = None } -> Unit
             | _ -> test.fail("TCP worker lowering did not preserve the stage-0 port/count operand order"))
     |> (given (_) ->
-        match emitCoreBuiltin(CoreBytesFromText)(10)(unaryArguments)(unaryTypes) with
+        match emitCoreBuiltin(CoreBytesFromText)(false)(10)(unaryArguments)(unaryTypes) with
             | CoreBuiltinEmission { instructions = [], nextTemp = 10, error = None } as emission ->
                 match emission with
                     | CoreBuiltinEmission { result = CoreBuiltinTemp(1) } -> Unit
                     | _ -> test.fail("Bytes.fromText returned the wrong source temp")
             | _ -> test.fail("Bytes.fromText was not lowered as its zero-cost identity"))
     |> (given (_) ->
-        match emitCoreBuiltin(CoreUIntFromInt)(10)(unaryArguments)(unaryTypes) with
+        match emitCoreBuiltin(CoreUIntFromInt)(false)(10)(unaryArguments)(unaryTypes) with
             | CoreBuiltinEmission { nextTemp = 12, result = CoreBuiltinTemp(11), error = None } as emission ->
                 match emission with
                     | CoreBuiltinEmission { instructions = LoadConstInt(10, 255) :: AndInt(11, 1, 10) :: [] } -> Unit
@@ -182,7 +182,7 @@ let expectRepresentativeInstructions unit =
             | _ -> test.fail("UInt.fromInt did not retain its stage-0 u8 mask"))
 
 let expectArityFailure unit =
-    match emitCoreBuiltin(CoreRegexFind)(10)(unaryArguments)(unaryTypes) with
+    match emitCoreBuiltin(CoreRegexFind)(false)(10)(unaryArguments)(unaryTypes) with
         | CoreBuiltinEmission { error = Some(_) } -> unit
         | _ -> test.fail("builtin lowering accepted the wrong arity")
 

@@ -897,98 +897,28 @@ let recursive analyzeExprReach (expr: Expr) (env: List((Str, ResultReachState)))
             in
                 let fReach = analyzeRecordFieldsSumReach(fields)(env)
                 in reachSum(rReach)(fReach)
-        | ExprAdd(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprSubtract(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprMultiply(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprDivide(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprModulo(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprBitwiseAnd(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprBitwiseOr(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprBitwiseXor(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprShiftLeft(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprShiftRight(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprBitwiseNot(operand) -> analyzeExprReach(operand)(env)
-        | ExprLogicalNot(operand) -> analyzeExprReach(operand)(env)
-        | ExprLogicalAnd(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprLogicalOr(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprEqual(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprNotEqual(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprLessThan(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprLessOrEqual(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprGreaterThan(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
-        | ExprGreaterOrEqual(left, right) ->
-            let lReach = analyzeExprReach(left)(env)
-            in
-                let rReach = analyzeExprReach(right)(env)
-                in reachSum(lReach)(rReach)
+        // Arithmetic, bitwise, shift, logical, and comparison results are copy-typed scalars: they
+        // reach no heap cell, so they are confined and reach no parameter.
+        | ExprAdd(_left, _right) -> reachBottom(Unit)
+        | ExprSubtract(_left, _right) -> reachBottom(Unit)
+        | ExprMultiply(_left, _right) -> reachBottom(Unit)
+        | ExprDivide(_left, _right) -> reachBottom(Unit)
+        | ExprModulo(_left, _right) -> reachBottom(Unit)
+        | ExprBitwiseAnd(_left, _right) -> reachBottom(Unit)
+        | ExprBitwiseOr(_left, _right) -> reachBottom(Unit)
+        | ExprBitwiseXor(_left, _right) -> reachBottom(Unit)
+        | ExprShiftLeft(_left, _right) -> reachBottom(Unit)
+        | ExprShiftRight(_left, _right) -> reachBottom(Unit)
+        | ExprBitwiseNot(_operand) -> reachBottom(Unit)
+        | ExprLogicalNot(_operand) -> reachBottom(Unit)
+        | ExprLogicalAnd(_left, _right) -> reachBottom(Unit)
+        | ExprLogicalOr(_left, _right) -> reachBottom(Unit)
+        | ExprEqual(_left, _right) -> reachBottom(Unit)
+        | ExprNotEqual(_left, _right) -> reachBottom(Unit)
+        | ExprLessThan(_left, _right) -> reachBottom(Unit)
+        | ExprLessOrEqual(_left, _right) -> reachBottom(Unit)
+        | ExprGreaterThan(_left, _right) -> reachBottom(Unit)
+        | ExprGreaterOrEqual(_left, _right) -> reachBottom(Unit)
         | ExprResultPipe(left, right) ->
             let lReach = analyzeExprReach(left)(env)
             in

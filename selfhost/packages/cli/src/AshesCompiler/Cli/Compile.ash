@@ -14,13 +14,19 @@
 //   and the exit codes are 0/1/2 for success, compilation or input failure, and usage error.
 //   `ashes run` compiles to the host temporary directory, forwards everything after `--` to the
 //   program, and propagates the program's own exit code.
+// - `--explain <kind>[:<selector>]` is accepted by both commands, repeats, and prints the requested
+//   compiler reports to stderr between optimization and code generation
+//   (docs/md/reference/cli.md#compiler-reports). Reporting reads the decision snapshot and the
+//   optimized program and writes neither, so the emitted image is the same whether or not a
+//   report was asked for. An unknown kind or a missing value is a usage error listing the valid
+//   values.
 // - Deliberately narrower than stage 0 for now: only the linux-x64 target and the file form
-//   (`--expr`, `--project`, target/optimization/debug options, `--explain`, and IR dumps are not
-//   parsed), no elapsed time in the confirmation (no monotonic clock capability is shipped yet), a
-//   program's stdout and stderr are relayed line by line rather than inherited, and the shipped
-//   standard library is located by probing `lib/Ashes` beside the executable, beside its parent
-//   directory, and under the working directory, in that order. Any program shape the backend does
-//   not support yet surfaces exactly as `AshesCompiler.Backend.IrCodegen` reports it.
+//   (`--expr`, `--project`, target/optimization/debug options, and IR dumps are not parsed), no
+//   elapsed time in the confirmation (no monotonic clock capability is shipped yet), a program's
+//   stdout and stderr are relayed line by line rather than inherited, and the shipped standard
+//   library is located by probing `lib/Ashes` beside the executable, beside its parent directory,
+//   and under the working directory, in that order. Any program shape the backend does not
+//   support yet surfaces exactly as `AshesCompiler.Backend.IrCodegen` reports it.
 
 import Ashes.Byte
 import Ashes.Ffi
@@ -32,8 +38,13 @@ import AshesCompiler.Backend.IrCodegen
 import AshesCompiler.Backend.ElfLinker
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Semantics.CoreLowering
+import AshesCompiler.Semantics.DecisionSnapshot
+import AshesCompiler.Semantics.ExplainReport
+import AshesCompiler.Semantics.ExplainReportFormatter
 import AshesCompiler.Semantics.Ir
+import AshesCompiler.Semantics.IrExplainReporter
 import AshesCompiler.Semantics.IrOptimizer
+import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ProjectSyntaxStitching
 import AshesCompiler.Semantics.ShippedModuleStitching
 export (
@@ -47,6 +58,7 @@ export (
     value defaultOutputPath,
     value formatByteSize,
     value inputStem,
+    value explainValidValuesText,
     value compileFileToExecutable,
     value runCompileWithArguments,
     value runCompile,
@@ -56,6 +68,7 @@ export (
 type CompileArguments =
     | inputPath: Str
     | outputPath: Maybe(Str)
+    | explain: ExplainRequest
 
 type CompileParse =
     | CompileHelpRequested
@@ -70,6 +83,7 @@ type CompileOutcome =
 type RunArguments =
     | runInputPath: Str
     | programArguments: List(Str)
+    | runExplain: ExplainRequest
 
 type RunParse =
     | RunHelpRequested
@@ -86,20 +100,36 @@ let hasAshExtension path =
 
 let isOptionLike argument = Ashes.Text.length(argument) > 0 && Ashes.Text.substring(argument)(0)(1) == "-"
 
-let recursive partitionCompileFlags args output inputs =
+// The valid `--explain` values as stage 0 lists them under a usage error.
+let explainValidValuesText = "\n\nValid values:\n  " + Ashes.Text.join("\n  ")(explainValidValues)
+
+// One `--explain <kind>[:<selector>]` value added to the request; repeats deduplicate and a later
+// selector replaces an earlier one.
+let addExplainOption (value: Str) (explain: ExplainRequest) =
+    match parseExplainValue(value) with
+        | Ok((kind, selector)) ->
+            explain
+            |> addExplainKind(kind)(selector)
+            |> Ok
+        | Error(message) -> Error(message + explainValidValuesText)
+
+let recursive partitionCompileFlags args output inputs explain =
     match args with
-        | [] -> Ok((output, inputs))
-        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)
-        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)
+        | [] -> Ok((output, inputs, explain))
+        | "-o" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)
+        | "--out" :: value :: rest -> partitionCompileFlags(rest)(Some(value))(inputs)(explain)
         | "-o" :: [] -> Error("Missing value for -o.")
         | "--out" :: [] -> Error("Missing value for --out.")
+        | "--explain" :: value :: rest ->
+            match addExplainOption(value)(explain) with
+                | Error(message) -> Error(message)
+                | Ok(added) -> partitionCompileFlags(rest)(output)(inputs)(added)
+        | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
         | other :: rest ->
             if isOptionLike(other)
             then Error("Unknown option '" + other + "'.")
             else
-                [other]
-                |> append(inputs)
-                |> partitionCompileFlags(rest)(output)
+                partitionCompileFlags(rest)(output)(append(inputs)([other]))(explain)
 
 let checkInputPath input =
     if hasAshExtension(input)
@@ -107,28 +137,43 @@ let checkInputPath input =
     else Error("Input file must have a .ash extension: " + input)
 
 // A bare `--help`/`-h` short-circuits; no arguments at all is a missing input (exit 1, like stage
-// 0's own "no input" error); an unknown option or more than one positional input is a usage error
-// (exit 2); a positional input without the `.ash` extension is an input error (exit 1).
+// 0's own "no input" error); an unknown option, a bad `--explain` value, or more than one
+// positional input is a usage error (exit 2); a positional input without the `.ash` extension is
+// an input error (exit 1).
 let parseCompileArguments args =
     match args with
         | "--help" :: [] -> CompileHelpRequested
         | "-h" :: [] -> CompileHelpRequested
         | [] -> CompileInputError("Missing input: provide a .ash file.")
         | _ ->
-            match partitionCompileFlags(args)(None)([]) with
+            match partitionCompileFlags(args)(None)([])(explainRequestNone) with
                 | Error(message) -> CompileUsageError(message)
-                | Ok((_, [])) -> CompileInputError("Missing input: provide a .ash file.")
-                | Ok((output, input :: [])) ->
+                | Ok((_, [], _)) -> CompileInputError("Missing input: provide a .ash file.")
+                | Ok((output, input :: [], explain)) ->
                     match checkInputPath(input) with
                         | Error(message) -> CompileInputError(message)
-                        | Ok(checked) -> CompileParsedArguments(CompileArguments(inputPath = checked, outputPath = output))
-                | Ok((_, _)) -> CompileUsageError("Provide exactly one input file.")
+                        | Ok(checked) -> CompileParsedArguments(CompileArguments(inputPath = checked, outputPath = output, explain = explain))
+                | Ok((_, _, _)) -> CompileUsageError("Provide exactly one input file.")
 
 let recursive splitProgramArguments args before =
     match args with
         | [] -> (reverseList(before), [])
         | "--" :: rest -> (reverseList(before), rest)
         | other :: rest -> splitProgramArguments(rest)(other :: before)
+
+let recursive partitionRunFlags args inputs explain =
+    match args with
+        | [] -> Ok((inputs, explain))
+        | "--explain" :: value :: rest ->
+            match addExplainOption(value)(explain) with
+                | Error(message) -> Error(message)
+                | Ok(added) -> partitionRunFlags(rest)(inputs)(added)
+        | "--explain" :: [] -> Error("--explain requires a value." + explainValidValuesText)
+        | other :: rest ->
+            if isOptionLike(other)
+            then Error("Unknown option '" + other + "'.")
+            else
+                partitionRunFlags(rest)(append(inputs)([other]))(explain)
 
 let parseRunArguments args =
     match args with
@@ -137,15 +182,15 @@ let parseRunArguments args =
         | [] -> RunInputError("Missing input: provide a .ash file.")
         | _ ->
             match splitProgramArguments(args)([]) with
-                | (input :: [], programArguments) ->
-                    if isOptionLike(input)
-                    then RunUsageError("Unknown option '" + input + "'.")
-                    else
-                        match checkInputPath(input) with
-                            | Error(message) -> RunInputError(message)
-                            | Ok(checked) -> RunParsedArguments(RunArguments(runInputPath = checked, programArguments = programArguments))
-                | ([], _) -> RunInputError("Missing input: provide a .ash file.")
-                | (_, _) -> RunUsageError("Provide exactly one input file.")
+                | (before, programArguments) ->
+                    match partitionRunFlags(before)([])(explainRequestNone) with
+                        | Error(message) -> RunUsageError(message)
+                        | Ok(([], _)) -> RunInputError("Missing input: provide a .ash file.")
+                        | Ok((input :: [], explain)) ->
+                            match checkInputPath(input) with
+                                | Error(message) -> RunInputError(message)
+                                | Ok(checked) -> RunParsedArguments(RunArguments(runInputPath = checked, programArguments = programArguments, runExplain = explain))
+                        | Ok((_, _)) -> RunUsageError("Provide exactly one input file.")
 
 // `examples/hello.ash` compiles to `examples/hello`: the `.ash` suffix is dropped in place.
 let defaultOutputPath inputPath = Ashes.Text.substring(inputPath)(0)(Ashes.Text.length(inputPath) - 4)
@@ -218,12 +263,10 @@ let loadShippedModules unit =
     |> shippedRootCandidates
     |> firstReadableShippedRoot
 
+// The lowered program and its optimized form, the one handed to code generation.
 let lowerStitchedProgram inputPath source program =
     match lowerCoreProgramWithSource(inputPath)(source)(program) with
-        | CoreLoweringResult { program = Some(lowered), error = None } ->
-            lowered
-            |> optimizeIrProgram
-            |> Ok
+        | CoreLoweringResult { program = Some(lowered), error = None } -> Ok((lowered, optimizeIrProgram(lowered)))
         | CoreLoweringResult { error = Some(error) } ->
             error
             |> Ashes.Trait.Show.show
@@ -236,7 +279,57 @@ let lowerFileSource inputPath source shipped =
             error
             |> Ashes.Trait.Show.show
             |> Error
-        | Ok(StitchedSyntaxProject { program = program }) -> lowerStitchedProgram(inputPath)(source)(program)
+        | Ok(StitchedSyntaxProject { program = program } as stitched) ->
+            match lowerStitchedProgram(inputPath)(source)(program) with
+                | Error(message) -> Error(message)
+                | Ok((lowered, optimized)) -> Ok((stitched, lowered, optimized))
+
+// The module-qualified name of a stitched binding for the reports. The single-file form is stage
+// 0's standalone layout, whose entry module is named `Main`; every other definition reports under
+// the qualified name stitching assigned it.
+let recursive qualifiedNameIn (entryModule: Str) (placements: List(StitchedDefinitionPlacement)) (name: Str) =
+    match placements with
+        | [] -> None
+        | StitchedDefinitionPlacement { definition = StitchedDefinition { compilerName = compilerName, sourceName = sourceName, qualifiedName = qualifiedName, moduleName = moduleName } } :: rest ->
+            if compilerName == name
+            then
+                Some(
+                    if moduleName == entryModule
+                    then "Main." + sourceName
+                    else qualifiedName
+                )
+            else qualifiedNameIn(entryModule)(rest)(name)
+
+let stitchedQualifiedName (stitched: StitchedSyntaxProject) =
+    match stitched with
+        | StitchedSyntaxProject { definitionPlacements = placements, entryModuleName = entryModule } -> qualifiedNameIn(entryModule)(placements)
+
+// The requested reports as text lines: the decision snapshot pairs the stitched program with its
+// lowering, and the RC counts read the optimized program the backend is about to receive.
+let explainReportLines (explain: ExplainRequest) (stitched: StitchedSyntaxProject) (lowered: IrProgram) (optimized: IrProgram) =
+    match stitched with
+        | StitchedSyntaxProject { program = program } ->
+            lowered
+            |> captureDecisionSnapshot(stitchedQualifiedName(stitched))(program)
+            |> (given (snapshot) -> buildExplainReport(snapshot)(optimized)(explain))
+            |> (given (report) -> formatExplainReport(report)(explain))
+
+let recursive writeErrorLines (lines: List(Str)) =
+    match lines with
+        | [] -> Unit
+        | line :: rest ->
+            let _ = Ashes.IO.writeErrorLine(line)
+            in writeErrorLines(rest)
+
+// Prints the requested reports to stderr, so a program's own stdout stays usable when it is
+// compiled and run in one step.
+let writeExplainReport (explain: ExplainRequest) stitched lowered optimized =
+    if isExplainRequestEmpty(explain)
+    then Unit
+    else
+        optimized
+        |> explainReportLines(explain)(stitched)(lowered)
+        |> writeErrorLines
 
 let disposeEmission buffer machine builder module_ context =
     Unit
@@ -304,8 +397,17 @@ let writeExecutable outputPath executableBytes =
                     |> Ashes.Byte.length
                     |> Ok
 
-// Compiles `inputPath` to the executable at `outputPath`, returning the written byte count.
-let compileFileToExecutable inputPath outputPath =
+let emitAndLink outputPath optimized =
+    match emitObject(optimized) with
+        | Error(message) -> Error(message)
+        | Ok(objectBytes) ->
+            match linkExecutable(objectBytes) with
+                | Error(message) -> Error(message)
+                | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+
+// Compiles `inputPath` to the executable at `outputPath`, printing the `explain` reports to stderr
+// on the way, and returns the written byte count.
+let compileFileToExecutable inputPath outputPath (explain: ExplainRequest) =
     match Ashes.IO.File.readText(inputPath) with
         | Error(message) -> Error("Could not read " + inputPath + ": " + message)
         | Ok(source) ->
@@ -314,23 +416,20 @@ let compileFileToExecutable inputPath outputPath =
                 | Ok(shipped) ->
                     match lowerFileSource(inputPath)(source)(shipped) with
                         | Error(message) -> Error(message)
-                        | Ok(lowered) ->
-                            match emitObject(lowered) with
-                                | Error(message) -> Error(message)
-                                | Ok(objectBytes) ->
-                                    match linkExecutable(objectBytes) with
-                                        | Error(message) -> Error(message)
-                                        | Ok(executableBytes) -> writeExecutable(outputPath)(executableBytes)
+                        | Ok((stitched, lowered, optimized)) ->
+                            optimized
+                            |> writeExplainReport(explain)(stitched)(lowered)
+                            |> (given (_) -> emitAndLink(outputPath)(optimized))
 
 let runCompileWithArguments arguments =
     match arguments with
-        | CompileArguments { inputPath = inputPath, outputPath = outputPath } ->
+        | CompileArguments { inputPath = inputPath, outputPath = outputPath, explain = explain } ->
             let output =
                 match outputPath with
                     | Some(explicit) -> explicit
                     | None -> defaultOutputPath(inputPath)
             in
-                match compileFileToExecutable(inputPath)(output) with
+                match compileFileToExecutable(inputPath)(output)(explain) with
                     | Error(message) -> CompileFailed(message)
                     | Ok(size) ->
                         Unit
@@ -343,7 +442,7 @@ let runCompileWithArguments arguments =
 let runCompile args =
     match parseCompileArguments(args) with
         | CompileHelpRequested ->
-            let _ = Ashes.IO.writeLine("Usage: ashes compile [-o <output>] <input.ash>")
+            let _ = Ashes.IO.writeLine("Usage: ashes compile [--explain <kind>] [-o <output>] <input.ash>")
             in 0
         | CompileInputError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
@@ -400,11 +499,11 @@ let spawnCompiledProgram executablePath programArguments =
                 |> Ashes.IO.Process.waitForExit
                 |> Ok)
 
-let runProgramFile inputPath programArguments =
+let runProgramFile inputPath programArguments (explain: ExplainRequest) =
     match temporaryExecutablePath(inputPath) with
         | Error(message) -> Error(message)
         | Ok(executablePath) ->
-            match compileFileToExecutable(inputPath)(executablePath) with
+            match compileFileToExecutable(inputPath)(executablePath)(explain) with
                 | Error(message) -> Error(message)
                 | Ok(_) -> spawnCompiledProgram(executablePath)(programArguments)
 
@@ -413,7 +512,7 @@ let runProgramFile inputPath programArguments =
 let runRun args =
     match parseRunArguments(args) with
         | RunHelpRequested ->
-            let _ = Ashes.IO.writeLine("Usage: ashes run <input.ash> [-- <args...>]")
+            let _ = Ashes.IO.writeLine("Usage: ashes run [--explain <kind>] <input.ash> [-- <args...>]")
             in 0
         | RunInputError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
@@ -421,8 +520,8 @@ let runRun args =
         | RunUsageError(message) ->
             let _ = Ashes.IO.writeErrorLine(message)
             in 2
-        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments }) ->
-            match runProgramFile(inputPath)(programArguments) with
+        | RunParsedArguments(RunArguments { runInputPath = inputPath, programArguments = programArguments, runExplain = explain }) ->
+            match runProgramFile(inputPath)(programArguments)(explain) with
                 | Error(message) ->
                     let _ = Ashes.IO.writeErrorLine(message)
                     in 1

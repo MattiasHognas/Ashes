@@ -735,18 +735,33 @@ same public behavior.
   either. Closures carry stage 0's origins (`SourceFunction from <let name>`, `ClosureHelper` with
   the `lambda:<start>:<length>:<param>` discriminator, anonymous helpers), a scalar-capture
   environment normalizer (`<label>$env_normalize`), and a let-bound lambda used only as a direct
-  callee is a `MakeClosureStack`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
-  `ownerless_match`, `pattern_match`, and `closure_capture` fixtures match stage 0
-  byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`;
-  the backend fuses it into a `musttail` when the instruction past the call's own window close
-  stores or returns its result. Open: the mutual-recursion loop merge (milestone 5's OPT-19;
-  `mutual_recursion` stays out of the parity runner until then: its `recgroup_*` members and entry
-  already match, the merged `lambda_N` body, `__recgroup_dispatch_N`, and the
-  `MutualRecursionWrapper`s are missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
-  `CopyOutArena`/`CopyOutList` for heap-escaping results, coroutine/async back edges, entry
-  normalization of a parameter reaching the result, the owner-alias walk across curried chains,
-  borrowed reads of owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop`
-  emission itself (only the provably-dead top-level constructor drop is emitted so far).
+  callee is a `MakeClosureStack`. Runtime-managed strings follow stage 0's
+  `LoweredValueRequest`: a consumer that keeps a fresh string alive (a direct binding result, an
+  immediate `Text.length`/`byteLength`/`IO.print` use) asks the fresh-string builtins
+  (`fromInt`/`fromFloat`/`formatFloat`/`fromBigInt`/`toHex`/ASCII case/`Rune.toText`/
+  `Bytes.subText`) for an RC result (`RuntimeManaged=true`), the consumed operand of a
+  print/write/`byteLength`/concat is released right after the use (`RcDrop ... RuntimeManaged`
+  on a newly produced temp), a `let` adopts its RC value as an owner released at scope exit
+  unless its body tail-forwards the binding (the read then transfers ownership without a
+  `Borrow`), a lambda whose body produces an RC value is a `MakeClosure ReturnsRuntimeManaged`
+  and a single-argument call to it marks its result newly produced, and a scope that owned and
+  released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
+  cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
+  same-arity scalar-field ADT) is copied past the reset as an RC-normalized
+  `CopyOutArena`/`CopyOutList`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
+  `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
+  `heap_result_let`, and `heap_result_list` fixtures match stage 0 byte-for-byte, source
+  locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  into a `musttail` when the instruction past the call's own window close stores or returns its
+  result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
+  out of the parity runner until then: its `recgroup_*` members and entry already match, the
+  merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
+  missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
+  copy-out at call windows and match arms, the runtime flag on `ConcatStr` (the deferred-add
+  sealing), curried known-call results, coroutine/async back edges, entry normalization of a
+  parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
+  owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
+  aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
@@ -828,8 +843,16 @@ same public behavior.
   cancelled or completed tasks.
 - [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
   changes, and explanation/report instrumentation.
-- [ ] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
-  current public reports.
+- [~] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
+  current public reports. Done: the report model, reporter, and formatter (`ExplainReport.ash`,
+  `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`) and the decision
+  snapshot capture (`captureDecisionSnapshot` in `DecisionSnapshot.ash`, built from whole-program
+  ownership inference and the lowered origins), rendering byte-identical `ownership`, `rc`, `reuse`,
+  and `memory` reports for the shared parity fixtures against stage 0's text under
+  `selfhost/parity/semantics/explain/` (`ExplainReportTests.ash`). Open: value placements (the
+  `memory` report's `representation` blocks), reuse decisions (lowering records none), move-safety
+  proofs (every parameter reports `unique: yes`), and the `mutual_recursion` RC counts, which wait
+  on recursive-group lowering parity; each is pinned as a known difference in the test.
 
 #### LLVM code generation and runtime integration
 
@@ -882,10 +905,9 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: `CopyOutArena`/`CopyOutList`
-  (panic; the lowering leaves a window open rather than emit them, see OPT-25), the rest of
-  Perceus placement (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and
-  the async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). Open: the rest of Perceus placement
+  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
+  async/parallel/net/FFI instruction families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
@@ -896,13 +918,23 @@ same public behavior.
   diagnostics. Open: `deriving`, function-typed fields, real zero-cost classification, and
   `RcDrop.typeName` carrying the constructor rather than the declaring type (harmless — codegen
   ignores the field).
-- [~] **CG-6** RC status: a field-carrying `AllocAdt` is conservatively RC-classified (`fieldCount > 0`),
-  `malloc`s the real 16-byte `{count, size}` header, and returns the post-header payload pointer;
-  a single non-cascading `RcDrop` is emitted for a provably-dead top-level constructor binding
-  (negative-GEP header walk, decrement, `free` at zero); string literals carry the immortal
-  sentinel so the same drop path never frees static storage. Open: everything else in Perceus
-  placement — cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup
-  insertion, and reuse.
+- [~] **CG-6** RC status. Done: a field-carrying `AllocAdt` is conservatively RC-classified
+  (`fieldCount > 0`), `malloc`s the real 16-byte `{count, size}` header, and returns the
+  post-header payload pointer; the RC runtime itself is ported in `IrCodegen.Rc` (source of
+  truth: `LlvmCodegenMemory.cs`, `LlvmCodegenExpressions.cs`'s closure drop, and
+  `LlvmCodegen.cs`'s dup/drop instruction dispatch) — `RcDup` (immortal-aware increment),
+  `RcIsUnique`, `RcDrop` (immortal no-op, decrement, `free` at a count of `1`; the `mayBeEmpty`
+  null guard; `Function` releases the environment block with the closure; a
+  `structuralDropperLabel` is one `CallKnown` of the dropper with `(0, value, 0)` and no local
+  decrement), `DropReuse` (the cell as token when unique, else decrement and the null token;
+  immortal yields null untouched), and `AllocReusing` (tag store into the token, or a fresh RC
+  cell of the layout on a null runtime-managed token; arena tokens are the tag store alone);
+  string literals carry the immortal sentinel so every path leaves static storage alone. libc
+  `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
+  free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
+  cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
+  reuse emission.
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve
@@ -1097,9 +1129,14 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
 - [ ] **CLI-8** Registry configuration and credentials plus `login`, `publish`, `yank`, `search`, and `info`,
   including package capability extraction from compiler metadata, against the unchanged .NET
   registry server ([Package registry](../internals/architecture.md#package-registry) documents the wire protocol).
-- [ ] **CLI-9** Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
+- [~] **CLI-9** Render structured diagnostics and the `ownership`, `rc`, `reuse`, `traits`, `authority`,
   `concurrency`, and `memory` reports with stable filtering and stderr behavior
-  ([Compiler reports](../reference/cli.md#compiler-reports)).
+  ([Compiler reports](../reference/cli.md#compiler-reports)). Done: `--explain <kind>[:<selector>]`
+  on `compile` and `run` (repeatable, deduplicated kinds, last selector wins, all seven kinds
+  parsed, unknown kind or missing value a usage error listing the valid values), printing the
+  reports to stderr between optimization and code generation. Open: structured diagnostics, the
+  `test` command, and the `traits`/`authority`/`concurrency`/representation data the self-hosted
+  lowering does not record yet, which render as their empty sections.
 
 #### TestRunner and validation infrastructure
 

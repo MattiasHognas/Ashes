@@ -1,0 +1,25 @@
+Ownership report
+================
+
+Function: isEven
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: isOdd
+  Parameters
+    n
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

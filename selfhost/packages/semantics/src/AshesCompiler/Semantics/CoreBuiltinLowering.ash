@@ -931,7 +931,16 @@ let floatToInt start argument intrinsic =
                 ]
             )(start + 2)(CoreBuiltinTemp(start + 1))
 
-let textFormatFloat start value precision = managedTarget2(start)(value)(precision)(TextFormatFloat)
+// A fresh-string producer whose result the consumer asked to place on the reference-counted heap
+// carries the request as its `RuntimeManaged` flag.
+let runtimeTarget1 start first runtimeManaged build =
+    target1(start)(first)(given (target) ->
+        given (argument) -> build(target)(argument)(runtimeManaged))
+
+let textFormatFloat start value precision runtimeManaged =
+    target2(start)(value)(precision)(given (target) ->
+        given (left) ->
+            given (right) -> TextFormatFloat(target)(left)(right)(runtimeManaged))
 
 let regexCaptures start code subject offset = target3(start)(code)(subject)(offset)(RegexCaptures)
 
@@ -962,7 +971,7 @@ let printValue start value semanticType =
         | SemBool -> unit([PrintBool(value)])(start)
         | other -> emissionFailure(start)("print does not support " + formatSemanticType(other))
 
-let emitCoreBuiltin kind start arguments argumentTypes =
+let emitCoreBuiltin kind runtimeManaged start arguments argumentTypes =
     match (kind, arguments, argumentTypes) with
         | (CoreProgramArgs, [], []) -> target0(start)(LoadProgramArgs)
         | (CorePrint, value :: [], semanticType :: []) -> printValue(start)(value)(semanticType)
@@ -1003,7 +1012,7 @@ let emitCoreBuiltin kind start arguments argumentTypes =
             managedTarget1(start)(text)(if stringHead
             then TextUnconsText
             else TextUncons)
-        | (CoreRuneToText, rune :: [], _types) -> managedTarget1(start)(rune)(RuneToText)
+        | (CoreRuneToText, rune :: [], _types) -> runtimeTarget1(start)(rune)(runtimeManaged)(RuneToText)
         | (CoreRuneToInt, rune :: [], _types) -> identity(start)(rune)
         | (CoreRuneFromInt, value :: [], _types) -> managedTarget1(start)(value)(RuneFromInt)
         | (CoreRuneIsAsciiLetter, rune :: [], _types) -> runeAsciiLetter(start)(rune)
@@ -1011,10 +1020,10 @@ let emitCoreBuiltin kind start arguments argumentTypes =
         | (CoreRuneIsAsciiWhiteSpace, rune :: [], _types) -> runeAsciiWhiteSpace(start)(rune)
         | (CoreTextParseInt, text :: [], _types) -> managedTarget1(start)(text)(TextParseInt)
         | (CoreTextParseFloat, text :: [], _types) -> managedTarget1(start)(text)(TextParseFloat)
-        | (CoreTextFromInt, value :: [], _types) -> managedTarget1(start)(value)(TextFromInt)
-        | (CoreTextFromFloat, value :: [], _types) -> managedTarget1(start)(value)(TextFromFloat)
-        | (CoreTextFormatFloat, value :: precision :: [], _types) -> textFormatFloat(start)(value)(precision)
-        | (CoreTextToHex, value :: [], _types) -> managedTarget1(start)(value)(TextToHex)
+        | (CoreTextFromInt, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextFromInt)
+        | (CoreTextFromFloat, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextFromFloat)
+        | (CoreTextFormatFloat, value :: precision :: [], _types) -> textFormatFloat(start)(value)(precision)(runtimeManaged)
+        | (CoreTextToHex, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(TextToHex)
         | (CoreTextAsciiCase(upper), text :: [], _types) ->
             target1(start)(text)(given (target) ->
                 given (source) -> TextAsciiCase(target)(source)(upper)(false))
@@ -1026,7 +1035,7 @@ let emitCoreBuiltin kind start arguments argumentTypes =
         | (CoreMathLibm(name), values, _types) ->
             target0(start)(given (target) -> CallLibm(target)(name)(values))
         | (CoreBigIntFromInt, value :: [], _types) -> managedTarget1(start)(value)(BigIntFromInt)
-        | (CoreBigIntToString, value :: [], _types) -> managedTarget1(start)(value)(BigIntToString)
+        | (CoreBigIntToString, value :: [], _types) -> runtimeTarget1(start)(value)(runtimeManaged)(BigIntToString)
         | (CoreBigIntToInt, value :: [], _types) -> managedTarget1(start)(value)(BigIntToInt)
         | (CoreBigIntFromString, value :: [], _types) -> managedTarget1(start)(value)(BigIntFromString)
         | (CoreBigIntBinary(operation), left :: right :: [], _types) ->
