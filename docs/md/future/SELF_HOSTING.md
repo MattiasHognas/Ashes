@@ -882,13 +882,23 @@ same public behavior.
   diagnostics. Open: `deriving`, function-typed fields, real zero-cost classification, and
   `RcDrop.typeName` carrying the constructor rather than the declaring type (harmless — codegen
   ignores the field).
-- [~] **CG-6** RC status: a field-carrying `AllocAdt` is conservatively RC-classified (`fieldCount > 0`),
-  `malloc`s the real 16-byte `{count, size}` header, and returns the post-header payload pointer;
-  a single non-cascading `RcDrop` is emitted for a provably-dead top-level constructor binding
-  (negative-GEP header walk, decrement, `free` at zero); string literals carry the immortal
-  sentinel so the same drop path never frees static storage. Open: everything else in Perceus
-  placement — cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup
-  insertion, and reuse.
+- [~] **CG-6** RC status. Done: a field-carrying `AllocAdt` is conservatively RC-classified
+  (`fieldCount > 0`), `malloc`s the real 16-byte `{count, size}` header, and returns the
+  post-header payload pointer; the RC runtime itself is ported in `IrCodegen.Rc` (source of
+  truth: `LlvmCodegenMemory.cs`, `LlvmCodegenExpressions.cs`'s closure drop, and
+  `LlvmCodegen.cs`'s dup/drop instruction dispatch) — `RcDup` (immortal-aware increment),
+  `RcIsUnique`, `RcDrop` (immortal no-op, decrement, `free` at a count of `1`; the `mayBeEmpty`
+  null guard; `Function` releases the environment block with the closure; a
+  `structuralDropperLabel` is one `CallKnown` of the dropper with `(0, value, 0)` and no local
+  decrement), `DropReuse` (the cell as token when unique, else decrement and the null token;
+  immortal yields null untouched), and `AllocReusing` (tag store into the token, or a fresh RC
+  cell of the layout on a null runtime-managed token; arena tokens are the tag store alone);
+  string literals carry the immortal sentinel so every path leaves static storage alone. libc
+  `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
+  free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
+  cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
+  reuse emission.
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve

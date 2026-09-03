@@ -1,9 +1,9 @@
 // Shared low-level emission helpers for `AshesCompiler.Backend.IrCodegen`'s slices: the LLVM
 // scalar-type bundle, the view-aware `Str`/`Bytes` header readers and writers, RC-managed
 // allocation with the real 16-byte `{count, size}` header, closure-object layout and calls,
-// `RcDrop`, string concatenation/printing/comparison, and the `PrintInt`/`PrintBool` digit
-// machinery. The per-instruction dispatch and the builtin-family emitters live in the sibling
-// slices (`IrCodegen.Filesystem`, `IrCodegen.TextBytes`, `IrCodegen.Environment`,
+// string concatenation/printing/comparison, and the `PrintInt`/`PrintBool` digit machinery. The
+// per-instruction dispatch and the builtin-family emitters live in the sibling slices
+// (`IrCodegen.Rc`, `IrCodegen.Filesystem`, `IrCodegen.TextBytes`, `IrCodegen.Environment`,
 // `IrCodegen.Process`) and in `IrCodegen` itself.
 //
 // Everything here is platform-neutral EXCEPT the fd-writing print helpers
@@ -57,7 +57,6 @@ export (
     value emitCallClosure,
     value emitLoadEnv,
     value memOffsetPtr,
-    value emitRcDrop,
     value sumPartLengths,
     value emitConcatCopyParts,
     value emitStringConcatN,
@@ -561,11 +560,8 @@ let gepBytes builder i64 i8 ptr offset name =
 // `count = 1` and the payload size, and returns the PAYLOAD pointer (past the header) as this
 // codegen's universal `i64` word representation — the same "public pointer never carries the
 // header" contract `selfhost/tests/backend/Main.ash`'s own `defineRcAllocFunction` established.
-// `SetAdtField` writes into this same payload region. **Explicitly out of scope**: nothing drops
-// this allocation yet (`CoreLowering.ash` does not emit `RcDrop` anywhere for a multi-field
-// value), so a runtime-managed value from this path leaks today — an explicit, temporary
-// limitation matching every other stand-in in this arc, closed by the next slice (Perceus drop
-// insertion).
+// `SetAdtField` writes into this same payload region; `IrCodegen.Rc`'s release walks back to the
+// header from it.
 // One real `malloc`'d RC-managed block — the 16-byte `{i64 reference_count, i64 allocation_size}`
 // header followed by `payloadSizeBytes` of payload — initialized to `count = 1` and the payload
 // size, returning the PAYLOAD pointer (past the header). Shared by every RC-managed allocation
@@ -664,40 +660,6 @@ let emitLoadEnv builder i64 i8 ptrType envSlot index resultName =
 
 let memOffsetPtr builder i64 i8 ptrType baseRef offsetBytes name =
     gepBytes(builder)(i64)(i8)(buildIntToPtr(builder)(baseRef)(ptrType)(name + "_base"))(offsetBytes)(name)
-
-// Releases one RC-managed `AllocAdt` cell: walks back to the header with the NEGATIVE byte-offset
-// GEP that mirrors `AllocAdt`'s own forward one (the public value pointer never carries the header
-// with it — same contract as `selfhost/tests/backend/Main.ash`'s hand-built `defineRcRetainFunction`),
-// decrements the count, and `free`s the header only once it reaches zero. No `phi` binding exists
-// in this package's LLVM surface, so the two-way branch merges by simply falling through both
-// blocks into the same `continueBlock`.
-let emitRcDrop context function_ i64 i8 ptrType builder freeFn freeType sourceRef =
-    (let valuePtr = buildIntToPtr(builder)(sourceRef)(ptrType)("rc_drop_value_ptr")
-    in
-        let headerPtr = gepBytes(builder)(i64)(i8)(valuePtr)(-16)("rc_drop_header_ptr")
-        in
-            let oldCount = buildLoad(builder)(i64)(headerPtr)("rc_drop_old_count")
-            in
-                let newCount =
-                    buildSub(builder)(oldCount)(constInt(i64)(1u64)(false))("rc_drop_new_count")
-                in
-                    let _ = buildStore(builder)(newCount)(headerPtr)
-                    in
-                        let isZero =
-                            buildICmp(builder)(intPredicateEq)(newCount)(constInt(i64)(0u64)(false))("rc_drop_is_zero")
-                        in
-                            let freeBlock = appendBasicBlock(context)(function_)("rc_drop_free")
-                            in
-                                let continueBlock = appendBasicBlock(context)(function_)("rc_drop_continue")
-                                in
-                                    let _ = buildCondBr(builder)(isZero)(freeBlock)(continueBlock)
-                                    in
-                                        let _ = positionBuilderAtEnd(builder)(freeBlock)
-                                        in
-                                            let _ = buildCall(builder)(freeType)(freeFn)([headerPtr])(1u32)("")
-                                            in
-                                                let _ = buildBr(builder)(continueBlock)
-                                                in positionBuilderAtEnd(builder)(continueBlock))
 
 // Sums every part's own `len` field into one `i64` add chain. `partRefs` arrives already resolved
 // to LLVM values, never raw `IrTemp`s needing a `lookupIndexed` lookup in here — see the
