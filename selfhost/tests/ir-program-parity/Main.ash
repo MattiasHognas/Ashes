@@ -41,12 +41,15 @@ let checkFixture root name =
 
 // let_bindings, nested_let_scopes, and scalar_match need only arena bracketing (SaveArenaState/
 // RestoreArenaState/ReclaimArenaChunks around flat top-level lets, nested let chains, and each
-// match arm), ported for the provably-scalar case (CoreLowering.ash's isProvablyArenaSafeExpr/
-// topLevelItemsProvablyArenaSafe/lowerArenaBracketedNestedLet/lowerMatchArms); ownerless_match
-// adds an arena-placed constructor scrutinee with a null guard before each tag test. closure_capture,
-// mutual_recursion, and pattern_match still need constructor-layout registration,
-// closure/resource cleanup, or recursive bindings — none of which lowerCoreProgram runs yet —
-// and remain deliberately excluded until that machinery is ported.
+// match arm, each window reset only when its result survives the reset); ownerless_match adds an
+// arena-placed constructor scrutinee with a null guard before each tag test, pattern_match the
+// owned-binding borrow and its control-flow precise release, and closure_capture the source-named
+// function origins, the closure environment normalizer, the per-call windows, and the stack
+// closure of a let-bound lambda used only as a callee. closure_capture's instructions now match
+// stage 0 exactly and only two source locations still differ (the environment normalizer's own,
+// and the span of a lambda a `let`'s parameter sugar synthesizes, which stage 0 leaves unspanned);
+// it and mutual_recursion, which still needs recursive-binding lowering parity, remain excluded
+// until those are ported.
 match Ashes.IO.args with
     | root :: [] ->
         Unit

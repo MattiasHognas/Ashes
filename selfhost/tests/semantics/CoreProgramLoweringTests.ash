@@ -284,19 +284,19 @@ let expectCallSpinesGetArenaWindows unit =
         Unit
         |> (given (_) ->
             lines
-            |> containsLine("    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2")
-            |> test.assertEqual(true))
-        |> (given (_) ->
-            lines
             |> containsLine("    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4")
             |> test.assertEqual(true))
         |> (given (_) ->
             lines
-            |> containsLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+            |> containsLine("    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6")
             |> test.assertEqual(true))
         |> (given (_) ->
             lines
-            |> containsLine("    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=6")
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7")
+            |> test.assertEqual(true))
+        |> (given (_) ->
+            lines
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=8")
             |> test.assertEqual(true)))
 
 // A call whose result is a closure cannot be copied out yet, so its window stays open.
@@ -307,15 +307,15 @@ let expectClosureResultKeepsCallWindowOpen unit =
         Unit
         |> (given (_) ->
             lines
-            |> containsLine("    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2")
+            |> containsLine("    SaveArenaState        CursorLocalSlot=5 EndLocalSlot=6")
             |> test.assertEqual(true))
         |> (given (_) ->
             lines
-            |> containsLine("    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3")
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7")
             |> test.assertEqual(false))
         |> (given (_) ->
             lines
-            |> containsLine("    RestoreArenaState     CursorLocalSlot=5 EndLocalSlot=6 PreRestoreEndSlot=7")
+            |> containsLine("    RestoreArenaState     CursorLocalSlot=9 EndLocalSlot=10 PreRestoreEndSlot=11")
             |> test.assertEqual(true)))
 
 let expectAnonymousLambdaIsAnAnonymousClosureHelper unit =
@@ -410,26 +410,37 @@ let expectConstructorLetMatchedByConstructorPatternsIsBracketed unit =
 
 // The same cell escaping as the program's result is not arena-confined, so the chain stays
 // unbracketed: an arena reset would free the value being returned.
-let expectEscapingConstructorLetStaysUnbracketed unit =
+// The same cell escaping as the program's result is bracketed like every other `let`, but its
+// window is never reset: the result would not survive it. Stage 0 emits exactly this shape.
+let expectEscapingConstructorLetIsBracketedButNeverReset unit =
     "type Option(a) =\n    | NoVal\n    | HasVal(a)\n\nlet value = HasVal(42)\n\nvalue"
     |> dumpSource
-    |> (given (lines) ->
-        Unit
-        |> (given (_) ->
-            lines
-            |> containsLine("    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1")
-            |> test.assertEqual(false))
-        |> (given (_) ->
-            lines
-            |> containsLine("    AllocAdt              Target=1 Tag=1 FieldCount=1")
-            |> test.assertEqual(true)))
+    |> test.assertEqual([
+        "IR (lowered)",
+        "============",
+        "",
+        "function _start_main  [ProgramEntry]",
+        "  locals=5 temps=6",
+        "    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1",
+        "    LoadConstInt          Target=0 Value=42",
+        "    AllocAdt              Target=1 Tag=1 FieldCount=1",
+        "    SetAdtField           Ptr=1 FieldIndex=0 Source=0",
+        "    StoreLocal            Slot=2 Source=1",
+        "    LoadLocal             Target=2 Slot=2",
+        "    Borrow                Target=3 SourceTemp=2",
+        "    StoreLocal            Slot=3 Source=3",
+        "    LoadLocal             Target=5 Slot=3",
+        "    Return                Source=5",
+        "    RcDrop                SourceTemp=1 TypeName=Option OwnerSlot=2",
+        ""
+    ])
 
 let runCoreProgramLoweringTests unit =
     unit
     |> expectPlainTopLevelLetsProduceIr
     |> expectPlainTopLevelLetsProduceExpectedIr
     |> expectConstructorLetMatchedByConstructorPatternsIsBracketed
-    |> expectEscapingConstructorLetStaysUnbracketed
+    |> expectEscapingConstructorLetIsBracketedButNeverReset
     |> expectSelfRecursiveTopLevelLetLowers
     |> expectMutualRecursionGroupLowers
     |> expectMixedPlainAndRecursiveLettersLower

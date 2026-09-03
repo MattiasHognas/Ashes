@@ -135,7 +135,7 @@ type CoreLoweringState =
     | currentSpan: Maybe(TextSpan)
     | currentItem: Int
     | topLevelNames: List(Str)
-    | arenaBracketingArmed: Bool
+    | pendingStackClosure: Bool
     | runtimeAdtRequested: Bool
     | pendingOperatorDefaults: List((Int, SemanticType))
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
@@ -349,7 +349,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         currentSpan = None,
         currentItem = 0,
         topLevelNames = [],
-        arenaBracketingArmed = false,
+        pendingStackClosure = false,
         runtimeAdtRequested = false,
         pendingOperatorDefaults = [],
         sealedOperatorDefaults = [],
@@ -550,10 +550,10 @@ let recursive letValueIsLambda (value: Expr) =
 // Arms a `let` whose value is a lambda so the lambda lowered next is lifted as that name's
 // `SourceFunction`; any other value leaves the lambda origins alone. A lambda under `let ... in`
 // wrappers inside the value is not armed and lifts as a closure helper.
-let armSourceFunction (name: Str) (value: Expr) (state: CoreLoweringState) =
+let armSourceFunction (name: Str) (value: Expr) (stackClosure: Bool) (state: CoreLoweringState) =
     if letValueIsLambda(value)
     then
-        state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state))
+        state with pendingSourceFunction = Some(sourceFunctionOriginFor(name)(state)), pendingStackClosure = stackClosure
     else state
 
 let sourceFunctionOrigin (label: Str) (source: SourceFunctionOrigin) (state: CoreLoweringState) =
@@ -601,7 +601,7 @@ let lambdaOriginFor (label: Str) (parameter: Str) (state: CoreLoweringState) =
         | Some(source) -> sourceFunctionOrigin(label)(source)(state)
         | None -> closureHelperOrigin(label)(parameter)(state.activeFunctionOrigin)(state)
 
-let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) = state with pendingSourceFunction = None, activeFunctionOrigin = Some(origin)
+let enterFunctionOrigin (origin: IrFunctionOrigin) (state: CoreLoweringState) = state with pendingSourceFunction = None, pendingStackClosure = false, activeFunctionOrigin = Some(origin)
 
 // One scoped-arena bracket's two watermark slots, carried from its `SaveArenaState` to the
 // matching restore. Every bracket stage 0 emits — around a top-level `let`, a nested `let`, and
@@ -1044,195 +1044,6 @@ let recursive stripExprAt (expr: Expr) =
         | ExprAt(_span, inner) -> stripExprAt(inner)
         | other -> other
 
-// The names the arena-safety whitelist has proven so far: `arenaScalarNames` hold scalars,
-// `arenaAdtNames` hold arena-confined constructor cells whose every field is a scalar (see
-// `isArenaConfinedConstructorValue`), and `arenaConstructorLayouts` recognizes constructor calls.
-type ArenaSafeScope =
-    | arenaScalarNames: List(Str)
-    | arenaAdtNames: List(Str)
-    | arenaConstructorLayouts: List(CoreConstructorLayout)
-
-let arenaSafeScope layouts = ArenaSafeScope(arenaScalarNames = [], arenaAdtNames = [], arenaConstructorLayouts = layouts)
-
-let arenaScopeWithScalar name (scope: ArenaSafeScope) = scope with arenaScalarNames = name :: scope.arenaScalarNames
-
-let arenaScopeWithAdt name (scope: ArenaSafeScope) = scope with arenaAdtNames = name :: scope.arenaAdtNames
-
-let recursive schemeParameterCount (semanticType: SemanticType) =
-    match semanticType with
-        | SemFunction(_parameter, result, _row) -> 1 + schemeParameterCount(result)
-        | _ -> 0
-
-// `Ctor(a1)...(an)` as its root name and argument list; `None` for anything not rooted at a name.
-let recursive callSpineArguments (expr: Expr) (arguments: List(Expr)) =
-    match stripExprAt(expr) with
-        | ExprCall(callee, argument, _isSugar, _argumentLayout) -> callSpineArguments(callee)(argument :: arguments)
-        | ExprVar(name) -> Some((name, arguments))
-        | _ -> None
-
-let recursive arenaSafeContainsName (name: Str) (names: List(Str)) =
-    match names with
-        | [] -> false
-        | candidate :: rest ->
-            if name == candidate
-            then true
-            else arenaSafeContainsName(name)(rest)
-
-// A conservative, purely syntactic whitelist: true only when `expr` can never produce or read a
-// heap value that outlives its arena bracket — scalar literals, scalar operators over such
-// expressions, a reference to a name already proven scalar within this same check, a nested
-// `let` whose value is scalar or an arena-confined constructor cell (`arenaSafeBindingScope`)
-// and whose body passes the same check, and a `match` over a scalar or over such a cell. Never
-// inspects real types, so it is sound (a false positive would let an escaping heap reference be
-// reclaimed) without needing inference: anything not on the whitelist (calls, lambdas, external
-// types, ...) conservatively answers false.
-let recursive isProvablyArenaSafeExpr (expr: Expr) (scope: ArenaSafeScope) =
-    match expr with
-        | ExprAt(_span, inner) -> isProvablyArenaSafeExpr(inner)(scope)
-        | ExprInt(_value) -> true
-        | ExprBool(_value) -> true
-        | ExprVar(name) -> arenaSafeContainsName(name)(scope.arenaScalarNames)
-        | ExprAdd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprSubtract(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprMultiply(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprDivide(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprModulo(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprBitwiseAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprBitwiseOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprBitwiseXor(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprShiftLeft(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprShiftRight(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprGreaterThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprGreaterOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprLessThan(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprLessOrEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprNotEqual(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprBitwiseNot(operand) -> isProvablyArenaSafeExpr(operand)(scope)
-        | ExprLogicalNot(operand) -> isProvablyArenaSafeExpr(operand)(scope)
-        | ExprLogicalAnd(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprLogicalOr(left, right) -> isProvablyArenaSafeBinary(left)(right)(scope)
-        | ExprLet(name, letValue, letBody, _parameters, _annotation, _requirements) ->
-            match arenaSafeBindingScope(name)(letValue)(scope) with
-                | Some(bodyScope) -> isProvablyArenaSafeExpr(letBody)(bodyScope)
-                | None -> false
-        | ExprMatch(matchValue, cases, _position) ->
-            if isArenaConfinedScrutinee(matchValue)(scope)
-            then arenaSafeAdtMatchCases(cases)(scope)
-            else
-                if isProvablyArenaSafeExpr(matchValue)(scope)
-                then arenaSafeMatchCases(cases)(scope)
-                else false
-        | _ -> false
-and isProvablyArenaSafeBinary (left: Expr) (right: Expr) (scope: ArenaSafeScope) =
-    if isProvablyArenaSafeExpr(left)(scope)
-    then isProvablyArenaSafeExpr(right)(scope)
-    else false
-// Only patterns that bind nothing heap-derived keep the chain provable: a literal or wildcard
-// binds no name at all, and a plain variable pattern binds the scrutinee itself, which this same
-// check has already proven scalar. A constructor, tuple, list, or record pattern extracts a field
-// whose own type this syntactic check cannot see, so it conservatively stops the chain. A guard
-// is an ordinary expression and must pass in the arm's own scope.
-and arenaSafeMatchCases (cases: List((Pattern, Expr, Maybe(Expr)))) (scope: ArenaSafeScope) =
-    match cases with
-        | [] -> true
-        | (pattern, body, guard) :: rest ->
-            match arenaSafePatternNames(pattern)(scope) with
-                | None -> false
-                | Some(armNames) ->
-                    if arenaSafeGuard(guard)(armNames)
-                    then
-                        if isProvablyArenaSafeExpr(body)(armNames)
-                        then arenaSafeMatchCases(rest)(scope)
-                        else false
-                    else false
-and arenaSafeGuard (guard: Maybe(Expr)) (scope: ArenaSafeScope) =
-    match guard with
-        | None -> true
-        | Some(condition) -> isProvablyArenaSafeExpr(condition)(scope)
-and arenaSafePatternNames (pattern: Pattern) (scope: ArenaSafeScope) =
-    match pattern with
-        | PatternAt(_span, inner) -> arenaSafePatternNames(inner)(scope)
-        | PatternWildcard -> Some(scope)
-        | PatternInt(_value) -> Some(scope)
-        | PatternBool(_value) -> Some(scope)
-        | PatternVar(name) ->
-            scope
-            |> arenaScopeWithScalar(name)
-            |> Some
-        | _ -> None
-// Arms over an arena-confined constructor cell: a constructor pattern binds only that cell's
-// scalar fields (each sub-pattern a variable, literal, or wildcard), a wildcard binds nothing,
-// and a plain variable pattern aliases the cell itself under the same restrictions.
-and arenaSafeAdtMatchCases (cases: List((Pattern, Expr, Maybe(Expr)))) (scope: ArenaSafeScope) =
-    match cases with
-        | [] -> true
-        | (pattern, body, guard) :: rest ->
-            match arenaSafeAdtPatternScope(pattern)(scope) with
-                | None -> false
-                | Some(armScope) ->
-                    if arenaSafeGuard(guard)(armScope)
-                    then
-                        if isProvablyArenaSafeExpr(body)(armScope)
-                        then arenaSafeAdtMatchCases(rest)(scope)
-                        else false
-                    else false
-and arenaSafeAdtPatternScope (pattern: Pattern) (scope: ArenaSafeScope) =
-    match pattern with
-        | PatternAt(_span, inner) -> arenaSafeAdtPatternScope(inner)(scope)
-        | PatternWildcard -> Some(scope)
-        | PatternVar(name) ->
-            scope
-            |> arenaScopeWithAdt(name)
-            |> Some
-        | PatternConstructor(_name, fields) -> arenaSafeFieldPatternScope(fields)(scope)
-        | _ -> None
-and arenaSafeFieldPatternScope (fields: List(Pattern)) (scope: ArenaSafeScope) =
-    match fields with
-        | [] -> Some(scope)
-        | field :: rest ->
-            match arenaSafePatternNames(field)(scope) with
-                | None -> None
-                | Some(fieldScope) -> arenaSafeFieldPatternScope(rest)(fieldScope)
-and isArenaConfinedScrutinee (value: Expr) (scope: ArenaSafeScope) =
-    match stripExprAt(value) with
-        | ExprVar(name) -> arenaSafeContainsName(name)(scope.arenaAdtNames)
-        | _ -> false
-// The scope a `let`-bound `name` extends: scalar values join `arenaScalarNames`, arena-confined
-// constructor cells join `arenaAdtNames`, and anything else stops the proof.
-and arenaSafeBindingScope (name: Str) (value: Expr) (scope: ArenaSafeScope) =
-    if isProvablyArenaSafeExpr(value)(scope)
-    then
-        scope
-        |> arenaScopeWithScalar(name)
-        |> Some
-    else
-        if isArenaConfinedConstructorValue(value)(scope)
-        then
-            scope
-            |> arenaScopeWithAdt(name)
-            |> Some
-        else None
-// A saturated application of a known, non-zero-cost constructor to provably scalar arguments:
-// the cell is arena-placed and every field holds a scalar, so a match on it binds only scalars.
-and isArenaConfinedConstructorValue (value: Expr) (scope: ArenaSafeScope) =
-    match callSpineArguments(value)([]) with
-        | None -> false
-        | Some((name, arguments)) ->
-            match findConstructorLayout(name)(scope.arenaConstructorLayouts) with
-                | Some(CoreConstructorLayout { isZeroCost = false, scheme = TypeScheme { body = body } }) ->
-                    if schemeParameterCount(body) == coreListLength(arguments)
-                    then allProvablyArenaSafe(arguments)(scope)
-                    else false
-                | _ -> false
-and allProvablyArenaSafe (values: List(Expr)) (scope: ArenaSafeScope) =
-    match values with
-        | [] -> true
-        | value :: rest ->
-            if isProvablyArenaSafeExpr(value)(scope)
-            then allProvablyArenaSafe(rest)(scope)
-            else false
-
 // Stage 0's parser attaches no location between `in` and a directly-chained `let`, so every
 // frame store in a `let ... in let ... in body` chain carries the chain head's span (its
 // LowerSequentialBindingChain walks the chain without touching the ambient diagnostic span).
@@ -1248,13 +1059,106 @@ let stripChainedLetAt body =
                 | _ -> body
         | _ -> body
 
+let recursive patternBindsName (name: Str) (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> patternBindsName(name)(inner)
+        | PatternVar(candidate) -> candidate == name
+        | PatternCons(head, tail) -> patternBindsName(name)(head) || patternBindsName(name)(tail)
+        | PatternTuple(elements) -> patternsBindName(name)(elements)
+        | PatternConstructor(_constructor, arguments) -> patternsBindName(name)(arguments)
+        | PatternRecord(_typeName, fields) -> fieldPatternsBindName(name)(fields)
+        | PatternAs(inner, alias) -> alias == name || patternBindsName(name)(inner)
+        | PatternOr(alternatives) -> patternsBindName(name)(alternatives)
+        | _ -> false
+and patternsBindName (name: Str) (patterns: List(Pattern)) =
+    match patterns with
+        | [] -> false
+        | pattern :: rest -> patternBindsName(name)(pattern) || patternsBindName(name)(rest)
+and fieldPatternsBindName (name: Str) (fields: List((Str, Pattern))) =
+    match fields with
+        | [] -> false
+        | (_field, pattern) :: rest -> patternBindsName(name)(pattern) || fieldPatternsBindName(name)(rest)
+
+// Stage 0's direct-callee analysis for one binding: whether `name` is used in `body` only as the
+// callee of an application, the condition under which its lambda value is a stack closure. A
+// binding that shadows the name ends the walk of its scope, and an expression form the walk does
+// not know counts as a non-callee use, which only ever keeps a closure on the heap.
+let recursive nameHasNonCalleeUse (name: Str) (expr: Expr) (asCallee: Bool) =
+    match expr with
+        | ExprAt(_span, inner) -> nameHasNonCalleeUse(name)(inner)(asCallee)
+        | ExprInt(_value) -> false
+        | ExprBigInt(_value) -> false
+        | ExprUInt(_value, _bitWidth, _suffix) -> false
+        | ExprFloat(_value, _suffix) -> false
+        | ExprString(_value) -> false
+        | ExprRune(_value) -> false
+        | ExprBool(_value) -> false
+        | ExprVar(candidate) -> candidate == name && asCallee == false
+        | ExprQualifiedVar(_moduleName, _memberName) -> false
+        | ExprCall(function, argument, _isSugar, _layout) -> nameHasNonCalleeUse(name)(function)(true) || nameHasNonCalleeUse(name)(argument)(false)
+        | ExprLambda(parameter, body, _annotation) -> parameter != name && nameHasNonCalleeUse(name)(body)(false)
+        | ExprLet(bound, value, body, _parameters, _annotation, _requirements) -> nameHasNonCalleeUse(name)(value)(false) || bound != name && nameHasNonCalleeUse(name)(body)(false)
+        | ExprLetResult(bound, value, body) -> nameHasNonCalleeUse(name)(value)(false) || bound != name && nameHasNonCalleeUse(name)(body)(false)
+        | ExprLetRecursive(bound, value, body, _parameters, _annotation, _requirements) -> bound != name && (nameHasNonCalleeUse(name)(value)(false) || nameHasNonCalleeUse(name)(body)(false))
+        | ExprIf(condition, thenBranch, elseBranch) -> nameHasNonCalleeUse(name)(condition)(false) || nameHasNonCalleeUse(name)(thenBranch)(false) || nameHasNonCalleeUse(name)(elseBranch)(false)
+        | ExprAdd(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprSubtract(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprMultiply(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprDivide(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprModulo(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprBitwiseAnd(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprBitwiseOr(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprBitwiseXor(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprShiftLeft(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprShiftRight(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprLogicalAnd(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprLogicalOr(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprGreaterThan(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprLessThan(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprGreaterOrEqual(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprLessOrEqual(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprEqual(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprNotEqual(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprResultPipe(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprResultMapErrorPipe(left, right) -> eitherHasNonCalleeUse(name)(left)(right)
+        | ExprCons(head, tail) -> eitherHasNonCalleeUse(name)(head)(tail)
+        | ExprBitwiseNot(operand) -> nameHasNonCalleeUse(name)(operand)(false)
+        | ExprLogicalNot(operand) -> nameHasNonCalleeUse(name)(operand)(false)
+        | ExprTuple(elements) -> anyHasNonCalleeUse(name)(elements)
+        | ExprList(elements, _isMultiline) -> anyHasNonCalleeUse(name)(elements)
+        | ExprRecord(_typeName, fields, _isMultiline) -> anyFieldHasNonCalleeUse(name)(fields)
+        | ExprRecordUpdate(record, fields) -> nameHasNonCalleeUse(name)(record)(false) || anyFieldHasNonCalleeUse(name)(fields)
+        | ExprMatch(scrutinee, arms, _position) -> nameHasNonCalleeUse(name)(scrutinee)(false) || anyArmHasNonCalleeUse(name)(arms)
+        | _ -> true
+and eitherHasNonCalleeUse (name: Str) (left: Expr) (right: Expr) = nameHasNonCalleeUse(name)(left)(false) || nameHasNonCalleeUse(name)(right)(false)
+and anyHasNonCalleeUse (name: Str) (expressions: List(Expr)) =
+    match expressions with
+        | [] -> false
+        | expression :: rest -> nameHasNonCalleeUse(name)(expression)(false) || anyHasNonCalleeUse(name)(rest)
+and anyFieldHasNonCalleeUse (name: Str) (fields: List((Str, Expr))) =
+    match fields with
+        | [] -> false
+        | (_field, expression) :: rest -> nameHasNonCalleeUse(name)(expression)(false) || anyFieldHasNonCalleeUse(name)(rest)
+and anyArmHasNonCalleeUse (name: Str) (arms: List((Pattern, Expr, Maybe(Expr)))) =
+    match arms with
+        | [] -> false
+        | (pattern, body, guard) :: rest ->
+            if patternBindsName(name)(pattern)
+            then anyArmHasNonCalleeUse(name)(rest)
+            else guardHasNonCalleeUse(name)(guard) || nameHasNonCalleeUse(name)(body)(false) || anyArmHasNonCalleeUse(name)(rest)
+and guardHasNonCalleeUse (name: Str) (guard: Maybe(Expr)) =
+    match guard with
+        | None -> false
+        | Some(condition) -> nameHasNonCalleeUse(name)(condition)(false)
+
+let nameUsedOnlyAsDirectCallee (name: Str) (body: Expr) = nameHasNonCalleeUse(name)(body)(false) == false
+
 // A nested `let`'s arena bracket, stage 0's exact per-binding discipline: `SaveArenaState`
-// before the value, the restore/reclaim pair after the whole body (an inner chained `let` opens
-// and closes its own bracket inside this one, so the pairs close LIFO before the enclosing
-// binding's store). Reached only when `arenaBracketingArmed` is set — the whole remaining program
-// was already proven provably-arena-safe by `topLevelLetChainProvablyArenaSafe`, which recursed
-// through every nested `let` (see `isProvablyArenaSafeExpr`'s own `ExprLet` case), so no separate
-// per-site proof is needed here.
+// before the value, and after the whole body the spill of an owned binding's result, its
+// release anchor, and the reset the scope rule allows (an inner chained `let` opens and closes
+// its own bracket inside this one, so the pairs close LIFO before the enclosing binding's
+// store). Every `let` is bracketed; whether its window is reset is decided from the body's type
+// when the scope closes, so no syntactic proof is needed up front.
 // The owned type name of a lowered `let` value (`ownedTypeNameOf`), `None` when the value is a
 // copy type; an owned binding's scope carries a drop obligation the closing bracket discharges.
 let loweredValueOwnedTypeName lowered =
@@ -1286,11 +1190,53 @@ let emitRestoreAndReclaim cursorSlot endSlot preRestoreSlot state =
     |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
     |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
 
+// A type variable that a deferred `+` default owns resolves to `Int` at finalization, the type
+// the deferred add itself falls back to.
+let recursive operatorDefaultedVariables (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> []
+        | semanticType :: rest ->
+            match resolveType(state)(semanticType) with
+                | SemVariable(id) -> id :: operatorDefaultedVariables(rest)(state)
+                | _ -> operatorDefaultedVariables(rest)(state)
+
+// Whether a scope's or a call's result survives the arena reset that closes it: stage 0's
+// `CanArenaReset`, a scalar seen through a zero-cost wrapper. A type variable that a deferred `+`
+// default owns is the `Int` that default resolves to, which stage 0 already knows at that point.
+let resultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemVariable(id) ->
+            []
+            |> sealedOperatorTypes(state.sealedOperatorDefaults)
+            |> pendingOperatorTypes(state.pendingOperatorDefaults)
+            |> (given (types) ->
+                state
+                |> operatorDefaultedVariables(types)
+                |> containsInt(id))
+        | SemNamed(_symbolId, name, _arguments) ->
+            match zeroCostPayloadType(name)(state.constructorLayouts) with
+                | Some(payload) ->
+                    payload
+                    |> resolveType(state)
+                    |> canArenaResetLayout
+                | None -> false
+        | resolved -> canArenaResetLayout(resolved)
+
+// The closing reset of a scope: the pre-restore end slot is allocated either way, as stage 0
+// does, and the arena is restored and reclaimed only when the scope's result survives it. A heap
+// result leaves the window open, since the copy-out that would preserve it is not ported yet.
+let closeScopeForResult (resultType: SemanticType) cursorSlot endSlot state =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } ->
+            if resultSurvivesReset(resultType)(allocated)
+            then emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
+            else allocated
+
 // Closes a `let`'s arena bracket and returns the closed state with the result temp. A scope that
 // owns its binding spills the body result to a slot, releases the binding, restores, and reloads
 // the result afterwards (stage 0's result preservation: the release could otherwise overwrite the
 // result temp); a scope owning nothing restores and returns the body temp directly.
-let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp state =
+let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp resultType state =
     match ownedTypeName with
         | Some(typeName) ->
             match freshLocal(state) with
@@ -1298,16 +1244,11 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp s
                     match resultAllocated
                     |> emit(StoreLocal(resultSlot)(resultTemp))
                     |> emitOwnedLetRelease(typeName)(ownerSlot)
-                    |> freshLocal with
-                        | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } ->
-                            match preRestoreAllocated
-                            |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
-                            |> freshTemp with
-                                | FreshTemp { state = reloadState, temp = reloadTemp } ->
-                                    (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
-        | None ->
-            match freshLocal(state) with
-                | FreshLocal { state = preRestoreAllocated, local = preRestoreSlot } -> (emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)(preRestoreAllocated), resultTemp)
+                    |> closeScopeForResult(resultType)(cursorSlot)(endSlot)
+                    |> freshTemp with
+                        | FreshTemp { state = reloadState, temp = reloadTemp } ->
+                            (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
+        | None -> (closeScopeForResult(resultType)(cursorSlot)(endSlot)(state), resultTemp)
 
 // `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it.
 let finishLetValueInSlot name body lower outerBindings lowered =
@@ -1324,26 +1265,19 @@ let lowerArenaBracketedNestedLet name value body lower outerBindings state =
                 | FreshLocal { state = endAllocated, local = endSlot } ->
                     match endAllocated
                     |> emit(SaveArenaState(cursorSlot)(endSlot)(false))
-                    |> armSourceFunction(name)(value)
+                    |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(body))
                     |> lower(value) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { error = None } as loweredValue ->
                             match finishLetValueInSlot(name)(stripChainedLetAt(body))(lower)(outerBindings)(loweredValue) with
                                 | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
                                 | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(bodyState) with
+                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
                                         | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
 
 let lowerLet name value body lower state =
     match state with
-        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = armed } ->
-            if armed
-            then lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
-            else
-                state
-                |> armSourceFunction(name)(value)
-                |> lower(value)
-                |> finishLetValue(name)(stripChainedLetAt(body))(lower)(outerBindings)
+        | CoreLoweringState { bindings = outerBindings } -> lowerArenaBracketedNestedLet(name)(value)(body)(lower)(outerBindings)(state)
 
 let recursive containsName name names =
     match names with
@@ -1690,16 +1624,6 @@ let scalarCaptureText (semanticType: SemanticType) =
 
 // `(environment offset, type text)` per capture, in environment order, when every capture is a
 // scalar.
-// A type variable that a deferred `+` default owns resolves to `Int` at finalization, the type
-// the deferred add itself falls back to.
-let recursive operatorDefaultedVariables (types: List(SemanticType)) (state: CoreLoweringState) =
-    match types with
-        | [] -> []
-        | semanticType :: rest ->
-            match resolveType(state)(semanticType) with
-                | SemVariable(id) -> id :: operatorDefaultedVariables(rest)(state)
-                | _ -> operatorDefaultedVariables(rest)(state)
-
 let finalCaptureType (defaulted: List(Int)) (state: CoreLoweringState) (captureType: SemanticType) =
     match resolveType(state)(captureType) with
         | SemVariable(id) ->
@@ -1930,7 +1854,7 @@ let lowerLambda parameter body annotation stackAllocate lower state =
         | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
             match (capturedBindings(collectFree(body)([parameter])([]))(outerBindings)([]), lambdaOriginFor("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)(state)) with
                 | (captures, origin) ->
-                    match freshType((state with pendingSourceFunction = None)) with
+                    match freshType((state with pendingSourceFunction = None, pendingStackClosure = false)) with
                         | FreshType { state = freshState, semanticType = parameterType } ->
                             match lowerLambdaParameterType(annotation)(parameterType)(freshState) with
                                 | (checkedState, Some(error)) -> failure(checkedState)(error)
@@ -1968,44 +1892,14 @@ let ensureFunctionType semanticType state =
             |> finishFreshFunctionType(semanticType)
         | other -> failedFunctionType(state)(CoreCallRequiresFunction(other))
 
-// Whether a call's result survives the arena reset that closes the call's window: stage 0's
-// `CanArenaReset`, a scalar seen through a zero-cost wrapper. A type variable that a deferred `+`
-// default owns is the `Int` that default resolves to.
-let callResultSurvivesReset (semanticType: SemanticType) (state: CoreLoweringState) =
-    match resolveType(state)(semanticType) with
-        | SemVariable(id) ->
-            []
-            |> sealedOperatorTypes(state.sealedOperatorDefaults)
-            |> pendingOperatorTypes(state.pendingOperatorDefaults)
-            |> (given (types) ->
-                state
-                |> operatorDefaultedVariables(types)
-                |> containsInt(id))
-        | SemNamed(_symbolId, name, _arguments) ->
-            match zeroCostPayloadType(name)(state.constructorLayouts) with
-                | Some(payload) ->
-                    payload
-                    |> resolveType(state)
-                    |> canArenaResetLayout
-                | None -> false
-        | resolved -> canArenaResetLayout(resolved)
-
-// Closes a call's arena window after its last application: the pre-restore end slot is
-// allocated either way, as stage 0 does, and the window is reset only when the result survives
-// it. A heap result keeps the window open, since the copy-out that would preserve it is not
-// ported yet.
+// Closes a call's arena window after its last application under the scope rule.
 let closeCallWindow cursorSlot endSlot lowered =
     match lowered with
         | LoweredCoreValue { error = Some(_error) } -> lowered
         | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            match freshLocal(state) with
-                | FreshLocal { state = allocated, local = preRestoreSlot } ->
-                    if callResultSurvivesReset(semanticType)(allocated)
-                    then
-                        allocated
-                        |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
-                        |> success(temp)(semanticType)
-                    else success(temp)(semanticType)(allocated)
+            state
+            |> closeScopeForResult(semanticType)(cursorSlot)(endSlot)
+            |> success(temp)(semanticType)
 
 let finishCoreCall functionTemp argumentTemp resultType binding =
     match binding with
@@ -2701,10 +2595,12 @@ let lowerMatchGuard guard failLabel lower patternResult =
 // `bracket` is `None` on the arm paths that are not bracketed yet — the tag-group dispatch and
 // the capability-operation arms, neither of which has an IR parity fixture to verify the exact
 // slot and label ordering against. Both still owe stage 0 their per-arm bracket (OPT-25).
-let closeArenaBracketIfPresent bracket state =
+// An arm's bracket closes on its success path under the scope rule: the arm result that dies at
+// the reset keeps the arm's window open.
+let closeArmBracketForResult bracket resultType state =
     match bracket with
         | None -> state
-        | Some(opened) -> closeArenaBracket(opened.bracketCursorSlot)(opened.bracketEndSlot)(state)
+        | Some(opened) -> closeScopeForResult(resultType)(opened.bracketCursorSlot)(opened.bracketEndSlot)(state)
 
 let finishMatchArm body resultSlot endLabel resultType outerBindings bracket lower guarded =
     match guarded with
@@ -2718,7 +2614,7 @@ let finishMatchArm body resultSlot endLabel resultType outerBindings bracket low
                         | (typedState, None) ->
                             typedState
                             |> emit(StoreLocal(resultSlot)(temp))
-                            |> closeArenaBracketIfPresent(bracket)
+                            |> closeArmBracketForResult(bracket)(bodyType)
                             |> emit(Jump(endLabel))
                             |> restoreBindings(outerBindings)
                             |> success(temp)(resultType)
@@ -5264,7 +5160,7 @@ let recursive resolveOperationArmBody body lower postRegisterIndex capName opNam
                         match state with
                             | CoreLoweringState { bindings = outerBindings } ->
                                 state
-                                |> armSourceFunction(name)(value)
+                                |> armSourceFunction(name)(value)(nameUsedOnlyAsDirectCallee(name)(letBody))
                                 |> lower(value)
                                 |> finishLetValue(
                                     name,
@@ -5701,7 +5597,7 @@ let recursive lowerCore expression state =
                 state
             )
         | ExprIf(condition, thenBranch, elseBranch) -> lowerIf(condition)(thenBranch)(elseBranch)(lowerCore)(state)
-        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(false)(lowerCore)(state)
+        | ExprLambda(parameter, body, annotation) -> lowerLambda(parameter)(body)(annotation)(state.pendingStackClosure)(lowerCore)(state)
         | ExprCall(function, argument, _whitespace, _layout) ->
             match tryLowerConstructorCall(expression)(lowerCore)(state) with
                 | Some(lowered) -> lowered
@@ -5841,33 +5737,6 @@ let recursive allTopLevelBindingNames items =
 // points), lowers unchanged. A forwarding failure (no active dictionary supplies the callee's
 // required evidence) surfaces as UnresolvedTraitEvidenceForwarding at the two call sites below,
 // rather than silently emitting a call the callee's hidden parameter can't be supplied for.
-// As isProvablyArenaSafeExpr, but over the flat top-level `let`/trailing-expression sequence
-// lowerCoreProgramItems walks (Model A: sequential, not one nested Expr). A self-recursive
-// TopLevelLet or a TopLevelRecursiveGroup conservatively stops the chain — recursive bindings
-// lower through lowerPreparedRecursiveGroupWith, a distinct path this first slice does not cover.
-// Every other item (types, externals, capabilities, traits, providers) lowers no value in this
-// function and is transparent, matching lowerCoreProgramItems's own fallthrough.
-let recursive topLevelItemsProvablyArenaSafe (items: List(TopLevelItem)) (trailingBody: Expr) (scope: ArenaSafeScope) =
-    match items with
-        | [] -> isProvablyArenaSafeExpr(trailingBody)(scope)
-        | TopLevelAt(_span, inner) :: rest -> topLevelItemsProvablyArenaSafe(inner :: rest)(trailingBody)(scope)
-        | TopLevelLet(LetBindingSyntax { name = name, value = value }, false) :: rest ->
-            match arenaSafeBindingScope(name)(value)(scope) with
-                | Some(nextScope) -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(nextScope)
-                | None -> false
-        | TopLevelLet(_letBinding, true) :: _rest -> false
-        | TopLevelRecursiveGroup(_bindings) :: _rest -> false
-        | _other :: rest -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scope)
-
-// `layouts` are the constructors declared before this `let`; a constructor of a later `type`
-// declaration is simply not recognized, which conservatively stops the chain.
-let topLevelLetChainProvablyArenaSafe name value rest trailingBody layouts =
-    match layouts
-    |> arenaSafeScope
-    |> arenaSafeBindingScope(name)(value) with
-        | Some(scope) -> topLevelItemsProvablyArenaSafe(rest)(trailingBody)(scope)
-        | None -> false
-
 // Brackets one flat top-level let with the arena save/restore/reclaim triple stage 0 always emits
 // (SaveArenaState before the value, RestoreArenaState + ReclaimArenaChunks after the rest of the
 // program), the first slice of Perceus/region lifetime placement ported to the self-hosted
@@ -5876,27 +5745,22 @@ let topLevelLetChainProvablyArenaSafe name value rest trailingBody layouts =
 // the general case additionally needs a CopyOutArena for an escaping heap result, not yet ported
 // (see docs/md/future/SELF_HOSTING.md). Takes the sentinel-placeholder continuation
 // lowerCoreProgramItems supplies (see its own TopLevelLet case) in place of a literal body Expr.
-let lowerArenaBracketedTopLevelLet name value environment continuation outerBindings restoreArmedTo state =
-    match freshLocal(state) with
-        | FreshLocal { state = cursorAllocated, local = cursorSlot } ->
-            match freshLocal(cursorAllocated) with
-                | FreshLocal { state = endAllocated, local = endSlot } ->
-                    let saved =
-                        emit(SaveArenaState(cursorSlot)(endSlot)(false))(endAllocated)
-                    in
-                        match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
-                            | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure((saved with arenaBracketingArmed = restoreArmedTo))(UnresolvedTraitEvidenceForwarding(error))
-                            | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-                                match saved
-                                |> armSourceFunction(name)(rewrittenValue)
-                                |> lowerCore(rewrittenValue) with
-                                    | LoweredCoreValue { state = failedState, error = Some(error) } -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
-                                    | LoweredCoreValue { error = None } as loweredValue ->
-                                        match finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
-                                            | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure((failedState with arenaBracketingArmed = restoreArmedTo))(error)
-                                            | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
-                                                match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(bodyState) with
-                                                    | (closed, finalTemp) -> success(finalTemp)(resultType)((closed with arenaBracketingArmed = restoreArmedTo))
+let lowerArenaBracketedTopLevelLet name value environment continuation outerBindings stackClosure state =
+    match openArenaBracket(state) with
+        | ArenaBracket { bracketState = saved, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
+            match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
+                | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(saved)(UnresolvedTraitEvidenceForwarding(error))
+                | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
+                    match saved
+                    |> armSourceFunction(name)(rewrittenValue)(stackClosure)
+                    |> lowerCore(rewrittenValue) with
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | LoweredCoreValue { error = None } as loweredValue ->
+                            match finishLetValueInSlot(name)(topLevelContinuationBody)(continuation)(outerBindings)(loweredValue) with
+                                | (LoweredCoreValue { state = failedState, error = Some(error) }, _slot) -> failure(failedState)(error)
+                                | (LoweredCoreValue { state = bodyState, temp = resultTemp, semanticType = resultType, error = None }, ownerSlot) ->
+                                    match closeOwnedLetBracket(loweredValueOwnedTypeName(loweredValue))(ownerSlot)(cursorSlot)(endSlot)(resultTemp)(resultType)(bodyState) with
+                                        | (closed, finalTemp) -> success(finalTemp)(resultType)(closed)
 
 // A single, non-cascading `RcDrop` fires for a top-level `let` whose value is a direct,
 // fully-saturated call to a known field-carrying constructor (see
@@ -6047,6 +5911,40 @@ let recursive topLevelItemsMayReferenceName (items: List(TopLevelItem)) (trailin
             else topLevelItemsMayReferenceName(rest)(trailingBody)(name)
         | _other :: rest -> topLevelItemsMayReferenceName(rest)(trailingBody)(name)
 
+let recursive letBindingSyntaxValuesHaveNonCalleeUse (name: Str) (bindings: List(LetBindingSyntax)) =
+    match bindings with
+        | [] -> false
+        | LetBindingSyntax { value = value } :: rest -> nameHasNonCalleeUse(name)(value)(false) || letBindingSyntaxValuesHaveNonCalleeUse(name)(rest)
+
+// The direct-callee analysis over the flat top-level sequence after a binding, the scope stage 0
+// walks as the desugared nested `let` body: a later value or the trailing expression that uses
+// `name` other than as a callee keeps its closure on the heap, and a later binding of the same
+// name shadows it and ends the walk.
+let recursive topLevelNameUsedOnlyAsDirectCallee (name: Str) (items: List(TopLevelItem)) (trailingBody: Expr) =
+    match items with
+        | [] -> nameUsedOnlyAsDirectCallee(name)(trailingBody)
+        | TopLevelAt(_span, inner) :: rest -> topLevelNameUsedOnlyAsDirectCallee(name)(inner :: rest)(trailingBody)
+        | TopLevelLet(LetBindingSyntax { name = bound, value = value }, isRecursive) :: rest ->
+            if isRecursive && bound == name
+            then true
+            else
+                if nameHasNonCalleeUse(name)(value)(false)
+                then false
+                else
+                    if bound == name
+                    then true
+                    else topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
+        | TopLevelRecursiveGroup(bindings) :: rest ->
+            if bindings
+            |> letBindingSyntaxNames
+            |> containsName(name)
+            then true
+            else
+                if letBindingSyntaxValuesHaveNonCalleeUse(name)(bindings)
+                then false
+                else topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
+        | _other :: rest -> topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody)
+
 // Recognizes ONLY `Ctor(arg)` — one, fully-saturating argument — against a known constructor whose
 // scheme is exactly `a -> T(...)` (not itself a function, ruling out a curried/multi-argument
 // constructor this slice does not attempt) and that isn't zero-cost (a zero-cost constructor never
@@ -6069,22 +5967,6 @@ let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(Co
                         | _ -> None
                 | _ -> None
         | _ -> None
-
-// The ordinary (non-arena-bracketed) top-level `let` path: stores the value into a fresh local and
-// lowers the rest of the program with `name` bound to it.
-let lowerOrdinaryTopLevelLet name value environment continuation outerBindings state =
-    match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
-        | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
-        | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
-            state
-            |> armSourceFunction(name)(rewrittenValue)
-            |> lowerCore(rewrittenValue)
-            |> finishLetValue(
-                name,
-                topLevelContinuationBody,
-                continuation,
-                outerBindings
-            )
 
 // Called only once the caller has confirmed `value` is a direct, fully-saturating call to a
 // field-carrying constructor and `name` is provably dead. Skips `finishLetValue`'s local-slot/
@@ -6399,23 +6281,18 @@ let recursive lowerCoreProgramItems items trailingBody seen environment state =
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
                 | TopLevelDuplicateCheck { seen = nextSeen, duplicate = None } ->
                     match state with
-                        | CoreLoweringState { bindings = outerBindings, arenaBracketingArmed = alreadyArmed, constructorLayouts = constructorLayouts } ->
+                        | CoreLoweringState { bindings = outerBindings, constructorLayouts = constructorLayouts } ->
                             let continuation =
                                 given (_ignoredBody) ->
                                     given (s) -> lowerCoreProgramItems(rest)(trailingBody)(nextSeen)(environment)(s)
                             in
-                                if alreadyArmed
-                                then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(alreadyArmed)(state)
-                                else
-                                    if topLevelLetChainProvablyArenaSafe(name)(value)(rest)(trailingBody)(constructorLayouts)
-                                    then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)((state with arenaBracketingArmed = true))
-                                    else
-                                        match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
-                                            | Some(layout) ->
-                                                if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
-                                                then lowerOrdinaryTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(state)
-                                                else lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(continuation)(state)
-                                            | None -> lowerOrdinaryTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(state)
+                                match directSingleArgRcConstructorLayout(value)(constructorLayouts) with
+                                    | Some(layout) ->
+                                        if topLevelItemsMayReferenceName(rest)(trailingBody)(name)
+                                        then lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(false)(state)
+                                        else lowerDeadRcTopLevelLet(name)(value)(layout)(environment)(continuation)(state)
+                                    | None ->
+                                        lowerArenaBracketedTopLevelLet(name)(value)(environment)(continuation)(outerBindings)(topLevelNameUsedOnlyAsDirectCallee(name)(rest)(trailingBody))(state)
         | TopLevelLet(LetBindingSyntax { name = name, value = value }, true) :: rest ->
             match checkTopLevelNames([name])(seen) with
                 | TopLevelDuplicateCheck { duplicate = Some(duplicateName) } -> failure(state)(DuplicateTopLevelBinding(duplicateName))
