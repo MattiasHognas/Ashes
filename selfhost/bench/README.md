@@ -63,6 +63,22 @@ Refreshed on the commit named in the heading; fastest of three runs on a Linux x
 stage-1 binary compiled at `-O2`, .NET driver in Release. Times are milliseconds over the whole
 corpus (822 files, 475 of them import-free).
 
+### 2026-09-03, milestone 1 closed (resources, console)
+
+Refreshed at the close of the file-system and process milestone: no phase regressed against the
+previous entry, the formatter now renders every file the .NET formatter renders (the crashed
+files of the earlier entries are gone), and the corpus grew to 879 files with the milestone's
+regression tests. The parse row, lexing included, matches .NET; the header scan stays faster.
+
+| Phase | Stage 0 (.NET) ms | Stage 0 count | Stage 1 (Ashes) ms | Stage 1 count | Stage 1 / Stage 0 | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| header | 22 | 879 | 14 | 879 | 0.64x | |
+| lex | 59 | 530078 | 72 | 530119 | 1.22x | |
+| parse | 227 | 864 | 224 | 859 | 0.99x | |
+| format | 85 | 3526464 | 98 | 2818700 | 1.15x | |
+| infer (stage 1) vs infer+lower (stage 0) | 1130 | 388 | 8 | 37 | 0.01x | |
+| optimize IR (stage 0 only) | 519 | 1412 | - | - | - | |
+
 ### 2026-08-26, after the per-token copy left the lexer
 
 The lexer deep-copied every token before consing it onto the token list, a workaround from its
