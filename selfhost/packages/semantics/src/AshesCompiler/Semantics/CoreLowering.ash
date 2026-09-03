@@ -141,7 +141,7 @@ type CoreLoweringState =
     | sealedOperatorDefaults: List((Str, Int, SemanticType))
     | pendingSourceFunction: Maybe(SourceFunctionOrigin)
     | activeFunctionOrigin: Maybe(IrFunctionOrigin)
-    | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType)))
+    | pendingClosureNormalizers: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -1657,16 +1657,18 @@ let recursive captureLayoutText (layout: List((Int, Str))) =
                 | [] -> Ashes.Text.fromInt(offset) + ":" + text
                 | _ -> Ashes.Text.fromInt(offset) + ":" + text + ";" + captureLayoutText(rest)
 
-let machineryInstruction kind = IrInstruction(instruction = kind, location = None)
+// The normalizer's instructions carry the location of the closure they belong to, the ambient
+// span stage 0 synthesizes them under.
+let locatedInstruction (location: Maybe(IrSourceLocation)) kind = IrInstruction(instruction = kind, location = location)
 
 // The word copies of the normalizer body: capture `i` is read from the source environment (temp
 // 0) at its offset and stored into the target environment (temp 1) at the same offset, on temps
 // from 2 upward.
-let recursive normalizerCopies (layout: List((Int, Str))) (temp: Int) =
+let recursive normalizerCopies (layout: List((Int, Str))) (temp: Int) (location: Maybe(IrSourceLocation)) =
     match layout with
         | [] -> []
         | (offset, _text) :: rest ->
-            machineryInstruction(LoadMemOffset(temp)(0)(offset)) :: machineryInstruction(StoreMemOffset(1)(offset)(temp)) :: normalizerCopies(rest)(temp + 1)
+            locatedInstruction(location)(LoadMemOffset(temp)(0)(offset)) :: locatedInstruction(location)(StoreMemOffset(1)(offset)(temp)) :: normalizerCopies(rest)(temp + 1)(location)
 
 let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layoutText: Str) =
     IrFunctionOrigin(
@@ -1682,15 +1684,15 @@ let closureNormalizerOrigin (label: Str) (closureLabel: Str) (closureOrigin: IrF
 // Stage 0's `lambda$env_normalize` helper for a closure whose captures are all scalars: called
 // with the source environment in slot 0 and the target environment in slot 1, it copies every
 // capture across and returns 0, the "no dropper" address, since scalar captures own nothing.
-let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str))) =
+let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrigin) (layout: List((Int, Str))) (location: Maybe(IrSourceLocation)) =
     ((given (labelled) ->
         match labelled with
             | (label, resultTemp) ->
                 IrFunction(
                     label = label,
-                    instructions = append(machineryInstruction(LoadLocal(0)(0)) :: machineryInstruction(LoadLocal(1)(1)) :: normalizerCopies(layout)(2))([0
+                    instructions = append(locatedInstruction(location)(LoadLocal(0)(0)) :: locatedInstruction(location)(LoadLocal(1)(1)) :: normalizerCopies(layout)(2)(location))([0
                     |> LoadConstInt(resultTemp)
-                    |> machineryInstruction, machineryInstruction(Return(resultTemp))]),
+                    |> locatedInstruction(location), locatedInstruction(location)(Return(resultTemp))]),
                     localCount = 2,
                     tempCount = resultTemp + 1,
                     hasEnvAndArgParams = true,
@@ -1709,7 +1711,7 @@ let closureNormalizerFunction (closureLabel: Str) (closureOrigin: IrFunctionOrig
 let recordClosureNormalizer (closureLabel: Str) (captures: List(CoreBinding)) (closureOrigin: IrFunctionOrigin) (state: CoreLoweringState) =
     match captures with
         | [] -> state
-        | _ -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures)) :: state.pendingClosureNormalizers
+        | _ -> state with pendingClosureNormalizers = (closureLabel, closureOrigin, captureTypes(captures), currentLocation(state)) :: state.pendingClosureNormalizers
 
 let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: List(IrFunction)) =
     match functions with
@@ -1722,14 +1724,14 @@ let recursive insertAfterLabel (label: Str) (inserted: IrFunction) (functions: L
 // Places each recorded closure's normalizer right after the closure's own function, as stage 0
 // synthesizes it when the closure is emitted, for the closures whose captures all resolve to
 // scalars.
-let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, List(SemanticType)))) (defaulted: List(Int)) (state: CoreLoweringState) (functions: List(IrFunction)) =
+let recursive insertClosureNormalizers (pending: List((Str, IrFunctionOrigin, List(SemanticType), Maybe(IrSourceLocation)))) (defaulted: List(Int)) (state: CoreLoweringState) (functions: List(IrFunction)) =
     match pending with
         | [] -> functions
-        | (closureLabel, closureOrigin, types) :: rest ->
+        | (closureLabel, closureOrigin, types, location) :: rest ->
             match scalarCaptureLayout(types)(0)(defaulted)(state) with
                 | Some(layout) ->
                     functions
-                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(layout))
+                    |> insertAfterLabel(closureLabel)(closureNormalizerFunction(closureLabel)(closureOrigin)(layout)(location))
                     |> insertClosureNormalizers(rest)(defaulted)(state)
                 | None -> insertClosureNormalizers(rest)(defaulted)(state)(functions)
 
