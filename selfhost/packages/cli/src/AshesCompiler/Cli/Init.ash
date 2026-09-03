@@ -34,9 +34,9 @@ let parseInitArguments args =
         | "--help" :: [] -> InitHelpRequested
         | "-h" :: [] -> InitHelpRequested
         | _ -> InitUsageError("Unknown argument.")
+
 // The exact `ashes.json` text stage 0 writes: two-space indent, `sourceRoots` as a one-element
 // array with its own lines, and a trailing newline after the closing brace.
-
 let initProjectJson projectName = "{\n  \"name\": \"" + projectName + "\",\n  \"entry\": \"src/Main.ash\",\n  \"sourceRoots\": [\n    \"src\"\n  ]\n}\n"
 
 let helloWorldSource = "Ashes.IO.print(\"hello, ashes!\")\n"

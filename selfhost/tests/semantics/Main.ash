@@ -46,6 +46,7 @@ import OwnershipInferenceTests
 import HeapLayoutClassificationTests
 import ExplainReportTests
 import TaglessAdtLayoutTests
+import StructuralDroppersTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -92,6 +93,7 @@ let run unit =
     |> (given (_) -> HeapLayoutClassificationTests.runHeapLayoutClassificationTests(Unit))
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
+    |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)

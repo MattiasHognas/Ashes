@@ -33,7 +33,11 @@ import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
+import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
+import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
+import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
 import AshesCompiler.Semantics.TraitEvidenceRewriting
@@ -182,6 +186,8 @@ type CoreLoweringState =
     | runtimeOwners: List((Int, Bool))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
     | letLambdaLabels: List((Str, Str))
+    | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
+    | dropperLabels: DropperLabelCache
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -403,7 +409,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeTemps = [],
         runtimeOwners = [],
         bodyRuntimeManagedByLabel = [],
-        letLambdaLabels = []
+        letLambdaLabels = [],
+        programParameterOwnership = [],
+        dropperLabels = emptyDropperLabelCache
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -1315,14 +1323,51 @@ let recursive markConsumedArguments (arguments: List(Expr)) (index: Int) (owners
                     |> markResourceArgumentMoved(argument)
                     |> markConsumedArguments(rest)(index + 1)(ownership)
 
+// Positionally overlays the whole-program verdict on the single-function one: a parameter the
+// fixpoint proved borrowed stays a borrow where the single-function summary saw a consuming
+// hand-off; every other parameter keeps its single-function classification.
+let recursive overlayProvenBorrows (proven: List((Str, ParameterOwnership))) (ownership: List((Str, ParameterOwnership))) =
+    match (proven, ownership) with
+        | ((_provenParameter, Borrowed) :: provenRest, (parameter, _kind) :: rest) -> (parameter, Borrowed) :: overlayProvenBorrows(provenRest)(rest)
+        | (_provenEntry :: provenRest, entry :: rest) -> entry :: overlayProvenBorrows(provenRest)(rest)
+        | (_, remaining) -> remaining
+
+let recursive sameParameterNames (proven: List((Str, ParameterOwnership))) (parameters: List(Str)) =
+    match (proven, parameters) with
+        | ([], []) -> true
+        | ((provenParameter, _kind) :: provenRest, parameter :: rest) -> provenParameter == parameter && sameParameterNames(provenRest)(rest)
+        | _ -> false
+
+let recursive registeredTopLevelName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == name || registeredTopLevelName(name)(rest)
+
+// Stage 0's open-world hand-off approval: the whole-program inspect-only fixpoint
+// (`inferProgramParameterOwnership`) is consulted for a callee that is a registered top-level
+// function whose parameter chain is the one the fixpoint classified, so a hand-off to a proven
+// inspecting helper stays a borrow; a callee the fixpoint did not resolve (a local lambda, or a
+// name shadowing a registered function with a different parameter chain) keeps the
+// single-function verdict.
+let provenParameterOwnership (callee: Str) (parameters: List(Str)) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
+    match lookupProgramParameterOwnership(callee)(state.programParameterOwnership) with
+        | Some(proven) ->
+            if registeredTopLevelName(callee)(state.topLevelNames) && sameParameterNames(proven)(parameters)
+            then overlayProvenBorrows(proven)(ownership)
+            else ownership
+        | None -> ownership
+
 // Stage 0's per-argument `borrowsOnly` decision for a general call: an argument naming a live
-// resource moves unless the callee is a let-bound lambda proven to only read that parameter.
+// resource moves unless the callee is a let-bound lambda proven to only read that parameter,
+// by its own summary or by the whole-program fixpoint.
 let markCallArgumentsMoved (spine: CoreCallSpine) (state: CoreLoweringState) =
     match unspanArgument(spine.root) with
         | ExprVar(callee) ->
             match lookupLetLambda(callee)(state.letLambdas) with
                 | Some((parameters, body)) ->
-                    markConsumedArguments(spine.arguments)(0)(classifyParameterOwnership(parameters)(body)([]))(state)
+                    state
+                    |> provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))
+                    |> (given (ownership) -> markConsumedArguments(spine.arguments)(0)(ownership)(state))
                 | None -> markResourceArgumentsMoved(spine.arguments)(state)
         | _ -> markResourceArgumentsMoved(spine.arguments)(state)
 
@@ -6993,22 +7038,33 @@ let directSingleArgRcConstructorLayout (expr: Expr) (constructorLayouts: List(Co
                 | _ -> None
         | _ -> None
 
+// Names the structural release helper for a value of `semanticType` (stage 0's
+// `SynthesizeStructuralOwnerDropper`), synthesizing it and any ADT dropper it calls into the
+// program once per type through the state's label cache; `None` when the value's release is a
+// single allocation.
+let synthesizeStructuralDropperLabel (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeStructuralOwnerDropper(resolveType(state)(semanticType))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+
 // Called only once the caller has confirmed `value` is a direct, fully-saturating call to a
 // field-carrying constructor and `name` is provably dead. Skips `finishLetValue`'s local-slot/
 // binding machinery entirely (nothing will ever read `name` back): lowers the value, immediately
-// releases it with a single non-cascading `RcDrop` (`ownerSlot = -1`, since this value is never
-// stored to a local), then continues lowering the rest of the program.
+// releases it with a single `RcDrop` (`ownerSlot = -1`, since this value is never stored to a
+// local) naming the type's structural dropper when the release reaches past the cell, then
+// continues lowering the rest of the program.
 let lowerDeadRcTopLevelLet name value layout environment continuation state =
     match rewriteTraitConstrainedTopLevelValue(name)(value)(environment) with
         | TraitConstrainedTopLevelValueRewriting { value = _rewrittenValue, error = Some(error) } -> failure(state)(UnresolvedTraitEvidenceForwarding(error))
         | TraitConstrainedTopLevelValueRewriting { value = rewrittenValue, error = None } ->
             match lowerCore(rewrittenValue)((state with runtimeAdtRequested = true)) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
-                | LoweredCoreValue { state = valueState, temp = valueTemp, error = None } ->
-                    match layout with
-                        | CoreConstructorLayout { name = constructorName } ->
-                            (valueState with runtimeAdtRequested = false)
-                            |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(None))
+                | LoweredCoreValue { state = valueState, temp = valueTemp, semanticType = valueType, error = None } ->
+                    match (layout, synthesizeStructuralDropperLabel(valueType)((valueState with runtimeAdtRequested = false))) with
+                        | (CoreConstructorLayout { name = constructorName }, (dropperLabel, dropperState)) ->
+                            dropperState
+                            |> emit(RcDrop(valueTemp)(constructorName)(-1)(true)(false)(dropperLabel))
                             |> continuation(topLevelContinuationBody)
 
 let recursive constructorFieldSemanticTypes (parameters: List(TypeExpr)) (parameterTypes: List((Str, SemanticType))) =
@@ -7441,6 +7497,11 @@ let buildProgram lowered =
                                             error = None
                                         )
 
+// Seeds the state with the whole-program inspect-only fixpoint over the program's registered
+// top-level functions, the verdict `markCallArgumentsMoved` consults for hand-offs.
+let withProgramParameterOwnership (program: ProgramSyntax) (state: CoreLoweringState) =
+    state with programParameterOwnership = inferProgramParameterOwnership(topLevelFunctions(program))
+
 let lowerCoreProgram (program: ProgramSyntax) =
     match program with
         | ProgramSyntax { items = items, body = body } ->
@@ -7452,6 +7513,7 @@ let lowerCoreProgram (program: ProgramSyntax) =
                 Unit
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
+                |> withProgramParameterOwnership(program)
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
@@ -7478,6 +7540,7 @@ let lowerCoreProgramWithSourceAndContext (filePath: Str) (source: Str) (program:
                 |> initialStateWithContext(constructorLayouts)(builtinLayouts)
                 |> (given (state: CoreLoweringState) ->
                     state with sourceContext = Some(createSourceContext(filePath)(source)), topLevelNames = allTopLevelBindingNames(items))
+                |> withProgramParameterOwnership(program)
                 |> lowerCoreProgramItems(items)(trailingBody)([])(None)
                 |> buildProgram
 
@@ -7503,6 +7566,7 @@ let lowerCoreProgramWithEnvironment (environment: TypeEnvironment) (program: Pro
                 Unit
                 |> initialState
                 |> (given (state: CoreLoweringState) -> state with topLevelNames = allTopLevelBindingNames(items))
+                |> withProgramParameterOwnership(program)
                 |> lowerCoreProgramItems(items)(trailingBody)([])(Some(environment))
                 |> buildProgram
 

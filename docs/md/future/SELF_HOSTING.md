@@ -668,7 +668,7 @@ same public behavior.
   body, or a well-formed program hits the forward-reference diagnostic (`ASH014`).
 - [x] **OPT-21** Infer parameter/capture ownership, result reachability and freshness, moves, borrows,
   forwarding, and whole-program SCC provenance summaries.
-- [~] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
+- [x] **OPT-22** Prove open-world inspect-only parameters as a monotone least fixpoint over every registered
   function, so in-place reuse borrowing survives a hand-off to a proven read-only helper
   (`FunctionOwnershipSummary.ParameterOwnership` cannot answer this — it classifies a plain
   inspecting helper's parameter as consumed).
@@ -678,8 +678,13 @@ same public behavior.
   repeat until stable), so a hand-off to a proven inspecting helper or a chain of them stays
   borrowed, a genuine hand-off cycle never converges and stays consumed, and a shadowed,
   unregistered, ambiguous, or partially applied callee still consumes;
-  `inferProgramOwnership` reports the fixpoint verdict. Deferred: `CoreLowering`'s call-site
-  borrow decision still asks the single-function `classifyParameterOwnership`.
+  `inferProgramOwnership` reports the fixpoint verdict. `CoreLowering` seeds its state with the
+  fixpoint over the program's top-level functions (`withProgramParameterOwnership`) and its
+  call-site borrow decision (`markCallArgumentsMoved`) overlays the proven verdict on the
+  single-function summary the way stage 0's call lowering consults its proven inspect-only set:
+  a parameter the fixpoint proved borrowed stays a borrow where the single-function summary saw
+  a consuming hand-off, for a callee that is a registered top-level function with the classified
+  parameter chain; a local lambda or a shadowing name keeps the single-function verdict.
 - [~] **OPT-23** Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts.
   Done (`HeapLayoutClassification.ash`): resource-bearing and unresolved-type detection
   (cycle-guarded) and per-child drop kinds for list/tuple/ADT shapes, with constructor fields
@@ -762,6 +767,21 @@ same public behavior.
   parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
   owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
   aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).
+  Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
+  (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the
+  unique-guarded tuple and single-constructor walks, string/bytes/bigint leaves) and the
+  constructor-switching ADT dropper (`__rcdrop_N`, called for a recursive-copy or owned-child
+  ADT child, self-calls through the label cache) as complete env-and-arg `IrFunction`s with
+  their type-owned origins, from the pruned type and `HeapLayoutClassification`'s per-child drop
+  kinds under a per-name symbol id, matching stage 0's instruction text for a record with a list
+  and a string, a list of such records, a tuple with a list, a recursive tree, and an owned-child
+  variant (`StructuralDroppersTests.ash`; the droppers still emit `GetAdtField` with
+  `Tagless=false`, so the OPT-24 flag has to be threaded through `emitAdtFieldDrops` and
+  `emitConstructorSwitch`). `CoreLowering` caches the labels per pretty type
+  (`dropperLabels`) and names the dropper on the dead top-level constructor drop. Open on the
+  droppers: the `Result(Str, BigInt)` and text-uncons special drops, zero-cost erasure in the
+  classification environment (the dropper environment carries no type-resolution context), and
+  naming the dropper on the owned-`let` and pattern-owner releases once those are runtime-managed.
 - [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
@@ -929,8 +949,10 @@ same public behavior.
   decrement), `DropReuse` (the cell as token when unique, else decrement and the null token;
   immortal yields null untouched), and `AllocReusing` (tag store into the token, or a fresh RC
   cell of the layout on a null runtime-managed token; arena tokens are the tag store alone);
-  string literals carry the immortal sentinel so every path leaves static storage alone. libc
-  `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  string literals carry the immortal sentinel so every path leaves static storage alone. The
+  provably-dead top-level constructor drop names its type's synthesized structural dropper
+  (`StructuralDroppers.ash`, see OPT-25) when the payload reaches past the cell, and the dropper
+  functions are registered in the program. libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
   (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
   free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
   cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
