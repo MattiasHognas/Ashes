@@ -740,13 +740,14 @@ let isParamUsedOnlyAsBorrowRead (expr: Expr) (param: Str) = borrowReadWalk([])([
 
 // --- Whole-program inspect-only parameters ---
 // `inferProgramParameterOwnership` refines the single-function verdict with every other registered
-// function's: the table starts with every parameter borrowed, each pass re-classifies every
-// function against the current table (a parameter is demoted to consumed as soon as one mention
-// is not a borrow read, and never recovers), and the pass repeats until no parameter changes. The
-// consumed set is therefore the least fixpoint of the demotion rule, so a hand-off through a
-// chain or a cycle of purely inspecting functions stays borrowed, while a single retaining member
-// of a cycle demotes everyone that hands the parameter to it. Termination is bounded by the
-// finite parameter count: every non-final pass demotes at least one parameter.
+// function's, in stage 0's direction: the proven set starts empty (every parameter consumed), each
+// pass re-checks every still-consumed parameter against the current table and promotes it to
+// borrowed once every mention is a borrow read (a proven parameter is never re-examined), and the
+// pass repeats until no parameter changes. The borrowed set is the least fixpoint of the promotion
+// rule, so a chain of hand-offs to self-contained inspecting helpers converges over several passes,
+// while a genuine cycle of hand-offs never does: neither side is in the table when the other is
+// checked, so both members stay consumed. Termination is bounded by the finite parameter count:
+// every non-final pass promotes at least one parameter.
 let recursive lookupProgramParameterOwnership (name: Str) (table: ProgramParameterOwnership) =
     match table with
         | [] -> None
@@ -755,33 +756,33 @@ let recursive lookupProgramParameterOwnership (name: Str) (table: ProgramParamet
             then Some(ownership)
             else lookupProgramParameterOwnership(name)(rest)
 
-let recursive allBorrowed (params: List(Str)) =
+let recursive allConsumed (params: List(Str)) =
     match params with
         | [] -> []
-        | param :: rest -> (param, Borrowed) :: allBorrowed(rest)
+        | param :: rest -> (param, Consumed) :: allConsumed(rest)
 
-let recursive optimisticProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
+let recursive unprovenProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
     match funcs with
         | [] -> []
-        | (name, params, _body) :: rest -> (name, allBorrowed(params)) :: optimisticProgramParameterOwnership(rest)
+        | (name, params, _body) :: rest -> (name, allConsumed(params)) :: unprovenProgramParameterOwnership(rest)
 
-let recursive demoteParameters (table: ProgramParameterOwnership) (shadowed: List(Str)) (body: Expr) (previous: List((Str, ParameterOwnership))) =
+let recursive promoteParameters (table: ProgramParameterOwnership) (shadowed: List(Str)) (body: Expr) (previous: List((Str, ParameterOwnership))) =
     match previous with
         | [] -> []
-        | (param, Consumed) :: rest -> (param, Consumed) :: demoteParameters(table)(shadowed)(body)(rest)
-        | (param, Borrowed) :: rest ->
+        | (param, Borrowed) :: rest -> (param, Borrowed) :: promoteParameters(table)(shadowed)(body)(rest)
+        | (param, Consumed) :: rest ->
             let own =
                 if borrowReadWalk(table)(shadowed)(body)(param)
                 then Borrowed
                 else Consumed
-            in (param, own) :: demoteParameters(table)(shadowed)(body)(rest)
+            in (param, own) :: promoteParameters(table)(shadowed)(body)(rest)
 
 let recursive refineProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) (previous: ProgramParameterOwnership) =
     match funcs with
         | [] -> []
         | (name, params, body) :: restFuncs ->
             match previous with
-                | (_name, ownership) :: restPrevious -> (name, demoteParameters(table)(params)(body)(ownership)) :: refineProgramParameterOwnership(restFuncs)(table)(restPrevious)
+                | (_name, ownership) :: restPrevious -> (name, promoteParameters(table)(params)(body)(ownership)) :: refineProgramParameterOwnership(restFuncs)(table)(restPrevious)
                 | [] -> []
 
 let recursive runInspectOnlyFixpoint (funcs: List((Str, List(Str), Expr))) (table: ProgramParameterOwnership) =
@@ -795,7 +796,7 @@ let recursive runInspectOnlyFixpoint (funcs: List((Str, List(Str), Expr))) (tabl
 // function, after the whole-program fixpoint; entries keep the registration order.
 let inferProgramParameterOwnership (funcs: List((Str, List(Str), Expr))) =
     funcs
-    |> optimisticProgramParameterOwnership
+    |> unprovenProgramParameterOwnership
     |> runInspectOnlyFixpoint(funcs)
 
 // The innermost body of a curried lambda value and its parameter chain.

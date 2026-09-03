@@ -520,14 +520,13 @@ let testWrapperStoringParameterIsConsumed unit =
     |> assertConsumed("keep")(["h"])
     |> done
 
-// Two mutually recursive functions that only read the handle or hand it to each other.
-let testMutuallyRecursiveInspectorsAreBorrowed unit =
+// Two mutually recursive functions that hand the handle to each other: neither is proven before the
+// other is checked, so the cycle never converges to borrowed (stage 0's outcome).
+let testMutuallyRecursiveInspectorsStayConsumed unit =
     "let recursive ping h n = if n == 0 then Ashes.IO.File.readChunk(h)(1) else pong(h)(n - 1)\nand pong h n = if n == 0 then Ashes.IO.File.readChunk(h)(2) else ping(h)(n - 1)\n"
     |> programOwnershipTable
-    |> assertBorrowed("ping")(["h"])
-    |> assertConsumed("ping")(["n"])
-    |> assertBorrowed("pong")(["h"])
-    |> assertConsumed("pong")(["n"])
+    |> assertConsumed("ping")(["h", "n"])
+    |> assertConsumed("pong")(["h", "n"])
     |> done
 
 // One member of the cycle returns the handle, so the handle flowing through the other is consumed.
@@ -625,7 +624,7 @@ let runOwnershipInferenceTests unit =
     |> testInspectingHelperAndWrapperAreBorrowed
     |> testSingleFunctionVerdictForWrapperStaysConsumed
     |> testWrapperStoringParameterIsConsumed
-    |> testMutuallyRecursiveInspectorsAreBorrowed
+    |> testMutuallyRecursiveInspectorsStayConsumed
     |> testCycleWithRetainingMemberIsConsumed
     |> testUnregisteredCalleeIsConsumed
     |> testShadowedCalleeIsConsumed
