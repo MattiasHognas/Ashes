@@ -674,8 +674,13 @@ same public behavior.
 - [~] **OPT-23** Classify copy, RC-managed, resource, borrowed-view, region, and unsupported heap layouts.
   Done (`HeapLayoutClassification.ash`): resource-bearing and unresolved-type detection
   (cycle-guarded) and per-child drop kinds for list/tuple/ADT shapes, with constructor fields
-  instantiated against concrete type arguments. Deferred to reuse specialization: structural copy
-  kinds and the `Runtime*Supported` reuse-eligibility flags (no consumer exists yet).
+  instantiated against concrete type arguments; the structural copy kind of the whole graph and of
+  every child (inline, shallow, deep, or none), whether every owned child is droppable, the
+  runtime outer-cell reuse eligibility with its copy/record/owned-child/TCO-owned-child/recursive
+  ADT and TCO list-element support flags, and the stable rejection flags (resource or borrowed-view
+  containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
+  Deferred to reuse specialization: the borrowed-view projection of a capability and the consumer
+  that reads the reuse flags (none exists yet).
 - [ ] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
