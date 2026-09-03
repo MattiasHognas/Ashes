@@ -3488,6 +3488,293 @@ let testArenaRestoreReusesCursor unit = expectExecutableLine(buildArenaRestoreRe
 
 let testArenaGrowAndReclaim unit = expectExecutableLine(buildArenaGrowAndReclaimModule)("selfhostBackendArenaGrow")("selfhost_backend_arena_grow_e2e")("true")
 
+// The copy-out fixtures below all place their source above a scope watermark in a chunk of its
+// own (a 6 MB `Alloc` right after `SaveArenaState` grows the arena into a fresh chunk, and every
+// later allocation in the bracket lands there too), so `ReclaimArenaChunks` unmaps the source:
+// reading the copy afterwards proves it lives elsewhere.
+// A two-field arena ADT copied to an RC cell before the reset; the two fields (`7` and `35`) are
+// read back from the copy after the reclaim. Prints `42`.
+let buildCopyOutArenaRcAdtModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(7), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(35), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(24)(true)(RcNormalization)(None), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = AddInt(7)(5)(6), location = None),
+        IrInstruction(instruction = PrintInt(7), location = None),
+        IrInstruction(instruction = LoadConstInt(8)(0), location = None),
+        IrInstruction(instruction = Return(8), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(9))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// The same ADT copied into the arena AFTER the reset (the destination is the first allocation at
+// the rewound cursor, so its address equals the saved watermark in local slot `0`) and read after
+// the reclaim. Prints `43`: the field sum `42` plus the `1` of the address comparison.
+let buildCopyOutArenaScopedAdtModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(7), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(35), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(24)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = AddInt(7)(5)(6), location = None),
+        IrInstruction(instruction = LoadLocal(8)(0), location = None),
+        IrInstruction(instruction = CmpIntEq(9)(4)(8), location = None),
+        IrInstruction(instruction = AddInt(10)(7)(9), location = None),
+        IrInstruction(instruction = PrintInt(10), location = None),
+        IrInstruction(instruction = LoadConstInt(11)(0), location = None),
+        IrInstruction(instruction = Return(11), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(12))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// An arena copy whose destination overlaps its source: a 16-byte cell sits at the watermark and
+// the 24-byte source right after it, so after the reset the copy lands 16 bytes below the source
+// and the two ranges overlap by 8 bytes. The ascending byte move reads every byte before the
+// write that would clobber it. Prints `42`.
+let buildCopyOutArenaOverlappingModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = AllocAdt(0)(0)(1)(false), location = None),
+        IrInstruction(instruction = AllocAdt(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(7), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(35), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(24)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = GetAdtField(5)(4)(0), location = None),
+        IrInstruction(instruction = GetAdtField(6)(4)(1), location = None),
+        IrInstruction(instruction = AddInt(7)(5)(6), location = None),
+        IrInstruction(instruction = PrintInt(7), location = None),
+        IrInstruction(instruction = LoadConstInt(8)(0), location = None),
+        IrInstruction(instruction = Return(8), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(9))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A `ConcatStr` result copied out by its header length (`StaticSizeBytes = -1`) into an RC
+// string, that copy copied again into an arena string, and both printed around a `|`. Prints
+// `hello|hello`.
+let buildCopyOutArenaStringModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = LoadConstStr(1)("s1"), location = None),
+        IrInstruction(instruction = ConcatStr(2)(0)(1)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(3)(2)(-1)(true)(RcNormalization)(None), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(3)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = LoadConstStr(5)("s2"), location = None),
+        IrInstruction(instruction = ConcatStr(6)(3)(5)(false), location = None),
+        IrInstruction(instruction = ConcatStr(7)(6)(4)(false), location = None),
+        IrInstruction(instruction = PrintStr(7), location = None),
+        IrInstruction(instruction = LoadConstInt(8)(0), location = None),
+        IrInstruction(instruction = Return(8), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(9))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "hel"), IrStringLiteral(label = "s1", value = "lo"), IrStringLiteral(label = "s2", value = "|")]))
+
+// A one-limb `BigInt` (`{header = 1, limb = 42}`) built in the arena, copied to an RC cell by its
+// limb count (`copyOutBigIntSize`), and its limb read after the reclaim. Prints `42`.
+let buildCopyOutArenaBigIntModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(42), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(8)(3), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(copyOutBigIntSize)(true)(RcNormalization)(None), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(5)(4)(8), location = None),
+        IrInstruction(instruction = PrintInt(5), location = None),
+        IrInstruction(instruction = LoadConstInt(6)(0), location = None),
+        IrInstruction(instruction = Return(6), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(7))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// Two arena cons cells `[1, 2]` (`{head, tail}` words) copied as RC cells before the reset; both
+// heads and the final nil tail are read back after the reclaim. Prints `12`.
+let buildCopyOutListRcInlineModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(2), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(8)(3), location = None),
+        IrInstruction(instruction = Alloc(4)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(5), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(8)(1), location = None),
+        IrInstruction(instruction = CopyOutList(6)(4)(InlineListHead)(true)(RcNormalization), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(7)(6)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(8)(6)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(8)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(10)(10), location = None),
+        IrInstruction(instruction = MulInt(11)(7)(10), location = None),
+        IrInstruction(instruction = AddInt(12)(11)(9), location = None),
+        IrInstruction(instruction = LoadMemOffset(13)(8)(8), location = None),
+        IrInstruction(instruction = AddInt(14)(12)(13), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = LoadConstInt(15)(0), location = None),
+        IrInstruction(instruction = Return(15), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(16))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// The same `[1, 2]` copied into the arena after the reset, its cells landing at the rewound cursor
+// while the sources sit in the chunk the reclaim then unmaps. Prints `12`.
+let buildCopyOutListScopedInlineModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(2), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(8)(3), location = None),
+        IrInstruction(instruction = Alloc(4)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(5), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(8)(1), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutList(6)(4)(InlineListHead)(false)(ArenaScopeBoundary), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(7)(6)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(8)(6)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(8)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(10)(10), location = None),
+        IrInstruction(instruction = MulInt(11)(7)(10), location = None),
+        IrInstruction(instruction = AddInt(12)(11)(9), location = None),
+        IrInstruction(instruction = LoadMemOffset(13)(8)(8), location = None),
+        IrInstruction(instruction = AddInt(14)(12)(13), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = LoadConstInt(15)(0), location = None),
+        IrInstruction(instruction = Return(15), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(16))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// `["ab", "cd"]` whose heads are arena strings (literal copies made inside the bracket, so they
+// live in the unmapped chunk too), copied with string heads into the arena after the reset; the
+// two copied heads are concatenated after the reclaim. Prints `abcd`.
+let buildCopyOutListScopedStringHeadsModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = LoadConstStr(1)("s1"), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(2)(6000000)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(3)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = Alloc(5)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(5)(0)(4), location = None),
+        IrInstruction(instruction = LoadConstInt(6)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(5)(8)(6), location = None),
+        IrInstruction(instruction = Alloc(7)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(0)(3), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(8)(5), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutList(8)(7)(StringListHead)(false)(ArenaScopeBoundary), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(8)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(10)(8)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(11)(10)(0), location = None),
+        IrInstruction(instruction = ConcatStr(12)(9)(11)(false), location = None),
+        IrInstruction(instruction = PrintStr(12), location = None),
+        IrInstruction(instruction = LoadConstInt(13)(0), location = None),
+        IrInstruction(instruction = Return(13), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(14))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "ab"), IrStringLiteral(label = "s1", value = "cd")]))
+
+// `[[1, 2], [3]]` copied with inner-list heads into the arena after the reset: the outer chain and
+// every inner chain are rebuilt below the watermark. Prints `123` from the three inner heads.
+let buildCopyOutListScopedInnerListsModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(0), location = None),
+        IrInstruction(instruction = Alloc(2)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(2), location = None),
+        IrInstruction(instruction = StoreMemOffset(2)(0)(3), location = None),
+        IrInstruction(instruction = StoreMemOffset(2)(8)(1), location = None),
+        IrInstruction(instruction = Alloc(4)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(5), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(8)(2), location = None),
+        IrInstruction(instruction = Alloc(6)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(7)(3), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(0)(7), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(8)(1), location = None),
+        IrInstruction(instruction = Alloc(8)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(8)(0)(6), location = None),
+        IrInstruction(instruction = StoreMemOffset(8)(8)(1), location = None),
+        IrInstruction(instruction = Alloc(9)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(9)(0)(4), location = None),
+        IrInstruction(instruction = StoreMemOffset(9)(8)(8), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutList(10)(9)(InnerListHead)(false)(ArenaScopeBoundary), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(11)(10)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(12)(11)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(13)(11)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(14)(13)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(15)(10)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(16)(15)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(17)(16)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(18)(10), location = None),
+        IrInstruction(instruction = MulInt(19)(12)(18), location = None),
+        IrInstruction(instruction = AddInt(20)(19)(14), location = None),
+        IrInstruction(instruction = MulInt(21)(20)(18), location = None),
+        IrInstruction(instruction = AddInt(22)(21)(17), location = None),
+        IrInstruction(instruction = PrintInt(22), location = None),
+        IrInstruction(instruction = LoadConstInt(23)(0), location = None),
+        IrInstruction(instruction = Return(23), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(24))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+let testCopyOutArenaRcAdt unit = assertProgramPrints(buildCopyOutArenaRcAdtModule)("selfhostBackendCopyOutArenaRcAdt")("selfhost_backend_copy_out_arena_rc_adt_e2e")("42")
+
+let testCopyOutArenaScopedAdt unit = assertProgramPrints(buildCopyOutArenaScopedAdtModule)("selfhostBackendCopyOutArenaScopedAdt")("selfhost_backend_copy_out_arena_scoped_adt_e2e")("43")
+
+let testCopyOutArenaOverlapping unit = assertProgramPrints(buildCopyOutArenaOverlappingModule)("selfhostBackendCopyOutArenaOverlapping")("selfhost_backend_copy_out_arena_overlapping_e2e")("42")
+
+let testCopyOutArenaString unit = assertProgramPrints(buildCopyOutArenaStringModule)("selfhostBackendCopyOutArenaString")("selfhost_backend_copy_out_arena_string_e2e")("hello|hello")
+
+let testCopyOutArenaBigInt unit = assertProgramPrints(buildCopyOutArenaBigIntModule)("selfhostBackendCopyOutArenaBigInt")("selfhost_backend_copy_out_arena_bigint_e2e")("42")
+
+let testCopyOutListRcInline unit = assertProgramPrints(buildCopyOutListRcInlineModule)("selfhostBackendCopyOutListRcInline")("selfhost_backend_copy_out_list_rc_inline_e2e")("12")
+
+let testCopyOutListScopedInline unit = assertProgramPrints(buildCopyOutListScopedInlineModule)("selfhostBackendCopyOutListScopedInline")("selfhost_backend_copy_out_list_scoped_inline_e2e")("12")
+
+let testCopyOutListScopedStringHeads unit = assertProgramPrints(buildCopyOutListScopedStringHeadsModule)("selfhostBackendCopyOutListScopedStringHeads")("selfhost_backend_copy_out_list_scoped_string_heads_e2e")("abcd")
+
+let testCopyOutListScopedInnerLists unit = assertProgramPrints(buildCopyOutListScopedInnerListsModule)("selfhostBackendCopyOutListScopedInnerLists")("selfhost_backend_copy_out_list_scoped_inner_lists_e2e")("123")
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -3575,6 +3862,15 @@ let run shipped =
     |> testLinkAndRunDynamicMallocFreeModule
     |> testArenaRestoreReusesCursor
     |> testArenaGrowAndReclaim
+    |> testCopyOutArenaRcAdt
+    |> testCopyOutArenaScopedAdt
+    |> testCopyOutArenaOverlapping
+    |> testCopyOutArenaString
+    |> testCopyOutArenaBigInt
+    |> testCopyOutListRcInline
+    |> testCopyOutListScopedInline
+    |> testCopyOutListScopedStringHeads
+    |> testCopyOutListScopedInnerLists
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

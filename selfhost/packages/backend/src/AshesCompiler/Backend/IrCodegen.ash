@@ -617,11 +617,15 @@ let codegenInstructionKind cx builder kind state =
                                                             |> emitProcessDrop(context)(function_)(builder)(i64)(i8)(ptrType)
                                                         in (tempEnv, terminated)
                                                     else Ashes.IO.panic("codegen: CleanupResource for " + typeName + " not yet supported")
-                        // `CopyOutArena` moves a value below a scope's restored watermark before
-                        // its chunks are reclaimed. `CoreLowering.ash` only brackets scopes whose
-                        // values are provably scalar, so it never emits one; the copy itself
-                        // (stage 0's `EmitCopyOutArena` size kinds) is not ported yet.
-                                        | CopyOutArena(_destTemp, _srcTemp, _staticSizeBytes, _runtimeManaged, _purpose, _semanticType) -> Ashes.IO.panic("codegen: CopyOutArena not yet supported")
+                        // `CopyOutArena`/`CopyOutList` move a value that lives above a scope's
+                        // restored watermark to storage that survives the reset — an RC cell or an
+                        // arena block below the watermark — before the chunks are reclaimed. Each
+                        // is one call into the module-level helpers `IrCodegen.Arena` defines; the
+                        // purpose operand does not change the copy.
+                                        | CopyOutArena(destTemp, srcTemp, staticSizeBytes, runtimeManaged, _purpose, _semanticType) ->
+                                            ((destTemp, emitCopyOutArena(builder)(i64)(arena)(lookupIndexed(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                        | CopyOutList(destTemp, srcTemp, headCopy, runtimeManaged, _purpose) ->
+                                            ((destTemp, emitCopyOutList(builder)(i64)(arena)(lookupIndexed(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
                                         | StoreLocal(slot, source) ->
                                             let _ =
                                                 localSlots
@@ -1437,6 +1441,20 @@ let recursive codegenLiftedFunctions mc functions =
                         codegenFunctionBody(mc)(lookupIndexed(label)(mc.moduleLiftedFunctions))(false)(function_)
                     in codegenLiftedFunctions(mc)(rest)
 
+// Whether any instruction is a `CopyOutArena`/`CopyOutList`: only then does the module get the
+// copy-out helpers, whose libc calls would otherwise make every program dynamically linked.
+let recursive instructionsUseCopyOut instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = CopyOutArena(_dest, _src, _size, _managed, _purpose, _elementType) } :: _ -> true
+        | IrInstruction { instruction = CopyOutList(_dest, _src, _headCopy, _managed, _purpose) } :: _ -> true
+        | _ :: rest -> instructionsUseCopyOut(rest)
+
+let recursive functionsUseCopyOut functions =
+    match functions with
+        | [] -> false
+        | IrFunction { instructions = instructions } :: rest -> instructionsUseCopyOut(instructions) || functionsUseCopyOut(rest)
+
 // Builds `void <name>()` for `entryFunction` plus `i64 <label>(i64, i64, i64)` for every function
 // in `functions`, all in one fresh module, and returns `(module_, builder)`, matching every other
 // module builder's shape in `selfhost/tests/backend` so the same `emitModule` verification
@@ -1473,25 +1491,27 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                             in
                                 let builder = createBuilder(context)
                                 in
-                                    let mc =
-                                        ModuleCodegen(
-                                            moduleRef = module_,
-                                            moduleContext = context,
-                                            moduleTypes = types,
-                                            moduleExternals = declareExternalFunctions(module_)(context)(types),
-                                            moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
-                                            moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
-                                            moduleClosureFunctionType = closureFnType,
-                                            moduleEnvpGlobal = envpGlobal,
-                                            moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                            moduleArenaRuntime = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType),
-                                            moduleBuilder = builder
-                                        )
+                                    let externals = declareExternalFunctions(module_)(context)(types)
                                     in
-                                        let _ = codegenLiftedFunctions(mc)(functions)
+                                        let mc =
+                                            ModuleCodegen(
+                                                moduleRef = module_,
+                                                moduleContext = context,
+                                                moduleTypes = types,
+                                                moduleExternals = externals,
+                                                moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
+                                                moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
+                                                moduleClosureFunctionType = closureFnType,
+                                                moduleEnvpGlobal = envpGlobal,
+                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                moduleArenaRuntime = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(functionsUseCopyOut(entryFunction :: functions))(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType),
+                                                moduleBuilder = builder
+                                            )
                                         in
-                                            let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                            in (module_, mc.moduleBuilder))
+                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                            in
+                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)
