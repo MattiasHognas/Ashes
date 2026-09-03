@@ -31,7 +31,7 @@ internal enum PatternBindingOwnershipKind
 /// location instead of the AST node.
 /// </summary>
 internal sealed record PatternBindingOwnershipFact(
-    Pattern.Var Binder,
+    Pattern Binder,
     SourceFunctionOrigin Function,
     int BindingOrdinal,
     string BindingName,

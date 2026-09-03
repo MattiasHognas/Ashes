@@ -364,16 +364,16 @@ public sealed partial class Lowering
             return true;
         }
 
-        private readonly IReadOnlyDictionary<Pattern.Var, PatternBindingOwnershipFact>
+        private readonly IReadOnlyDictionary<Pattern, PatternBindingOwnershipFact>
             _patternBindingOwnershipByBinder;
         private readonly Dictionary<int, PatternBindingOwnershipFact> _patternBindingOwnershipBySlot = [];
-        private readonly Dictionary<Pattern.Var, int> _patternBindingSlots = new(
+        private readonly Dictionary<Pattern, int> _patternBindingSlots = new(
             ReferenceEqualityComparer.Instance);
 
         private static readonly IReadOnlyList<PatternBindingOwnershipFact> EmptyPatternBindingOwnership = [];
         private static readonly IReadOnlySet<int> EmptyParameterOrdinals = new HashSet<int>();
 
-        public void RegisterPatternBindingSlot(Pattern.Var binder, int slot)
+        public void RegisterPatternBindingSlot(Pattern binder, int slot)
         {
             if (_patternBindingOwnershipByBinder.TryGetValue(
                 binder,
@@ -385,7 +385,7 @@ public sealed partial class Lowering
         }
 
         public bool TryGetPatternBinding(
-            Pattern.Var binder,
+            Pattern binder,
             out int slot,
             out PatternBindingOwnershipFact? ownership)
         {
@@ -457,7 +457,7 @@ public sealed partial class Lowering
             _consumedListTailParamOrdinals = consumedListTailParamOrdinals;
             _borrowInspectOnlyParamOrdinals = borrowInspectOnlyParamOrdinals;
             _affineSelfAppendOnlyParamOrdinals = affineSelfAppendOnlyParamOrdinals;
-            var ownershipByBinder = new Dictionary<Pattern.Var, PatternBindingOwnershipFact>(
+            var ownershipByBinder = new Dictionary<Pattern, PatternBindingOwnershipFact>(
                 ReferenceEqualityComparer.Instance);
             foreach (PatternBindingOwnershipFact fact in patternBindingOwnership)
             {
