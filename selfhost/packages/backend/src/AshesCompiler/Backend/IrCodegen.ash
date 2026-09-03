@@ -106,6 +106,7 @@ import AshesCompiler.Backend.IrCodegen.Arena
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
 import AshesCompiler.Backend.IrCodegen.Process
+import AshesCompiler.Backend.IrCodegen.Console
 import AshesCompiler.Backend.IrCodegen.TextBytes
 import Ashes.Number.UInt
 export (
@@ -166,6 +167,7 @@ type CodegenContext =
     | liftedFunctions: List((Str, LLVMValueRef))
     | closureFunctionType: LLVMTypeRef
     | envpGlobal: LLVMValueRef
+    | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
     | isEntry: Bool
 
@@ -180,6 +182,7 @@ type ModuleCodegen =
     | moduleLiftedFunctions: List((Str, LLVMValueRef))
     | moduleClosureFunctionType: LLVMTypeRef
     | moduleEnvpGlobal: LLVMValueRef
+    | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
     | moduleBuilder: LLVMBuilderRef
 
@@ -324,7 +327,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, arenaRuntime = arena, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -987,6 +990,23 @@ let codegenInstructionKind cx builder kind state =
                                         | ReadLine(target) ->
                                             let resultValue = emitReadLine(context)(function_)(i64)(i8)(ptrType)(builder)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
                                             in ((target, resultValue) :: tempEnv, terminated)
+                        // `Ashes.IO.Console` — raw stdin mode over `TCGETS`/`TCSETS`, `ppoll` on stdin,
+                        // and the monotonic clock.
+                                        | ConsoleEnableRaw(target) ->
+                                            let resultValue = emitConsoleEnableRaw(context)(function_)(builder)(i64)(i8)(types.i32)(ptrType)(consoleGlobals)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | ConsoleRestore(_token) ->
+                                            let _ = emitConsoleRestore(context)(function_)(builder)(i64)(ptrType)(consoleGlobals)
+                                            in (tempEnv, terminated)
+                                        | ConsolePoll(target, timeout) ->
+                                            let resultValue =
+                                                tempEnv
+                                                |> lookupIndexed(timeout)
+                                                |> emitConsolePoll(context)(function_)(builder)(i64)(i8)(ptrType)(mallocFn)(mallocType)(memcpyFn)(memcpyType)
+                                            in ((target, resultValue) :: tempEnv, terminated)
+                                        | MonotonicMillis(target) ->
+                                            let resultValue = emitMonotonicMillis(builder)(i64)(i8)
+                                            in ((target, resultValue) :: tempEnv, terminated)
                         // `Ashes.IO.File.writeText`/`Ashes.IO.File.replace`/`Ashes.IO.Directory.createAll` —
                         // raw `openat`/`write`/`close`/`rename`/`mkdir` syscalls, no libc dependency.
                                         | FileWriteText(target, path, text) ->
@@ -1386,6 +1406,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         liftedFunctions = liftedFunctions,
                                                         closureFunctionType = closureFnType,
                                                         envpGlobal = mc.moduleEnvpGlobal,
+                                                        consoleGlobals = mc.moduleConsoleGlobals,
                                                         arenaRuntime = arena,
                                                         isEntry = isEntry
                                                     )
@@ -1458,6 +1479,7 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                                             moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
                                             moduleClosureFunctionType = closureFnType,
                                             moduleEnvpGlobal = envpGlobal,
+                                            moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
                                             moduleArenaRuntime = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType),
                                             moduleBuilder = builder
                                         )

@@ -39,6 +39,9 @@ export (
     value emitLinuxExecve,
     value emitLinuxWait4,
     value emitLinuxKill,
+    value emitLinuxIoctl,
+    value emitLinuxPpoll,
+    value emitLinuxClockGettime,
 )
 
 // Any linux-x64 3-argument syscall, matching `LlvmCodegenPlatform.cs`'s own `EmitSyscallX86`
@@ -135,6 +138,19 @@ let emitLinuxSyscallCall6 builder i64 nr arg1 arg2 arg3 arg4 arg5 arg6 name =
     in
         let syscallAsm = getInlineAsm(syscallType)("syscall")("={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},~{rcx},~{r11},~{memory}")(true)(false)
         in buildCall(builder)(syscallType)(syscallAsm)([nr, arg1, arg2, arg3, arg4, arg5, arg6])(7u32)(name))
+
+// `ioctl(fd, request, argAddr)` — syscall 16; the console raw-mode `TCGETS`/`TCSETS` requests.
+let emitLinuxIoctl builder i64 fd request argAddr name =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(16u64)(false))(fd)(request)(argAddr)(name)
+
+// `ppoll(fds, nfds, timeoutAddr, sigmask, sigsetsize)` — syscall 271, five real arguments through
+// the 6-register mechanism.
+let emitLinuxPpoll builder i64 fdsAddr nfds timeoutAddr sigmask sigsetsize name =
+    emitLinuxSyscallCall6(builder)(i64)(constInt(i64)(271u64)(false))(fdsAddr)(nfds)(timeoutAddr)(sigmask)(sigsetsize)(constInt(i64)(0u64)(false))(name)
+
+// `clock_gettime(clockId, timespecAddr)` — syscall 228.
+let emitLinuxClockGettime builder i64 clockId timespecAddr =
+    emitLinuxSyscallCall(builder)(i64)(constInt(i64)(228u64)(false))(clockId)(timespecAddr)(constInt(i64)(0u64)(false))("sys_clock_gettime")
 
 // `mmap(NULL, len, PROT_READ, MAP_PRIVATE, fd, 0)` — syscall 9, the read-only private mapping
 // `Ashes.IO.File.mmap` builds its zero-copy `Bytes` view over. A failed mapping returns a negative

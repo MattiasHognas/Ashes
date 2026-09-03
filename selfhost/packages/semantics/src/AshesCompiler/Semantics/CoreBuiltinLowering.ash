@@ -579,6 +579,18 @@ let standardBuiltinLayouts =
                 constraints = []
             )
         ),
+        standardBuiltinLayout("Ashes.IO.Console")("enableRawInput")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(SemBool)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO.Console")("restoreInput")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(unitType)(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO.Console")("pollInput")(
+            TypeScheme(quantified = [], body = SemFunction(SemInt)(SemNamed(0)("Maybe")([SemString]))(None), constraints = [])
+        ),
+        standardBuiltinLayout("Ashes.IO.Console")("monotonicMillis")(
+            TypeScheme(quantified = [], body = SemFunction(unitType)(SemInt)(None), constraints = [])
+        ),
         standardBuiltinLayout("Ashes.IO.Process")("spawn")(
             TypeScheme(
                 quantified = [],
