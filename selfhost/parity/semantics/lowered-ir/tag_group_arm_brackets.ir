@@ -1,0 +1,174 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from weight]
+  locals=18 temps=23
+    LoadLocal             Target=0 Slot=1   (tag_group_arm_brackets.ash:7:11)
+    GetAdtTag             Target=1 Ptr=0   (tag_group_arm_brackets.ash:7:5)
+    SwitchTag             TagTemp=1 Cases=[3] DefaultLabel=match_none_1   (tag_group_arm_brackets.ash:7:5)
+  match_group_2:
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0   (tag_group_arm_brackets.ash:7:5)
+    CmpIntNe              Target=3 Left=0 Right=2   (tag_group_arm_brackets.ash:7:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_6   (tag_group_arm_brackets.ash:7:5)
+    GetAdtTag             Target=4 Ptr=0   (tag_group_arm_brackets.ash:7:5)
+    LoadConstInt          Target=6 Value=1   (tag_group_arm_brackets.ash:7:5)
+    CmpIntEq              Target=5 Left=4 Right=6   (tag_group_arm_brackets.ash:7:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_6   (tag_group_arm_brackets.ash:7:5)
+    GetAdtField           Target=7 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:7:5)
+    LoadConstInt          Target=8 Value=0   (tag_group_arm_brackets.ash:7:5)
+    CmpIntEq              Target=9 Left=7 Right=8   (tag_group_arm_brackets.ash:7:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_6   (tag_group_arm_brackets.ash:7:5)
+    LoadConstInt          Target=10 Value=0   (tag_group_arm_brackets.ash:8:24)
+    StoreLocal            Slot=2 Source=10   (tag_group_arm_brackets.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    Jump                  Target=match_end_0   (tag_group_arm_brackets.ash:7:5)
+  match_arm_cleanup_6:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_group_next_5   (tag_group_arm_brackets.ash:7:5)
+  match_group_next_5:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=11 Value=0   (tag_group_arm_brackets.ash:7:5)
+    CmpIntNe              Target=12 Left=0 Right=11   (tag_group_arm_brackets.ash:7:5)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_7   (tag_group_arm_brackets.ash:7:5)
+    GetAdtTag             Target=13 Ptr=0   (tag_group_arm_brackets.ash:7:5)
+    LoadConstInt          Target=15 Value=1   (tag_group_arm_brackets.ash:7:5)
+    CmpIntEq              Target=14 Left=13 Right=15   (tag_group_arm_brackets.ash:7:5)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_7   (tag_group_arm_brackets.ash:7:5)
+    GetAdtField           Target=16 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:7:5)
+    StoreLocal            Slot=9 Source=16   (tag_group_arm_brackets.ash:7:5)
+    LoadLocal             Target=17 Slot=9   (tag_group_arm_brackets.ash:9:24)
+    StoreLocal            Slot=2 Source=17   (tag_group_arm_brackets.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
+    Jump                  Target=match_end_0   (tag_group_arm_brackets.ash:7:5)
+  match_arm_cleanup_7:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=11
+    Jump                  Target=match_none_1   (tag_group_arm_brackets.ash:7:5)
+  match_group_3:
+    SaveArenaState        CursorLocalSlot=12 EndLocalSlot=13
+    LoadConstInt          Target=18 Value=1   (tag_group_arm_brackets.ash:10:20)
+    StoreLocal            Slot=2 Source=18   (tag_group_arm_brackets.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=12 EndLocalSlot=13 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=13 PreRestoreEndSlot=14
+    Jump                  Target=match_end_0   (tag_group_arm_brackets.ash:7:5)
+  match_group_4:
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    GetAdtField           Target=19 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:7:5)
+    LoadConstInt          Target=20 Value=2   (tag_group_arm_brackets.ash:11:22)
+    StoreLocal            Slot=2 Source=20   (tag_group_arm_brackets.ash:7:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    Jump                  Target=match_end_0   (tag_group_arm_brackets.ash:7:5)
+  match_none_1:
+    LoadConstInt          Target=21 Value=0   (tag_group_arm_brackets.ash:7:5)
+    StoreLocal            Slot=2 Source=21   (tag_group_arm_brackets.ash:7:5)
+  match_end_0:
+    LoadLocal             Target=22 Slot=2   (tag_group_arm_brackets.ash:7:5)
+    Return                Source=22
+
+function lambda_1  [SourceFunction from render]
+  locals=17 temps=23
+    LoadLocal             Target=0 Slot=1   (tag_group_arm_brackets.ash:14:11)
+    GetAdtTag             Target=1 Ptr=0   (tag_group_arm_brackets.ash:14:5)
+    SwitchTag             TagTemp=1 Cases=[3] DefaultLabel=match_none_9   (tag_group_arm_brackets.ash:14:5)
+  match_group_10:
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0   (tag_group_arm_brackets.ash:14:5)
+    CmpIntNe              Target=3 Left=0 Right=2   (tag_group_arm_brackets.ash:14:5)
+    JumpIfFalse           CondTemp=3 Target=match_arm_cleanup_14   (tag_group_arm_brackets.ash:14:5)
+    GetAdtTag             Target=4 Ptr=0   (tag_group_arm_brackets.ash:14:5)
+    LoadConstInt          Target=6 Value=1   (tag_group_arm_brackets.ash:14:5)
+    CmpIntEq              Target=5 Left=4 Right=6   (tag_group_arm_brackets.ash:14:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_14   (tag_group_arm_brackets.ash:14:5)
+    GetAdtField           Target=7 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:14:5)
+    LoadConstInt          Target=8 Value=0   (tag_group_arm_brackets.ash:14:5)
+    CmpIntEq              Target=9 Left=7 Right=8   (tag_group_arm_brackets.ash:14:5)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_14   (tag_group_arm_brackets.ash:14:5)
+    LoadConstStr          Target=10 StrLabel=str_0   (tag_group_arm_brackets.ash:15:24)
+    StoreLocal            Slot=2 Source=10   (tag_group_arm_brackets.ash:14:5)
+    Jump                  Target=match_end_8   (tag_group_arm_brackets.ash:14:5)
+  match_arm_cleanup_14:
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=6
+    Jump                  Target=match_group_next_13   (tag_group_arm_brackets.ash:14:5)
+  match_group_next_13:
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=11 Value=0   (tag_group_arm_brackets.ash:14:5)
+    CmpIntNe              Target=12 Left=0 Right=11   (tag_group_arm_brackets.ash:14:5)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_15   (tag_group_arm_brackets.ash:14:5)
+    GetAdtTag             Target=13 Ptr=0   (tag_group_arm_brackets.ash:14:5)
+    LoadConstInt          Target=15 Value=1   (tag_group_arm_brackets.ash:14:5)
+    CmpIntEq              Target=14 Left=13 Right=15   (tag_group_arm_brackets.ash:14:5)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_15   (tag_group_arm_brackets.ash:14:5)
+    GetAdtField           Target=16 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:14:5)
+    LoadConstStr          Target=17 StrLabel=str_1   (tag_group_arm_brackets.ash:16:24)
+    StoreLocal            Slot=2 Source=17   (tag_group_arm_brackets.ash:14:5)
+    Jump                  Target=match_end_8   (tag_group_arm_brackets.ash:14:5)
+  match_arm_cleanup_15:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
+    Jump                  Target=match_none_9   (tag_group_arm_brackets.ash:14:5)
+  match_group_11:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstStr          Target=18 StrLabel=str_2   (tag_group_arm_brackets.ash:17:20)
+    StoreLocal            Slot=2 Source=18   (tag_group_arm_brackets.ash:14:5)
+    Jump                  Target=match_end_8   (tag_group_arm_brackets.ash:14:5)
+  match_group_12:
+    SaveArenaState        CursorLocalSlot=14 EndLocalSlot=15
+    GetAdtField           Target=19 Ptr=0 FieldIndex=0   (tag_group_arm_brackets.ash:14:5)
+    LoadConstStr          Target=20 StrLabel=str_3   (tag_group_arm_brackets.ash:18:22)
+    StoreLocal            Slot=2 Source=20   (tag_group_arm_brackets.ash:14:5)
+    Jump                  Target=match_end_8   (tag_group_arm_brackets.ash:14:5)
+  match_none_9:
+    LoadConstInt          Target=21 Value=0   (tag_group_arm_brackets.ash:14:5)
+    StoreLocal            Slot=2 Source=21   (tag_group_arm_brackets.ash:14:5)
+  match_end_8:
+    LoadLocal             Target=22 Slot=2   (tag_group_arm_brackets.ash:14:5)
+    Return                Source=22
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=18
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
+    StoreLocal            Slot=5 Source=3
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadLocal             Target=4 Slot=2   (tag_group_arm_brackets.ash:20:35)
+    Borrow                Target=5 SourceTemp=4
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=6 Slot=2   (tag_group_arm_brackets.ash:20:49)
+    Borrow                Target=7 SourceTemp=6
+    AllocAdt              Target=8 Tag=2 FieldCount=0   (tag_group_arm_brackets.ash:20:56)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (tag_group_arm_brackets.ash:20:49)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    AllocAdt              Target=10 Tag=1 FieldCount=1   (tag_group_arm_brackets.ash:20:42)
+    SetAdtField           Ptr=10 FieldIndex=0 Source=9   (tag_group_arm_brackets.ash:20:42)
+    CallClosure           Target=11 ClosureTemp=5 ArgTemp=10   (tag_group_arm_brackets.ash:20:35)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=11
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=11
+    TextFromInt           Target=12 ValueTemp=11   (tag_group_arm_brackets.ash:20:16)
+    PrintStr              Source=12   (tag_group_arm_brackets.ash:20:1)
+    AllocAdt              Target=13 Tag=0 FieldCount=0   (tag_group_arm_brackets.ash:20:1)
+    StoreLocal            Slot=12 Source=13
+    LoadLocal             Target=14 Slot=5
+    CleanupResource       SourceTemp=14 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=13
+    CopyOutArena          DestTemp=15 SrcTemp=13 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=13
+    StoreLocal            Slot=14 Source=15
+    LoadLocal             Target=16 Slot=2
+    CleanupResource       SourceTemp=16 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
+    LoadLocal             Target=17 Slot=14
+    Return                Source=17
+

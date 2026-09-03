@@ -1,0 +1,20 @@
+type Token =
+    | Word(Str)
+    | Number(Int)
+    | Space
+
+let weight token =
+    match token with
+        | Number(0) -> 0
+        | Number(n) -> n
+        | Space -> 1
+        | Word(_) -> 2
+
+let render token =
+    match token with
+        | Number(0) -> "zero"
+        | Number(_) -> "number"
+        | Space -> " "
+        | Word(_) -> "word"
+
+Ashes.IO.print(Ashes.Text.fromInt(weight(Number(weight(Space)))))
