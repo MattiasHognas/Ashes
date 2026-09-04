@@ -3290,6 +3290,36 @@ let testRunStaticExecutableForDeepIfInsideMatchJoinLoopModule unit = assertProgr
 
 let testRunStaticExecutableForOptimizedIrRecursiveHelperModule unit = assertProgramPrints(buildOptimizedIrRecursiveHelperModule)("selfhostBackendRunOptimizedRecursiveHelper")("selfhost_backend_optimized_recursive_helper_e2e")("120")
 
+// The runtime-managed aggregate programs of `selfhost/parity/semantics/lowered-ir`, compiled and
+// run end to end: a top-level `let` owning a runtime list of fresh strings walks its spine at the
+// scope exit, a `let`-owned list inside a function does the same and the function returns a
+// runtime value, a lambda returning a fresh record tree hands a runtime-managed cell to the
+// top-level `let` that releases it through its field walk, and escaping tuples, list literals,
+// and cons cells retain the owned strings and lists they store before their owners are released.
+let ownedListLetSource = "let labels = [Ashes.Text.fromInt(1), Ashes.Text.fromInt(2)]\n\nmatch labels with\n    | first :: _ -> Ashes.IO.print(first)\n    | [] -> Ashes.IO.print(\"empty\")"
+
+let ownedListInFunctionSource = "let describe n =\n    let labels = [Ashes.Text.fromInt(n), Ashes.Text.fromInt(7)]\n    in\n        match labels with\n            | first :: _ -> Ashes.Text.byteLength(first)\n            | [] -> 0\n\nAshes.IO.print(Ashes.Text.fromInt(describe(1)))"
+
+let lambdaReturnsRecordSource = "type Label =\n    | text: Str\n    | width: Int\n\nlet label n = Label(text = Ashes.Text.fromInt(n), width = n)\n\nlet made = label(7)\n\nmatch made with\n    | Label { text = text } -> Ashes.IO.print(text)"
+
+let aggregateChildrenRetainSource = "let label n = Ashes.Text.fromInt(n)\n\nlet pair n =\n    let first = label(n)\n    in\n        let second = label(7)\n        in (first, second)\n\nlet listed n =\n    let first = label(n)\n    in\n        let second = label(7)\n        in [first, second]\n\nlet prefixed n =\n    let first = label(n)\n    in\n        let rest = listed(7)\n        in first :: rest\n\nlet both = pair(1)\n\nlet three = prefixed(1)\n\nmatch (both, three) with\n    | ((first, _), _ :: _) -> Ashes.IO.print(first)\n    | _ -> Ashes.IO.print(\"empty\")"
+
+let buildOptimizedIrOwnedListLetModule name context = codegenOptimizedRealSource(ownedListLetSource)(name)(context)
+
+let buildOptimizedIrOwnedListInFunctionModule name context = codegenOptimizedRealSource(ownedListInFunctionSource)(name)(context)
+
+let buildOptimizedIrLambdaReturnsRecordModule name context = codegenOptimizedRealSource(lambdaReturnsRecordSource)(name)(context)
+
+let buildOptimizedIrAggregateChildrenRetainModule name context = codegenOptimizedRealSource(aggregateChildrenRetainSource)(name)(context)
+
+let testRunStaticExecutableForOwnedListLetModule unit = assertProgramPrints(buildOptimizedIrOwnedListLetModule)("selfhostBackendRunOwnedListLet")("selfhost_backend_owned_list_let_e2e")("1")
+
+let testRunStaticExecutableForOwnedListInFunctionModule unit = assertProgramPrints(buildOptimizedIrOwnedListInFunctionModule)("selfhostBackendRunOwnedListInFunction")("selfhost_backend_owned_list_in_function_e2e")("1")
+
+let testRunStaticExecutableForLambdaReturnsRecordModule unit = assertProgramPrints(buildOptimizedIrLambdaReturnsRecordModule)("selfhostBackendRunLambdaReturnsRecord")("selfhost_backend_lambda_returns_record_e2e")("7")
+
+let testRunStaticExecutableForAggregateChildrenRetainModule unit = assertProgramPrints(buildOptimizedIrAggregateChildrenRetainModule)("selfhostBackendRunAggregateChildrenRetain")("selfhost_backend_aggregate_children_retain_e2e")("1")
+
 let testRunStaticExecutableForOptimizedIrDeepTailLoopModule unit = assertProgramPrints(buildOptimizedIrDeepTailLoopModule)("selfhostBackendRunOptimizedDeepTailLoop")("selfhost_backend_deep_tail_loop_e2e")("2000000")
 
 let testRunStaticExecutableForScratchAllocaLoopModule unit = assertProgramPrints(buildScratchAllocaLoopModule)("selfhostBackendRunOptimizedScratchAllocaLoop")("selfhost_backend_scratch_alloca_loop_e2e")("7")
@@ -4930,6 +4960,10 @@ let run shipped =
     |> testCopyOutTcoListCellStringHead
     |> testCopyOutTcoListCellInnerList
     |> testLoadArgumentOwnership
+    |> testRunStaticExecutableForOwnedListLetModule
+    |> testRunStaticExecutableForOwnedListInFunctionModule
+    |> testRunStaticExecutableForLambdaReturnsRecordModule
+    |> testRunStaticExecutableForAggregateChildrenRetainModule
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

@@ -51,6 +51,7 @@ import TaglessAdtLayoutTests
 import StructuralDroppersTests
 import ResultReachTests
 import TcoOwnershipRulesTests
+import OwnedAggregateReleaseTests
 let run unit =
     Unit
     |> UnificationTests.runUnificationTests
@@ -102,6 +103,7 @@ let run unit =
     |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
     |> (given (_) -> TcoOwnershipRulesTests.runTcoOwnershipRulesTests(Unit))
+    |> (given (_) -> OwnedAggregateReleaseTests.runOwnedAggregateReleaseTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 
 run(Unit)

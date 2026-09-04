@@ -1,6 +1,6 @@
 // Unit tests for the synthesized structural and ADT droppers, checked instruction for instruction
-// against stage 0's lowered IR text for the same types (the `GetAdtField` lines differ only by
-// stage 0's `Tagless=true` flag, which the self-hosted instruction does not carry yet). Each
+// against stage 0's lowered IR text for the same types, the `GetAdtField` lines carrying the
+// OPT-24 tagless flag of a sole-constructor type as stage 0's do. Each
 // synthesized function is described once, as its header line, its origin line, and its
 // instruction lines, and the whole description is compared in one assertion.
 
@@ -127,7 +127,7 @@ let expectRecordWithListAndStringMatchesStageZero unit =
         "    LoadLocal             Target=0 Slot=1",
         "    RcIsUnique            Target=1 SourceTemp=0",
         "    JumpIfFalse           CondTemp=1 Target=rc_drop_shared_15",
-        "    GetAdtField           Target=2 Ptr=0 FieldIndex=0",
+        "    GetAdtField           Target=2 Ptr=0 FieldIndex=0 Tagless=true",
         "    StoreLocal            Slot=2 Source=2",
         "  rcdrop_list_16:",
         "    LoadLocal             Target=3 Slot=2",
@@ -144,7 +144,7 @@ let expectRecordWithListAndStringMatchesStageZero unit =
         "    RcDrop                SourceTemp=3 TypeName=List RuntimeManaged=true",
         "    Jump                  Target=rcdrop_list_end_18",
         "  rcdrop_list_end_18:",
-        "    GetAdtField           Target=8 Ptr=0 FieldIndex=1",
+        "    GetAdtField           Target=8 Ptr=0 FieldIndex=1 Tagless=true",
         "    RcDrop                SourceTemp=8 TypeName=String RuntimeManaged=true",
         "  rc_drop_shared_15:",
         "    RcDrop                SourceTemp=0 TypeName=Found RuntimeManaged=true",
@@ -178,7 +178,7 @@ let expectListOfRecordsMatchesStageZero unit =
         "    LoadMemOffset         Target=5 BasePtr=1 OffsetBytes=0",
         "    RcIsUnique            Target=6 SourceTemp=5",
         "    JumpIfFalse           CondTemp=6 Target=rc_drop_shared_21",
-        "    GetAdtField           Target=7 Ptr=5 FieldIndex=0",
+        "    GetAdtField           Target=7 Ptr=5 FieldIndex=0 Tagless=true",
         "    StoreLocal            Slot=3 Source=7",
         "  rcdrop_list_22:",
         "    LoadLocal             Target=8 Slot=3",
@@ -195,7 +195,7 @@ let expectListOfRecordsMatchesStageZero unit =
         "    RcDrop                SourceTemp=8 TypeName=List RuntimeManaged=true",
         "    Jump                  Target=rcdrop_list_end_24",
         "  rcdrop_list_end_24:",
-        "    GetAdtField           Target=13 Ptr=5 FieldIndex=1",
+        "    GetAdtField           Target=13 Ptr=5 FieldIndex=1 Tagless=true",
         "    RcDrop                SourceTemp=13 TypeName=String RuntimeManaged=true",
         "  rc_drop_shared_21:",
         "    RcDrop                SourceTemp=5 TypeName=Found RuntimeManaged=true",

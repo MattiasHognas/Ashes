@@ -56,6 +56,13 @@ let checkFixture root name =
 // reference-counted argument under the callee's accepts bit with its release after the call.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
+// owned_let_list_drop adds a `let`-owned runtime list of fresh strings (the list request, the
+// runtime-managed cells and heads, and the inline unique-spine walk at the scope exit) and
+// aggregate_children_retain the escaping tuple, list literal, and cons cell that retain the owned
+// bindings they store, the runtime tuple and list cells, and the shared-spine walk of an owned
+// list. lambda_returns_record (a lambda returning a fresh record tree, owned by a top-level `let`
+// and released through its field walk) stays out of the runner: its `_start_main` still copies
+// the match result out at the scope exit where stage 0 knows every arm produced a runtime value.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -74,5 +81,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("match_arm_copy_out"))
         |> (given (_) -> checkFixture(root)("call_result_copy_out"))
         |> (given (_) -> checkFixture(root)("call_argument_retain"))
+        |> (given (_) -> checkFixture(root)("owned_let_list_drop"))
+        |> (given (_) -> checkFixture(root)("aggregate_children_retain"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
