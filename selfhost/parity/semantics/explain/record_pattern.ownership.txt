@@ -1,0 +1,15 @@
+Ownership report
+================
+
+Function: describe
+  Parameters
+    p
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - p
+

@@ -1,0 +1,26 @@
+Ownership report
+================
+
+Function: render
+  Parameters
+    token
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+
+Function: weight
+  Parameters
+    token
+      ownership: consumed
+      move-safe: yes
+      unique:    no
+  Result
+    fresh:    no
+    poisoned: no
+    aliases:
+      - token
+

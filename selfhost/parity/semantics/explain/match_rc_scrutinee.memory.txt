@@ -1,0 +1,25 @@
+Memory report
+=============
+
+Function: label
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_1]
+    conservative unknown: 1
+    region:               2
+    runtime rc:           1
+    copy value:           2
+
+Function: shout
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    runtime rc:           1
+    copy value:           1
+

@@ -1,0 +1,55 @@
+Memory report
+=============
+
+Function: label
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    runtime rc:           1
+    copy value:           1
+
+Function: listed
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_2]
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+  representation [lambda_2]
+    conservative unknown: 2
+    runtime rc:           12
+    copy value:           2
+
+Function: pair
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_1]
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+  perceus [lambda_1__scalarenv0]
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+  representation [lambda_1]
+    conservative unknown: 2
+    runtime rc:           11
+    copy value:           2
+
+Function: prefixed
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_3]
+    dup:                  2
+    drop:                 4
+    uniqueness checks:    1
+  representation [lambda_3]
+    conservative unknown: 3
+    region:               3
+    runtime rc:           9
+    copy value:           2
+

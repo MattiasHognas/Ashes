@@ -1,0 +1,11 @@
+Memory report
+=============
+
+Function: shout
+  ownership
+    n: consumed, move-safe yes
+    result fresh: no
+  representation [lambda_0]
+    runtime rc:           2
+    copy value:           1
+

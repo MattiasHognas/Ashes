@@ -686,36 +686,6 @@ let emit kind state =
             let wrapped = tagItemInstruction(kind)(span)(item)(context)
             in state with reversedInstructions = wrapped :: instructions
 
-// A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
-// explain report's `memory` representation, regardless of how it was produced.
-let isCopyTypeSemantic (semanticType: SemanticType) =
-    match semanticType with
-        | SemInt -> true
-        | SemUInt(_bits) -> true
-        | SemFloat -> true
-        | SemRune -> true
-        | SemBool -> true
-        | _ -> false
-
-// The per-value fact the explain report's `memory` representation needs and nowhere else does:
-// which function produced this temp, and whether its resolved type is copy-typed. Recording it
-// here — where every lowered value already passes through with its type — reads state and appends
-// to a list; it changes nothing about what gets lowered.
-let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
-    (let isCopyType =
-        semanticType
-        |> resolveType(state)
-        |> isCopyTypeSemantic
-    in state with valuePlacements = (temp, state.activeFunctionOrigin, isCopyType) :: state.valuePlacements)
-
-let success temp semanticType state =
-    LoweredCoreValue(
-        state = recordValuePlacement(temp)(semanticType)(state),
-        temp = temp,
-        semanticType = semanticType,
-        error = None
-    )
-
 // The innermost enclosing span resolved the way emitted instructions resolve theirs.
 let currentLocation (state: CoreLoweringState) =
     match (state.currentSpan, state.sourceContext) with
@@ -885,6 +855,42 @@ let instantiateBinding binding state =
 let resolveType state semanticType =
     match state with
         | CoreLoweringState { substitution = substitution } -> applySubstitution(substitution)(semanticType)
+
+// A copy-typed value needs no heap ownership at all, so it always reports as `CopyValue` in the
+// explain report's `memory` representation, regardless of how it was produced.
+let isCopyTypeSemantic (semanticType: SemanticType) =
+    match semanticType with
+        | SemInt -> true
+        | SemUInt(_bits) -> true
+        | SemFloat -> true
+        | SemRune -> true
+        | SemBool -> true
+        | _ -> false
+
+// The per-value fact the explain report's `memory` representation needs and nowhere else does:
+// which function produced this temp, and whether its resolved type is copy-typed. Recording it
+// here — where every lowered value already passes through with its type — reads state and appends
+// to a list; it changes nothing about what gets lowered.
+// Stage 0 only captures a value placement from inside `AddFunction`, called for a lifted function
+// and never for the program entry, so a value lowered while `activeFunctionOrigin` is still `None`
+// (the top-level trailing expression, before any lambda is entered) is not recorded either.
+let recordValuePlacement (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state.activeFunctionOrigin with
+        | None -> state
+        | Some(_origin) ->
+            let isCopyType =
+                semanticType
+                |> resolveType(state)
+                |> isCopyTypeSemantic
+            in state with valuePlacements = (temp, state.activeFunctionOrigin, isCopyType) :: state.valuePlacements
+
+let success temp semanticType state =
+    LoweredCoreValue(
+        state = recordValuePlacement(temp)(semanticType)(state),
+        temp = temp,
+        semanticType = semanticType,
+        error = None
+    )
 
 let bindType left right state =
     match state with
