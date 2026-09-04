@@ -513,7 +513,11 @@ same public behavior.
   The combined declarations are inferred in that same order while switching package ownership at every
   module boundary; deriving output stays module-local while eligibility validation shares the stitched
   declaration context, trait orphan checks retain package identity, and implementation coherence is
-  program-global. Retaining source-function origins through the future IR remains.
+  program-global. An unqualified name two whole-module imports both export is rejected only where
+  the module uses it unqualified (stage 0's referenced-name rule: `import Ashes.Collection.List as
+  list` beside `import Ashes.Text as text` is routine, and both export `length`); an unused
+  collision keeps the first import's binding, and a local top-level definition of the name shadows
+  every import. Retaining source-function origins through the future IR remains.
 - [x] **MOD-9** Lift and resolve inline modules, enforce their restricted declaration surface, and integrate them
   with cross-file imports, exports, aliases, and selector ambiguity rules. Pure-Ashes lifting covers
   header recognition, indentation and dedenting, nested name composition, child-before-parent order,

@@ -186,31 +186,51 @@ let duplicateExportModule name path =
         false
     )
 
-let checkImportCollision unitValue =
-    (let left = duplicateExportModule("Left")("/Left.ash")
-    in
-        let right = duplicateExportModule("Right")("/Right.ash")
-        in
-            let entry =
-                unit(
-                    "Main",
-                    "pkg",
-                    "/Main.ash",
-                    [ResolvedModuleImport("Left")(None)(1)("import Left"), ResolvedModuleImport(
-                        "Right",
-                        None,
-                        2,
-                        "import Right"
-                    )],
-                    moduleInterface("Main")([]),
-                    ProgramSyntax(items = [], body = None),
-                    true
-                )
-            in
-                match buildStitchedSemanticProject([left, right, entry]) with
-                    | Error(ConflictingStitchedImport("Main", "value")) -> Unit
-                    | Error(_error) -> test.fail("unexpected import collision")
-                    | Ok(_) -> test.fail("whole-module import collisions should be rejected"))
+let collidingImportEntry program =
+    unit(
+        "Main",
+        "pkg",
+        "/Main.ash",
+        [ResolvedModuleImport("Left")(None)(1)("import Left"), ResolvedModuleImport(
+            "Right",
+            None,
+            2,
+            "import Right"
+        )],
+        moduleInterface("Main")([]),
+        program,
+        true
+    )
+
+let collidingImportProject program = buildStitchedSemanticProject([duplicateExportModule("Left")("/Left.ash"), duplicateExportModule("Right")("/Right.ash"), collidingImportEntry(program)])
+
+let requireModuleOwner expected message (resolved: Maybe(StitchedDefinition)) =
+    match resolved with
+        | Some(definition) ->
+            if definition.moduleName == expected
+            then Unit
+            else test.fail(message)
+        | None -> test.fail(message)
+
+let checkUnusedImportCollision unitValue =
+    ProgramSyntax(items = [], body = None)
+    |> collidingImportProject
+    |> requireProject
+    |> resolveStitchedUnqualified("Main")(0)(StitchedValue)("value")
+    |> requireModuleOwner("Left")("an unused import collision should keep the first import's binding")
+
+let checkReferencedImportCollision unitValue =
+    match collidingImportProject(ProgramSyntax(items = [], body = Some(ExprVar("value")))) with
+        | Error(ConflictingStitchedImport("Main", "value")) -> Unit
+        | Error(_error) -> test.fail("unexpected import collision")
+        | Ok(_) -> test.fail("an unqualified use of a name two imports export should be rejected")
+
+let checkShadowedImportCollision unitValue =
+    ProgramSyntax(items = [TopLevelLet(binding("value")(ExprInt(0)))(false)], body = Some(ExprVar("value")))
+    |> collidingImportProject
+    |> requireProject
+    |> resolveStitchedUnqualified("Main")(10)(StitchedValue)("value")
+    |> requireModuleOwner("Main")("a local definition should shadow a colliding imported name")
 
 let checkDependencyOrder unitValue =
     match buildStitchedSemanticProject([mainUnit, utilUnit]) with
@@ -248,6 +268,8 @@ let runModuleSemanticStitchingTests unitValue =
     unitValue
     |> checkPrimaryPlan
     |> checkCompilerNameCollision
-    |> checkImportCollision
+    |> checkUnusedImportCollision
+    |> checkReferencedImportCollision
+    |> checkShadowedImportCollision
     |> checkDependencyOrder
     |> checkShortQualifierCollision

@@ -57,6 +57,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.PerceusLifetimePlacement
+import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some

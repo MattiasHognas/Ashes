@@ -11,6 +11,7 @@ import Ashes.Internal.deepCopy as deepCopy
 import AshesCompiler.Frontend.ImportResolution
 import AshesCompiler.Frontend.Syntax
 import AshesCompiler.Frontend.Token
+import AshesCompiler.Semantics.ExprMentions.programMentionsVariable
 export (
     type StitchedNameKind(..),
     type SemanticStitchUnit(..),
@@ -447,15 +448,52 @@ let recursive unqualifiedConflict (binding: StitchedImportBinding) bindings =
                     then true
                     else unqualifiedConflict(binding)(rest)
 
-let recursive addImportBindings moduleName additions current =
+let recursive localDefinitionShadows name kind definitions =
+    match definitions with
+        | [] -> false
+        | definition :: rest ->
+            if both(definition.sourceName == name)(sameNamespace(kind)(definition.kind))
+            then true
+            else localDefinitionShadows(name)(kind)(rest)
+
+let valueNamespace kind =
+    match kind with
+        | StitchedValue -> true
+        | StitchedConstructor -> true
+        | StitchedExternal -> true
+        | _ -> false
+
+// Whether an unqualified import binding that collides with an earlier one is an error for this
+// module. Language.md makes unqualified ACCESS to a name two imported modules both export the
+// error, not the pair of imports themselves (`import Ashes.Collection.List as list` beside
+// `import Ashes.Text as text` is routine, and both export `length`): a value-namespace collision
+// is fatal only where the module's own top-level values or trailing expression mention the name,
+// the surface stage 0's referenced-name walk covers, and never when a local top-level definition
+// of the same namespace shadows every import. A type-namespace collision stays an error at the
+// import, since a type name's uses are not scanned here.
+let importConflictIsFatal (program: ProgramSyntax) definitions (binding: StitchedImportBinding) =
+    match binding with
+        | StitchedImportBinding { localName = name, qualifier = _qualifier, target = target } ->
+            if localDefinitionShadows(name)(target.kind)(definitions)
+            then false
+            else
+                if valueNamespace(target.kind)
+                then programMentionsVariable(name)(program)
+                else true
+
+// An unused collision keeps the first import's binding; `fatalConflict` decides the rest.
+let recursive addImportBindings moduleName fatalConflict additions current =
     match additions with
         | [] -> Ok(current)
         | (StitchedImportBinding { localName = bindingName, qualifier = _qualifier, target = _target } as binding) :: rest ->
             if unqualifiedConflict(binding)(current)
-            then Error(ConflictingStitchedImport(moduleName)(bindingName))
-            else addImportBindings(moduleName)(rest)(binding :: current)
+            then
+                if fatalConflict(binding)
+                then Error(ConflictingStitchedImport(moduleName)(bindingName))
+                else addImportBindings(moduleName)(fatalConflict)(rest)(current)
+            else addImportBindings(moduleName)(fatalConflict)(rest)(binding :: current)
 
-let addWholeModuleImport ownerModule (imported: StitchedModuleScope) alias bindings =
+let addWholeModuleImport ownerModule fatalConflict (imported: StitchedModuleScope) alias bindings =
     match imported with
         | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
             let primaryQualifier =
@@ -485,6 +523,7 @@ let addWholeModuleImport ownerModule (imported: StitchedModuleScope) alias bindi
                                 | Some(_name) ->
                                     addImportBindings(
                                         ownerModule,
+                                        fatalConflict,
                                         appendList(exportedBindings(None)(definitions))(withShort),
                                         bindings
                                     )
@@ -496,11 +535,12 @@ let addWholeModuleImport ownerModule (imported: StitchedModuleScope) alias bindi
                                         else
                                             addImportBindings(
                                                 ownerModule,
+                                                fatalConflict,
                                                 appendList(exportedBindings(None)(definitions))(withShort),
                                                 bindings
                                             )
 
-let addSelectorImport ownerModule (imported: StitchedModuleScope) exportName localName kind bindings =
+let addSelectorImport ownerModule fatalConflict (imported: StitchedModuleScope) exportName localName kind bindings =
     match imported with
         | StitchedModuleScope { name = importedName, packageId = _packageId, sourcePath = _sourcePath, imports = _imports, definitions = definitions } ->
             match findExportedDefinition(exportName)(kind)(definitions) with
@@ -508,11 +548,12 @@ let addSelectorImport ownerModule (imported: StitchedModuleScope) exportName loc
                 | Some(definition) ->
                     addImportBindings(
                         ownerModule,
+                        fatalConflict,
                         [StitchedImportBinding(localName = localName, qualifier = None, target = definition)],
                         bindings
                     )
 
-let recursive buildImportBindings ownerModule imports completed bindings =
+let recursive buildImportBindings ownerModule fatalConflict imports completed bindings =
     match imports with
         | [] -> Ok(reverseList(bindings))
         | resolved :: rest ->
@@ -524,6 +565,7 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                             | ResolvedModuleImport(_moduleName, alias, _line, _written) ->
                                 addWholeModuleImport(
                                     ownerModule,
+                                    fatalConflict,
                                     imported,
                                     alias,
                                     bindings
@@ -531,6 +573,7 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                             | ResolvedValueImport(_moduleName, exportName, localName, _line, _written) ->
                                 addSelectorImport(
                                     ownerModule,
+                                    fatalConflict,
                                     imported,
                                     exportName,
                                     localName,
@@ -540,6 +583,7 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                             | ResolvedTypeImport(_moduleName, exportName, localName, _line, _written) ->
                                 addSelectorImport(
                                     ownerModule,
+                                    fatalConflict,
                                     imported,
                                     exportName,
                                     localName,
@@ -549,7 +593,7 @@ let recursive buildImportBindings ownerModule imports completed bindings =
                     in
                         match added with
                             | Error(error) -> Error(error)
-                            | Ok(next) -> buildImportBindings(ownerModule)(rest)(completed)(next)
+                            | Ok(next) -> buildImportBindings(ownerModule)(fatalConflict)(rest)(completed)(next)
 
 // The qualifier shorthands a module's whole-module imports establish: an explicit alias
 // (`import Ashes.IO as io` maps `io`) and the module-path leaf (`import Ashes.IO` maps `IO`),
@@ -607,11 +651,11 @@ let stitchedModulePlainImports moduleName (project: StitchedSemanticProject) =
 
 let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
     match (unit, state) with
-        | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = ProgramSyntax { items = items, body = _body }, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
+        | (SemanticStitchUnit { name = moduleName, packageId = packageId, sourcePath = sourcePath, imports = resolvedImports, interface = _moduleInterface, program = program, isEntry = _isEntry }, StitchState { reversedModules = completedModules, nextDefinitionId = nextDefinitionId }) ->
             if hasModule(moduleName)(completedModules)
             then Error(DuplicateStitchedModule(moduleName))
             else
-                let pending = collectPendingDefinitions(items)(DefinitionCollection(reversed = [], nextOrder = 0))
+                let pending = collectPendingDefinitions(program.items)(DefinitionCollection(reversed = [], nextOrder = 0))
                 in
                     match duplicateDefinition(pending)([]) with
                         | Some(name) -> Error(DuplicateModuleDeclaration(moduleName)(name))
@@ -623,6 +667,7 @@ let buildModule (unit: SemanticStitchUnit) (state: StitchState) =
                                         | None ->
                                             match buildImportBindings(
                                                 moduleName,
+                                                importConflictIsFatal(program)(definitions),
                                                 resolvedImports,
                                                 completedModules,
                                                 []
