@@ -22,6 +22,7 @@ export (
     value isTailPosition,
     value countLambdaArity,
     value collectLambdaParamNames,
+    value collectInnermostBody,
     value hasTailSelfCalls,
     value collectGroupTailCalls,
     value tryPlanMutualRecursionTco,

@@ -571,8 +571,33 @@ let expectEscapingConstructorLetIsBracketedButNeverReset unit =
         ""
     ])
 
+// A field read through a receiver whose type is still a variable at the access (a parameter read
+// before any call constrains it) resolves by the field's name when exactly one record type
+// declares it, stage 0's `ResolveRecordReceiverByFieldName`; two records sharing the field leave
+// the receiver unresolved.
+let expectFieldAccessOnUnresolvedReceiverResolvesByUniqueField unit =
+    "type Case =\n    | tag: Int\n    | label: Str\n\nlet taken c = c.tag + 1\n\ntaken(Case(tag = 1, label = \"a\"))"
+    |> dumpSource
+    |> anyLineContains("GetAdtField           Target=1 Ptr=0 FieldIndex=0 Tagless=true")
+    |> test.assertEqual(true)
+
+let expectAmbiguousFieldAccessStaysUnresolved unit =
+    match loweringErrorFor("type Case =\n    | tag: Int\n\ntype Other =\n    | tag: Int\n\nlet taken c = c.tag + 1\n\ntaken(Case(tag = 1))") with
+        | CoreRecordUpdateRequiresRecord(_receiverType) -> Unit
+        | other -> test.fail("expected CoreRecordUpdateRequiresRecord, got " + Ashes.Trait.Show.show(other))
+
+// An operand that fails to lower reports its own error, not a type mismatch between the
+// operator's placeholder operand types.
+let expectFailedOperandReportsItsOwnError unit =
+    match loweringErrorFor("let a = missing == 1\na") with
+        | UnknownLoweringBinding(name) -> test.assertEqual("missing")(name)
+        | other -> test.fail("expected UnknownLoweringBinding, got " + Ashes.Trait.Show.show(other))
+
 let runCoreProgramLoweringTests unit =
     unit
+    |> expectFieldAccessOnUnresolvedReceiverResolvesByUniqueField
+    |> expectAmbiguousFieldAccessStaysUnresolved
+    |> expectFailedOperandReportsItsOwnError
     |> expectPlainTopLevelLetsProduceIr
     |> expectPlainTopLevelLetsProduceExpectedIr
     |> expectConstructorLetMatchedByConstructorPatternsIsBracketed

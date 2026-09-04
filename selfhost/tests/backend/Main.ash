@@ -24,6 +24,20 @@ import AshesCompiler.Semantics.ShippedModuleStitching
 // later function that should share the same builder (an LLVM `IRBuilder` is reusable across
 // functions in one module — repositioning it is cheaper and avoids leaking an extra one that
 // `emitModule` would never dispose). Returns `(function, functionType, builder)`.
+// The program's printing driver spelled with `Ashes.Text.fromInt` in place of the standard
+// `Show` method, which the stitched single-program lowering cannot resolve yet; the loop
+// functions under test are the program's own.
+// A self-call that is an operand of an operator in one branch of a TCO loop is an ordinary call;
+// only the other branch's self-call is the loop's tail call.
+// A `let` bound to a plain read of the loop's string parameter is not an owner: no release of
+// the parameter's reference at its scope exit.
+// A `let` call result stored in a constructor field of the tail self-call's accumulator argument
+// survives the iteration that bound it.
+// The same shape with a `let` that owns a fresh reference-counted string (a known call whose
+// body is a fresh-string builtin): the retain of the read stored into the accumulator keeps the
+// string alive past the owner's scope-exit release.
+// The owned `let` read stored by a self-call that is an operator operand (not a tail call) and
+// by the sibling branch's genuine tail self-call.
 let beginFunction module_ context existingBuilder name returnType paramTypes paramCount =
     (let fnType = functionType(returnType)(paramTypes)(paramCount)(false)
     in
@@ -3288,6 +3302,54 @@ let testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule unit = assert
 
 let testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule unit = assertProgramPrints(buildOptimizedIrDeepMutualRecursionModule)("selfhostBackendRunOptimizedDeepMutualRecursion")("selfhost_backend_deep_mutual_recursion_e2e")("true")
 
+// `codegenShippedSource` with `IrOptimizer` run in between, as the real compile pipeline does for
+// a program using the standard library.
+let codegenOptimizedShippedSource shipped source name context =
+    match stitchWithShippedModules(name)(name + ".ash")(source)(shipped) with
+        | Error(error) -> test.fail("shipped-module stitching failed: " + Ashes.Trait.Show.show(error))
+        | Ok(StitchedSyntaxProject { program = program }) ->
+            match lowerCoreProgramWithSource(name + ".ash")(source)(program) with
+                | CoreLoweringResult { program = Some(lowered), error = None } ->
+                    lowered
+                    |> optimizeIrProgramWithOptions(optimizerOptionsWithoutCompileTimeEval)
+                    |> codegenProgram(name)(context)
+                | CoreLoweringResult { error = Some(error) } -> test.fail("lowering failed: " + Ashes.Trait.Show.show(error))
+                | _ -> test.fail("lowering produced no program")
+
+// The end-to-end regression programs shared with stage 0 under `tests/` (relative to the
+// repository root the suite runs from), compiled verbatim: their leading `// expect:` directive
+// is a comment to this pipeline, so the expected line is repeated by each test.
+let sharedTestSource path =
+    match Ashes.IO.File.readText(path) with
+        | Ok(source) -> source
+        | Error(message) -> test.fail("could not read " + path + ": " + message)
+
+let buildSharedTestModule shipped path name context =
+    codegenOptimizedShippedSource(shipped)(sharedTestSource(path))(name)(context)
+
+let showAsFromInt source =
+    "Ashes.Trait.Show.show("
+    |> Ashes.Text.split(source)
+    |> Ashes.Text.join("Ashes.Text.fromInt(")
+
+let testRunSharedTcoNonTailSelfCallInOperatorOperand shipped unit =
+    assertProgramPrints("tests/tco_non_tail_self_call_in_operator_operand.ash"
+    |> sharedTestSource
+    |> showAsFromInt
+    |> codegenOptimizedShippedSource(shipped))("selfhostBackendRunSharedTcoOperatorOperand")("selfhost_backend_shared_tco_operator_operand_e2e")("2 2 2 4 1 1")
+
+let testRunSharedTcoLetAliasOfRcParameter shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_alias_of_rc_parameter.ash"))("selfhostBackendRunSharedTcoLetAlias")("selfhost_backend_shared_tco_let_alias_e2e")("xxxxx|abcdefghij|Abc.DeAd.1bc|---|A.B.C.D.E.A.B.C.D.E.A.B.C.D.E")
+
+let testRunSharedTcoLetCallResultInAccumulatorRecord shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_let_call_result_in_accumulator_record.ash"))("selfhostBackendRunSharedTcoAccumulatorRecord")("selfhost_backend_shared_tco_accumulator_record_e2e")("picked;other;picked;other;|2000")
+
+let testRunSharedTcoOwnedLetInTailArgumentRecord shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_owned_let_in_tail_argument_record.ash"))("selfhostBackendRunSharedTcoOwnedLetRecord")("selfhost_backend_shared_tco_owned_let_record_e2e")("1;2;3;")
+
+let testRunSharedTcoOwnedLetInOperandSelfCall shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_owned_let_in_operand_self_call.ash"))("selfhostBackendRunSharedTcoOwnedLetOperand")("selfhost_backend_shared_tco_owned_let_operand_e2e")("2")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4801,6 +4863,11 @@ let run shipped =
     |> testRunStaticExecutableForOptimizedIrFileHandleAutoCloseModule
     |> testRunStaticExecutableForOptimizedIrConsolePollModule
     |> testRunStaticExecutableForOptimizedIrDeepMutualRecursionModule
+    |> testRunSharedTcoNonTailSelfCallInOperatorOperand(shipped)
+    |> testRunSharedTcoLetAliasOfRcParameter(shipped)
+    |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
+    |> testRunSharedTcoOwnedLetInTailArgumentRecord(shipped)
+    |> testRunSharedTcoOwnedLetInOperandSelfCall(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

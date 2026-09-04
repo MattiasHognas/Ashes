@@ -41,6 +41,9 @@ import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
+import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
+import AshesCompiler.Semantics.TcoAnalysis.countLambdaArity
+import AshesCompiler.Semantics.TcoAnalysis.hasTailSelfCalls
 import AshesCompiler.Semantics.TraitEvidenceRewriting
 import AshesCompiler.Semantics.TraitEvidenceThreading
 import AshesCompiler.Semantics.TypeInference
@@ -134,12 +137,20 @@ type CoreBinding =
 
 // What the context asks of the next expression lowered, stage 0's `LoweredValueRequest`: the type
 // it expects, whether it wants a fresh string placed on the reference-counted heap rather than in
-// the arena (`RuntimeRepresentation.String`), and the owned `let` slot whose value the expression
-// carries out as its result (`ConsumerCanOwn` for a tail-forwarded binding read).
+// the arena (`RuntimeRepresentation.String`), the owned `let` slot whose value the expression
+// carries out as its result (`ConsumerCanOwn` for a tail-forwarded binding read), whether the
+// expression sits in tail position of the enclosing TCO loop body (stage 0's
+// `TcoContext.InTailPosition`, suppressed by `TcoTailPositionScope` under every operator operand,
+// call argument, `let` value, condition, and scrutinee), and whether the expression's value
+// leaves the scopes that own its parts — a tail self-call argument becoming the next iteration's
+// parameter — so an aggregate it builds retains the owned bindings it stores
+// (`TransfersRuntimeManagedChildren`).
 type ConsumerRequest =
     | expectedType: Maybe(SemanticType)
     | runtimeString: Bool
     | transferSlot: Maybe(Int)
+    | tailPosition: Bool
+    | transfersRuntimeManagedChildren: Bool
 
 // A temp holding a reference-counted heap value: newly produced by its instruction (the consumer
 // may take the reference) or already handed on.
@@ -147,7 +158,24 @@ type RuntimeTempState =
     | RuntimeNewlyProduced
     | RuntimeTransferred
 
-let emptyConsumerRequest = ConsumerRequest(expectedType = None, runtimeString = false, transferSlot = None)
+let emptyConsumerRequest =
+    ConsumerRequest(
+        expectedType = None,
+        runtimeString = false,
+        transferSlot = None,
+        tailPosition = false,
+        transfersRuntimeManagedChildren = false
+    )
+
+// The self-recursive function whose innermost lambda body is lowered as stage 0's TCO loop
+// (`TcoContext`): the binding's name, the number of curried parameters a tail self-call must apply,
+// and how many of the curried lambdas between the binding and the loop body are still to be
+// entered. A lambda entered once that count is zero is an ordinary nested closure, whose body
+// leaves the loop.
+type CoreTcoLoop =
+    | selfName: Str
+    | arity: Int
+    | pendingCurried: Int
 
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
@@ -190,6 +218,7 @@ type CoreLoweringState =
     | runtimeNormalizedArgumentLabels: List(Str)
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
+    | tcoLoop: Maybe(CoreTcoLoop)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -414,7 +443,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdaLabels = [],
         runtimeNormalizedArgumentLabels = [],
         programParameterOwnership = [],
-        dropperLabels = emptyDropperLabelCache
+        dropperLabels = emptyDropperLabelCache,
+        tcoLoop = None
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -787,6 +817,18 @@ let runtimeStringRequested (state: CoreLoweringState) =
     match consumerRequestOf(state) with
         | ConsumerRequest { runtimeString = requested } -> requested
 
+let transfersChildrenRequested (state: CoreLoweringState) =
+    match consumerRequestOf(state) with
+        | ConsumerRequest { transfersRuntimeManagedChildren = requested } -> requested
+
+// The request an aggregate hands each of its children: the transfer it was asked for and nothing
+// else, so a nested aggregate retains its own owned children the same way.
+let withTransferRequest (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with transfersRuntimeManagedChildren = transfers))(state)
+
+// A call argument's request: the callee's parameter type, and the transfer when the call is the
+// loop's tail self-call.
+let withArgumentRequest expected (transfers: Bool) (state: CoreLoweringState) = withConsumerRequest((emptyConsumerRequest with expectedType = expected, transfersRuntimeManagedChildren = transfers))(state)
+
 // The reference-counted heap temps of the current function.
 let recursive lookupRuntimeTemp (temp: Int) (temps: List((Int, RuntimeTempState))) =
     match temps with
@@ -886,6 +928,39 @@ let recursive transferForwards expression =
         | ExprVar(_) -> true
         | _ -> false
 
+// Tail position survives only the forms whose value is the enclosing body's own result — a
+// `let` body, an `if` branch (the short-circuit operators lower as one), a `match` arm, and the
+// call itself; stage 0's `TcoTailPositionScope` suppresses it under everything else, every
+// operator operand included.
+let recursive tailPositionForwards expression =
+    match expression with
+        | ExprAt(_span, inner) -> tailPositionForwards(inner)
+        | ExprLet(_, _, _, _, _, _) -> true
+        | ExprLetRecursive(_, _, _, _, _, _) -> true
+        | ExprIf(_, _, _) -> true
+        | ExprLogicalAnd(_, _) -> true
+        | ExprLogicalOr(_, _) -> true
+        | ExprMatch(_, _, _) -> true
+        | ExprCall(_, _, _, _) -> true
+        | _ -> false
+
+// The transfer of an aggregate's children reaches the forms that forward their result and the
+// aggregates that store the children: a constructor application, a record, a cons cell, a list
+// literal, and a tuple.
+let recursive transferRequestForwards expression =
+    match expression with
+        | ExprAt(_span, inner) -> transferRequestForwards(inner)
+        | ExprLet(_, _, _, _, _, _) -> true
+        | ExprLetRecursive(_, _, _, _, _, _) -> true
+        | ExprIf(_, _, _) -> true
+        | ExprMatch(_, _, _) -> true
+        | ExprCall(_, _, _, _) -> true
+        | ExprRecord(_, _, _) -> true
+        | ExprCons(_, _) -> true
+        | ExprList(_, _) -> true
+        | ExprTuple(_) -> true
+        | _ -> false
+
 let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
     ConsumerRequest(
         expectedType = if expectedTypeForwards(expression)
@@ -894,7 +969,9 @@ let dispatchRequest (expression: Expr) (request: ConsumerRequest) =
         runtimeString = runtimeRequestForwards(expression) && request.runtimeString,
         transferSlot = if transferForwards(expression)
         then request.transferSlot
-        else None
+        else None,
+        tailPosition = tailPositionForwards(expression) && request.tailPosition,
+        transfersRuntimeManagedChildren = transferRequestForwards(expression) && request.transfersRuntimeManagedChildren
     )
 
 let unifyUnforwardedExpectedType (expression: Expr) (expected: Maybe(SemanticType)) (lowered: LoweredCoreValue) =
@@ -1478,6 +1555,69 @@ let recursive lookupRuntimeOwner (slot: Int) (owners: List((Int, Bool))) =
             else lookupRuntimeOwner(slot)(rest)
 
 let runtimeOwnerStateOf (slot: Int) (state: CoreLoweringState) = lookupRuntimeOwner(slot)(state.runtimeOwners)
+
+// The slot of a local `let` binding that still owns a reference-counted value.
+let liveRuntimeOwnerSlot (name: Str) (state: CoreLoweringState) =
+    match lookupBinding(name)(state.bindings) with
+        | Some(CoreBinding { location = CoreLocal(slot) }) ->
+            match runtimeOwnerStateOf(slot)(state) with
+                | Some(true) -> Some(slot)
+                | _ -> None
+        | _ -> None
+
+// Stage 0's `DuplicateRuntimeManagedOwnedValueForTransfer`: the read of a live owner that an
+// aggregate carries out of the owner's scope is retained before the owner's own scope-exit
+// release. A list-typed owner may hold the empty list, whose null representation has no header,
+// so its retain is guarded (`MayBeEmpty`). The duplicate is a newly produced reference.
+let mayBeEmptyList (semanticType: SemanticType) =
+    match semanticType with
+        | SemList(_element) -> true
+        | _ -> false
+
+let emitTransferRetain (temp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = duplicate } ->
+            allocated
+            |> emit(semanticType
+            |> resolveType(allocated)
+            |> mayBeEmptyList
+            |> RcDup(duplicate)(temp)(true))
+            |> markRuntimeTemp(duplicate)(RuntimeNewlyProduced)
+            |> success(duplicate)(semanticType)
+
+// A child an aggregate stores, or a tail self-call argument, retained when the context asked for
+// the transfer and the child is the read of a binding that still owns its reference; every other
+// child is stored as lowered.
+let retainTransferredChild (child: Expr) (transfers: Bool) (lowered: LoweredCoreValue) =
+    match (transfers, unspanArgument(child), lowered) with
+        | (true, ExprVar(name), LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }) ->
+            match liveRuntimeOwnerSlot(name)(state) with
+                | Some(_slot) -> emitTransferRetain(temp)(semanticType)(state)
+                | None -> lowered
+        | _ -> lowered
+
+// `lowerCoreValues` for an aggregate's children, each retained under the transfer as it is
+// lowered, before the next child.
+let recursive lowerTransferredValuesInto (transfers: Bool) expressions lower state reversedTemps reversedTypes =
+    match expressions with
+        | [] -> finishCoreValues(state)(reversedTemps)(reversedTypes)
+        | expression :: rest ->
+            match state
+            |> withTransferRequest(transfers)
+            |> lower(expression)
+            |> retainTransferredChild(expression)(transfers) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedCoreValues(failedState)(error)
+                | LoweredCoreValue { state = nextState, temp = temp, semanticType = semanticType, error = None } ->
+                    lowerTransferredValuesInto(
+                        transfers,
+                        rest,
+                        lower,
+                        nextState,
+                        temp :: reversedTemps,
+                        semanticType :: reversedTypes
+                    )
+
+let lowerTransferredValues (transfers: Bool) expressions lower state = lowerTransferredValuesInto(transfers)(expressions)(lower)(state)([])([])
 
 let finishOwnedRead ownedRead temp semanticType state =
     match state with
@@ -3005,13 +3145,43 @@ let normalizeAlwaysReturnedParameter parameter body label parameterType lowered 
                     if acceptsRuntimeManagedArgument(label)(bodyState) || !resultAlwaysReachesVariable(constructorLayoutNames(bodyState.constructorLayouts))(bodyState.letLambdas)(body)(parameter)
                     then lowered
                     else lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+// Stage 0's `TcoContext`: a recursive binding whose innermost lambda body has a tail self-call
+// applying every parameter is lowered as a TCO loop over that innermost body; the curried
+// lambdas between the binding and the body are entered on the way.
+let recursiveTcoLoop (name: Str) (body: Expr) =
+    (let arity = 1 + countLambdaArity(0)(body)
+    in
+        if hasTailSelfCalls(collectInnermostBody(body))(name)(arity)
+        then Some(CoreTcoLoop(selfName = name, arity = arity, pendingCurried = arity - 1))
+        else None)
+
+let enterRecursiveTcoLoop (name: Str) (body: Expr) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(body)
+
+// A lambda entered inside a loop function: the next curried parameter's lambda stays in the loop
+// (one fewer to enter); any other lambda is a nested closure whose body leaves it.
+let enterLambdaTcoLoop (state: CoreLoweringState) =
+    match state.tcoLoop with
+        | Some(CoreTcoLoop { pendingCurried = pending } as context) ->
+            if pending > 0
+            then state with tcoLoop = Some((context with pendingCurried = pending - 1))
+            else state with tcoLoop = None
+        | None -> state
+
+// The loop body — the innermost lambda body of the loop function — starts in tail position.
+let loopBodyTailPosition (state: CoreLoweringState) =
+    match state.tcoLoop with
+        | Some(CoreTcoLoop { pendingCurried = pending }) -> pending == 0
+        | None -> false
+
+let withLoopBodyRequest (request: ConsumerRequest) (state: CoreLoweringState) = withConsumerRequest((request with tailPosition = loopBodyTailPosition(state)))(state)
 
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
             typedOuter
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
-            |> withConsumerRequest(functionBodyRequest(body)(typedOuter))
+            |> enterLambdaTcoLoop
+            |> withLoopBodyRequest(functionBodyRequest(body)(typedOuter))
             |> lower(body)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
@@ -3103,23 +3273,26 @@ let lowerCoreCallArgument functionTemp expectedArgumentType resultType loweredAr
             |> bindType(expectedArgumentType)(argumentType)
             |> finishCoreCall(functionTemp)(argumentTemp)(resultType)
 
-// An argument is expected to have the callee's parameter type.
-let lowerCoreCallTyped argument lower functionTemp resolved =
+// An argument is expected to have the callee's parameter type. A tail self-call's argument
+// becomes the next iteration's parameter, so it is lowered under the children transfer and its
+// own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`).
+let lowerCoreCallTyped argument (transfers: Bool) lower functionTemp resolved =
     match resolved with
         | FunctionTypeResolution { state = typedState, error = Some(error) } -> failure(typedState)(error)
         | FunctionTypeResolution { state = typedState, argumentType = expectedType, resultType = resultType, error = None } ->
             typedState
-            |> withOnlyExpectedType(Some(expectedType))
+            |> withArgumentRequest(Some(expectedType))(transfers)
             |> lower(argument)
+            |> retainTransferredChild(argument)(transfers)
             |> lowerCoreCallArgument(functionTemp)(expectedType)(resultType)
 
-let lowerCoreCallFunction argument lower loweredFunction =
+let lowerCoreCallFunction argument (transfers: Bool) lower loweredFunction =
     match loweredFunction with
         | LoweredCoreValue { state = functionState, error = Some(error) } -> failure(functionState)(error)
         | LoweredCoreValue { state = functionState, temp = functionTemp, semanticType = functionType, error = None } ->
             functionState
             |> ensureFunctionType(functionType)
-            |> lowerCoreCallTyped(argument)(lower)(functionTemp)
+            |> lowerCoreCallTyped(argument)(transfers)(lower)(functionTemp)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a
@@ -3146,10 +3319,10 @@ let preconstrainCallResult expected arity loweredCallee =
 // else is an ordinary expression. The stages share the window `lowerCall` opened around the
 // whole spine; a call inside an argument opens its own. The root callee's result after the
 // spine's `arity` applications is constrained to the expected type before the arguments.
-let recursive lowerCallSpineCallee expression expected arity lower state =
+let recursive lowerCallSpineCallee expression expected arity (transfers: Bool) lower state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(expected)(arity)(lower)(state)
-        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(expected)(arity + 1)(lower)(state)
+        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(expected)(arity)(transfers)(lower)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(expected)(arity + 1)(transfers)(lower)(state)
         | ExprLambda(parameter, body, annotation) ->
             state
             |> lowerLambda(parameter)(body)(annotation)(true)(lower)
@@ -3158,18 +3331,26 @@ let recursive lowerCallSpineCallee expression expected arity lower state =
             state
             |> lower(expression)
             |> preconstrainCallResult(expected)(arity)
-and lowerCallSpineStage function argument expected arity lower state =
+and lowerCallSpineStage function argument expected arity (transfers: Bool) lower state =
     state
-    |> lowerCallSpineCallee(function)(expected)(arity)(lower)
-    |> lowerCoreCallFunction(argument)(lower)
+    |> lowerCallSpineCallee(function)(expected)(arity)(transfers)(lower)
+    |> lowerCoreCallFunction(argument)(transfers)(lower)
+
+// Stage 0's TCO tail self-call (`LowerCallTcoEvalArgs`): in tail position of the loop body, the
+// loop function applied to exactly its parameters. Every argument of the spine is lowered under
+// the children transfer.
+let isTailSelfCall (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match (state.tcoLoop, consumerRequestOf(state), unspanArgument(spine.root)) with
+        | (Some(CoreTcoLoop { selfName = selfName, arity = arity, pendingCurried = pending }), ConsumerRequest { tailPosition = true }, ExprVar(name)) -> pending == 0 && name == selfName && coreListLength(spine.arguments) == arity
+        | _ -> false
 
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
-let lowerCall (spine: CoreCallSpine) function argument expected lower state =
+let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) lower state =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> lowerCallSpineStage(function)(argument)(expected)(1)(lower)
+            |> lowerCallSpineStage(function)(argument)(expected)(1)(transfers)(lower)
             |> markKnownCallResult(spine)
             |> closeCallWindow(cursorSlot)(endSlot)
 
@@ -4662,7 +4843,8 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
             |> (given (origin) ->
                 state
                 |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
-                |> withConsumerRequest(functionBodyRequest(body)(state))
+                |> enterRecursiveTcoLoop(name)(body)
+                |> withLoopBodyRequest(functionBodyRequest(body)(state))
                 |> lower(body)
                 |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(state))
 
@@ -4876,7 +5058,7 @@ let finishTupleLowering lowered =
 let lowerTuple elements lower state =
     state
     |> markResourceArgumentsMoved(elements)
-    |> lowerCoreValues(elements)(lower)
+    |> lowerTransferredValues(transfersChildrenRequested(state))(elements)(lower)
     |> finishTupleLowering
 
 let allocateListCell headTemp tailTemp elementType state =
@@ -4899,6 +5081,7 @@ let finishCons head tail =
                 | (failedState, Some(error)) -> failure(failedState)(error)
                 | (typedState, None) -> allocateListCell(headTemp)(tailTemp)(headType)(typedState)
 
+// The tail is asked only for the list type: stage 0 forwards the head's transfer to no tail.
 let finishConsTail lower tailExpression head =
     match head with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -4920,8 +5103,9 @@ let expectedListElementType state =
 let lowerCons head tail lower state =
     state
     |> markResourceArgumentsMoved([head, tail])
-    |> withOnlyExpectedType(expectedListElementType(state))
+    |> withArgumentRequest(expectedListElementType(state))(transfersChildrenRequested(state))
     |> lower(head)
+    |> retainTransferredChild(head)(transfersChildrenRequested(state))
     |> finishConsTail(lower)(tail)
 
 let emptyList state =
@@ -4929,7 +5113,7 @@ let emptyList state =
         | FreshType { state = typedState, semanticType = elementType } ->
             lowerConstant(given (target) -> LoadConstInt(target)(0))(SemList(elementType))(typedState)
 
-let recursive lowerListElements elements elementType tailTemp lower state =
+let recursive lowerListElements (transfers: Bool) elements elementType tailTemp lower state =
     match elements with
         | [] ->
             success(tailTemp)(elementType
@@ -4937,8 +5121,9 @@ let recursive lowerListElements elements elementType tailTemp lower state =
             |> SemList)(state)
         | expression :: rest ->
             match state
-            |> withOnlyExpectedType(Some(elementType))
-            |> lower(expression) with
+            |> withArgumentRequest(Some(elementType))(transfers)
+            |> lower(expression)
+            |> retainTransferredChild(expression)(transfers) with
                 | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                 | LoweredCoreValue { state = valueState, temp = headTemp, semanticType = headType, error = None } ->
                     match bindType(elementType)(headType)(valueState) with
@@ -4947,6 +5132,7 @@ let recursive lowerListElements elements elementType tailTemp lower state =
                             match allocateListCell(headTemp)(tailTemp)(elementType)(typedState) with
                                 | LoweredCoreValue { state = cellState, temp = cellTemp, error = None } ->
                                     lowerListElements(
+                                        transfers,
                                         rest,
                                         elementType,
                                         cellTemp,
@@ -4955,11 +5141,11 @@ let recursive lowerListElements elements elementType tailTemp lower state =
                                     )
                                 | failed -> failed
 
-let finishListLiteral elements lower empty =
+let finishListLiteral (transfers: Bool) elements lower empty =
     match empty with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
         | LoweredCoreValue { state = emptyState, temp = emptyTemp, semanticType = SemList(elementType), error = None } ->
-            lowerListElements(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
+            lowerListElements(transfers)(reverse(elements))(elementType)(emptyTemp)(lower)(emptyState)
         | LoweredCoreValue { state = failedState } ->
             failure(
                 failedState,
@@ -4981,7 +5167,7 @@ let lowerListLiteral elements lower state =
     state
     |> markResourceArgumentsMoved(elements)
     |> expectedOrFreshEmptyList
-    |> finishListLiteral(elements)(lower)
+    |> finishListLiteral(transfersChildrenRequested(state))(elements)(lower)
 
 let recursive emitAdtFields baseTemp index tagless temps state =
     match temps with
@@ -5014,7 +5200,10 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
                         |> emitAdtFields(resultTemp)(0)(tagless)(temps)
                         |> success(resultTemp)(resolveType(allocatedState)(resultType))
 
-let finishConstructorArguments arguments lower shape =
+// Stage 0's `RetainEscapingConstructorArgument` under the transfer: each argument read of a live
+// owner is retained as it is lowered (the Perceus pattern-owner duplicate an owning consumer adds
+// waits on pattern-bound owners).
+let finishConstructorArguments arguments (transfers: Bool) lower shape =
     match shape with
         | CoreConstructorShape { state = state, layout = layout, parameterTypes = parameterTypes, resultType = resultType, constructorRuntimeManaged = runtimeManaged } ->
             let expectedArity = coreListLength(parameterTypes)
@@ -5029,7 +5218,7 @@ let finishConstructorArguments arguments lower shape =
                                 |> CoreConstructorArityMismatch(name)(expectedArity)
                                 |> failure(state)
                     else
-                        match lowerCoreValues(arguments)(lower)(state) with
+                        match lowerTransferredValues(transfers)(arguments)(lower)(state) with
                             | LoweredCoreValues { state = failedState, error = Some(error) } -> failure(failedState)(error)
                             | LoweredCoreValues { state = valuesState, semanticTypes = actualTypes, error = None } as lowered ->
                                 match bindCoreValueTypes(parameterTypes)(actualTypes)(valuesState) with
@@ -5038,11 +5227,11 @@ let finishConstructorArguments arguments lower shape =
                                         let typedValues = lowered with state = typedState
                                         in finishConstructorAllocation(layout)(resultType)(runtimeManaged)(typedValues)
 
-let lowerConstructor layout arguments lower state =
+let lowerConstructor layout arguments (transfers: Bool) lower state =
     state
     |> markResourceArgumentsMoved(arguments)
     |> instantiateConstructor(layout)
-    |> finishConstructorArguments(arguments)(lower)
+    |> finishConstructorArguments(arguments)(transfers)(lower)
 
 let recursive resolveCoreTypes state semanticTypes =
     match semanticTypes with
@@ -5061,7 +5250,7 @@ let finishBuiltinUnit resultType lower state =
     match constructorLayout("Unit")(state) with
         | None -> failure(state)(UnknownLoweringBinding("Unit"))
         | Some(layout) ->
-            match lowerConstructor(layout)([])(lower)(state) with
+            match lowerConstructor(layout)([])(false)(lower)(state) with
                 | LoweredCoreValue { state = unitState, temp = temp, error = None } ->
                     success(temp)(resolveType(unitState)(resultType))(unitState)
                 | failed -> failed
@@ -5297,7 +5486,7 @@ let builtinLambda layout =
                 |> applyConstructorParameters(ExprQualifiedVar(moduleName)(memberName))
                 |> wrapConstructorParameters(parameters))
 
-let tryLowerConstructorCall expression lower state =
+let tryLowerConstructorCall expression (transfers: Bool) lower state =
     match collectCallSpine(expression) with
         | CoreCallSpine { root = ExprVar(name), arguments = arguments } ->
             match constructorLayout(name)(state) with
@@ -5306,7 +5495,7 @@ let tryLowerConstructorCall expression lower state =
                     if coreListLength(arguments) == constructorArity(layout)
                     then
                         state
-                        |> lowerConstructor(layout)(arguments)(lower)
+                        |> lowerConstructor(layout)(arguments)(transfers)(lower)
                         |> Some
                     else None
         | _ -> None
@@ -5503,6 +5692,7 @@ let lowerRecord name fields lower state =
                     lowerConstructor(
                         layout,
                         expressions,
+                        transfersChildrenRequested(state),
                         lower,
                         state
                     )
@@ -5543,6 +5733,29 @@ let finishRecordFieldLayout typeName fieldName receiverTemp receiverType state l
             |> instantiateConstructor(constructor)
             |> finishRecordFieldShape(typeName)(fieldName)(receiverTemp)(receiverType)(fieldNames)
 
+let recursive recordLayoutsDeclaringField (fieldName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { fieldNames = fieldNames } as layout) :: rest ->
+            if containsName(fieldName)(fieldNames)
+            then layout :: recordLayoutsDeclaringField(fieldName)(rest)
+            else recordLayoutsDeclaringField(fieldName)(rest)
+
+// Stage 0's `ResolveRecordReceiverByFieldName`: a receiver whose type is still a variable at the
+// access (a parameter read before any call constrains it) is resolved structurally when exactly
+// one record type declares the field, by unifying the receiver with a fresh instance of that
+// type. An ambiguous or undeclared field leaves the receiver unresolved.
+let resolveRecordReceiverByFieldName (fieldName: Str) (receiverType: SemanticType) (state: CoreLoweringState) =
+    match recordLayoutsDeclaringField(fieldName)(state.constructorLayouts) with
+        | layout :: [] ->
+            match (instantiateConstructor(layout)(state), constructorResultName(layout)) with
+                | (CoreConstructorShape { state = instantiated, resultType = resultType }, Some(typeName)) ->
+                    match bindType(receiverType)(resultType)((instantiated with runtimeAdtRequested = state.runtimeAdtRequested)) with
+                        | (typedState, None) -> (typedState, Some(typeName))
+                        | (failedState, Some(_error)) -> (failedState, None)
+                | (CoreConstructorShape { state = instantiated }, None) -> ((instantiated with runtimeAdtRequested = state.runtimeAdtRequested), None)
+        | _ -> (state, None)
+
 let finishRecordFieldAccess _receiverName fieldName lowered =
     match lowered with
         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
@@ -5552,6 +5765,16 @@ let finishRecordFieldAccess _receiverName fieldName lowered =
                     state
                     |> recordLayout(typeName)
                     |> finishRecordFieldLayout(typeName)(fieldName)(receiverTemp)(receiverType)(state)
+                | SemVariable(_id) ->
+                    match resolveRecordReceiverByFieldName(fieldName)(receiverType)(state) with
+                        | (typedState, Some(typeName)) ->
+                            typedState
+                            |> recordLayout(typeName)
+                            |> finishRecordFieldLayout(typeName)(fieldName)(receiverTemp)(receiverType)(typedState)
+                        | (typedState, None) ->
+                            failure(typedState)(receiverType
+                            |> resolveType(typedState)
+                            |> CoreRecordUpdateRequiresRecord)
                 | other -> failure(state)(CoreRecordUpdateRequiresRecord(other))
 
 // The receiver of a field access is read without the owned-read borrow: stage 0's
@@ -6075,10 +6298,7 @@ let emitPreparedCoreBinary operator binary =
                     binary
                     |> resolvedCoreBinary
                     |> emitResolvedCoreBinary(operator)
-        | _ ->
-            binary
-            |> resolvedCoreBinary
-            |> emitResolvedCoreBinary(operator)
+        | LoweredCoreBinary { state = failedState, error = Some(error) } -> failure(failedState)(error)
 
 let resolveDeferredAddKind state semanticType target left right =
     match resolveType(state)(semanticType) with
@@ -6265,7 +6485,7 @@ let lowerCoreBigInt digits state =
 
 let finishCoreConstructorReference layout lower state =
     if constructorArity(layout) == 0
-    then lowerConstructor(layout)([])(lower)(state)
+    then lowerConstructor(layout)([])(false)(lower)(state)
     else
         lower(constructorLambda(layout))(state)
 
@@ -7018,7 +7238,7 @@ let unifyOptionalExpectedResult expected lowered =
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
-    |> tryLowerConstructorCall(expression)(lower) with
+    |> tryLowerConstructorCall(expression)(transfersChildrenRequested(state))(lower) with
         | Some(lowered) ->
             unifyOptionalExpectedResult(expectedTypeOf(state))(lowered)
         | None ->
@@ -7032,7 +7252,7 @@ let lowerCallExpression expression function argument lower state =
                         | None ->
                             state
                             |> clearConsumerRequest
-                            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(lower)
+                            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(lower)
                             |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
 
 let lowerCoreDispatch expression lowerCore state =

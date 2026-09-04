@@ -555,7 +555,10 @@ same public behavior.
   back-edge transforms).
 - [x] **IR-5** Lower tuples, lists, strings, bytes, nominal/record/zero-cost ADTs, constructors, field
   access, patterns, and record updates with stage-0-compatible layouts (tuple words, two-word list
-  cells, interned strings, tagged cells, erased zero-cost wrappers).
+  cells, interned strings, tagged cells, erased zero-cost wrappers). A field read through a
+  receiver whose type is still a variable at the access (a parameter read before any call
+  constrains it) resolves by the field's name when exactly one record type declares it, stage 0's
+  `ResolveRecordReceiverByFieldName`; an ambiguous field leaves the receiver unresolved.
 - [x] **IR-6** Lower operators, BigInt, text/number conversions, program arguments, panic, standard I/O,
   filesystem, environment, process, networking, TLS/HTTP, regex, and other builtin operations.
 - [x] **IR-7** Lower external calls, resources/destructors, native ownership conventions, library/resource
@@ -817,22 +820,63 @@ same public behavior.
   droppers: the `Result(Str, BigInt)` and text-uncons special drops, zero-cost erasure in the
   classification environment (the dropper environment carries no type-resolution context), and
   naming the dropper on the owned-`let` and pattern-owner releases once those are runtime-managed.
-- [ ] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
+- [~] **OPT-26** Retain a runtime-managed owned binding that a tail self-call argument carries out of its
   scope (the argument escapes the iteration like a result escapes its callee — request
   `TransfersRuntimeManagedChildren`, honored by the constructor-argument path even without an
   owning aggregate consumer). Regression: `tests/tco_let_call_result_in_accumulator_record.ash`.
-- [ ] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
+  Done: the consumer request carries stage 0's `TransfersRuntimeManagedChildren`
+  (`transfersRuntimeManagedChildren`); a tail self-call's arguments — `isTailSelfCall`: the
+  enclosing loop function applied to all of its parameters in tail position of its loop body
+  (OPT-29) — are lowered under the transfer, which the constructor, record, cons-head,
+  list-literal, and tuple paths forward to their children and honor by retaining the read of a
+  live `let` owner (`retainTransferredChild`: the `Borrow`, then an `RcDup RuntimeManaged=true`
+  whose duplicate is what the cell stores, guarded `MayBeEmpty` for a list-typed owner), stage 0's
+  `DuplicateRuntimeManagedOwnedValueForTransfer`; the argument's own read of an owner is retained
+  the same way, and the cons tail is not forwarded to, as in stage 0. Covered by
+  `TcoOwnershipRulesTests.ash` and the shared `tests/tco_owned_let_in_tail_argument_record.ash`
+  (a known call whose body is a fresh-string builtin — the one `let` value the selfhost places on
+  the RC heap today) run through the backend suite, next to the regression fixture itself, whose
+  `let label = taken(...)` result stays an arena string until call-result RC normalization is
+  ported, so no retain fires on it. Open: the Perceus pattern-owner duplicate an owning consumer
+  adds (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
+  (`DuplicateRuntimeManagedTcoParameterForAggregate`), waiting on pattern owners and parameter
+  placement.
+- [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
   represented: only a fresh producer or a transferred value confers a releasable reference; a
   plain read of an RC-normalized slot is a borrowed read, and registering it as an owner
   double-releases every iteration. Regression: `tests/tco_let_alias_of_rc_parameter.ash`.
+  `adoptRuntimeLetValue` registers an owner only for a `RuntimeNewlyProduced` value temp — a
+  fresh producer's result, a known call marked by its callee's body placement, a copy-out, or a
+  transferred read (`transferRuntimeOwner`); a parameter `LoadLocal`, a `LoadEnv`, a pattern-field
+  load, and the `Borrow` of an owner's read are never marked, so `let r = acc` inside a loop
+  releases nothing at its exit (`TcoOwnershipRulesTests.ash`; the regression program runs through
+  the backend suite). The RC-normalized loop parameter the rule guards against arrives with
+  OPT-25's parameter entry normalization.
 - [ ] **OPT-28** Supply the evidence for a trait requirement inside a constrained function from the
   requirement's own instantiated type, never by trait name alone — the call lowering must unify
   the real arguments first, keep any name-threaded hint only for a still-bare type variable, and
   never serve a concrete requirement from the active dictionary. Regression:
   `tests/trait_concrete_requirement_inside_polymorphic_function.ash`.
-- [ ] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
+- [~] **OPT-29** Keep every operator operand out of tail position: in a genuine TCO loop, a self-call that is
   an operand of an operator in another branch is an ordinary call, never a back-edge jump.
-  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`.
+  Regression: `tests/tco_non_tail_self_call_in_operator_operand.ash`. Done: the consumer request
+  carries stage 0's `InTailPosition` (`tailPosition`), true at a loop body's root — a recursive
+  binding whose innermost lambda body `hasTailSelfCalls` gets a `CoreTcoLoop`
+  (`recursiveTcoLoop`), the curried lambdas between the binding and that body stay in the loop and
+  any other lambda leaves it (`enterLambdaTcoLoop`) — and forwarded only through `let` and
+  `let recursive` bodies, `if` branches (`&&`/`||` included), `match` arms, and the call node
+  itself; every operator operand, call argument, `let` value, condition, and scrutinee is lowered
+  without it (`tailPositionForwards`, the request-side `TcoTailPositionScope`). The flag decides
+  the tail self-call whose arguments transfer their children (OPT-26); the call itself stays a
+  `CallClosure` the backend fuses only when its result is stored or returned, so an operand
+  self-call is an ordinary call by construction. Covered by `TcoTests.ash` (`hasTailSelfCalls`
+  over operator operands), `TcoOwnershipRulesTests.ash` (the operand branch's cons stores the
+  plain borrow, the tail branch's the retained duplicate), and the regression program plus
+  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. Open: the loop
+  lowering itself (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`, argument
+  ownership flags with entry and back-edge normalization, the exit transfer) — the loop functions
+  of the OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of
+  the parity runner.
 - [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:

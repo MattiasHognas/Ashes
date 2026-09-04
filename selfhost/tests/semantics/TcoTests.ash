@@ -267,6 +267,24 @@ let testTcoPlacementTransitions unit =
                             | _ -> test.fail("promoted transition expected")
             | _ -> test.fail("initial transition expected"))
 
+// A self-call that is an operand of an operator (`1 + f(x)`, `f(x) + 1`, a comparison, a negated
+// comparison) is never a tail call; only a self-call that is the branch's own result is.
+let testOperatorOperandsAreNotTailCalls unit =
+    (let selfCall = ExprCall(ExprVar("f"))(ExprVar("x"))(false)(callArgumentsInline)
+    in
+        let _ = test.assertEqual(true)(hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(selfCall))("f")(1))
+        in
+            let _ = test.assertEqual(false)(hasTailSelfCalls(ExprAdd(ExprInt(1))(selfCall))("f")(1))
+            in
+                let _ = test.assertEqual(false)(hasTailSelfCalls(ExprAdd(selfCall)(ExprInt(1)))("f")(1))
+                in
+                    let _ = test.assertEqual(false)(hasTailSelfCalls(ExprEqual(selfCall)(ExprInt(1)))("f")(1))
+                    in
+                        let _ = test.assertEqual(false)(hasTailSelfCalls(ExprLogicalNot(ExprEqual(selfCall)(ExprInt(1))))("f")(1))
+                        in
+                            let _ = test.assertEqual(false)(hasTailSelfCalls(ExprIf(ExprVar("even"))(ExprAdd(ExprInt(1))(selfCall))(ExprInt(0)))("f")(1))
+                            in Unit)
+
 let runTcoTests unit =
     (let _ = testOrdinaryTailCallDetection(Unit)
     in
@@ -280,5 +298,7 @@ let runTcoTests unit =
                     in
                         let _ = testTcoPlacementTransitions(Unit)
                         in
-                            let _ = Ashes.IO.print("all self-hosted TCO and mutual recursion tests passed")
-                            in Unit)
+                            let _ = testOperatorOperandsAreNotTailCalls(Unit)
+                            in
+                                let _ = Ashes.IO.print("all self-hosted TCO and mutual recursion tests passed")
+                                in Unit)
