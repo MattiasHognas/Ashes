@@ -4300,6 +4300,448 @@ let testRcAllocReusing unit = assertProgramPrintsLines(buildRcAllocReusingModule
 
 let testRcClosureDrop unit = assertProgramPrintsLines(buildRcClosureDropModule)("selfhostBackendRcClosureDrop")("selfhost_backend_rc_closure_drop_e2e")(["42", "7"])
 
+// A string copied into the arena above a scope watermark (in a chunk of its own), copied to an RC
+// string before the reset and to an arena string below the watermark after it; both are printed
+// once the source chunk is unmapped. The RC copy's real header makes it unique. Prints
+// `hello|hello` and `true`.
+let buildCopyOutArenaStringAfterResetModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(6000000)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(2)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = CopyOutArena(3)(2)(-1)(true)(RcNormalization)(None), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(2)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstStr(5)("s1"), location = None),
+        IrInstruction(instruction = ConcatStr(6)(3)(5)(false), location = None),
+        IrInstruction(instruction = ConcatStr(7)(6)(4)(false), location = None),
+        IrInstruction(instruction = PrintStr(7), location = None),
+        IrInstruction(instruction = RcIsUnique(8)(3), location = None),
+        IrInstruction(instruction = PrintBool(8), location = None),
+        IrInstruction(instruction = LoadConstInt(9)(0), location = None),
+        IrInstruction(instruction = Return(9), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(10))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "hello"), IrStringLiteral(label = "s1", value = "|")]))
+
+// `["ab", "cd"]` with arena string heads copied as RC cells with RC string heads before the reset;
+// both heads are read back after the reclaim, and the first head copy is a unique RC string.
+// Prints `abcd` and `true`.
+let buildCopyOutListRcStringHeadsModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = LoadConstStr(1)("s1"), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(2)(6000000)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(3)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = CopyOutArena(4)(1)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = Alloc(5)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(5)(0)(4), location = None),
+        IrInstruction(instruction = LoadConstInt(6)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(5)(8)(6), location = None),
+        IrInstruction(instruction = Alloc(7)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(0)(3), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(8)(5), location = None),
+        IrInstruction(instruction = CopyOutList(8)(7)(StringListHead)(true)(RcNormalization), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(8)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(10)(8)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(11)(10)(0), location = None),
+        IrInstruction(instruction = ConcatStr(12)(9)(11)(false), location = None),
+        IrInstruction(instruction = PrintStr(12), location = None),
+        IrInstruction(instruction = RcIsUnique(13)(9), location = None),
+        IrInstruction(instruction = PrintBool(13), location = None),
+        IrInstruction(instruction = LoadConstInt(14)(0), location = None),
+        IrInstruction(instruction = Return(14), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(15))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "ab"), IrStringLiteral(label = "s1", value = "cd")]))
+
+// `env[0] + arg`: the lifted body every closure copy-out fixture below calls through.
+let copyAddEnvFunction label =
+    handBuiltLiftedFunction(label)([
+        IrInstruction(instruction = LoadEnv(0)(0), location = None),
+        IrInstruction(instruction = LoadLocal(1)(1), location = None),
+        IrInstruction(instruction = AddInt(2)(0)(1), location = None),
+        IrInstruction(instruction = Return(2), location = None)
+    ])(2)(3)
+
+// An arena closure and its one-word environment built in a chunk of their own, copied below the
+// watermark after the reset, and called once the source chunk is unmapped; a capture-free
+// closure's copy keeps its nil environment word. Prints `42` and `0`.
+let buildCopyOutClosureArenaModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(8)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(40), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
+        IrInstruction(instruction = MakeClosure(3)("copy_add_env")(1)(8)(false)(false)(false), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutClosure(4)(3)(false)(ArenaScopeBoundary), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(2), location = None),
+        IrInstruction(instruction = CallClosure(6)(4)(5)(-1), location = None),
+        IrInstruction(instruction = PrintInt(6), location = None),
+        IrInstruction(instruction = LoadConstInt(7)(0), location = None),
+        IrInstruction(instruction = MakeClosure(8)("copy_add_env")(7)(0)(false)(false)(false), location = None),
+        IrInstruction(instruction = CopyOutClosure(9)(8)(false)(ArenaScopeBoundary), location = None),
+        IrInstruction(instruction = LoadMemOffset(10)(9)(8), location = None),
+        IrInstruction(instruction = PrintInt(10), location = None),
+        IrInstruction(instruction = LoadConstInt(11)(0), location = None),
+        IrInstruction(instruction = Return(11), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(12))
+    |> (given (entryFunction) -> handBuiltProgram(entryFunction)([copyAddEnvFunction("copy_add_env")]))
+    |> codegenProgram(name)(context)
+
+// `copy_norm_env$env_normalize`: the normalizer stage 0 synthesizes for a closure whose captures
+// are all scalars, with the source environment in slot `0` and the destination in slot `1`. This
+// one writes `source[0] + 1` so a call through the copy shows the normalizer ran, and returns `0`,
+// the "no dropper" address.
+let copyNormalizerFunction =
+    handBuiltLiftedFunction("copy_norm_env$env_normalize")([
+        IrInstruction(instruction = LoadLocal(0)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(1)(0)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(1), location = None),
+        IrInstruction(instruction = AddInt(3)(1)(2), location = None),
+        IrInstruction(instruction = LoadLocal(4)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(3), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(0), location = None),
+        IrInstruction(instruction = Return(5), location = None)
+    ])(2)(6)
+
+// Two RC closures copied with `CopyOutClosure(runtimeManaged = true)`: `copy_norm_env` has a
+// normalizer, which the copy dispatches to by code address (`40 + 1 + 2`); `copy_raw_env` has none
+// and gets the raw environment bytes (`40 + 2`). Each source environment is overwritten after its
+// copy, so the calls prove the copies own their own environments; the copied environment is a
+// unique RC cell, and every closure and copy is dropped through the closure release. Prints `43`,
+// `42`, `true`, `7`.
+let buildCopyOutClosureRcNormalizerModule name context =
+    [
+        IrInstruction(instruction = Alloc(0)(8)(true), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(40), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(0)(1), location = None),
+        IrInstruction(instruction = MakeClosure(2)("copy_norm_env")(0)(8)(true)(false)(false), location = None),
+        IrInstruction(instruction = CopyOutClosure(3)(2)(true)(RcNormalization), location = None),
+        IrInstruction(instruction = LoadConstInt(4)(100), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(0)(4), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(2), location = None),
+        IrInstruction(instruction = CallClosure(6)(3)(5)(-1), location = None),
+        IrInstruction(instruction = PrintInt(6), location = None),
+        IrInstruction(instruction = Alloc(7)(8)(true), location = None),
+        IrInstruction(instruction = LoadConstInt(8)(40), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(0)(8), location = None),
+        IrInstruction(instruction = MakeClosure(9)("copy_raw_env")(7)(8)(true)(false)(false), location = None),
+        IrInstruction(instruction = CopyOutClosure(10)(9)(true)(RcNormalization), location = None),
+        IrInstruction(instruction = StoreMemOffset(7)(0)(4), location = None),
+        IrInstruction(instruction = CallClosure(11)(10)(5)(-1), location = None),
+        IrInstruction(instruction = PrintInt(11), location = None),
+        IrInstruction(instruction = LoadMemOffset(12)(3)(8), location = None),
+        IrInstruction(instruction = RcIsUnique(13)(12), location = None),
+        IrInstruction(instruction = PrintBool(13), location = None),
+        IrInstruction(instruction = RcDrop(3)("Function")(0)(true)(false)(None), location = None),
+        IrInstruction(instruction = RcDrop(10)("Function")(0)(true)(false)(None), location = None),
+        IrInstruction(instruction = RcDrop(2)("Function")(0)(true)(false)(None), location = None),
+        IrInstruction(instruction = RcDrop(9)("Function")(0)(true)(false)(None), location = None),
+        IrInstruction(instruction = LoadConstInt(14)(7), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = Return(14), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(15))
+    |> (given (entryFunction) -> handBuiltProgram(entryFunction)([copyAddEnvFunction("copy_norm_env"), copyNormalizerFunction, copyAddEnvFunction("copy_raw_env")]))
+    |> codegenProgram(name)(context)
+
+// Two to-space cells (a tagged two-field cell and a tagless one pointing at it) allocated inside an
+// arena bracket whose chunk is then unmapped, followed by two more bracket/unmap rounds; the tag
+// and both fields are read back through the tagless cell afterwards. Prints `45` (`3 + 7 + 35`).
+let buildAllocAdtToSpaceSurvivesResetsModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = AllocAdtToSpace(1)(3)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(7), location = None),
+        IrInstruction(instruction = SetAdtField(1)(0)(2)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(35), location = None),
+        IrInstruction(instruction = SetAdtField(1)(1)(3)(false), location = None),
+        IrInstruction(instruction = AllocAdtToSpace(4)(0)(1)(true), location = None),
+        IrInstruction(instruction = SetAdtField(4)(0)(1)(true), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(5)(6000000)(false), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(6)(6000000)(false), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = GetAdtField(7)(4)(0)(true), location = None),
+        IrInstruction(instruction = GetAdtTag(8)(7), location = None),
+        IrInstruction(instruction = GetAdtField(9)(7)(0)(false), location = None),
+        IrInstruction(instruction = GetAdtField(10)(7)(1)(false), location = None),
+        IrInstruction(instruction = AddInt(11)(9)(10), location = None),
+        IrInstruction(instruction = AddInt(12)(11)(8), location = None),
+        IrInstruction(instruction = PrintInt(12), location = None),
+        IrInstruction(instruction = LoadConstInt(13)(0), location = None),
+        IrInstruction(instruction = Return(13), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(14))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// An arena string and a 16-byte arena tuple, both in a chunk of their own, copied into the blob
+// region (`-1` by header length, `16` fixed) and read back once the chunk is unmapped. Prints
+// `hello|42`.
+let buildCopyOutArenaToSpaceModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(6000000)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(2)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = Alloc(3)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(4)(7), location = None),
+        IrInstruction(instruction = StoreMemOffset(3)(0)(4), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(35), location = None),
+        IrInstruction(instruction = StoreMemOffset(3)(8)(5), location = None),
+        IrInstruction(instruction = CopyOutArenaToSpace(6)(2)(-1), location = None),
+        IrInstruction(instruction = CopyOutArenaToSpace(7)(3)(16), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(8)(7)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(7)(8), location = None),
+        IrInstruction(instruction = AddInt(10)(8)(9), location = None),
+        IrInstruction(instruction = TextFromInt(11)(10)(false), location = None),
+        IrInstruction(instruction = LoadConstStr(12)("s1"), location = None),
+        IrInstruction(instruction = ConcatStr(13)(6)(12)(false), location = None),
+        IrInstruction(instruction = ConcatStr(14)(13)(11)(false), location = None),
+        IrInstruction(instruction = PrintStr(14), location = None),
+        IrInstruction(instruction = LoadConstInt(15)(0), location = None),
+        IrInstruction(instruction = Return(15), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(16))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "hello"), IrStringLiteral(label = "s1", value = "|")]))
+
+// A zeroed RC cell overwritten in place with a 16-byte arena tuple from a chunk that is then
+// unmapped; both words are read back from the cell. Prints `42`.
+let buildCopyFixedIntoModule name context =
+    [
+        IrInstruction(instruction = Alloc(0)(16)(true), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(0)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(8)(1), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(2)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(3)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(4)(7), location = None),
+        IrInstruction(instruction = StoreMemOffset(3)(0)(4), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(35), location = None),
+        IrInstruction(instruction = StoreMemOffset(3)(8)(5), location = None),
+        IrInstruction(instruction = CopyFixedInto(0)(3)(16), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(6)(0)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(7)(0)(8), location = None),
+        IrInstruction(instruction = AddInt(8)(6)(7), location = None),
+        IrInstruction(instruction = PrintInt(8), location = None),
+        IrInstruction(instruction = LoadConstInt(9)(0), location = None),
+        IrInstruction(instruction = Return(9), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(10))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// `CopyStringIntoOrFresh` over a blob-region `"hello"`: `"abc"` fits and lands in place (the result
+// is the old blob), `"longer text"` does not and gets a fresh blob, and `"abc"` over an ARENA
+// `"hello"` gets a fresh blob too, leaving the arena string untouched. Prints `true`, `abc`,
+// `false`, `longer text`, `false`, `abc`, `hello`.
+let buildCopyStringIntoOrFreshModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = LoadConstStr(1)("s1"), location = None),
+        IrInstruction(instruction = LoadConstStr(2)("s2"), location = None),
+        IrInstruction(instruction = CopyOutArenaToSpace(3)(0)(-1), location = None),
+        IrInstruction(instruction = CopyStringIntoOrFresh(4)(3)(1), location = None),
+        IrInstruction(instruction = CmpIntEq(5)(4)(3), location = None),
+        IrInstruction(instruction = PrintBool(5), location = None),
+        IrInstruction(instruction = PrintStr(4), location = None),
+        IrInstruction(instruction = CopyStringIntoOrFresh(6)(3)(2), location = None),
+        IrInstruction(instruction = CmpIntEq(7)(6)(3), location = None),
+        IrInstruction(instruction = PrintBool(7), location = None),
+        IrInstruction(instruction = PrintStr(6), location = None),
+        IrInstruction(instruction = CopyOutArena(8)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = CopyStringIntoOrFresh(9)(8)(1), location = None),
+        IrInstruction(instruction = CmpIntEq(10)(9)(8), location = None),
+        IrInstruction(instruction = PrintBool(10), location = None),
+        IrInstruction(instruction = PrintStr(9), location = None),
+        IrInstruction(instruction = PrintStr(8), location = None),
+        IrInstruction(instruction = LoadConstInt(11)(0), location = None),
+        IrInstruction(instruction = Return(11), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(12))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "hello"), IrStringLiteral(label = "s1", value = "abc"), IrStringLiteral(label = "s2", value = "longer text")]))
+
+// `CopyFixedIntoOrFresh` over a blob-region 16-byte cell lands in place (the old cell now holds
+// `{1, 2}`); over an arena cell it gets a fresh blob cell, leaving the arena cell untouched. Prints
+// `true`, `3`, `false`, `7`, `2`.
+let buildCopyFixedIntoOrFreshModule name context =
+    [
+        IrInstruction(instruction = Alloc(0)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(1)(7), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(0)(1), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(35), location = None),
+        IrInstruction(instruction = StoreMemOffset(0)(8)(2), location = None),
+        IrInstruction(instruction = CopyOutArenaToSpace(3)(0)(16), location = None),
+        IrInstruction(instruction = Alloc(4)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(5), location = None),
+        IrInstruction(instruction = LoadConstInt(6)(2), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(8)(6), location = None),
+        IrInstruction(instruction = CopyFixedIntoOrFresh(7)(3)(4)(16), location = None),
+        IrInstruction(instruction = CmpIntEq(8)(7)(3), location = None),
+        IrInstruction(instruction = PrintBool(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(3)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(10)(3)(8), location = None),
+        IrInstruction(instruction = AddInt(11)(9)(10), location = None),
+        IrInstruction(instruction = PrintInt(11), location = None),
+        IrInstruction(instruction = CopyFixedIntoOrFresh(12)(0)(4)(16), location = None),
+        IrInstruction(instruction = CmpIntEq(13)(12)(0), location = None),
+        IrInstruction(instruction = PrintBool(13), location = None),
+        IrInstruction(instruction = LoadMemOffset(14)(0)(0), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = LoadMemOffset(15)(12)(8), location = None),
+        IrInstruction(instruction = PrintInt(15), location = None),
+        IrInstruction(instruction = LoadConstInt(16)(0), location = None),
+        IrInstruction(instruction = Return(16), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(17))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// A TCO accumulator's top cell: an arena `"ab"` head and the cell itself above the watermark, the
+// tail a pre-watermark cell holding `"cd"`. The copy after the reset carries a fresh head and the
+// same tail word, read after the source chunk is unmapped; a nil source stays nil. Prints `abcd`,
+// `true`, `0`.
+let buildCopyOutTcoListCellStringHeadModule name context =
+    [
+        IrInstruction(instruction = LoadConstStr(0)("s0"), location = None),
+        IrInstruction(instruction = LoadConstStr(1)("s1"), location = None),
+        IrInstruction(instruction = Alloc(2)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(2)(0)(1), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(2)(8)(3), location = None),
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(4)(6000000)(false), location = None),
+        IrInstruction(instruction = CopyOutArena(5)(0)(-1)(false)(ArenaScopeBoundary)(None), location = None),
+        IrInstruction(instruction = Alloc(6)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(0)(5), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(8)(2), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutTcoListCell(7)(6)(StringListHead)(ArenaTcoCompaction), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(8)(7)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(7)(8), location = None),
+        IrInstruction(instruction = CmpIntEq(10)(9)(2), location = None),
+        IrInstruction(instruction = LoadMemOffset(11)(9)(0), location = None),
+        IrInstruction(instruction = ConcatStr(12)(8)(11)(false), location = None),
+        IrInstruction(instruction = PrintStr(12), location = None),
+        IrInstruction(instruction = PrintBool(10), location = None),
+        IrInstruction(instruction = LoadConstInt(13)(0), location = None),
+        IrInstruction(instruction = CopyOutTcoListCell(14)(13)(StringListHead)(ArenaTcoCompaction), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = LoadConstInt(15)(0), location = None),
+        IrInstruction(instruction = Return(15), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(16))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([IrStringLiteral(label = "s0", value = "ab"), IrStringLiteral(label = "s1", value = "cd")]))
+
+// The same top-cell copy with an inner-list head `[1, 2]`: the inner chain is rebuilt below the
+// watermark and both of its heads are read after the unmap. Prints `12`.
+let buildCopyOutTcoListCellInnerListModule name context =
+    [
+        IrInstruction(instruction = SaveArenaState(0)(1)(false), location = None),
+        IrInstruction(instruction = Alloc(0)(6000000)(false), location = None),
+        IrInstruction(instruction = Alloc(1)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(2)(2), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(0)(2), location = None),
+        IrInstruction(instruction = LoadConstInt(3)(0), location = None),
+        IrInstruction(instruction = StoreMemOffset(1)(8)(3), location = None),
+        IrInstruction(instruction = Alloc(4)(16)(false), location = None),
+        IrInstruction(instruction = LoadConstInt(5)(1), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(0)(5), location = None),
+        IrInstruction(instruction = StoreMemOffset(4)(8)(1), location = None),
+        IrInstruction(instruction = Alloc(6)(16)(false), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(0)(4), location = None),
+        IrInstruction(instruction = StoreMemOffset(6)(8)(3), location = None),
+        IrInstruction(instruction = RestoreArenaState(0)(1)(2)(false), location = None),
+        IrInstruction(instruction = CopyOutTcoListCell(7)(6)(InnerListHead)(ArenaTcoCompaction), location = None),
+        IrInstruction(instruction = ReclaimArenaChunks(1)(2)(false), location = None),
+        IrInstruction(instruction = LoadMemOffset(8)(7)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(9)(8)(0), location = None),
+        IrInstruction(instruction = LoadMemOffset(10)(8)(8), location = None),
+        IrInstruction(instruction = LoadMemOffset(11)(10)(0), location = None),
+        IrInstruction(instruction = LoadConstInt(12)(10), location = None),
+        IrInstruction(instruction = MulInt(13)(9)(12), location = None),
+        IrInstruction(instruction = AddInt(14)(13)(11), location = None),
+        IrInstruction(instruction = PrintInt(14), location = None),
+        IrInstruction(instruction = LoadConstInt(15)(0), location = None),
+        IrInstruction(instruction = Return(15), location = None)
+    ]
+    |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(3)(16))
+    |> (given (irFunction) -> codegenEntryFunction(name)(context)(irFunction)([]))
+
+// `own_flag` prints the hidden ownership flag it receives and returns its argument. Called through
+// a closure with no flag temp (`0`), with a flag temp holding `1`, and directly by label both ways.
+// Prints `0`, `1`, `1`, `0`, `5`.
+let buildLoadArgumentOwnershipModule name context =
+    (let flagFunction =
+        handBuiltLiftedFunction("own_flag")([
+            IrInstruction(instruction = LoadArgumentOwnership(0), location = None),
+            IrInstruction(instruction = PrintInt(0), location = None),
+            IrInstruction(instruction = LoadLocal(1)(1), location = None),
+            IrInstruction(instruction = Return(1), location = None)
+        ])(2)(2)
+    in
+        [
+            IrInstruction(instruction = LoadConstInt(0)(0), location = None),
+            IrInstruction(instruction = MakeClosure(1)("own_flag")(0)(0)(false)(false)(true), location = None),
+            IrInstruction(instruction = LoadConstInt(2)(5), location = None),
+            IrInstruction(instruction = CallClosure(3)(1)(2)(-1), location = None),
+            IrInstruction(instruction = LoadConstInt(4)(1), location = None),
+            IrInstruction(instruction = CallClosure(5)(1)(2)(4), location = None),
+            IrInstruction(instruction = CallKnown(6)("own_flag")(0)(2)(4)(false), location = None),
+            IrInstruction(instruction = CallKnown(7)("own_flag")(0)(2)(-1)(false), location = None),
+            IrInstruction(instruction = PrintInt(7), location = None),
+            IrInstruction(instruction = Return(7), location = None)
+        ]
+        |> (given (instructions) -> handBuiltEntryFunction(name)(instructions)(0)(8))
+        |> (given (entryFunction) -> handBuiltProgram(entryFunction)([flagFunction]))
+        |> codegenProgram(name)(context))
+
+let testCopyOutArenaStringAfterReset unit = assertProgramPrintsLines(buildCopyOutArenaStringAfterResetModule)("selfhostBackendCopyOutArenaStringAfterReset")("selfhost_backend_copy_out_arena_string_after_reset_e2e")(["hello|hello", "true"])
+
+let testCopyOutListRcStringHeads unit = assertProgramPrintsLines(buildCopyOutListRcStringHeadsModule)("selfhostBackendCopyOutListRcStringHeads")("selfhost_backend_copy_out_list_rc_string_heads_e2e")(["abcd", "true"])
+
+let testCopyOutClosureArena unit = assertProgramPrintsLines(buildCopyOutClosureArenaModule)("selfhostBackendCopyOutClosureArena")("selfhost_backend_copy_out_closure_arena_e2e")(["42", "0"])
+
+let testCopyOutClosureRcNormalizer unit = assertProgramPrintsLines(buildCopyOutClosureRcNormalizerModule)("selfhostBackendCopyOutClosureRcNormalizer")("selfhost_backend_copy_out_closure_rc_normalizer_e2e")(["43", "42", "true", "7"])
+
+let testAllocAdtToSpaceSurvivesResets unit = assertProgramPrints(buildAllocAdtToSpaceSurvivesResetsModule)("selfhostBackendAllocAdtToSpace")("selfhost_backend_alloc_adt_to_space_e2e")("45")
+
+let testCopyOutArenaToSpace unit = assertProgramPrints(buildCopyOutArenaToSpaceModule)("selfhostBackendCopyOutArenaToSpace")("selfhost_backend_copy_out_arena_to_space_e2e")("hello|42")
+
+let testCopyFixedInto unit = assertProgramPrints(buildCopyFixedIntoModule)("selfhostBackendCopyFixedInto")("selfhost_backend_copy_fixed_into_e2e")("42")
+
+let testCopyStringIntoOrFresh unit = assertProgramPrintsLines(buildCopyStringIntoOrFreshModule)("selfhostBackendCopyStringIntoOrFresh")("selfhost_backend_copy_string_into_or_fresh_e2e")(["true", "abc", "false", "longer text", "false", "abc", "hello"])
+
+let testCopyFixedIntoOrFresh unit = assertProgramPrintsLines(buildCopyFixedIntoOrFreshModule)("selfhostBackendCopyFixedIntoOrFresh")("selfhost_backend_copy_fixed_into_or_fresh_e2e")(["true", "3", "false", "7", "2"])
+
+let testCopyOutTcoListCellStringHead unit = assertProgramPrintsLines(buildCopyOutTcoListCellStringHeadModule)("selfhostBackendCopyOutTcoListCellStringHead")("selfhost_backend_copy_out_tco_list_cell_string_head_e2e")(["abcd", "true", "0"])
+
+let testCopyOutTcoListCellInnerList unit = assertProgramPrints(buildCopyOutTcoListCellInnerListModule)("selfhostBackendCopyOutTcoListCellInnerList")("selfhost_backend_copy_out_tco_list_cell_inner_list_e2e")("12")
+
+let testLoadArgumentOwnership unit = assertProgramPrintsLines(buildLoadArgumentOwnershipModule)("selfhostBackendLoadArgumentOwnership")("selfhost_backend_load_argument_ownership_e2e")(["0", "1", "1", "0", "5"])
+
 let run shipped =
     Unit
     |> testBuildAndVerifyTrivialModule
@@ -4409,6 +4851,18 @@ let run shipped =
     |> testRcDropReuse
     |> testRcAllocReusing
     |> testRcClosureDrop
+    |> testCopyOutArenaStringAfterReset
+    |> testCopyOutListRcStringHeads
+    |> testCopyOutClosureArena
+    |> testCopyOutClosureRcNormalizer
+    |> testAllocAdtToSpaceSurvivesResets
+    |> testCopyOutArenaToSpace
+    |> testCopyFixedInto
+    |> testCopyStringIntoOrFresh
+    |> testCopyFixedIntoOrFresh
+    |> testCopyOutTcoListCellStringHead
+    |> testCopyOutTcoListCellInnerList
+    |> testLoadArgumentOwnership
     |> (given (_) -> Ashes.IO.print("all self-hosted backend tests passed"))
 
 match Ashes.IO.args with

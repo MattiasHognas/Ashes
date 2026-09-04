@@ -925,9 +925,22 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: the rest of Perceus placement
-  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
-  async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). The copy and normalization family is
+  complete: `CopyOutArena` (fixed, `-1` string/`Bytes` by header length, `BigInt` by limb
+  count) and `CopyOutList` (inline, string, and inner-list heads) in `IrCodegen.Arena`, and in
+  `IrCodegen.Copy` `CopyOutClosure` (environment plus closure, nil environment kept),
+  `CopyOutTcoListCell` (string/inner-list head, tail word preserved, nil pass-through), the
+  persistent to-space and blob regions stage 0 keeps beside the arena (`__ashes_tospace_*`/
+  `__ashes_blob_*`, grown lazily through `__ashes_region_grow`, never reset) behind
+  `AllocAdtToSpace` and `CopyOutArenaToSpace`, and the in-place reuse forms `CopyFixedInto`,
+  `CopyStringIntoOrFresh`, and `CopyFixedIntoOrFresh` (in place only when the old blob lies in
+  the blob region's current chunk); `TcoResetPending` is rejected at dispatch, since lowering
+  resolves every placeholder before handing the program over. Only `CopyOutArena`/`CopyOutList`
+  are reached from real lowering today; the rest is exercised by hand-built IR fixtures in
+  `selfhost/tests/backend` until the call-window/match-arm copy-out, TCO ownership, and reuse
+  specialization ports emit them. Open: the rest of Perceus placement (cascading drops, dup
+  insertion, closure droppers, reuse), TLS sections, and the async/parallel/net/FFI instruction
+  families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
@@ -952,7 +965,14 @@ same public behavior.
   string literals carry the immortal sentinel so every path leaves static storage alone. The
   provably-dead top-level constructor drop names its type's synthesized structural dropper
   (`StructuralDroppers.ash`, see OPT-25) when the payload reaches past the cell, and the dropper
-  functions are registered in the program. libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  functions are registered in the program. The RC-normalizing copies produce real headers: a
+  runtime-managed `CopyOutArena`/`CopyOutList`/`CopyOutClosure` `malloc`s a fresh `{1, size}`
+  cell per copied value, string head, environment block, and closure, and a runtime-managed
+  `CopyOutClosure` dispatches to the program's `$env_normalize` function by code address (the
+  normalizer copies the captures and returns the new dropper; a closure without one gets the
+  raw bytes). The callee side of the hidden ownership flag is `LoadArgumentOwnership` reading
+  the third parameter, which `CallClosure`/`CallKnown` pass from their flag temp (`0` when the
+  call site has none). libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
   (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
   free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
   cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
