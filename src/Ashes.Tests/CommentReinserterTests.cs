@@ -82,6 +82,36 @@ public sealed class CommentReinserterTests
     }
 
     [Test]
+    public void ToFixedPoint_keeps_a_comment_before_a_definition_the_formatter_collapses_onto_one_line()
+    {
+        // Both of the comment's anchors change here: the definition above it collapses onto one
+        // line (its last line `x + 1` becomes that line's tail) and the definition below it
+        // collapses too (its first line `let b (flag: Bool) =` becomes that line's head). The
+        // comment must stay in front of `let b`, matched through the merged line, instead of
+        // falling back to the top of the file.
+        const string source = """
+            let a (x: Int) =
+                x + 1
+
+            // comment for b
+            let b (flag: Bool) =
+                flag == false && true
+
+            b(a(1) == 2)
+            """;
+
+        var formatted = FormatToFixedPoint(source);
+        formatted.ShouldNotBeNull();
+
+        var lines = formatted.Split('\n');
+        var commentLineIndex = Array.FindIndex(lines, line => line.Contains("comment for b", StringComparison.Ordinal));
+        var definitionLineIndex = Array.FindIndex(lines, line => line.StartsWith("let b", StringComparison.Ordinal));
+
+        definitionLineIndex.ShouldBeGreaterThan(0);
+        commentLineIndex.ShouldBe(definitionLineIndex - 1, "the comment must stay directly in front of the definition it documented");
+    }
+
+    [Test]
     public void GetLineSignature_treats_a_bare_in_line_and_a_merged_in_line_as_the_same_anchor()
     {
         var mergedFormatted = FormatToFixedPoint("""

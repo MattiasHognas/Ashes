@@ -784,11 +784,32 @@ same public behavior.
   carrying the function is a `MakeClosure`/`MakeClosureStack AcceptsRuntimeManagedArgument`;
   the normalized functions of the `parameter_reaches_result_string`,
   `parameter_reaches_result_record`, and `parameter_reaches_result_record_update` fixtures
-  match stage 0's text (`ResultReachTests.ash`). Open: the mutual-recursion loop merge
+  match stage 0's text (`ResultReachTests.ash`). A general call closes its window under stage 0's
+  `LowerCallRestoreArena`: a scalar result, or a result the callee is known to place on the RC
+  heap (a single application of a let-bound function whose lowered body produced an RC result
+  of a runtime-manageable type, or of a heap type without any copy-out), resets the window; any
+  other result whose type has a call copy-out (the scope kinds plus lists of strings and of
+  scalar lists, `GetCallCopyOutKind`) reads the callee's `ReturnsRuntimeManaged` bit before the
+  call and crosses the reset through the conditional `call_copy_arena_result` /
+  `call_reclaim_owned_result` block, the reloaded slot value being the RC result; a
+  self-recursive callee keeps the plain scope rule so the backend's tail fusion still finds the
+  call adjacent to its return. On the argument side (`LowerAppliedClosureCall`), an RC argument
+  (a fresh runtime temp, or a binding that owns one) to a parameter the callee does not borrow
+  reads the callee's `AcceptsRuntimeManagedArgument` bit: a fresh argument the callee's result
+  keeps, or that an entry-normalizing callee adopts (`runtimeNormalizedArgumentLabels`), passes
+  as is; a named binding the result may keep is retained unconditionally; any other is retained
+  under the bit through the `rc_call_argument_not_retained` slot. The flag rides on the
+  `CallClosure`, and a fresh string, `Bytes`, `BigInt`, closure, or childless-ADT argument the
+  callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
+  (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
+  a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
+  `call_argument_retain` fixtures join the byte-identical set. Open: the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
-  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), copy-out at call
-  windows, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
+  unresolved at the call (`CallResultCopyOutPending`), the list-spine, tuple, and owned-child
+  releases of a consumed call argument, the RC-eligibility provenance behind the known-result
+  decision, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
   it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
   arena result out at the arm close instead), the runtime-managed scrutinee owner
   (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
@@ -797,8 +818,7 @@ same public behavior.
   arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
   deferred-add sealing), curried known-call results, coroutine/async back edges, the
   `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
-  (such a parameter is left unnormalized), the caller-side hand-off of a retained reference to
-  an `AcceptsRuntimeManagedArgument` callee, the source locations of a curried inner lambda's
+  (such a parameter is left unnormalized), the source locations of a curried inner lambda's
   instructions (stage 0 tags them with the `let`'s span, which keeps the three
   `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
   parity runner), the owner-alias walk across curried chains, borrowed reads of owned bindings

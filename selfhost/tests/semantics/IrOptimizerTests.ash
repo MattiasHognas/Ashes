@@ -252,6 +252,68 @@ let testRedundantArenaBrackets unit =
                     | IrInstruction { instruction = LoadConstInt(0, 77) } :: IrInstruction { instruction = Return(0) } :: [] -> Unit
                     | _ -> test.fail("testRedundantArenaBrackets failed"))
 
+let recursive containsArenaBookkeeping instructions =
+    match instructions with
+        | [] -> false
+        | IrInstruction { instruction = SaveArenaState(_, _, _) } :: _ -> true
+        | IrInstruction { instruction = RestoreArenaState(_, _, _, _) } :: _ -> true
+        | IrInstruction { instruction = ReclaimArenaChunks(_, _, _) } :: _ -> true
+        | _ :: rest -> containsArenaBookkeeping(rest)
+
+// A call window's conditional copy-out places the bracket's reclaim past a jump and a label
+// rather than right after the restore; stripping the redundant bracket must take that reclaim
+// with it, since it reads the slots the removed save and restore no longer write. The trailing
+// `Alloc` keeps the function allocating, so the straight-line region rule applies rather than the
+// whole-function one.
+let testRedundantBracketWithDetachedReclaim unit =
+    (let fn =
+        makeFunction("_start_main")(
+            [
+                false
+                |> SaveArenaState(0)(1)
+                |> makeInstruction,
+                77
+                |> LoadConstInt(0)
+                |> makeInstruction,
+                false
+                |> RestoreArenaState(0)(1)(2)
+                |> makeInstruction,
+                "call_copy_arena_result_0"
+                |> JumpIfFalse(0)
+                |> makeInstruction,
+                makeInstruction(Jump("call_reclaim_owned_result_1")),
+                makeInstruction(Label("call_copy_arena_result_0")),
+                5
+                |> LoadConstInt(1)
+                |> makeInstruction,
+                makeInstruction(Label("call_reclaim_owned_result_1")),
+                false
+                |> ReclaimArenaChunks(1)(2)
+                |> makeInstruction,
+                false
+                |> Alloc(2)(16)
+                |> makeInstruction,
+                makeInstruction(Return(2))
+            ]
+        )(
+            3
+        )(
+            3
+        )(
+            false
+        )
+    in
+        let optProg =
+            0
+            |> makeProgram(fn)([])([])
+            |> optimizeIrProgram
+        in
+            if optProg
+            |> entryInstructions
+            |> containsArenaBookkeeping
+            then test.fail("testRedundantBracketWithDetachedReclaim failed: the bracket's reclaim survived its save and restore")
+            else Unit)
+
 let testCompileTimeEvaluation unit =
     (let helper =
         makeFunction("add_ten")(
@@ -2631,6 +2693,7 @@ let runIrOptimizerTests unit =
     |> (given (_) -> testDeadCodeElision(Unit))
     |> (given (_) -> testDevirtualizeClosure(Unit))
     |> (given (_) -> testRedundantArenaBrackets(Unit))
+    |> (given (_) -> testRedundantBracketWithDetachedReclaim(Unit))
     |> (given (_) -> testCompileTimeEvaluation(Unit))
     |> (given (_) -> testBorrowElisionRemapsBytesOperand(Unit))
     |> (given (_) -> Ashes.IO.print("all self-hosted IR optimizer tests passed"))

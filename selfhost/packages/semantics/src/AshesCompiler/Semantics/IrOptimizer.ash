@@ -1335,6 +1335,18 @@ let computeNonAllocatingFunctions (functions: List(IrFunction)) =
                 else fixpoint(filtered)
         in fixpoint(initialCandidates))
 
+// The index of the bracket's reclaim, which reads the slots the bracket's save and restore
+// wrote: right after the restore, or past the conditional copy-out block a call window places
+// between the two. Absent when the bracket closes without one.
+let recursive findBracketReclaim insts idx endSlot preSlot =
+    match insts with
+        | [] -> []
+        | IrInstruction { instruction = ReclaimArenaChunks(recEnd, recPre, _) } :: tail ->
+            if recEnd == endSlot && recPre == preSlot
+            then [idx]
+            else findBracketReclaim(tail)(idx + 1)(endSlot)(preSlot)
+        | _ :: tail -> findBracketReclaim(tail)(idx + 1)(endSlot)(preSlot)
+
 let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
     (let isWholeNonAllocating =
         if listContains(fn.label)(nonAllocatingFns)
@@ -1381,18 +1393,7 @@ let stripRedundantArenaBrackets nonAllocatingFns (fn: IrFunction) =
                                     if rCur == curSlot
                                     then
                                         if rEnd == endSlot
-                                        then
-                                            let reclaimIndices =
-                                                match rTail with
-                                                    | IrInstruction { instruction = ReclaimArenaChunks(recEnd, recPre, _) } :: _ ->
-                                                        if recEnd == endSlot
-                                                        then
-                                                            if recPre == preSlot
-                                                            then [j + 1]
-                                                            else []
-                                                        else []
-                                                    | _ -> []
-                                            in Some(j :: reclaimIndices)
+                                        then Some(j :: findBracketReclaim(rTail)(j + 1)(endSlot)(preSlot))
                                         else None
                                     else None
                                 | IrInstruction { instruction = inst } :: rTail ->

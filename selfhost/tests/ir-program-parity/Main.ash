@@ -51,6 +51,11 @@ let checkFixture root name =
 // match_arm_copy_out the pattern-owned binding's release and the copy-out of a record arm result
 // past the arm's reset. mutual_recursion still needs recursive-binding lowering parity and
 // remains deliberately excluded until that is ported.
+// call_result_copy_out adds the call window's conditional copy-out of a result whose placement
+// only the callee's returns bit knows, and call_argument_retain the retain of a fresh
+// reference-counted argument under the callee's accepts bit with its release after the call.
+// mutual_recursion still needs recursive-binding lowering parity and remains deliberately
+// excluded until that is ported.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -67,5 +72,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("record_pattern"))
         |> (given (_) -> checkFixture(root)("tag_group_arm_brackets"))
         |> (given (_) -> checkFixture(root)("match_arm_copy_out"))
+        |> (given (_) -> checkFixture(root)("call_result_copy_out"))
+        |> (given (_) -> checkFixture(root)("call_argument_retain"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

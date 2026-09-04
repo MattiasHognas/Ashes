@@ -1,0 +1,3 @@
+let shout (text: Str) = Ashes.IO.print(text)
+
+shout(Ashes.Text.fromInt(7))

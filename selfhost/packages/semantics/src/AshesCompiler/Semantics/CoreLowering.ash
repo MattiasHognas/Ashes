@@ -22,6 +22,7 @@ import AshesCompiler.Frontend.Syntax.TypeParameter
 import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
+import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
@@ -214,8 +215,9 @@ type CoreLoweringState =
     | runtimeTemps: List((Int, RuntimeTempState))
     | runtimeOwners: List((Int, Bool))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
-    | letLambdaLabels: List((Str, Str))
     | runtimeNormalizedArgumentLabels: List(Str)
+    | recursiveGroupNames: List(Str)
+    | letLambdaLabels: List((Str, Str))
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
@@ -440,8 +442,9 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeTemps = [],
         runtimeOwners = [],
         bodyRuntimeManagedByLabel = [],
-        letLambdaLabels = [],
         runtimeNormalizedArgumentLabels = [],
+        recursiveGroupNames = [],
+        letLambdaLabels = [],
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None
@@ -1396,14 +1399,6 @@ let recursive lookupLetLambda (name: Str) (lambdas: List((Str, List(Str), Expr))
             then Some((parameters, body))
             else lookupLetLambda(name)(rest)
 
-let recursive parameterAtIndex (index: Int) (ownership: List((Str, ParameterOwnership))) =
-    match ownership with
-        | [] -> Consumed
-        | (_parameter, kind) :: rest ->
-            if index == 0
-            then kind
-            else parameterAtIndex(index - 1)(rest)
-
 let recursive markConsumedArguments (arguments: List(Expr)) (index: Int) (ownership: List((Str, ParameterOwnership))) (state: CoreLoweringState) =
     match arguments with
         | [] -> state
@@ -1463,8 +1458,7 @@ let markCallArgumentsMoved (spine: CoreCallSpine) (state: CoreLoweringState) =
                 | None -> markResourceArgumentsMoved(spine.arguments)(state)
         | _ -> markResourceArgumentsMoved(spine.arguments)(state)
 
-// Stage 0's known-call result: a single application of a let-bound function whose body result
-// is reference-counted yields a newly produced reference-counted temp.
+// The generated label recorded under a let-bound function's name, once its body is lowered.
 let recursive lookupLetLambdaLabel (name: Str) (labels: List((Str, Str))) =
     match labels with
         | [] -> None
@@ -1472,17 +1466,6 @@ let recursive lookupLetLambdaLabel (name: Str) (labels: List((Str, Str))) =
             if candidate == name
             then Some(label)
             else lookupLetLambdaLabel(name)(rest)
-
-let markKnownCallResult (spine: CoreCallSpine) (lowered: LoweredCoreValue) =
-    match (unspanArgument(spine.root), spine.arguments, lowered) with
-        | (ExprVar(callee), _argument :: [], LoweredCoreValue { state = state, error = None }) ->
-            match lookupLetLambdaLabel(callee)(state.letLambdaLabels) with
-                | Some(label) ->
-                    if bodyReturnsRuntimeManaged(label)(state)
-                    then markLoweredRuntimeTemp(lowered)
-                    else lowered
-                | None -> lowered
-        | _ -> lowered
 
 let markLoweredCallArgumentsMoved (spine: CoreCallSpine) (lowered: LoweredCoreValue) =
     match lowered with
@@ -2098,6 +2081,21 @@ let closeOwnedScopeForResult (resultTemp: Int) (resultType: SemanticType) cursor
                     | None -> (allocated, None)
                     | Some(copyOut) -> emitScopeCopyOut(copyOut)(resultTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated)
 
+// The reloaded copy of a spilled reference-counted result holds the same reference.
+let inheritRuntimeTemp (sourceTemp: Int) (targetTemp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(sourceTemp)(state) with
+        | Some(runtimeState) -> markRuntimeTemp(targetTemp)(runtimeState)(state)
+        | None -> state
+
+// Reloads a spilled body result after its scope's release and reset.
+let reloadLetResult (resultTemp: Int) (resultSlot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reloadState, temp = reloadTemp } ->
+            reloadState
+            |> emit(LoadLocal(reloadTemp)(resultSlot))
+            |> inheritRuntimeTemp(resultTemp)(reloadTemp)
+            |> (given (reloaded) -> (reloaded, reloadTemp))
+
 // Closes a `let`'s arena bracket and returns the closed state with the result temp. A scope that
 // owns its binding spills the body result to a slot, releases the binding, restores, and reloads
 // the result afterwards (stage 0's result preservation: the release could otherwise overwrite the
@@ -2113,10 +2111,7 @@ let closeOwnedLetBracket ownedTypeName ownerSlot cursorSlot endSlot resultTemp r
                     |> emitOwnedLetRelease(typeName)(ownerSlot)
                     |> closeOwnedScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot) with
                         | (closed, Some(copyTemp)) -> (closed, copyTemp)
-                        | (closed, None) ->
-                            match freshTemp(closed) with
-                                | FreshTemp { state = reloadState, temp = reloadTemp } ->
-                                    (emit(LoadLocal(reloadTemp)(resultSlot))(reloadState), reloadTemp)
+                        | (closed, None) -> reloadLetResult(resultTemp)(resultSlot)(closed)
         | (None, _owned) -> (closeScopeForResult(resultTemp)(resultType)(cursorSlot)(endSlot)(state), resultTemp)
 
 // `finishLetValue` with the binding's own slot exposed, for the bracketed closers that release it.
@@ -2832,7 +2827,7 @@ type ArgumentCopyPlan =
 let bigIntCopySizeBytes = -2
 
 // The cell size of one constructor: one word per field, plus the tag word unless tagless.
-let adtAllocationSizeBytes (layout: CoreConstructorLayout) =
+let layoutAllocationSizeBytes (layout: CoreConstructorLayout) =
     match layout with
         | CoreConstructorLayout { tagless = tagless } ->
             if tagless
@@ -2928,7 +2923,7 @@ and constructorCopyPlansOf (layouts: List(CoreConstructorLayout)) (children: Lis
         | [] -> Some([])
         | (CoreConstructorLayout { name = constructorName, tag = tag, tagless = tagless } as layout) :: rest ->
             match (childCopyPlansOf(ownedConstructorChildren(constructorName)(children))(state), constructorCopyPlansOf(rest)(children)(state)) with
-                | (Some(plans), Some(restPlans)) -> Some((tag, adtAllocationSizeBytes(layout), tagless, plans) :: restPlans)
+                | (Some(plans), Some(restPlans)) -> Some((tag, layoutAllocationSizeBytes(layout), tagless, plans) :: restPlans)
                 | _ -> None
 and adtCopyPlanOf (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
     match constructorCopyPlansOf(layouts)(children)(state) with
@@ -3145,6 +3140,7 @@ let normalizeAlwaysReturnedParameter parameter body label parameterType lowered 
                     if acceptsRuntimeManagedArgument(label)(bodyState) || !resultAlwaysReachesVariable(constructorLayoutNames(bodyState.constructorLayouts))(bodyState.letLambdas)(body)(parameter)
                     then lowered
                     else lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+
 // Stage 0's `TcoContext`: a recursive binding whose innermost lambda body has a tail self-call
 // applying every parameter is lowered as a TCO loop over that innermost body; the curried
 // lambdas between the binding and the body are entered on the way.
@@ -3246,53 +3242,487 @@ let lowerLambda parameter body annotation stackAllocate lower state =
                                         | (checkedState, Some(error)) -> failure(checkedState)(error)
                                         | (checkedState, None) -> lowerLambdaBody(parameter)(body)(stackAllocate)(lower)(lambdaId)(captures)(origin)(FreshType(state = checkedState, semanticType = parameterType))
 
-// Closes a call's arena window after its last application under the scope rule.
-let closeCallWindow cursorSlot endSlot lowered =
-    match lowered with
-        | LoweredCoreValue { error = Some(_error) } -> lowered
-        | LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } ->
-            state
-            |> closeScopeForResult(temp)(semanticType)(cursorSlot)(endSlot)
-            |> success(temp)(semanticType)
+// Reserves `count` consecutive temps and returns the first; the run is `temp .. temp + count - 1`.
+let freshTempRun (count: Int) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { nextTemp = base } ->
+            FreshTemp(
+                state = withNextTemp(base + count)(state),
+                temp = base
+            )
 
-let finishCoreCall functionTemp argumentTemp resultType binding =
+// Stage 0's known-callee resolution for a call spine: a let-bound function called by name
+// carries its label, the ownership of its parameters (the single-function verdict overlaid with
+// the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
+// of its result; any other callee has no facts.
+let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            match lookupLetLambda(callee)(state.letLambdas) with
+                | Some((parameters, body)) ->
+                    Some(CoreCalleeFacts(
+                        label = lookupLetLambdaLabel(callee)(state.letLambdaLabels),
+                        parameters = parameters,
+                        ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
+                        reach = calleeReach(parameters)(body),
+                        argumentCount = length(spine.arguments)
+                    ))
+                | None -> None
+        | _ -> None
+
+// A callee that is the enclosing recursive binding itself or a group sibling, bound directly in
+// the member's outermost stage or captured into an inner curried stage or a nested closure: the
+// backend fuses its tail calls into native loops on the adjacency of the call and its return, so
+// its window keeps the plain scope rule and no copy-out block is placed after the call.
+let isSelfCallee (spine: CoreCallSpine) (state: CoreLoweringState) =
+    match unspanArgument(spine.root) with
+        | ExprVar(callee) ->
+            match lookupBinding(callee)(state.bindings) with
+                | Some(CoreBinding { location = CoreSelf(_label, _environmentSize) }) -> true
+                | Some(CoreBinding { location = CoreEnvironment(_index) }) -> containsLabel(callee)(state.recursiveGroupNames)
+                | _ -> false
+        | _ -> false
+
+// What a spine's stages know about the callee: its facts and whether it is the enclosing
+// recursive binding.
+type CoreCallContext =
+    | facts: Maybe(CoreCalleeFacts)
+    | selfCallee: Bool
+
+// A fresh reference-counted argument the callee did not take, released after the call; the
+// release preserves the argument's escaped children when the callee's result may keep them.
+type CoreConsumedArgument =
+    | temp: Int
+    | semanticType: SemanticType
+    | preserveEscapedChildren: Bool
+
+// One spine stage's result with the fresh arguments applied so far and the returns-bit flag
+// temp the last application read (`-1` for none).
+type CoreCallStage =
+    | lowered: LoweredCoreValue
+    | consumedArguments: List(CoreConsumedArgument)
+    | resultFlagTemp: Int
+
+let callStageOf (lowered: LoweredCoreValue) =
+    CoreCallStage(
+        lowered = lowered,
+        consumedArguments = [],
+        resultFlagTemp = -1
+    )
+
+// The argument position of the application `arity` stages from the end of the spine.
+let argumentIndexOf (facts: Maybe(CoreCalleeFacts)) (arity: Int) =
+    match facts with
+        | Some(CoreCalleeFacts { argumentCount = count }) -> count - arity
+        | None -> -1
+
+let isVariableArgument (argument: Expr) =
+    match unspanArgument(argument) with
+        | ExprVar(_name) -> true
+        | _ -> false
+
+// Whether the argument names a `let` binding that still owns a reference-counted value.
+let namesRuntimeOwner (argument: Expr) (state: CoreLoweringState) =
+    match unspanArgument(argument) with
+        | ExprVar(name) ->
+            match lookupBinding(name)(state.bindings) with
+                | Some(CoreBinding { location = CoreLocal(slot) }) ->
+                    match runtimeOwnerStateOf(slot)(state) with
+                        | Some(owned) -> owned
+                        | None -> false
+                | _ -> false
+        | _ -> false
+
+// Stage 0's `TryGetRuntimeManagedCallArgument` outside a TCO frame: the argument temp holds a
+// reference-counted value, or the argument names a binding that owns one.
+let isRuntimeManagedCallArgument (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) = isRuntimeTemp(argumentTemp)(state) || namesRuntimeOwner(argument)(state)
+
+// A freshly produced reference-counted argument rather than a binding read: the caller
+// releases it after the call unless the callee takes it.
+let isFreshRuntimeArgument (argument: Expr) (argumentTemp: Int) (state: CoreLoweringState) = isVariableArgument(argument) == false && isRuntimeTemp(argumentTemp)(state)
+
+// Whether the callee normalizes its first parameter on entry, stage 0's
+// `IsKnownRuntimeNormalizedFunctionArgument`: such a callee adopts a fresh argument outright
+// through the ownership flag. Later curried positions are not tracked.
+let calleeNormalizesArgument (facts: Maybe(CoreCalleeFacts)) (index: Int) (state: CoreLoweringState) =
+    match facts with
+        | Some(CoreCalleeFacts { label = Some(label) }) -> index == 0 && containsLabel(label)(state.runtimeNormalizedArgumentLabels)
+        | _ -> false
+
+// Stage 0's `CalleeResultMayReachParameter`: the argument holds a reference-counted value the
+// callee's result may keep alive past the call.
+let argumentMayReachResult (facts: Maybe(CoreCalleeFacts)) (index: Int) (argumentTemp: Int) (state: CoreLoweringState) = isRuntimeTemp(argumentTemp)(state) && calleeResultReachesArgument(facts)(index)
+
+// Stage 0's `TransfersFreshRuntimeArgument`: a fresh argument moves into a callee that
+// normalizes it on entry or whose result keeps it, so the caller neither retains nor releases it.
+let transfersFreshArgument facts index argument argumentTemp state = calleeParameterBorrows(facts)(index) == false && isFreshRuntimeArgument(argument)(argumentTemp)(state) && (calleeNormalizesArgument(facts)(index)(state) || argumentMayReachResult(facts)(index)(argumentTemp)(state))
+
+// One application's hand-off decisions, stage 0's `LowerAppliedClosureCall` facts.
+type CoreArgumentHandOff =
+    | borrowsOnly: Bool
+    | fresh: Bool
+    | runtimeArgument: Bool
+    | mayReach: Bool
+    | transfers: Bool
+
+let argumentHandOffOf facts index argument argumentTemp state =
+    CoreArgumentHandOff(
+        borrowsOnly = calleeParameterBorrows(facts)(index),
+        fresh = isFreshRuntimeArgument(argument)(argumentTemp)(state),
+        runtimeArgument = isRuntimeManagedCallArgument(argument)(argumentTemp)(state),
+        mayReach = argumentMayReachResult(facts)(index)(argumentTemp)(state),
+        transfers = transfersFreshArgument(facts)(index)(argument)(argumentTemp)(state)
+    )
+
+// The callee's `AcceptsRuntimeManagedArgument` bit, bit 62 of the closure's packed environment
+// size word, in a fresh flag temp.
+let emitAcceptsRuntimeManagedFlag (closureTemp: Int) (state: CoreLoweringState) =
+    match freshTempRun(5)(state) with
+        | FreshTemp { state = reserved, temp = sizeTemp } ->
+            reserved
+            |> emit(LoadMemOffset(sizeTemp)(closureTemp)(16))
+            |> emit(LoadConstInt(sizeTemp + 1)(62))
+            |> emit(ShrInt(sizeTemp + 2)(sizeTemp)(sizeTemp + 1))
+            |> emit(LoadConstInt(sizeTemp + 3)(1))
+            |> emit(AndInt(sizeTemp + 4)(sizeTemp + 2)(sizeTemp + 3))
+            |> (given (flagged) -> (flagged, sizeTemp + 4))
+
+// The callee's `ReturnsRuntimeManaged` bit, bit 63 of the same word.
+let emitReturnsRuntimeManagedFlag (closureTemp: Int) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = sizeTemp } ->
+            reserved
+            |> emit(LoadMemOffset(sizeTemp)(closureTemp)(16))
+            |> emit(LoadConstInt(sizeTemp + 1)(63))
+            |> emit(ShrInt(sizeTemp + 2)(sizeTemp)(sizeTemp + 1))
+            |> (given (flagged) -> (flagged, sizeTemp + 2))
+
+let isListType (semanticType: SemanticType) =
+    match semanticType with
+        | SemList(_element) -> true
+        | _ -> false
+
+// Stage 0's `EmitRuntimeManagedArgumentRetain`: the argument's reference is duplicated into a
+// fresh reference-counted temp, null-tolerantly for a list.
+let emitArgumentRetain (argumentTemp: Int) (argumentType: SemanticType) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = retainState, temp = retainedTemp } ->
+            retainState
+            |> emit(argumentType
+            |> resolveType(state)
+            |> isListType
+            |> RcDup(retainedTemp)(argumentTemp)(true))
+            |> markRuntimeTemp(retainedTemp)(RuntimeNewlyProduced)
+            |> (given (retained) -> (retained, retainedTemp))
+
+// Reloads a slot's reference-counted value into a fresh newly produced temp.
+let reloadRuntimeSlot (slot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reloadState, temp = reloadTemp } ->
+            reloadState
+            |> emit(LoadLocal(reloadTemp)(slot))
+            |> markRuntimeTemp(reloadTemp)(RuntimeNewlyProduced)
+            |> (given (reloaded) -> (reloaded, reloadTemp))
+
+// Stage 0's `EmitConditionallyRetainedRuntimeArgument`: the argument is routed through a slot
+// the retain path overwrites with the duplicate when the callee adopts runtime-managed
+// arguments, and the slot's value is what the call receives.
+let emitConditionalArgumentRetain (argumentTemp: Int) (argumentType: SemanticType) (flagTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = slot } ->
+            match allocated
+            |> emit(StoreLocal(slot)(argumentTemp))
+            |> freshLabel("rc_call_argument_not_retained") with
+                | FreshLabel { state = labelled, label = doneLabel } ->
+                    match labelled
+                    |> emit(JumpIfFalse(flagTemp)(doneLabel))
+                    |> emitArgumentRetain(argumentTemp)(argumentType) with
+                        | (retained, retainedTemp) ->
+                            retained
+                            |> emit(StoreLocal(slot)(retainedTemp))
+                            |> emit(Label(doneLabel))
+                            |> reloadRuntimeSlot(slot)
+
+let retainCallArgument (handOff: CoreArgumentHandOff) argumentType argumentTemp flagTemp state =
+    match handOff with
+        | CoreArgumentHandOff { mayReach = true, fresh = false } -> emitArgumentRetain(argumentTemp)(argumentType)(state)
+        | _ -> emitConditionalArgumentRetain(argumentTemp)(argumentType)(flagTemp)(state)
+
+// Stage 0's `PrepareRuntimeManagedCallArgument`: a borrowed parameter or an argument without a
+// reference-counted value passes as is without a flag. Otherwise the callee's accepts bit is
+// read, and the argument passes unchanged when it moves into the callee, retained
+// unconditionally when the callee's result may keep a named binding, and retained under the bit
+// otherwise. Yields the state, the temp the call receives, and the flag temp (`-1` for none).
+let prepareCallArgument (handOff: CoreArgumentHandOff) argumentType functionTemp argumentTemp state =
+    match handOff with
+        | CoreArgumentHandOff { borrowsOnly = true } -> (state, argumentTemp, -1)
+        | CoreArgumentHandOff { runtimeArgument = false } -> (state, argumentTemp, -1)
+        | CoreArgumentHandOff { transfers = true } ->
+            match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
+                | (flagged, flagTemp) -> (flagged, argumentTemp, flagTemp)
+        | _ ->
+            match emitAcceptsRuntimeManagedFlag(functionTemp)(state) with
+                | (flagged, flagTemp) ->
+                    match retainCallArgument(handOff)(argumentType)(argumentTemp)(flagTemp)(flagged) with
+                        | (retained, passedTemp) -> (retained, passedTemp, flagTemp)
+
+// The fresh arguments the callee does not take, in argument order.
+let consumedArgumentsWith (handOff: CoreArgumentHandOff) (argumentTemp: Int) (argumentType: SemanticType) (consumed: List(CoreConsumedArgument)) =
+    match handOff with
+        | CoreArgumentHandOff { borrowsOnly = false, fresh = true, transfers = false, mayReach = mayReach } ->
+            append(consumed)([CoreConsumedArgument(
+                temp = argumentTemp,
+                semanticType = argumentType,
+                preserveEscapedChildren = mayReach
+            )])
+        | _ -> consumed
+
+let ownedChildrenDroppable (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> coverageEnvironment
+    |> classifyHeapLayout(semanticType) with
+        | HeapLayoutFacts { ownedChildrenDroppable = droppable } -> droppable
+
+// Stage 0's `IsConcretelyRuntimeManageableResultType`: a result type runtime RC holds — a
+// scalar, a string, `Bytes`, a `BigInt`, a list over scalars, or a tuple or named type whose
+// owned children the type-directed dropper can release.
+let isRuntimeManageableResultType (semanticType: SemanticType) (state: CoreLoweringState) =
+    resultSurvivesReset(semanticType)(state) || (match resolveType(state)(semanticType) with
+        | SemString -> true
+        | SemBytes -> true
+        | SemBigInt -> true
+        | SemList(element) -> canArenaResetLayout(element)
+        | SemTuple(_elements) as tuple -> ownedChildrenDroppable(tuple)(state)
+        | SemNamed(_symbolId, _name, _arguments) as named -> ownedChildrenDroppable(named)(state)
+        | _ -> false)
+
+// Stage 0's `GetCallCopyOutKind`: the scope copy-outs plus the list results whose elements are
+// strings or scalar lists.
+let callCopyOutOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match scopeCopyOutOf(semanticType)(state) with
+        | Some(ShallowScopeCopyOut(staticSizeBytes)) -> Some(ShallowCallCopyOut(staticSizeBytes))
+        | Some(ListScopeCopyOut) -> Some(ListCallCopyOut(InlineListHead))
+        | None ->
+            match resolveType(state)(semanticType) with
+                | SemList(element) ->
+                    match element
+                    |> resolveType(state)
+                    |> listHeadCopyOf with
+                        | Some(headCopy) -> Some(ListCallCopyOut(headCopy))
+                        | None -> None
+                | _ -> None
+
+let hasCallCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
+    match callCopyOutOf(semanticType)(state) with
+        | Some(_copyOut) -> true
+        | None -> false
+
+// Whether the callee's lowered body is recorded to produce a reference-counted result, stage 0's
+// `TryGetCompiledFunctionResultRuntimeManaged` for a single application; a curried spine's
+// returned-closure chain is not tracked and a body not lowered yet is unknown.
+let calleeBodyReturnsRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
+    match facts with
+        | Some(CoreCalleeFacts { label = Some(label), argumentCount = 1 }) -> bodyReturnsRuntimeManaged(label)(state)
+        | _ -> false
+
+// Stage 0's `TryResolveKnownFunctionResultOwnership`: the callee's body produced a
+// reference-counted result of a type runtime RC holds.
+let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeBodyReturnsRuntimeManaged(facts)(state) && isRuntimeManageableResultType(resultType)(state)
+
+// Stage 0's `IsDirectRuntimeManagedFunctionCall` with `ResolveUncopyableResultRuntimeManaged`:
+// the known result ownership, or a lowered body's reference-counted result of a heap type
+// without any copy-out (such a result can only have left the callee's window by being RC).
+let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeBodyReturnsRuntimeManaged(facts)(state) && resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false
+
+// The last application of a spine reads the callee's returns bit when the result's ownership
+// is not statically known and its type has a call copy-out, stage 0's `needsResultOwnership`.
+let emitResultOwnershipFlag (context: CoreCallContext) (arity: Int) (resultType: SemanticType) (functionTemp: Int) (state: CoreLoweringState) =
+    match context with
+        | CoreCallContext { selfCallee = true } -> (state, -1)
+        | CoreCallContext { facts = facts } ->
+            if arity == 1 && knownResultRuntimeManaged(facts)(resultType)(state) == false && hasCallCopyOut(resultType)(state)
+            then emitReturnsRuntimeManagedFlag(functionTemp)(state)
+            else (state, -1)
+
+let emitAppliedCall (context: CoreCallContext) arity argumentType consumed functionTemp argumentTemp resultType (handOff: CoreArgumentHandOff) unifiedState =
+    match prepareCallArgument(handOff)(argumentType)(functionTemp)(argumentTemp)(unifiedState) with
+        | (preparedState, passedTemp, argumentFlagTemp) ->
+            match emitResultOwnershipFlag(context)(arity)(resultType)(functionTemp)(preparedState) with
+                | (flaggedState, resultFlagTemp) ->
+                    match freshTemp(flaggedState) with
+                        | FreshTemp { state = targetState, temp = target } ->
+                            CoreCallStage(
+                                lowered = targetState
+                                |> emit(CallClosure(target)(functionTemp)(passedTemp)(argumentFlagTemp))
+                                |> success(target)(resolveType(unifiedState)(resultType)),
+                                consumedArguments = consumedArgumentsWith(handOff)(argumentTemp)(argumentType)(consumed),
+                                resultFlagTemp = resultFlagTemp
+                            )
+
+// One application, stage 0's `LowerAppliedClosureCall`: the argument's hand-off is decided from
+// the callee facts and the argument temp, the retain and the flags are emitted, and the call
+// follows.
+let finishCoreCall (context: CoreCallContext) arity argument argumentType consumed functionTemp argumentTemp resultType binding =
     match binding with
-        | (unifiedState, Some(error)) -> failure(unifiedState)(error)
+        | (unifiedState, Some(error)) ->
+            error
+            |> failure(unifiedState)
+            |> callStageOf
         | (unifiedState, None) ->
-            match freshTemp(unifiedState) with
-                | FreshTemp { state = targetState, temp = target } ->
-                    targetState
-                    |> emit(CallClosure(target)(functionTemp)(argumentTemp)(-1))
-                    |> success(target)(resolveType(unifiedState)(resultType))
+            unifiedState
+            |> argumentHandOffOf(context.facts)(argumentIndexOf(context.facts)(arity))(argument)(argumentTemp)
+            |> (given (handOff: CoreArgumentHandOff) -> emitAppliedCall(context)(arity)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)(handOff)(unifiedState))
 
-let lowerCoreCallArgument functionTemp expectedArgumentType resultType loweredArgument =
+let lowerCoreCallArgument (context: CoreCallContext) arity argument consumed functionTemp expectedArgumentType resultType loweredArgument =
     match loweredArgument with
-        | LoweredCoreValue { state = argumentState, error = Some(error) } -> failure(argumentState)(error)
+        | LoweredCoreValue { state = argumentState, error = Some(error) } ->
+            error
+            |> failure(argumentState)
+            |> callStageOf
         | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
             argumentState
             |> bindType(expectedArgumentType)(argumentType)
-            |> finishCoreCall(functionTemp)(argumentTemp)(resultType)
+            |> finishCoreCall(context)(arity)(argument)(argumentType)(consumed)(functionTemp)(argumentTemp)(resultType)
 
 // An argument is expected to have the callee's parameter type. A tail self-call's argument
 // becomes the next iteration's parameter, so it is lowered under the children transfer and its
 // own read of a live owner is retained (stage 0's `LowerCallTcoEvalArg`).
-let lowerCoreCallTyped argument (transfers: Bool) lower functionTemp resolved =
+let lowerCoreCallTyped (context: CoreCallContext) arity argument (transfers: Bool) consumed lower functionTemp resolved =
     match resolved with
-        | FunctionTypeResolution { state = typedState, error = Some(error) } -> failure(typedState)(error)
+        | FunctionTypeResolution { state = typedState, error = Some(error) } ->
+            error
+            |> failure(typedState)
+            |> callStageOf
         | FunctionTypeResolution { state = typedState, argumentType = expectedType, resultType = resultType, error = None } ->
             typedState
             |> withArgumentRequest(Some(expectedType))(transfers)
             |> lower(argument)
             |> retainTransferredChild(argument)(transfers)
-            |> lowerCoreCallArgument(functionTemp)(expectedType)(resultType)
+            |> lowerCoreCallArgument(context)(arity)(argument)(consumed)(functionTemp)(expectedType)(resultType)
 
-let lowerCoreCallFunction argument (transfers: Bool) lower loweredFunction =
-    match loweredFunction with
-        | LoweredCoreValue { state = functionState, error = Some(error) } -> failure(functionState)(error)
-        | LoweredCoreValue { state = functionState, temp = functionTemp, semanticType = functionType, error = None } ->
+let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: Bool) lower (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
+        | CoreCallStage { lowered = LoweredCoreValue { state = functionState, temp = functionTemp, semanticType = functionType, error = None }, consumedArguments = consumed } ->
             functionState
             |> ensureFunctionType(functionType)
-            |> lowerCoreCallTyped(argument)(transfers)(lower)(functionTemp)
+            |> lowerCoreCallTyped(context)(arity)(argument)(transfers)(consumed)(lower)(functionTemp)
+
+let layoutHasNoOwnedChildren (semanticType: SemanticType) (state: CoreLoweringState) =
+    match state
+    |> coverageEnvironment
+    |> classifyHeapLayout(semanticType) with
+        | HeapLayoutFacts { children = [] } -> true
+        | _ -> false
+
+// Stage 0's `LowerCallDropConsumedRuntimeArguments` for the argument kinds whose runtime release
+// is ported: a fresh string, `Bytes`, or `BigInt` the callee did not take is released after the
+// call, a closure is closed and released, and a named type without owned children is released
+// as a whole unless the release must preserve children the callee's arena result may still
+// reference. An aggregate with owned children keeps its reference until the aggregate droppers
+// are ported.
+let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
+    match consumed with
+        | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
+            match resolveType(state)(semanticType) with
+                | SemString ->
+                    emit(RcDrop(temp)("String")(-1)(true)(false)(None))(state)
+                | SemBytes ->
+                    emit(RcDrop(temp)("Bytes")(-1)(true)(false)(None))(state)
+                | SemBigInt ->
+                    emit(RcDrop(temp)("BigInt")(-1)(true)(false)(None))(state)
+                | SemFunction(_parameter, _result, _row) ->
+                    state
+                    |> emit(CleanupResource(temp)("Function")(None))
+                    |> emit(RcDrop(temp)("Function")(-1)(true)(false)(None))
+                | SemNamed(_symbolId, name, _arguments) as named ->
+                    if layoutHasNoOwnedChildren(named)(state) && (preserve == false || verifiedRuntimeResult)
+                    then
+                        emit(RcDrop(temp)(name)(-1)(true)(false)(None))(state)
+                    else state
+                | _ -> state
+
+let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match consumed with
+        | [] -> state
+        | argument :: rest ->
+            state
+            |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
+            |> emitConsumedArgumentDrops(verifiedRuntimeResult)(rest)
+
+// A partial application keeps its fresh arguments alive in the returned closure.
+let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemFunction(_parameter, _result, _row) -> state
+        | _ ->
+            emitConsumedArgumentDrops(calleeBodyReturnsRuntimeManaged(context.facts)(state))(consumed)(state)
+
+let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    if callResultRuntimeManaged(context.facts)(resultType)(state)
+    then markRuntimeTemp(temp)(RuntimeNewlyProduced)(state)
+    else state
+
+// After the last application, stage 0's `LowerCallGeneral` tail: the fresh arguments the callee
+// did not take are released, and a result the callee is known to place on the reference-counted
+// heap is marked newly produced.
+let finishCallSpine (context: CoreCallContext) (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } } -> stage
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None } as lowered, consumedArguments = consumed } ->
+            state
+            |> releaseConsumedArguments(context)(semanticType)(consumed)
+            |> markCallResultOwnership(context)(temp)(semanticType)
+            |> (given (finished: CoreLoweringState) -> stage with lowered = (lowered with state = finished))
+
+// Stage 0's `LowerCallConditionalCopyOutResult`: the result is spilled to a slot, the arena is
+// restored, and the callee's returns bit selects between reclaiming the window as is (the
+// result already lives on the reference-counted heap) and first copying the result past the
+// reset; the slot's value is reloaded as the call's reference-counted result.
+let emitConditionalCallCopyOut copyOut resultTemp flagTemp cursorSlot endSlot preRestoreSlot state =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = resultSlot } ->
+            match allocated
+            |> emit(StoreLocal(resultSlot)(resultTemp))
+            |> emit(RestoreArenaState(cursorSlot)(endSlot)(preRestoreSlot)(false))
+            |> freshLabel("call_copy_arena_result") with
+                | FreshLabel { state = copyLabelled, label = copyLabel } ->
+                    match freshLabel("call_reclaim_owned_result")(copyLabelled) with
+                        | FreshLabel { state = labelled, label = reclaimLabel } ->
+                            match labelled
+                            |> emit(JumpIfFalse(flagTemp)(copyLabel))
+                            |> emit(Jump(reclaimLabel))
+                            |> emit(Label(copyLabel))
+                            |> freshTemp with
+                                | FreshTemp { state = copyState, temp = copiedTemp } ->
+                                    copyState
+                                    |> emit(callCopyOutInstruction(copyOut)(copiedTemp)(resultTemp))
+                                    |> emit(StoreLocal(resultSlot)(copiedTemp))
+                                    |> emit(Label(reclaimLabel))
+                                    |> emit(ReclaimArenaChunks(endSlot)(preRestoreSlot)(false))
+                                    |> reloadRuntimeSlot(resultSlot)
+
+// Closes a call's arena window after its last application, stage 0's `LowerCallRestoreArena`:
+// the pre-restore end slot is allocated first either way; a result that survives the reset or
+// is reference-counted resets the window; a heap result with a call copy-out and a returns-bit
+// flag crosses the reset through the conditional copy-out; any other heap result leaves the
+// window open.
+let closeCallWindow cursorSlot endSlot (stage: CoreCallStage) =
+    match stage with
+        | CoreCallStage { lowered = LoweredCoreValue { error = Some(_error) } as lowered } -> lowered
+        | CoreCallStage { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, resultFlagTemp = flagTemp } ->
+            match freshLocal(state) with
+                | FreshLocal { state = allocated, local = preRestoreSlot } ->
+                    if isRuntimeTemp(temp)(allocated) || resultSurvivesReset(semanticType)(allocated)
+                    then
+                        allocated
+                        |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                        |> success(temp)(semanticType)
+                    else
+                        match (callCopyOutOf(semanticType)(allocated), flagTemp >= 0) with
+                            | (Some(copyOut), true) ->
+                                match emitConditionalCallCopyOut(copyOut)(temp)(flagTemp)(cursorSlot)(endSlot)(preRestoreSlot)(allocated) with
+                                    | (closed, resultTemp) -> success(resultTemp)(semanticType)(closed)
+                            | _ -> success(temp)(semanticType)(allocated)
 
 // Unifies the result a spine of `arity` applications of the callee produces with the type the
 // context expects of the call, before any argument is lowered: a callee type that is still a
@@ -3319,22 +3749,24 @@ let preconstrainCallResult expected arity loweredCallee =
 // else is an ordinary expression. The stages share the window `lowerCall` opened around the
 // whole spine; a call inside an argument opens its own. The root callee's result after the
 // spine's `arity` applications is constrained to the expected type before the arguments.
-let recursive lowerCallSpineCallee expression expected arity (transfers: Bool) lower state =
+let recursive lowerCallSpineCallee expression (context: CoreCallContext) expected arity (transfers: Bool) lower state =
     match expression with
-        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(expected)(arity)(transfers)(lower)(state)
-        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(expected)(arity + 1)(transfers)(lower)(state)
+        | ExprAt(_span, inner) -> lowerCallSpineCallee(inner)(context)(expected)(arity)(transfers)(lower)(state)
+        | ExprCall(function, argument, _isSugar, _layout) -> lowerCallSpineStage(function)(argument)(context)(expected)(arity + 1)(transfers)(lower)(state)
         | ExprLambda(parameter, body, annotation) ->
             state
             |> lowerLambda(parameter)(body)(annotation)(true)(lower)
             |> preconstrainCallResult(expected)(arity)
+            |> callStageOf
         | _ ->
             state
             |> lower(expression)
             |> preconstrainCallResult(expected)(arity)
-and lowerCallSpineStage function argument expected arity (transfers: Bool) lower state =
+            |> callStageOf
+and lowerCallSpineStage function argument (context: CoreCallContext) expected arity (transfers: Bool) lower state =
     state
-    |> lowerCallSpineCallee(function)(expected)(arity)(transfers)(lower)
-    |> lowerCoreCallFunction(argument)(transfers)(lower)
+    |> lowerCallSpineCallee(function)(context)(expected)(arity)(transfers)(lower)
+    |> lowerCoreCallFunction(context)(arity)(argument)(transfers)(lower)
 
 // Stage 0's TCO tail self-call (`LowerCallTcoEvalArgs`): in tail position of the loop body, the
 // loop function applied to exactly its parameters. Every argument of the spine is lowered under
@@ -3344,14 +3776,23 @@ let isTailSelfCall (spine: CoreCallSpine) (state: CoreLoweringState) =
         | (Some(CoreTcoLoop { selfName = selfName, arity = arity, pendingCurried = pending }), ConsumerRequest { tailPosition = true }, ExprVar(name)) -> pending == 0 && name == selfName && coreListLength(spine.arguments) == arity
         | _ -> false
 
+let callContextOf (spine: CoreCallSpine) (state: CoreLoweringState) =
+    CoreCallContext(
+        facts = calleeFactsOf(spine)(state),
+        selfCallee = isSelfCallee(spine)(state)
+    )
+
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
 let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) lower state =
     match openArenaBracket(state) with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
-            |> lowerCallSpineStage(function)(argument)(expected)(1)(transfers)(lower)
-            |> markKnownCallResult(spine)
+            |> callContextOf(spine)
+            |> (given (context: CoreCallContext) ->
+                opened
+                |> lowerCallSpineStage(function)(argument)(context)(expected)(1)(transfers)(lower)
+                |> finishCallSpine(context))
             |> closeCallWindow(cursorSlot)(endSlot)
 
 let failedIfPlan state error =
@@ -4799,6 +5240,13 @@ let recursive lambdaParts expression =
         | ExprLambda(parameter, body, _annotation) -> Some((parameter, body))
         | _ -> None
 
+let recursive bindingNames (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> []
+        | CoreBinding { name = name } :: rest -> name :: bindingNames(rest)
+
+// The recursive group's member names are remembered for the body and everything lifted out of
+// it, so a member captured into an inner curried stage is still known as a self callee.
 let prepareRecursiveBodyState parameter parameterType captures selfBindings origin state =
     (let functionBindings =
         CoreBinding(
@@ -4812,6 +5260,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> enterFunctionOrigin(origin)
         |> (given (current: CoreLoweringState) -> current with reversedInstructions = [])
         |> (given (current: CoreLoweringState) -> current with bindings = functionBindings)
+        |> (given (current: CoreLoweringState) -> current with recursiveGroupNames = bindingNames(selfBindings))
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
