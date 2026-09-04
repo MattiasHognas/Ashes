@@ -15,17 +15,17 @@
 // `AllocReusing` pair itself still decides, at every call, whether the matched cell is actually
 // unique; this module only ever decides whether it is SAFE to ask.
 //
-// `exprMentionsName` is a conservative, shadow-blind reference check: a coincidental rebinding of
-// the scrutinee's own name inside the arm counts as "referenced", never as "safe to reuse" — sound,
-// just occasionally more conservative than a shadow-aware walk would be.
+// `exprMentionsName` (`ExprMentions.ash`) is a conservative, shadow-blind reference check: a
+// coincidental rebinding of the scrutinee's own name inside the arm counts as "referenced", never
+// as "safe to reuse" — sound, just occasionally more conservative than a shadow-aware walk would be.
 
 import Ashes.Collection.List.append
 import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Frontend.Syntax.Pattern
+import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 export (
     type CoreReuseToken(..),
-    value exprMentionsName,
     value reusePatternConstructorArity,
     value reusePatternFieldBindings,
     value reuseArmBodyRebuildsSameConstructor,
@@ -56,74 +56,6 @@ let recursive reuseUnspanPattern (pattern: Pattern) =
     match pattern with
         | PatternAt(_span, inner) -> reuseUnspanPattern(inner)
         | _ -> pattern
-
-// A shadow-blind "does `expression` mention `name` anywhere" scan: a `Let`/`Match` binder that
-// happens to reuse the name is still treated as a mention, so this never wrongly reports a live
-// cell as dead.
-let recursive exprMentionsName (name: Str) (expression: Expr) =
-    match expression with
-        | ExprAt(_span, inner) -> exprMentionsName(name)(inner)
-        | ExprVar(candidate) -> candidate == name
-        | ExprQualifiedVar(_module, _member) -> false
-        | ExprAdd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprSubtract(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprMultiply(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprDivide(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprModulo(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseAnd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseOr(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseXor(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprShiftLeft(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprShiftRight(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprBitwiseNot(operand) -> exprMentionsName(name)(operand)
-        | ExprLogicalNot(operand) -> exprMentionsName(name)(operand)
-        | ExprLogicalAnd(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLogicalOr(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprGreaterThan(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLessThan(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprGreaterOrEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLessOrEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprNotEqual(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprResultPipe(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprResultMapErrorPipe(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprCons(left, right) -> exprMentionsEither(name)(left)(right)
-        | ExprLet(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(name)(value)(body)
-        | ExprLetResult(_name, value, body) -> exprMentionsEither(name)(value)(body)
-        | ExprLetRecursive(_name, value, body, _params, _annotation, _requirements) -> exprMentionsEither(name)(value)(body)
-        | ExprIf(condition, thenBranch, elseBranch) -> exprMentionsName(name)(condition) || exprMentionsEither(name)(thenBranch)(elseBranch)
-        | ExprLambda(_parameter, body, _annotation) -> exprMentionsName(name)(body)
-        | ExprCall(function, argument, _isSugar, _layout) -> exprMentionsEither(name)(function)(argument)
-        | ExprTuple(elements) -> exprMentionsAny(name)(elements)
-        | ExprList(elements, _isMultiline) -> exprMentionsAny(name)(elements)
-        | ExprMatch(value, cases, _position) -> exprMentionsName(name)(value) || exprMentionsMatchCases(name)(cases)
-        | ExprAwait(operand) -> exprMentionsName(name)(operand)
-        | ExprRecord(_ctorName, fields, _isMultiline) -> exprMentionsFields(name)(fields)
-        | ExprRecordUpdate(target, fields) -> exprMentionsName(name)(target) || exprMentionsFields(name)(fields)
-        | ExprPerform(operand) -> exprMentionsName(name)(operand)
-        | ExprHandle(operand, arms) -> exprMentionsName(name)(operand) || exprMentionsHandleArms(name)(arms)
-        | _ -> false
-and exprMentionsEither (name: Str) (left: Expr) (right: Expr) = exprMentionsName(name)(left) || exprMentionsName(name)(right)
-and exprMentionsAny (name: Str) (expressions: List(Expr)) =
-    match expressions with
-        | [] -> false
-        | head :: rest -> exprMentionsName(name)(head) || exprMentionsAny(name)(rest)
-and exprMentionsFields (name: Str) (fields: List((Str, Expr))) =
-    match fields with
-        | [] -> false
-        | (_fieldName, expression) :: rest -> exprMentionsName(name)(expression) || exprMentionsFields(name)(rest)
-and exprMentionsMatchCases (name: Str) (cases: List((Pattern, Expr, Maybe(Expr)))) =
-    match cases with
-        | [] -> false
-        | (_pattern, body, guard) :: rest -> exprMentionsName(name)(body) || exprMentionsGuard(name)(guard) || exprMentionsMatchCases(name)(rest)
-and exprMentionsGuard (name: Str) (guard: Maybe(Expr)) =
-    match guard with
-        | Some(expression) -> exprMentionsName(name)(expression)
-        | None -> false
-and exprMentionsHandleArms (name: Str) (arms: List((Maybe(Str), Str, List(Pattern), Expr))) =
-    match arms with
-        | [] -> false
-        | (_binder, _operation, _patterns, body) :: rest -> exprMentionsName(name)(body) || exprMentionsHandleArms(name)(rest)
 
 // The constructor name and field count a pattern matches, when it is (through a source-location
 // wrapper) a positional constructor pattern — `None` for every other pattern shape, including a

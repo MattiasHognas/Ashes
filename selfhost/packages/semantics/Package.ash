@@ -26,6 +26,7 @@ import AshesCompiler.Semantics.ProjectDiscovery
 import AshesCompiler.Semantics.ProjectSourceEnumeration
 import AshesCompiler.Semantics.ProjectDependencyGraph
 import AshesCompiler.Semantics.ProjectCompilationPlanning
+import AshesCompiler.Semantics.ExprMentions
 import AshesCompiler.Semantics.ModuleSemanticStitching
 import AshesCompiler.Semantics.ModuleReferenceRewriting
 import AshesCompiler.Semantics.ProjectSyntaxStitching

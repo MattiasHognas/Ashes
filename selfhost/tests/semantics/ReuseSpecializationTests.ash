@@ -14,6 +14,7 @@
 
 import Ashes.Test as test
 import AshesCompiler.Frontend.Syntax
+import AshesCompiler.Semantics.ExprMentions.exprMentionsName
 import AshesCompiler.Semantics.ReuseSpecialization
 export (
     value runReuseSpecializationTests,

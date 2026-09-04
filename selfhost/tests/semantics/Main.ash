@@ -26,6 +26,12 @@ import TraitDictionaryRewritingTests
 import StandardTraitsTests
 import StandardTraitSourceBindingTests
 import DerivingExpansionTests
+import ProjectManifestTests
+import ProjectDiagnosticsTests
+import ModuleSemanticStitchingTests
+import ModuleReferenceRewritingTests
+import ProjectSyntaxStitchingTests
+import ProjectInferenceTests
 import ExternalTypingTests
 import ExternalAbiTests
 import IrTests
@@ -80,6 +86,12 @@ let run unit =
     |> (given (_) -> StandardTraitsTests.runStandardTraitsTests(Unit))
     |> (given (_) -> StandardTraitSourceBindingTests.runStandardTraitSourceBindingTests(Unit))
     |> (given (_) -> DerivingExpansionTests.runDerivingExpansionTests(Unit))
+    |> (given (_) -> ProjectManifestTests.runProjectManifestTests(Unit))
+    |> (given (_) -> ProjectDiagnosticsTests.runProjectDiagnosticsTests(Unit))
+    |> (given (_) -> ModuleSemanticStitchingTests.runModuleSemanticStitchingTests(Unit))
+    |> (given (_) -> ModuleReferenceRewritingTests.runModuleReferenceRewritingTests(Unit))
+    |> (given (_) -> ProjectSyntaxStitchingTests.runProjectSyntaxStitchingTests(Unit))
+    |> (given (_) -> ProjectInferenceTests.runProjectInferenceTests(Unit))
     |> (given (_) -> ExternalTypingTests.runExternalTypingTests(Unit))
     |> (given (_) -> ExternalAbiTests.runExternalAbiTests(Unit))
     |> (given (_) -> IrTests.runIrTests(Unit))
