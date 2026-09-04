@@ -10550,12 +10550,34 @@ public sealed partial class Lowering
         }
         tailPosition.Restore();
 
+        return LowerCallFinish(
+            rootExpr,
+            collectedArgs,
+            request,
+            callWmCursorSlot,
+            callWmEndSlot,
+            currentTemp,
+            currentType,
+            consumedRuntimeArguments,
+            runtimeManagedResultFlagTemp);
+    }
+
+    // The tail of LowerCallGeneral once every argument is applied: unify the result type, normalize
+    // the result out of the call's arena window, release the consumed runtime arguments, and record
+    // the result's ownership.
+    private (int, TypeRef) LowerCallFinish(
+        Expr rootExpr,
+        List<Expr> collectedArgs,
+        LoweredValueRequest request,
+        int callWmCursorSlot,
+        int callWmEndSlot,
+        int currentTemp,
+        TypeRef currentType,
+        List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
+        int runtimeManagedResultFlagTemp)
+    {
         UnifyExpectedType(currentType, request.ExpectedType);
         var callResultType = Prune(currentType);
-        LowerCallDropConsumedRuntimeArguments(
-            callResultType,
-            consumedRuntimeArguments,
-            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count));
         bool runtimeManagedResult = IsDirectRuntimeManagedFunctionCall(rootExpr, collectedArgs.Count, callResultType);
         bool stableReuseResult = IsSpecializationSelfReuseCall(rootExpr);
         TrackStableReuseCallResult(currentTemp, stableReuseResult);
@@ -10572,6 +10594,14 @@ public sealed partial class Lowering
             runtimeManagedResult || stableReuseResult,
             runtimeManagedResultFlagTemp,
             IsCalleeResultListElementQuantifiedInScheme(rootExpr, collectedArgs.Count));
+        // The consumed runtime arguments are released only once the result is normalized: an
+        // arena-placed result (a generic callee's own cons cells, say) can still reference the
+        // arguments' parts until the copy-out or deep copy above has copied them, so releasing the
+        // arguments first frees memory the normalization then reads.
+        LowerCallDropConsumedRuntimeArguments(
+            callResultType,
+            consumedRuntimeArguments,
+            CalleeCompiledResultVerifiedRuntimeManaged(rootExpr, collectedArgs.Count));
         RecordCallResultTempOwnership(currentTemp, callResultType, runtimeManagedResult,
             normalizesRuntimeManagedResult, GetKnownFunctionBytesProvenance(rootExpr, collectedArgs.Count));
 
