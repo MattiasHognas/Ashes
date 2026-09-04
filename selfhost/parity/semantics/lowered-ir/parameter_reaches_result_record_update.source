@@ -1,0 +1,24 @@
+type Inst =
+    | text: Str
+    | n: Int
+
+type Body =
+    | items: List(Inst)
+    | count: Int
+
+let emitTo (body: Body) (inst: Inst) = body with items = [inst]
+
+let mk (label: Str) = Inst(text = "" + label, n = 1)
+
+let build (seed: Str) = emitTo(emitTo(emitTo(Body(items = [], count = 0))(mk(seed)))(mk("Second")))(mk("Third"))
+
+let recursive texts (items: List(Inst)) =
+    match items with
+        | [] -> ""
+        | Inst { text = text } :: rest -> text + "," + texts(rest)
+
+let describe (body: Body) =
+    match body with
+        | Body { items = items } -> texts(items) + " " + texts(items)
+
+Ashes.IO.print(describe(build("Found")))

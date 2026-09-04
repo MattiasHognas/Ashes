@@ -38,14 +38,27 @@ import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import Ashes.Number.UInt
 export (
     type ArenaRuntime(..),
+    type CopyOutRuntime(..),
     value arenaChunkBytes,
+    value arenaConst,
+    value arenaValueImmortalCount,
+    value alignArenaSizeDynamic,
+    value addZeroWordGlobal,
+    value addInternalFunction,
+    value loadWordAt,
+    value storeWordAt,
     value defineArenaRuntime,
     value emitArenaInit,
+    value emitRegionGrow,
     value emitArenaAlloc,
     value emitArenaAllocDynamic,
     value emitArenaAllocAdt,
     value emitArenaValueAllocDynamic,
+    value emitRcAllocWord,
     value emitMoveBytes,
+    value listHeadKindCode,
+    value managedCode,
+    value copyOutRuntimeOf,
     value emitCopyOutArena,
     value emitCopyOutList,
     value emitSaveArenaState,
@@ -141,8 +154,9 @@ let addInternalFunction module_ name type_ =
         |> (given (_) -> setLinkage(function_)(linkageInternal))
         |> (given (_) -> function_))
 
-// Writes a fresh OS chunk's header and footer and points the cursor/end globals at its usable span.
-let emitArenaChunkSetup builder i64 i8 ptrType (arena: ArenaRuntime) chunkBase chunkSize prevEnd prefix =
+// Writes a fresh OS chunk's header and footer and points the region's cursor/end slots (`ptr`
+// values: the arena globals, or a persistent region's) at its usable span.
+let emitRegionChunkSetup builder i64 i8 ptrType cursorSlot endSlot chunkBase chunkSize prevEnd prefix =
     prefix + "_end"
     |> buildAdd(builder)(chunkBase)(buildSub(builder)(chunkSize)(arenaConst(i64)(arenaChunkFooterBytes))(prefix + "_usable_span"))
     |> (given (chunkEnd) ->
@@ -156,9 +170,11 @@ let emitArenaChunkSetup builder i64 i8 ptrType (arena: ArenaRuntime) chunkBase c
             |> memOffsetPtr(builder)(i64)(i8)(ptrType)(chunkEnd)(0)
             |> buildStore(builder)(chunkBase))
         |> (given (_) ->
-            buildStore(builder)(buildAdd(builder)(chunkBase)(arenaConst(i64)(arenaChunkHeaderBytes))(prefix + "_cursor_start"))(arena.arenaCursorGlobal))
-        |> (given (_) -> buildStore(builder)(chunkEnd)(arena.arenaEndGlobal))
+            buildStore(builder)(buildAdd(builder)(chunkBase)(arenaConst(i64)(arenaChunkHeaderBytes))(prefix + "_cursor_start"))(cursorSlot))
+        |> (given (_) -> buildStore(builder)(chunkEnd)(endSlot))
         |> (given (_) -> Unit))
+
+let emitArenaChunkSetup builder i64 i8 ptrType (arena: ArenaRuntime) chunkBase chunkSize prevEnd prefix = emitRegionChunkSetup(builder)(i64)(i8)(ptrType)(arena.arenaCursorGlobal)(arena.arenaEndGlobal)(chunkBase)(chunkSize)(prevEnd)(prefix)
 
 // `mmap`s `chunkSize` bytes; a result at or above `-4096` unsigned is an errno, on which the
 // program writes the failure message to stderr and exits with `1`, as stage 0 does.
@@ -183,26 +199,31 @@ let emitArenaOsAllocate context function_ builder i64 (arena: ArenaRuntime) chun
                 |> (given (_) -> positionBuilderAtEnd(builder)(okBlock))
                 |> (given (_) -> chunkBase))
 
-// `void __ashes_heap_grow(i64 needed)`: links a new chunk after the current one, sized to the
-// standard chunk or to `2 * needed + 16` when the request alone would not fit.
+// Links a new chunk after the one `cursorSlot`/`endSlot` bound, sized to the standard chunk or to
+// `2 * needed + 16` when the request alone would not fit. The header link is the previous end:
+// `0` on a persistent region's first chunk, which is never walked since such a region is never
+// reclaimed.
+let emitRegionGrow context function_ builder i64 i8 ptrType (arena: ArenaRuntime) cursorSlot endSlot needed =
+    "grow_heap_fit_size"
+    |> buildAdd(builder)(buildMul(builder)(needed)(arenaConst(i64)(2))("grow_heap_need2"))(arenaConst(i64)(arenaChunkHeaderBytes + arenaChunkFooterBytes))
+    |> (given (fitSize) ->
+        buildSelect(builder)(buildICmp(builder)(intPredicateUle)(fitSize)(arenaConst(i64)(arenaChunkBytes))("grow_heap_fits_standard"))(arenaConst(i64)(arenaChunkBytes))(fitSize)("grow_heap_chunk_size"))
+    |> (given (chunkSize) ->
+        "grow_heap_prev_end"
+        |> buildLoad(builder)(i64)(endSlot)
+        |> (given (prevEnd) ->
+            "grow_heap"
+            |> emitArenaOsAllocate(context)(function_)(builder)(i64)(arena)(chunkSize)
+            |> (given (chunkBase) -> emitRegionChunkSetup(builder)(i64)(i8)(ptrType)(cursorSlot)(endSlot)(chunkBase)(chunkSize)(prevEnd)("grow_heap"))))
+
+// `void __ashes_heap_grow(i64 needed)`: `emitRegionGrow` on the arena's own cursor/end globals.
 let emitArenaGrowBody context builder i64 i8 ptrType (arena: ArenaRuntime) =
     "entry"
     |> appendBasicBlock(context)(arena.arenaGrowFn)
     |> positionBuilderAtEnd(builder)
     |> (given (_) -> getParam(arena.arenaGrowFn)(0u32))
-    |> (given (needed) ->
-        "grow_heap_fit_size"
-        |> buildAdd(builder)(buildMul(builder)(needed)(arenaConst(i64)(2))("grow_heap_need2"))(arenaConst(i64)(arenaChunkHeaderBytes + arenaChunkFooterBytes))
-        |> (given (fitSize) ->
-            buildSelect(builder)(buildICmp(builder)(intPredicateUle)(fitSize)(arenaConst(i64)(arenaChunkBytes))("grow_heap_fits_standard"))(arenaConst(i64)(arenaChunkBytes))(fitSize)("grow_heap_chunk_size"))
-        |> (given (chunkSize) ->
-            "grow_heap_prev_end"
-            |> buildLoad(builder)(i64)(arena.arenaEndGlobal)
-            |> (given (prevEnd) ->
-                "grow_heap"
-                |> emitArenaOsAllocate(context)(arena.arenaGrowFn)(builder)(i64)(arena)(chunkSize)
-                |> (given (chunkBase) -> emitArenaChunkSetup(builder)(i64)(i8)(ptrType)(arena)(chunkBase)(chunkSize)(prevEnd)("grow_heap"))))
-        |> (given (_) -> buildRetVoid(builder)))
+    |> (given (needed) -> emitRegionGrow(context)(arena.arenaGrowFn)(builder)(i64)(i8)(ptrType)(arena)(arena.arenaCursorGlobal)(arena.arenaEndGlobal)(needed))
+    |> (given (_) -> buildRetVoid(builder))
 
 // `void __ashes_reclaim_arena_chunks(i64 savedEnd, i64 preRestoreEnd)`: `munmap`s every chunk
 // from the pre-restore one back to (not including) the saved one, following the header links. The

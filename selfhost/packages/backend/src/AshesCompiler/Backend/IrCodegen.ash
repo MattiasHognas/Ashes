@@ -109,6 +109,7 @@ import AshesCompiler.Backend.Llvm
 import AshesCompiler.Backend.IrCodegen.Support
 import AshesCompiler.Backend.IrCodegen.Syscalls.LinuxX64
 import AshesCompiler.Backend.IrCodegen.Arena
+import AshesCompiler.Backend.IrCodegen.Copy
 import AshesCompiler.Backend.IrCodegen.Rc
 import AshesCompiler.Backend.IrCodegen.Filesystem
 import AshesCompiler.Backend.IrCodegen.Environment
@@ -176,6 +177,7 @@ type CodegenContext =
     | envpGlobal: LLVMValueRef
     | consoleGlobals: ConsoleGlobals
     | arenaRuntime: ArenaRuntime
+    | copyRuntime: Maybe(CopyRuntime)
     | isEntry: Bool
 
 // Everything shared by every function in one module — computed once by `codegenFunctions`, then
@@ -191,6 +193,7 @@ type ModuleCodegen =
     | moduleEnvpGlobal: LLVMValueRef
     | moduleConsoleGlobals: ConsoleGlobals
     | moduleArenaRuntime: ArenaRuntime
+    | moduleCopyRuntime: Maybe(CopyRuntime)
     | moduleBuilder: LLVMBuilderRef
 
 // `i64 f(i64 env, i64 arg, i64 argumentOwnershipFlag)`: the one uniform native signature every
@@ -334,7 +337,7 @@ let codegenInstructionKind cx builder kind state =
     match state with
         | (tempEnv, terminated) ->
             match cx with
-                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, isEntry = isEntry } ->
+                | CodegenContext { context = context, moduleRef = moduleRef, function_ = function_, types = types, externals = externals, localSlots = localSlots, labelBlocks = labelBlocks, stringLiteralGlobals = stringLiteralGlobals, liftedFunctions = liftedFunctions, closureFunctionType = closureFunctionType, envpGlobal = envpGlobal, consoleGlobals = consoleGlobals, arenaRuntime = arena, copyRuntime = copyRuntime, isEntry = isEntry } ->
                     match types with
                         | CoreLlvmTypes { i64 = i64, i8 = i8, i1 = i1, ptrType = ptrType } ->
                             match externals with
@@ -636,6 +639,31 @@ let codegenInstructionKind cx builder kind state =
                                             ((destTemp, emitCopyOutArena(builder)(i64)(arena)(lookupIndexed(srcTemp)(tempEnv))(staticSizeBytes)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
                                         | CopyOutList(destTemp, srcTemp, headCopy, runtimeManaged, _purpose) ->
                                             ((destTemp, emitCopyOutList(builder)(i64)(arena)(lookupIndexed(srcTemp)(tempEnv))(headCopy)(runtimeManaged)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                        // The rest of the copy family lives in `IrCodegen.Copy`: the closure copy
+                        // (whose runtime-managed form dispatches to the program's `$env_normalize`
+                        // functions by code address), the TCO accumulator's single-cell copy, and
+                        // the persistent to-space/blob region allocations of the in-place reuse
+                        // specializations.
+                                        | CopyOutClosure(destTemp, srcTemp, runtimeManaged, _purpose) ->
+                                            ((destTemp, emitCopyOutClosure(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(mallocFn)(mallocType)(closureFunctionType)(liftedFunctions)(runtimeManaged)(lookupIndexed(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                        | CopyOutTcoListCell(destTemp, srcTemp, headCopy, _purpose) ->
+                                            ((destTemp, emitCopyOutTcoListCell(context)(function_)(builder)(i64)(i8)(ptrType)(arena)(copyOutRuntimeOf(arena))(headCopy)(lookupIndexed(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                        | AllocAdtToSpace(target, tag, fieldCount, tagless) ->
+                                            ((target, emitAllocAdtToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(tag)(fieldCount)(tagless)("t" + Ashes.Text.fromInt(target))) :: tempEnv, terminated)
+                                        | CopyOutArenaToSpace(destTemp, srcTemp, staticSizeBytes) ->
+                                            ((destTemp, emitCopyOutArenaToSpace(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(memcpyFn)(memcpyType)(lookupIndexed(srcTemp)(tempEnv))(staticSizeBytes)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                        | CopyFixedInto(destTemp, srcTemp, sizeBytes) ->
+                                            let _ =
+                                                emitCopyFixedInto(builder)(i64)(ptrType)(memcpyFn)(memcpyType)(lookupIndexed(destTemp)(tempEnv))(lookupIndexed(srcTemp)(tempEnv))(sizeBytes)
+                                            in (tempEnv, terminated)
+                                        | CopyStringIntoOrFresh(destTemp, oldBlobTemp, srcTemp) ->
+                                            ((destTemp, emitCopyStringIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(copyOutRuntimeOf(arena))(lookupIndexed(oldBlobTemp)(tempEnv))(lookupIndexed(srcTemp)(tempEnv))("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                                        | CopyFixedIntoOrFresh(destTemp, oldBlobTemp, srcTemp, sizeBytes) ->
+                                            ((destTemp, emitCopyFixedIntoOrFresh(context)(function_)(builder)(i64)(i8)(ptrType)(copyRuntimeOf(copyRuntime))(memcpyFn)(memcpyType)(lookupIndexed(oldBlobTemp)(tempEnv))(lookupIndexed(srcTemp)(tempEnv))(sizeBytes)("t" + Ashes.Text.fromInt(destTemp))) :: tempEnv, terminated)
+                        // A `TcoResetPending` is the lowerer's placeholder for a back-edge block
+                        // whose copy-out decision waited on inference; lowering replaces every one
+                        // before the program is handed over, so reaching codegen is a lowering bug.
+                                        | TcoResetPending(id, _usedTemps, _readLocalSlots) -> Ashes.IO.panic("codegen: TcoResetPending " + Ashes.Text.fromInt(id) + " reached the backend; lowering must resolve every deferred TCO reset")
                                         | StoreLocal(slot, source) ->
                                             let _ =
                                                 localSlots
@@ -1483,6 +1511,7 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                                         envpGlobal = mc.moduleEnvpGlobal,
                                                         consoleGlobals = mc.moduleConsoleGlobals,
                                                         arenaRuntime = arena,
+                                                        copyRuntime = mc.moduleCopyRuntime,
                                                         isEntry = isEntry
                                                     )
                                                 in (cx, instructions)
@@ -1533,13 +1562,21 @@ let recursive codegenLiftedFunctions mc functions =
                         codegenFunctionBody(mc)(lookupIndexed(label)(mc.moduleLiftedFunctions))(false)(function_)
                     in codegenLiftedFunctions(mc)(rest)
 
-// Whether any instruction is a `CopyOutArena`/`CopyOutList`: only then does the module get the
-// copy-out helpers, whose libc calls would otherwise make every program dynamically linked.
+// Whether any instruction is one of the copy family: only then does the module get the copy-out
+// helpers, whose libc calls would otherwise make every program dynamically linked, and the
+// persistent-region runtime (`IrCodegen.Copy`).
 let recursive instructionsUseCopyOut instructions =
     match instructions with
         | [] -> false
         | IrInstruction { instruction = CopyOutArena(_dest, _src, _size, _managed, _purpose, _elementType) } :: _ -> true
         | IrInstruction { instruction = CopyOutList(_dest, _src, _headCopy, _managed, _purpose) } :: _ -> true
+        | IrInstruction { instruction = CopyOutClosure(_dest, _src, _managed, _purpose) } :: _ -> true
+        | IrInstruction { instruction = CopyOutTcoListCell(_dest, _src, _headCopy, _purpose) } :: _ -> true
+        | IrInstruction { instruction = AllocAdtToSpace(_target, _tag, _fieldCount, _tagless) } :: _ -> true
+        | IrInstruction { instruction = CopyOutArenaToSpace(_dest, _src, _size) } :: _ -> true
+        | IrInstruction { instruction = CopyFixedInto(_dest, _src, _size) } :: _ -> true
+        | IrInstruction { instruction = CopyStringIntoOrFresh(_dest, _old, _src) } :: _ -> true
+        | IrInstruction { instruction = CopyFixedIntoOrFresh(_dest, _old, _src, _size) } :: _ -> true
         | _ :: rest -> instructionsUseCopyOut(rest)
 
 let recursive functionsUseCopyOut functions =
@@ -1585,25 +1622,35 @@ let codegenFunctions name context entryFunction functions stringLiterals =
                                 in
                                     let externals = declareExternalFunctions(module_)(context)(types)
                                     in
-                                        let mc =
-                                            ModuleCodegen(
-                                                moduleRef = module_,
-                                                moduleContext = context,
-                                                moduleTypes = types,
-                                                moduleExternals = externals,
-                                                moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
-                                                moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
-                                                moduleClosureFunctionType = closureFnType,
-                                                moduleEnvpGlobal = envpGlobal,
-                                                moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
-                                                moduleArenaRuntime = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(functionsUseCopyOut(entryFunction :: functions))(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType),
-                                                moduleBuilder = builder
-                                            )
+                                        let usesCopy = functionsUseCopyOut(entryFunction :: functions)
                                         in
-                                            let _ = codegenLiftedFunctions(mc)(functions)
+                                            let arena = defineArenaRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)(usesCopy)(externals.mallocFn)(externals.mallocType)(externals.freeFn)(externals.freeType)(externals.memcpyFn)(externals.memcpyType)
                                             in
-                                                let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
-                                                in (module_, mc.moduleBuilder))
+                                                let mc =
+                                                    ModuleCodegen(
+                                                        moduleRef = module_,
+                                                        moduleContext = context,
+                                                        moduleTypes = types,
+                                                        moduleExternals = externals,
+                                                        moduleStringLiteralGlobals = buildStringLiteralGlobalsFromIndex(module_)(context)(types.i64)(types.i8)(0)(stringLiterals),
+                                                        moduleLiftedFunctions = declareLiftedFunctions(module_)(closureFnType)(functions),
+                                                        moduleClosureFunctionType = closureFnType,
+                                                        moduleEnvpGlobal = envpGlobal,
+                                                        moduleConsoleGlobals = defineConsoleGlobals(module_)(types.i64)(types.i8),
+                                                        moduleArenaRuntime = arena,
+                                                        moduleCopyRuntime = if usesCopy
+                                                        then
+                                                            arena
+                                                            |> defineCopyRuntime(module_)(context)(builder)(types.i64)(types.i8)(types.ptrType)
+                                                            |> Some
+                                                        else None,
+                                                        moduleBuilder = builder
+                                                    )
+                                                in
+                                                    let _ = codegenLiftedFunctions(mc)(functions)
+                                                    in
+                                                        let _ = codegenFunctionBody(mc)(entryValue)(true)(entryFunction)
+                                                        in (module_, mc.moduleBuilder))
 
 // The entry function alone, for a hand-built `IrFunction` with no lifted functions at all.
 let codegenEntryFunction name context irFunction stringLiterals = codegenFunctions(name)(context)(irFunction)([])(stringLiterals)

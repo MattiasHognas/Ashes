@@ -46,8 +46,11 @@ let checkFixture root name =
 // owned-binding borrow and its control-flow precise release, and closure_capture the source-named
 // function origins, the closure environment normalizer, the per-call windows, and the stack
 // closure of a let-bound lambda used only as a callee, down to its source locations.
-// mutual_recursion still needs recursive-binding lowering parity and remains deliberately
-// excluded until that is ported.
+// tag_group_arm_brackets adds the per-arm brackets on the SwitchTag dispatch path (a cleanup
+// block per linearly tested group case, none for a trivial single-case group) and
+// match_arm_copy_out the pattern-owned binding's release and the copy-out of a record arm result
+// past the arm's reset. mutual_recursion still needs recursive-binding lowering parity and
+// remains deliberately excluded until that is ported.
 match Ashes.IO.args with
     | root :: [] ->
         Unit
@@ -62,5 +65,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("heap_result_let"))
         |> (given (_) -> checkFixture(root)("heap_result_list"))
         |> (given (_) -> checkFixture(root)("record_pattern"))
+        |> (given (_) -> checkFixture(root)("tag_group_arm_brackets"))
+        |> (given (_) -> checkFixture(root)("match_arm_copy_out"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")
