@@ -9,6 +9,7 @@
 // - A callee that is not a let-bound function called by name has no facts: it borrows nothing,
 //   its result reaches nothing, and its result ownership is never statically known.
 
+import Ashes.Collection.List.length
 import AshesCompiler.Frontend.Syntax.Expr
 import AshesCompiler.Semantics.HeapLayoutClassification.canArenaResetLayout
 import AshesCompiler.Semantics.IrInstructions
@@ -26,6 +27,9 @@ export (
     value parameterAtIndex,
     value calleeParameterBorrows,
     value calleeResultReachesArgument,
+    value innermostStageLabel,
+    value compiledResultRuntimeManaged,
+    value calleeSaturatedAndEligible,
 )
 
 // What a call's heap result needs to cross the closing reset, stage 0's `GetCallCopyOutKind`: a
@@ -56,13 +60,60 @@ let listHeadCopyOf (element: SemanticType) =
 // The facts about a call spine's callee the argument and result rules consult, stage 0's
 // ownership summary and known-label resolution of a let-bound function called by name: its
 // generated label (once its body is lowered), its parameters in order, their ownership, the
-// parameter reach of its result, and the number of arguments the spine applies.
+// parameter reach of its result, whether the pre-lowering provenance classification proved its
+// result RC-eligible, and the number of arguments the spine applies.
 type CoreCalleeFacts =
     | label: Maybe(Str)
     | parameters: List(Str)
     | ownership: List((Str, ParameterOwnership))
     | reach: ResultReachState
+    | rcEligible: Bool
     | argumentCount: Int
+
+let recursive lookupReturnedClosureLabel (label: Str) (labels: List((Str, Str))) =
+    match labels with
+        | [] -> None
+        | (candidate, returned) :: rest ->
+            if candidate == label
+            then Some(returned)
+            else lookupReturnedClosureLabel(label)(rest)
+
+// The label of the stage `hops` returned closures past `label` along the recorded
+// returned-closure chain, `None` where the chain is not recorded.
+let recursive innermostStageLabel (hops: Int) (label: Str) (labels: List((Str, Str))) =
+    if hops <= 0
+    then Some(label)
+    else
+        match lookupReturnedClosureLabel(label)(labels) with
+            | Some(next) -> innermostStageLabel(hops - 1)(next)(labels)
+            | None -> None
+
+let recursive lookupBodyPlacement (label: Str) (placements: List((Str, Bool))) =
+    match placements with
+        | [] -> None
+        | (candidate, runtimeManaged) :: rest ->
+            if candidate == label
+            then Some(runtimeManaged)
+            else lookupBodyPlacement(label)(rest)
+
+// Stage 0's `TryGetCompiledFunctionResultRuntimeManaged`: whether the lowered body of the stage
+// the spine's applications reach produced a reference-counted result, following the
+// returned-closure chain one hop per application past the first; `None` while that body is not
+// lowered or the chain is not recorded.
+let compiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (returnedClosureLabels: List((Str, Str))) (bodyPlacements: List((Str, Bool))) =
+    match facts with
+        | Some(CoreCalleeFacts { label = Some(label), argumentCount = count }) ->
+            match innermostStageLabel(count - 1)(label)(returnedClosureLabels) with
+                | Some(stage) -> lookupBodyPlacement(stage)(bodyPlacements)
+                | None -> None
+        | _ -> None
+
+// Stage 0's `TryResolveCalleeOwnershipSummary` under the provenance verdict: the spine saturates
+// a callee whose result the classification proved RC-eligible.
+let calleeSaturatedAndEligible (facts: Maybe(CoreCalleeFacts)) =
+    match facts with
+        | Some(CoreCalleeFacts { parameters = parameters, rcEligible = eligible, argumentCount = count }) -> eligible && length(parameters) == count
+        | None -> false
 
 let recursive reachEnvironment (parameters: List(Str)) (environment: List((Str, ResultReachState))) =
     match parameters with

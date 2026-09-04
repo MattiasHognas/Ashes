@@ -2518,6 +2518,25 @@ transferred. Storing a resource into an aggregate that then escapes and is never
 the original binding is the intended pattern and stays valid — the error only fires when the moved-out
 binding is used again.
 
+A closure that captures a resource uses it each time the closure is applied, so the same rule holds
+whether the later use is written directly or inside a pipeline stage. Both spellings below agree: when
+`relay` cannot be proven to borrow `process`, the first stage moves it and the second stage's use is
+an `ASH008`; when `relay` is a proven borrow, both are accepted.
+
+```ash
+let _ = relay(process)
+in Ashes.IO.Process.waitForExit(process)
+
+Unit
+|> (given (_) -> relay(process))
+|> (given (_) -> Ashes.IO.Process.waitForExit(process))
+```
+
+The borrow proof follows an import alias: `import Ashes.IO.Process as Process` and
+`Process.readStdoutLine(process)` prove the same read as the fully qualified spelling. A helper that
+passes the resource on to another Ashes function — including itself, in a recursive relay loop — is
+not a proven borrow and consumes it.
+
 ### 16.4 Compile-Time Safety
 
 The compiler enforces resource safety with three rules:
