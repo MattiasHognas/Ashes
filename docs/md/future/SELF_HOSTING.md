@@ -696,8 +696,9 @@ same public behavior.
   runtime outer-cell reuse eligibility with its copy/record/owned-child/TCO-owned-child/recursive
   ADT and TCO list-element support flags, and the stable rejection flags (resource or borrowed-view
   containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
-  Deferred to reuse specialization: the borrowed-view projection of a capability and the consumer
-  that reads the reuse flags (none exists yet).
+  Deferred to reuse specialization: the borrowed-view projection of a capability. The reuse flags
+  now have a first consumer (OPT-42's ordinary match-arm path), gated on a still-open producer gap
+  — see OPT-42's own note.
 - [~] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
@@ -1046,7 +1047,10 @@ same public behavior.
   monomorphic reverses; the compiler item stays open.
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
-  helper counts as resolved). Regression: `ReuseInlineResolutionTests`.
+  helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
+  selfhost: OPT-42's ordinary match-arm reuse path never inlines a helper call into an arm (no
+  `InlineCall`/`_inliningInProgress` family is ported), so there is nothing for this check to gate
+  yet — it becomes relevant once helper inlining or fold specialization lands.
 - [ ] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
@@ -1075,8 +1079,40 @@ same public behavior.
   and OS-backed allocations under the current no-GC contract.
 - [ ] **OPT-41** Normalize complete graphs and insert deep-copy boundaries where region or ownership rules require
   them.
-- [ ] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
-  allocation reuse for tuples, ADTs, closures, and tail-recursive paths.
+- [~] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
+  allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
+  `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
+  non-specialization) match-arm path — `ReuseSpecialization.ash` (the pure Expr/Pattern-shape
+  analysis: `reusePatternConstructorArity`/`reusePatternFieldBindings` extract a matched
+  constructor's field-index-to-bound-name map, `reuseArmBodyRebuildsSameConstructor` recognizes a
+  same-name, same-arity rebuild through nested `let`s including a field-order-projected record
+  literal, `reuseTransferredFieldsSafe` checks every pointer-typed field is passed straight through
+  unchanged rather than dropped or replaced, `exprMentionsName` is the shadow-blind dead-cell
+  check) plus the state-threaded `CoreLowering.ash` hooks: `withReuseScrutinee` gates a whole match
+  (exhaustive, guard-free, every case a distinct constructor of one type, every case's own rebuild
+  transfer-safe — narrower than stage 0's cross-constructor reuse by requiring every arm, not only
+  the ones with pointer fields, to rebuild its own matched constructor, so a produced token is
+  always consumed by construction and the unconsumed-token release path stage 0 needs never
+  arises), `reuseTokenIfEligible`/`reuseTruncateArmTokens` publish and bookkeep one `DropReuse`
+  token per arm, and `allocateOrReuseConstructorCell`/`reuseEmitTransferredChild` consume it with
+  `AllocReusing`, branching a transferred pointer field on the token's own runtime nullness exactly
+  like stage 0's `EmitRuntimeReuseTransferredChild`. Verified: 16 existing whole-program parity
+  fixtures re-checked byte-identical (no regression), 19 unit tests in
+  `ReuseSpecializationTests.ash` covering the analysis functions directly, and a stage-0 oracle
+  pair (`reuse_record_update.source`/`.ir`, `reuse_list_map.source`/`.ir`) that DOES emit
+  `DropReuse`/`AllocReusing` for this exact mechanism, plus a `reuse_shared_falls_back` pair where
+  stage 0 correctly emits neither (the scrutinee is provably shared by a second top-level binding).
+  Open, blocking end-to-end activation in selfhost: selfhost's own constructor-placement lowering
+  does not yet mark an ordinary `let`-bound or TCO-parameter named-ADT value `RuntimeManaged` the
+  way stage 0 does for these same shapes (confirmed empirically: stage 0 places `Counter(count =
+  0, total = 0)`/`Cons(1)(...)` as RC from construction; selfhost places the identical source as
+  arena), so the hooks' own precondition (`isRuntimeTemp` on the scrutinee) never holds in selfhost
+  yet and none of the three oracle fixtures are registered in `ir-program-parity/Main.ash`. The
+  TCO-loop-native ARENA direct-reuse mechanism (`LowerLambdaCoreScanDirectReuse` and
+  `CollectCtorMatchedScrutinees`'s constructor-pattern-only scan) and the full fold/list reuse
+  SPECIALIZATION (`f$reuse` functions, to-space allocation, `RcIsUnique`-gated runtime uniqueness
+  checks, structural droppers) are not ported — both are substantially larger than this slice and
+  remain open.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
@@ -1198,7 +1234,8 @@ same public behavior.
   the owned-list, lambda-returns-record, and aggregate-children programs of the backend suite.
   Open: the free-list cache if the compile-time benchmark needs it; the rest of Perceus
   placement — the pattern-owner and loop-parameter drops from real lowering, shadowing-aware
-  liveness, and reuse emission.
+  liveness, and the TCO-loop-native and fold-specialization reuse emission OPT-42 has not yet
+  reached (its ordinary match-arm path is the first consumer; see OPT-42's note).
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve

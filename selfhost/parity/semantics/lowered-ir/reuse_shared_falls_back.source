@@ -1,0 +1,11 @@
+type Lst =
+    | Nil
+    | Cons(Int, Lst)
+
+let lst = Cons(1)(Cons(2)(Cons(3)(Nil)))
+
+let kept = lst
+
+match lst with
+    | Nil -> Nil
+    | Cons(head, tail) -> Cons(head * 2)(tail)
