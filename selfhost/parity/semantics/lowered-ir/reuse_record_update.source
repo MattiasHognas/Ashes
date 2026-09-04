@@ -1,0 +1,8 @@
+type Counter =
+    | count: Int
+    | total: Int
+
+let counter = Counter(count = 0, total = 0)
+
+match counter with
+    | Counter(count, total) -> Counter(count = count + 1, total = total + count)

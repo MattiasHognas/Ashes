@@ -3393,6 +3393,13 @@ let testRunSharedTcoOwnedLetInTailArgumentRecord shipped unit =
 let testRunSharedTcoOwnedLetInOperandSelfCall shipped unit =
     assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_owned_let_in_operand_self_call.ash"))("selfhostBackendRunSharedTcoOwnedLetOperand")("selfhost_backend_shared_tco_owned_let_operand_e2e")("2")
 
+// The runtime-managed loop parameter plateau: a `Str` accumulator rebuilt through `+` and a
+// `List(Str)` consumed through its own pattern-owned tail, each run for 200000 iterations so a
+// per-iteration leak or double release of the accumulator's own reference shows up as a crash or
+// a wrong summary.
+let testRunSharedTcoRuntimeManagedStrAccumulatorPlateau shipped unit =
+    assertProgramPrints(buildSharedTestModule(shipped)("tests/tco_runtime_managed_str_accumulator_plateau.ash"))("selfhostBackendRunSharedTcoRuntimeManagedStrAccumulatorPlateau")("selfhost_backend_shared_tco_runtime_managed_str_accumulator_plateau_e2e")("200000|1088895")
+
 // A six-constructor `match` lowers to one `SwitchTag`, which LLVM's x86-64 selection turns into a
 // jump table in `.rodata`: absolute `.text` block addresses carried by `.rela.rodata` entries. The
 // linker must apply those to the `.rodata` bytes (`collectRodataPatches`), not only the `.text`
@@ -4914,6 +4921,7 @@ let run shipped =
     |> testRunSharedTcoLetCallResultInAccumulatorRecord(shipped)
     |> testRunSharedTcoOwnedLetInTailArgumentRecord(shipped)
     |> testRunSharedTcoOwnedLetInOperandSelfCall(shipped)
+    |> testRunSharedTcoRuntimeManagedStrAccumulatorPlateau(shipped)
     |> testRunStaticExecutableForRealIrPrintIntMinModule
     |> testRunStaticExecutableForRealIrIntegerOperatorsModule
     |> testRunStaticExecutableForRealIrIntegerComparisonsModule

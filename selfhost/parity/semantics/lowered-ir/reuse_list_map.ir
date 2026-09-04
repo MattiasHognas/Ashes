@@ -1,0 +1,92 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9890)
+
+function _start_main  [ProgramEntry]
+  locals=16 temps=36
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=1   (reuse_list_map.ash:5:16)
+    LoadConstInt          Target=1 Value=2   (reuse_list_map.ash:5:24)
+    LoadConstInt          Target=2 Value=3   (reuse_list_map.ash:5:32)
+    AllocAdt              Target=3 Tag=0 FieldCount=0 RuntimeManaged=true   (reuse_list_map.ash:5:35)
+    AllocAdt              Target=4 Tag=1 FieldCount=2 RuntimeManaged=true   (reuse_list_map.ash:5:27)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=2   (reuse_list_map.ash:5:27)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=3   (reuse_list_map.ash:5:27)
+    AllocAdt              Target=5 Tag=1 FieldCount=2 RuntimeManaged=true   (reuse_list_map.ash:5:19)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=1   (reuse_list_map.ash:5:19)
+    SetAdtField           Ptr=5 FieldIndex=1 Source=4   (reuse_list_map.ash:5:19)
+    AllocAdt              Target=6 Tag=1 FieldCount=2 RuntimeManaged=true   (reuse_list_map.ash:5:11)
+    SetAdtField           Ptr=6 FieldIndex=0 Source=0   (reuse_list_map.ash:5:11)
+    SetAdtField           Ptr=6 FieldIndex=1 Source=5   (reuse_list_map.ash:5:11)
+    StoreLocal            Slot=2 Source=6
+    LoadLocal             Target=7 Slot=2   (reuse_list_map.ash:7:7)
+    Borrow                Target=8 SourceTemp=7
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=9 Value=0   (reuse_list_map.ash:7:1)
+    CmpIntNe              Target=10 Left=8 Right=9   (reuse_list_map.ash:7:1)
+    JumpIfFalse           CondTemp=10 Target=match_arm_cleanup_3   (reuse_list_map.ash:7:1)
+    GetAdtTag             Target=11 Ptr=8   (reuse_list_map.ash:7:1)
+    LoadConstInt          Target=13 Value=0   (reuse_list_map.ash:7:1)
+    CmpIntEq              Target=12 Left=11 Right=13   (reuse_list_map.ash:7:1)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_3   (reuse_list_map.ash:7:1)
+    DropReuse             Target=14 SourceTemp=8 FieldCount=0 RuntimeManaged=true
+    AllocReusing          Target=15 Tag=0 FieldCount=0 TokenTemp=14 RuntimeManaged=true   (reuse_list_map.ash:8:14)
+    StoreLocal            Slot=3 Source=15   (reuse_list_map.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=6
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=6
+    Jump                  Target=match_end_0   (reuse_list_map.ash:7:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=7
+    Jump                  Target=match_next_2   (reuse_list_map.ash:7:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadConstInt          Target=16 Value=0   (reuse_list_map.ash:7:1)
+    CmpIntNe              Target=17 Left=8 Right=16   (reuse_list_map.ash:7:1)
+    JumpIfFalse           CondTemp=17 Target=match_arm_cleanup_4   (reuse_list_map.ash:7:1)
+    GetAdtTag             Target=18 Ptr=8   (reuse_list_map.ash:7:1)
+    LoadConstInt          Target=20 Value=1   (reuse_list_map.ash:7:1)
+    CmpIntEq              Target=19 Left=18 Right=20   (reuse_list_map.ash:7:1)
+    JumpIfFalse           CondTemp=19 Target=match_arm_cleanup_4   (reuse_list_map.ash:7:1)
+    GetAdtField           Target=21 Ptr=8 FieldIndex=0   (reuse_list_map.ash:7:1)
+    StoreLocal            Slot=10 Source=21   (reuse_list_map.ash:7:1)
+    GetAdtField           Target=22 Ptr=8 FieldIndex=1   (reuse_list_map.ash:7:1)
+    StoreLocal            Slot=11 Source=22   (reuse_list_map.ash:7:1)
+    DropReuse             Target=23 SourceTemp=8 FieldCount=2 RuntimeManaged=true
+    LoadLocal             Target=24 Slot=10   (reuse_list_map.ash:9:32)
+    LoadConstInt          Target=25 Value=2   (reuse_list_map.ash:9:39)
+    MulInt                Target=26 Left=24 Right=25   (reuse_list_map.ash:9:32)
+    LoadLocal             Target=27 Slot=11   (reuse_list_map.ash:9:42)
+    LoadConstInt          Target=29 Value=0   (reuse_list_map.ash:9:27)
+    CmpIntNe              Target=30 Left=23 Right=29   (reuse_list_map.ash:9:27)
+    JumpIfFalse           CondTemp=30 Target=reuse_child_duplicate_5   (reuse_list_map.ash:9:27)
+    StoreLocal            Slot=12 Source=27   (reuse_list_map.ash:9:27)
+    Jump                  Target=reuse_child_continue_6   (reuse_list_map.ash:9:27)
+  reuse_child_duplicate_5:
+    RcDup                 Target=31 SourceTemp=27 RuntimeManaged=true
+    StoreLocal            Slot=12 Source=31   (reuse_list_map.ash:9:27)
+  reuse_child_continue_6:
+    LoadLocal             Target=32 Slot=12   (reuse_list_map.ash:9:27)
+    AllocReusing          Target=28 Tag=1 FieldCount=2 TokenTemp=23 RuntimeManaged=true   (reuse_list_map.ash:9:27)
+    SetAdtField           Ptr=28 FieldIndex=0 Source=26   (reuse_list_map.ash:9:27)
+    SetAdtField           Ptr=28 FieldIndex=1 Source=32   (reuse_list_map.ash:9:27)
+    RcDrop                SourceTemp=22 TypeName=Lst OwnerSlot=11
+    StoreLocal            Slot=3 Source=28   (reuse_list_map.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=13
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=13
+    Jump                  Target=match_end_0   (reuse_list_map.ash:7:1)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=14
+    Jump                  Target=match_none_1   (reuse_list_map.ash:7:1)
+  match_none_1:
+    LoadConstInt          Target=34 Value=0   (reuse_list_map.ash:7:1)
+    StoreLocal            Slot=3 Source=34   (reuse_list_map.ash:7:1)
+  match_end_0:
+    LoadLocal             Target=35 Slot=3   (reuse_list_map.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=15
+    Return                Source=35
+
