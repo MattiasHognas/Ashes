@@ -56,6 +56,7 @@ import AshesCompiler.Semantics.IrValidation
 import AshesCompiler.Semantics.IrCompileTimeEval
 import AshesCompiler.Semantics.IrOptimizer
 import AshesCompiler.Semantics.TcoAffineAppend
+import AshesCompiler.Semantics.TcoRuntimeManagedParams
 import AshesCompiler.Semantics.TcoAnalysis
 import AshesCompiler.Semantics.TcoPromotionCostSignal
 import AshesCompiler.Semantics.HeapLayoutClassification
