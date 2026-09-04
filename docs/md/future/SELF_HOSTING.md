@@ -1155,10 +1155,14 @@ same public behavior.
   site emits a forced-true ownership flag followed by an `RcDup ... RuntimeManaged=true` in place
   of the old packed-word bit-63 read, plus a correctness execution test) and
   `tests/accessor_returns_retained_string_from_rc_record.ash`.
-- [ ] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
+- [x] **OPT-36** Keep a large string alive when a tail-recursive loop moves it from the list (or tuple state)
   it consumes into its accumulator — the consumed cell's release frees the moved element, read
   back freed for any string past one arena chunk. Repro: split a 15 KB line, walk it inline
-  consing the lines, join the result.
+  consing the lines, join the result. Closed by the consumed-argument release rule: a fresh list
+  consumed by a callee whose result reaches its parts is released spine-only in the caller
+  (`LowerCallDropConsumedRuntimeArguments`, the child-preserving walk), so the moved lines stay
+  alive for the join. Regression: `tests/tco_loop_moves_split_line_into_accumulator.ash` (three
+  5 KB lines split inline, walked, then read back after 20000 unrelated allocations).
 - [x] **OPT-37** Release a TCO loop's aggregate result in its caller when the exit arm builds an ADT from the
   loop's own runtime-managed accumulators — the shell is recognized as runtime-manageable when its
   field is the enclosing loop's own parameter slot (narrowly — not any outer variable).
