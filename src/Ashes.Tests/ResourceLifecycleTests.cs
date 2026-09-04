@@ -309,6 +309,101 @@ public sealed class ResourceLifecycleTests
         DiagnosticCodes.UseAfterMove.ShouldBe("ASH008");
     }
 
+    [Test]
+    public void Pipeline_stage_applied_after_captured_resource_moved_reports_ash008()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            let consume =
+                given (s) -> Some(s)
+            in
+                Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                    | Error(_) -> "fail"
+                    | Ok(sock) ->
+                        Unit
+                        |> (given (_) -> consume(sock))
+                        |> (given (_) -> await Ashes.Net.Tcp.send(sock)("hello"))
+                        |> (given (_) -> "ok"))
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterMove,
+            "Expected ASH008 (use-after-move) for a pipeline stage that uses a socket an earlier stage moved into a consuming helper.");
+        diag.StructuredErrors.ShouldNotContain(
+            x => x.Code == DiagnosticCodes.UseAfterDrop,
+            "A moved resource must not be reported as use-after-close (ASH006).");
+    }
+
+    [Test]
+    public void Pipeline_stage_applied_after_captured_resource_closed_reports_ash006()
+    {
+        var diag = new Diagnostics();
+        var program = new Parser(
+            """
+            Ashes.IO.print(match await Ashes.Net.Tcp.connect("127.0.0.1")(80) with
+                | Error(_) -> "fail"
+                | Ok(sock) ->
+                    Unit
+                    |> (given (_) -> await Ashes.Net.Tcp.close(sock))
+                    |> (given (_) -> await Ashes.Net.Tcp.send(sock)("hello"))
+                    |> (given (_) -> "ok"))
+            """,
+            diag).ParseProgram();
+        new Lowering(diag).Lower(program);
+
+        diag.StructuredErrors.ShouldContain(
+            x => x.Code == DiagnosticCodes.UseAfterDrop,
+            "Expected ASH006 (use-after-close) for a pipeline stage that uses a socket an earlier stage closed.");
+        diag.StructuredErrors.ShouldNotContain(
+            x => x.Code == DiagnosticCodes.UseAfterMove,
+            "A closed resource must not be reported as use-after-move (ASH008).");
+    }
+
+    [Test]
+    public void Read_only_helper_through_module_alias_borrows_in_let_and_pipeline_forms()
+    {
+        const string helper =
+            """
+            let peek =
+                given (s) -> await Tcp.receive(s)(1)
+            in
+                Ashes.IO.print(match await Tcp.connect("127.0.0.1")(80) with
+                    | Error(_) -> "fail"
+                    | Ok(sock) ->
+            """;
+        const string letForm =
+            """
+                        let _ = peek(sock)
+                        in
+                            let _ = await Tcp.send(sock)("hello")
+                            in "ok")
+            """;
+        const string pipelineForm =
+            """
+                        Unit
+                        |> (given (_) -> peek(sock))
+                        |> (given (_) -> await Tcp.send(sock)("hello"))
+                        |> (given (_) -> "ok"))
+            """;
+
+        foreach (string source in new[] { helper + "\n" + letForm, helper + "\n" + pipelineForm })
+        {
+            var diag = new Diagnostics();
+            var program = new Parser(source, diag).ParseProgram();
+            var aliases = new Dictionary<string, string>(StringComparer.Ordinal) { ["Tcp"] = "Ashes.Net.Tcp" };
+            var stdModules = new HashSet<string>(StringComparer.Ordinal) { "Ashes.IO", "Ashes.Net.Tcp" };
+            new Lowering(diag, stdModules, aliases, null).Lower(program);
+
+            diag.StructuredErrors.ShouldNotContain(
+                x => x.Code == DiagnosticCodes.UseAfterMove,
+                "A helper that only reads the socket through an aliased module name borrows it, so the later send is not a use-after-move.");
+            diag.StructuredErrors.ShouldBeEmpty();
+        }
+    }
+
     // --- Ownership: owned types get Drop, copy types don't ---
 
     [Test]

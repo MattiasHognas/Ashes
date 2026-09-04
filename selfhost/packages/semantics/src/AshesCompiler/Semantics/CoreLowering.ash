@@ -23,6 +23,7 @@ import AshesCompiler.Frontend.Syntax.TypeExpr
 import AshesCompiler.Frontend.Syntax.callArgumentsInline
 import AshesCompiler.Frontend.Token.TextSpan
 import AshesCompiler.Semantics.CallOwnership
+import AshesCompiler.Semantics.CallResultProvenance
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
 import AshesCompiler.Semantics.CoreExternalLowering
@@ -33,6 +34,7 @@ import AshesCompiler.Semantics.HeapLayoutClassification
 import AshesCompiler.Semantics.IrControlFlowGraph.containsInt
 import AshesCompiler.Semantics.IrInstructions
 import AshesCompiler.Semantics.IrOrigins
+import AshesCompiler.Semantics.MatchArmOwnership
 import AshesCompiler.Semantics.OwnershipInference.classifyParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
@@ -251,6 +253,8 @@ type CoreLoweringState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
+    | functionReturnedClosureLabels: List((Str, Str))
+    | resultRcEligibility: (Int, List((Str, Bool)))
     | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
     | pendingTcoResets: List(CoreTcoReset)
     | recursiveDeclarationSpan: Maybe(TextSpan)
@@ -301,6 +305,16 @@ type CoreIfThen =
     | thenType: SemanticType
     | error: Maybe(CoreLoweringError)
 
+// The owner an arm makes for a fresh runtime-managed scrutinee, stage 0's `$match_rc_N`: the
+// scrutinee's owned type name, and whether it is a list whose spine the release walks.
+type MatchScrutineeOwner =
+    | scrutineeTypeName: Str
+    | scrutineeIsList: Bool
+
+// The plan of one match: the arms lowered so far record what each stored into the result slot
+// (most recent first), the scrutinee owner every arm adopts when the scrutinee is a fresh
+// runtime-managed value, and whether the literal string arms are normalized to the
+// reference-counted heap.
 type CoreMatchPlan =
     | state: CoreLoweringState
     | valueTemp: Int
@@ -310,7 +324,15 @@ type CoreMatchPlan =
     | noMatchLabel: Str
     | resultType: SemanticType
     | armRequest: ConsumerRequest
+    | armResults: List(MatchArmResult)
+    | scrutineeOwner: Maybe(MatchScrutineeOwner)
+    | normalizeStaticStrings: Bool
     | error: Maybe(CoreLoweringError)
+
+// One lowered arm: its lowered value, and what it contributed to the match's result.
+type LoweredMatchArm =
+    | lowered: LoweredCoreValue
+    | armResult: MatchArmResult
 
 // The cases of one match that share an outer constructor tag, in first-seen order. A group is a
 // trivial single case only while it has exactly one case whose sub-patterns are all catch-alls,
@@ -481,6 +503,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
         tcoLoop = None,
+        functionReturnedClosureLabels = [],
+        resultRcEligibility = (0, []),
         tcoLoopFrame = None,
         pendingTcoResets = [],
         recursiveDeclarationSpan = None
@@ -904,6 +928,28 @@ let recursive lookupBodyRuntimeManaged (label: Str) (entries: List((Str, Bool)))
 let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) = lookupBodyRuntimeManaged(label)(state.bodyRuntimeManagedByLabel)
 
 let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = (label, runtimeManaged) :: state.bodyRuntimeManagedByLabel
+
+// The label of the closure a lowered body returns: the last closure instruction that produced
+// the body temp, read from the body's instructions in reverse emission order.
+let recursive returnedClosureLabelOf (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) =
+    match reversedInstructions with
+        | [] -> None
+        | IrInstruction { instruction = MakeClosure(target, label, _environment, _size, _returns, _accepts, _flag) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | IrInstruction { instruction = MakeClosureStack(target, label, _environment, _size, _returns, _accepts) } :: rest ->
+            if target == bodyTemp
+            then Some(label)
+            else returnedClosureLabelOf(bodyTemp)(rest)
+        | _ :: rest -> returnedClosureLabelOf(bodyTemp)(rest)
+
+// Stage 0's `RecordReturnedClosureLabel`: a curried function's stage is remembered under the
+// function's label, so a saturated spine can be followed to the innermost body it reaches.
+let recordReturnedClosureLabel (label: Str) (bodyTemp: Int) (reversedInstructions: List(IrInstruction)) (state: CoreLoweringState) =
+    match returnedClosureLabelOf(bodyTemp)(reversedInstructions) with
+        | Some(returned) -> state with functionReturnedClosureLabels = (label, returned) :: state.functionReturnedClosureLabels
+        | None -> state
 
 // Whether a lifted function normalizes its argument into an owned value at entry, so its closure
 // advertises that it accepts a runtime-managed argument and a caller hands over a retained
@@ -2575,6 +2621,8 @@ let restoreOuterFrame outer bodyState =
             |> (given (current: CoreLoweringState) -> current with substitution = substitution)
             |> (given (current: CoreLoweringState) -> current with sealedOperatorDefaults = sealedOperatorDefaults)
             |> (given (current: CoreLoweringState) -> current with pendingClosureNormalizers = bodyState.pendingClosureNormalizers)
+            |> (given (current: CoreLoweringState) -> current with bodyRuntimeManagedByLabel = bodyState.bodyRuntimeManagedByLabel)
+            |> (given (current: CoreLoweringState) -> current with functionReturnedClosureLabels = bodyState.functionReturnedClosureLabels)
 
 let emitClosure label environmentTemp captureTotal stackAllocate state =
     match freshTemp(state) with
@@ -2841,6 +2889,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                             finishedBody
                             |> restoreOuterFrame(typedOuter)
                             |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
+                            |> recordReturnedClosureLabel(label)(bodyTemp)(loweredBody.reversedInstructions)
                             |> markCapturedResourcesMoved(survivors)
                             |> allocateEnvironment(captures)(survivors)(stackAllocate)
                             |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
@@ -3503,6 +3552,67 @@ let freshTempRun (count: Int) (state: CoreLoweringState) =
                 temp = base
             )
 
+let recursive constructorAritiesOf (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { name = name } as layout) :: rest -> (name, constructorArity(layout)) :: constructorAritiesOf(rest)
+
+let recursive nullaryConstructorCount (typeName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> 0
+        | layout :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName && constructorArity(layout) == 0
+                    then 1 + nullaryConstructorCount(typeName)(rest)
+                    else nullaryConstructorCount(typeName)(rest)
+                | None -> nullaryConstructorCount(typeName)(rest)
+
+// The nullary constructors that are the only nullary constructor of their type.
+let recursive soleNullaryConstructorNames (layouts: List(CoreConstructorLayout)) (all: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | (CoreConstructorLayout { name = name } as layout) :: rest ->
+            match constructorResultName(layout) with
+                | Some(typeName) ->
+                    if constructorArity(layout) == 0 && nullaryConstructorCount(typeName)(all) == 1
+                    then name :: soleNullaryConstructorNames(rest)(all)
+                    else soleNullaryConstructorNames(rest)(all)
+                | None -> soleNullaryConstructorNames(rest)(all)
+
+let provenanceConstructorsOf (state: CoreLoweringState) =
+    ProvenanceConstructors(
+        arities = constructorAritiesOf(state.constructorLayouts),
+        soleNullary = soleNullaryConstructorNames(state.constructorLayouts)(state.constructorLayouts)
+    )
+
+let recursive provenanceFunctionsOf (lambdas: List((Str, List(Str), Expr))) =
+    match lambdas with
+        | [] -> []
+        | (name, parameters, body) :: rest -> ProvenanceFunction(name = name, parameters = parameters, body = body) :: provenanceFunctionsOf(rest)
+
+// Stage 0's `IsRuntimeRcFreshBuiltinProducer` over the fresh-string builtins the lowering knows.
+let isFreshBuiltinProducer (expression: Expr) (state: CoreLoweringState) =
+    match freshStringBuiltinCallKind(expression)(state) with
+        | Some(_kind) -> true
+        | None -> false
+
+let resultRcEligibilityOf (state: CoreLoweringState) =
+    match state.resultRcEligibility with
+        | (_count, eligibility) -> eligibility
+
+// Stage 0's `ComputeFunctionResultProvenanceFixpoint` over the let-bound functions recorded so
+// far, recomputed only once a function was recorded since the last call site.
+let ensureResultRcEligibility (state: CoreLoweringState) =
+    match state.resultRcEligibility with
+        | (count, _eligibility) ->
+            if count == length(state.letLambdas)
+            then state
+            else
+                state with resultRcEligibility = (length(state.letLambdas), (given (expression: Expr) -> isFreshBuiltinProducer(expression)(state))
+                |> resultProvenanceNodes(provenanceFunctionsOf(state.letLambdas))(provenanceConstructorsOf(state))
+                |> resolvedRcEligibility)
+
 // Stage 0's known-callee resolution for a call spine: a let-bound function called by name
 // carries its label, the ownership of its parameters (the single-function verdict overlaid with
 // the whole-program fixpoint, as `markCallArgumentsMoved` consults it), and the parameter reach
@@ -3517,6 +3627,9 @@ let calleeFactsOf (spine: CoreCallSpine) (state: CoreLoweringState) =
                         parameters = parameters,
                         ownership = provenParameterOwnership(callee)(parameters)(classifyParameterOwnership(parameters)(body)([]))(state),
                         reach = calleeReach(parameters)(body),
+                        rcEligible = state
+                        |> resultRcEligibilityOf
+                        |> lookupRcEligible(callee),
                         argumentCount = length(spine.arguments)
                     ))
                 | None -> None
@@ -3769,22 +3882,24 @@ let hasCallCopyOut (semanticType: SemanticType) (state: CoreLoweringState) =
         | Some(_copyOut) -> true
         | None -> false
 
-// Whether the callee's lowered body is recorded to produce a reference-counted result, stage 0's
-// `TryGetCompiledFunctionResultRuntimeManaged` for a single application; a curried spine's
-// returned-closure chain is not tracked and a body not lowered yet is unknown.
-let calleeBodyReturnsRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
-    match facts with
-        | Some(CoreCalleeFacts { label = Some(label), argumentCount = 1 }) -> bodyReturnsRuntimeManaged(label)(state)
-        | _ -> false
+// Stage 0's `TryGetCompiledFunctionResultRuntimeManaged` read at a call site: the recorded
+// placement of the innermost stage the spine's applications reach, following a curried callee's
+// returned-closure chain; a body not lowered yet is unknown.
+let calleeCompiledResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (state: CoreLoweringState) =
+    match compiledResultRuntimeManaged(facts)(state.functionReturnedClosureLabels)(state.bodyRuntimeManagedByLabel) with
+        | Some(runtimeManaged) -> runtimeManaged
+        | None -> false
 
-// Stage 0's `TryResolveKnownFunctionResultOwnership`: the callee's body produced a
-// reference-counted result of a type runtime RC holds.
-let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeBodyReturnsRuntimeManaged(facts)(state) && isRuntimeManageableResultType(resultType)(state)
+// Stage 0's `TryResolveKnownFunctionResultOwnership`: a saturated call to a callee whose result
+// the provenance classification proved RC-eligible, of a type runtime RC holds, whose lowered
+// body produced a reference-counted result.
+let knownResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = calleeSaturatedAndEligible(facts) && isRuntimeManageableResultType(resultType)(state) && calleeCompiledResultRuntimeManaged(facts)(state)
 
 // Stage 0's `IsDirectRuntimeManagedFunctionCall` with `ResolveUncopyableResultRuntimeManaged`:
-// the known result ownership, or a lowered body's reference-counted result of a heap type
-// without any copy-out (such a result can only have left the callee's window by being RC).
-let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeBodyReturnsRuntimeManaged(facts)(state) && resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false
+// the known result ownership, or a lowered body's reference-counted result of a type runtime RC
+// holds or of a heap type without any copy-out (such a result can only have left the callee's
+// window by being RC).
+let callResultRuntimeManaged (facts: Maybe(CoreCalleeFacts)) (resultType: SemanticType) (state: CoreLoweringState) = knownResultRuntimeManaged(facts)(resultType)(state) || calleeCompiledResultRuntimeManaged(facts)(state) && (isRuntimeManageableResultType(resultType)(state) || resultSurvivesReset(resultType)(state) == false && hasCallCopyOut(resultType)(state) == false)
 
 // The last application of a spine reads the callee's returns bit when the result's ownership
 // is not statically known and its type has a call copy-out, stage 0's `needsResultOwnership`.
@@ -3860,54 +3975,283 @@ let lowerCoreCallFunction (context: CoreCallContext) arity argument (transfers: 
             |> ensureFunctionType(functionType)
             |> lowerCoreCallTyped(context)(arity)(argument)(transfers)(consumed)(lower)(functionTemp)
 
-let layoutHasNoOwnedChildren (semanticType: SemanticType) (state: CoreLoweringState) =
+// Stage 0's `EmitRuntimeManagedShallowAggregateDrop`: a non-null aggregate cell is released
+// without walking its children.
+let emitRuntimeShallowAggregateDrop (valueTemp: Int) (typeName: Str) (state: CoreLoweringState) =
+    match freshLabel("rcdrop_shallow_end")(state) with
+        | FreshLabel { state = labelled, label = endLabel } ->
+            match freshTempRun(2)(labelled) with
+                | FreshTemp { state = reserved, temp = zeroTemp } ->
+                    reserved
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> emit(CmpIntNe(zeroTemp + 1)(valueTemp)(zeroTemp))
+                    |> emit(JumpIfFalse(zeroTemp + 1)(endLabel))
+                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
+                    |> emit(Label(endLabel))
+
+// The loop, shared-cell, and end labels of a list release walk, allocated in that order.
+let freshListDropLabels (prefix: Str) (state: CoreLoweringState) =
+    match freshLabel(prefix)(state) with
+        | FreshLabel { state = loopLabelled, label = loopLabel } ->
+            match freshLabel(prefix + "_shared")(loopLabelled) with
+                | FreshLabel { state = sharedLabelled, label = sharedLabel } ->
+                    match freshLabel(prefix + "_end")(sharedLabelled) with
+                        | FreshLabel { state = labelled, label = endLabel } -> (loopLabel, sharedLabel, endLabel, labelled)
+
+// Loads the walk's current cell from its slot and leaves the loop on the empty list; yields the
+// state and the current cell temp.
+let emitListDropTest (currentSlot: Int) (endLabel: Str) (state: CoreLoweringState) =
+    match freshTempRun(3)(state) with
+        | FreshTemp { state = reserved, temp = currentTemp } ->
+            reserved
+            |> emit(LoadLocal(currentTemp)(currentSlot))
+            |> emit(LoadConstInt(currentTemp + 1)(0))
+            |> emit(CmpIntNe(currentTemp + 2)(currentTemp)(currentTemp + 1))
+            |> emit(JumpIfFalse(currentTemp + 2)(endLabel))
+            |> (given (tested) -> (tested, currentTemp))
+
+// Jumps to the shared exit unless the cell is uniquely owned.
+let emitUniqueCellTest (cellTemp: Int) (sharedLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+            reserved
+            |> emit(RcIsUnique(uniqueTemp)(cellTemp))
+            |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+
+// Releases the unique cell and continues the walk through its tail.
+let emitListDropAdvance (cellTemp: Int) (currentSlot: Int) (loopLabel: Str) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = reserved, temp = tailTemp } ->
+            reserved
+            |> emit(LoadMemOffset(tailTemp)(cellTemp)(8))
+            |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+            |> emit(StoreLocal(currentSlot)(tailTemp))
+            |> emit(Jump(loopLabel))
+
+let emitListDropSharedExit (cellTemp: Int) (sharedLabel: Str) (endLabel: Str) (state: CoreLoweringState) =
+    state
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(cellTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitRuntimeManagedListSpineDrop`: the spine's cells are released one by one, the
+// elements left in place.
+let emitRuntimeListSpineDrop (listTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list_spine") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+
+// Names the constructor-switching dropper of a named type (stage 0's
+// `SynthesizeRuntimeManagedAdtDropper`), synthesizing it once through the state's label cache.
+let synthesizeAdtDropperLabel (named: SemanticType) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { constructorLayouts = layouts, dropperLabels = cache, functions = functions, nextLambdaId = lambdaId, nextLabelId = labelId } ->
+            match synthesizeRuntimeManagedAdtDropper(resolveType(state)(named))(constructorInferenceDefinitionsFromLayouts(layouts))(cache)(lambdaId)(labelId) with
+                | DropperSynthesis { label = label, cache = nextCache, functions = synthesized, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId } -> (label, (state with dropperLabels = nextCache, functions = append(functions)(synthesized), nextLambdaId = nextLambdaId, nextLabelId = nextLabelId))
+
+// Stage 0's `EmitRecursiveRuntimeManagedAdtDrop`: the value is handed to its type's dropper.
+let emitAdtDropperCall (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match synthesizeAdtDropperLabel(named)(state) with
+        | (Some(label), synthesized) ->
+            match freshTempRun(2)(synthesized) with
+                | FreshTemp { state = reserved, temp = environmentTemp } ->
+                    reserved
+                    |> emit(LoadConstInt(environmentTemp)(0))
+                    |> emit(CallKnown(environmentTemp + 1)(label)(environmentTemp)(valueTemp)(-1)(false))
+        | (None, synthesized) ->
+            emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(synthesized)
+
+// A recursive-copy or owned-child ADT is released by its own constructor-switching dropper.
+let usesAdtDropper (named: SemanticType) (state: CoreLoweringState) =
     match state
     |> coverageEnvironment
-    |> classifyHeapLayout(semanticType) with
-        | HeapLayoutFacts { children = [] } -> true
-        | _ -> false
+    |> classifyHeapLayout(named) with
+        | HeapLayoutFacts { runtimeOwnedChildAdtSupported = true } -> true
+        | _ ->
+            state
+            |> coverageEnvironment
+            |> heapRuntimeRecursiveCopyAdtLayout(named)
 
-// Stage 0's `LowerCallDropConsumedRuntimeArguments` for the argument kinds whose runtime release
-// is ported: a fresh string, `Bytes`, or `BigInt` the callee did not take is released after the
-// call, a closure is closed and released, and a named type without owned children is released
-// as a whole unless the release must preserve children the callee's arena result may still
-// reference. An aggregate with owned children keeps its reference until the aggregate droppers
-// are ported.
+// The layout of a named type's first constructor.
+let recursive firstConstructorLayoutOf (typeName: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> None
+        | (CoreConstructorLayout { tag = 0 } as layout) :: rest ->
+            match constructorResultName(layout) with
+                | Some(resultName) ->
+                    if resultName == typeName
+                    then Some(layout)
+                    else firstConstructorLayoutOf(typeName)(rest)
+                | None -> firstConstructorLayoutOf(typeName)(rest)
+        | _ :: rest -> firstConstructorLayoutOf(typeName)(rest)
+
+let ownedLayoutChildren (constructorName: Maybe(Str)) (semanticType: SemanticType) (state: CoreLoweringState) =
+    state
+    |> coverageEnvironment
+    |> classifyHeapLayout(semanticType)
+    |> ownedChildrenOf(constructorName)
+
+// Stage 0's `EmitRuntimeManagedChildDrop` family: a string-like leaf is released as one
+// allocation, a list walked cell by cell releasing each unique cell's head, a tuple or a
+// single-constructor ADT its owned children under a uniqueness test, and a recursive or
+// owned-child ADT handed to its dropper; a value the walk does not recognize is left in place.
+let recursive emitRuntimeChildDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemTuple(_elements) as tuple -> emitRuntimeTupleDrop(valueTemp)(tuple)(state)
+        | SemList(element) -> emitRuntimeListDrop(valueTemp)(element)(state)
+        | SemNamed(_symbolId, name, _arguments) as named -> emitRuntimeAdtDrop(valueTemp)(name)(named)(state)
+        | SemString ->
+            emit(RcDrop(valueTemp)("String")(-1)(true)(false)(None))(state)
+        | SemBytes ->
+            emit(RcDrop(valueTemp)("Bytes")(-1)(true)(false)(None))(state)
+        | SemBigInt ->
+            emit(RcDrop(valueTemp)("BigInt")(-1)(true)(false)(None))(state)
+        | _ -> state
+and emitRuntimeListDrop (listTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = currentSlot } ->
+            match allocated
+            |> emit(StoreLocal(currentSlot)(listTemp))
+            |> freshListDropLabels("rcdrop_list") with
+                | (loopLabel, sharedLabel, endLabel, labelled) ->
+                    match labelled
+                    |> emit(Label(loopLabel))
+                    |> emitListDropTest(currentSlot)(endLabel) with
+                        | (tested, currentTemp) ->
+                            tested
+                            |> emitUniqueCellTest(currentTemp)(sharedLabel)
+                            |> emitListDropHead(currentTemp)(elementType)
+                            |> emitListDropAdvance(currentTemp)(currentSlot)(loopLabel)
+                            |> emitListDropSharedExit(currentTemp)(sharedLabel)(endLabel)
+and emitListDropHead (cellTemp: Int) (elementType: SemanticType) (state: CoreLoweringState) =
+    if resultSurvivesReset(elementType)(state)
+    then state
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = reserved, temp = headTemp } ->
+                reserved
+                |> emit(LoadMemOffset(headTemp)(cellTemp)(0))
+                |> emitRuntimeChildDrop(headTemp)(elementType)
+and emitRuntimeTupleDrop (valueTemp: Int) (tuple: SemanticType) (state: CoreLoweringState) =
+    match freshLabel("rc_drop_tuple_shared")(state) with
+        | FreshLabel { state = labelled, label = sharedLabel } ->
+            match ownedLayoutChildren(None)(tuple)(labelled) with
+                | [] ->
+                    emit(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))(labelled)
+                | children ->
+                    labelled
+                    |> emitUniqueCellTest(valueTemp)(sharedLabel)
+                    |> emitTupleChildDrops(valueTemp)(children)
+                    |> emit(Label(sharedLabel))
+                    |> emit(RcDrop(valueTemp)("Tuple")(-1)(true)(false)(None))
+and emitTupleChildDrops (valueTemp: Int) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | HeapLayoutChild { fieldIndex = index, childType = childType } :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = childTemp } ->
+                    reserved
+                    |> emit(LoadMemOffset(childTemp)(valueTemp)(index * 8))
+                    |> emitRuntimeChildDrop(childTemp)(childType)
+                    |> emitTupleChildDrops(valueTemp)(rest)
+and emitRuntimeAdtDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    if isScalarResultType(named)
+    then
+        emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+    else
+        if usesAdtDropper(named)(state)
+        then emitAdtDropperCall(valueTemp)(typeName)(named)(state)
+        else emitFirstConstructorDrop(valueTemp)(typeName)(named)(state)
+and emitFirstConstructorDrop (valueTemp: Int) (typeName: Str) (named: SemanticType) (state: CoreLoweringState) =
+    match firstConstructorLayoutOf(typeName)(state.constructorLayouts) with
+        | Some(CoreConstructorLayout { name = constructorName, tagless = tagless }) ->
+            match ownedLayoutChildren(Some(constructorName))(named)(state) with
+                | [] ->
+                    emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+                | children ->
+                    match freshTemp(state) with
+                        | FreshTemp { state = reserved, temp = uniqueTemp } ->
+                            match freshLabel("rc_drop_shared")(reserved) with
+                                | FreshLabel { state = labelled, label = sharedLabel } ->
+                                    labelled
+                                    |> emit(RcIsUnique(uniqueTemp)(valueTemp))
+                                    |> emit(JumpIfFalse(uniqueTemp)(sharedLabel))
+                                    |> emitAdtFieldDrops(valueTemp)(tagless)(children)
+                                    |> emit(Label(sharedLabel))
+                                    |> emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))
+        | None ->
+            emit(RcDrop(valueTemp)(typeName)(-1)(true)(false)(None))(state)
+and emitAdtFieldDrops (valueTemp: Int) (tagless: Bool) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | HeapLayoutChild { fieldIndex = index, childType = childType } :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = reserved, temp = childTemp } ->
+                    reserved
+                    |> emit(GetAdtField(childTemp)(valueTemp)(index)(tagless))
+                    |> emitRuntimeChildDrop(childTemp)(childType)
+                    |> emitAdtFieldDrops(valueTemp)(tagless)(rest)
+
+// Stage 0's `EmitRuntimeManagedChildPreservingDrop`: only the references the caller still owns
+// are given up, a list's spine or an aggregate's own cell, because the callee's arena-placed
+// result may still reference the argument's parts.
+let emitChildPreservingDrop (valueTemp: Int) (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemList(_element) -> emitRuntimeListSpineDrop(valueTemp)(state)
+        | SemTuple(_elements) -> emitRuntimeShallowAggregateDrop(valueTemp)("Tuple")(state)
+        | SemNamed(_symbolId, name, _arguments) -> emitRuntimeShallowAggregateDrop(valueTemp)(name)(state)
+        | other -> emitRuntimeChildDrop(valueTemp)(other)(state)
+
+// Stage 0's `LowerCallDropConsumedRuntimeArguments` for one argument: a scalar needs nothing, a
+// closure is closed and released, an argument whose parts the callee's arena-placed result may
+// still reference gives up only the references the caller owns, and any other is released with
+// its owned children.
 let emitConsumedArgumentDrop (verifiedRuntimeResult: Bool) (consumed: CoreConsumedArgument) (state: CoreLoweringState) =
     match consumed with
         | CoreConsumedArgument { temp = temp, semanticType = semanticType, preserveEscapedChildren = preserve } ->
             match resolveType(state)(semanticType) with
-                | SemString ->
-                    emit(RcDrop(temp)("String")(-1)(true)(false)(None))(state)
-                | SemBytes ->
-                    emit(RcDrop(temp)("Bytes")(-1)(true)(false)(None))(state)
-                | SemBigInt ->
-                    emit(RcDrop(temp)("BigInt")(-1)(true)(false)(None))(state)
                 | SemFunction(_parameter, _result, _row) ->
                     state
                     |> emit(CleanupResource(temp)("Function")(None))
                     |> emit(RcDrop(temp)("Function")(-1)(true)(false)(None))
-                | SemNamed(_symbolId, name, _arguments) as named ->
-                    if layoutHasNoOwnedChildren(named)(state) && (preserve == false || verifiedRuntimeResult)
-                    then
-                        emit(RcDrop(temp)(name)(-1)(true)(false)(None))(state)
-                    else state
-                | _ -> state
+                | valueType ->
+                    if resultSurvivesReset(valueType)(state)
+                    then state
+                    else
+                        if preserve && verifiedRuntimeResult == false
+                        then emitChildPreservingDrop(temp)(valueType)(state)
+                        else emitRuntimeChildDrop(temp)(valueType)(state)
 
-let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
+// Each consumed temp is released once.
+let recursive emitConsumedArgumentDrops (verifiedRuntimeResult: Bool) (dropped: List(Int)) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match consumed with
         | [] -> state
-        | argument :: rest ->
-            state
-            |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
-            |> emitConsumedArgumentDrops(verifiedRuntimeResult)(rest)
+        | (CoreConsumedArgument { temp = temp } as argument) :: rest ->
+            if containsInt(temp)(dropped)
+            then emitConsumedArgumentDrops(verifiedRuntimeResult)(dropped)(rest)(state)
+            else
+                state
+                |> emitConsumedArgumentDrop(verifiedRuntimeResult)(argument)
+                |> emitConsumedArgumentDrops(verifiedRuntimeResult)(temp :: dropped)(rest)
 
 // A partial application keeps its fresh arguments alive in the returned closure.
 let releaseConsumedArguments (context: CoreCallContext) (resultType: SemanticType) (consumed: List(CoreConsumedArgument)) (state: CoreLoweringState) =
     match resolveType(state)(resultType) with
         | SemFunction(_parameter, _result, _row) -> state
         | _ ->
-            emitConsumedArgumentDrops(calleeBodyReturnsRuntimeManaged(context.facts)(state))(consumed)(state)
+            emitConsumedArgumentDrops(calleeCompiledResultRuntimeManaged(context.facts)(state))([])(consumed)(state)
 
 let markCallResultOwnership (context: CoreCallContext) (temp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
     if callResultRuntimeManaged(context.facts)(resultType)(state)
@@ -4037,7 +4381,9 @@ let callContextOf (spine: CoreCallSpine) (state: CoreLoweringState) =
 // A general call keeps its chain's intermediates in an arena window of its own, saved before the
 // callee and arguments are lowered and closed after the last application.
 let lowerCall (spine: CoreCallSpine) function argument expected (transfers: Bool) lower state =
-    match openArenaBracket(state) with
+    match state
+    |> ensureResultRcEligibility
+    |> openArenaBracket with
         | ArenaBracket { bracketState = opened, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
             opened
             |> callContextOf(spine)
@@ -4706,13 +5052,123 @@ let recursive armBindings (count: Int) (bindings: List(CoreBinding)) =
             then []
             else binding :: armBindings(count - 1)(rest)
 
+// The index of the live-posts counter among the capability globals: one past the pending-post
+// register that follows the capability handler slots.
+let livePostsIndex (state: CoreLoweringState) = state.capabilityGlobalCount + 1
+
+// Stage 0's `BeginLivePostsGuard`: with a capability in the program, an arena restore is skipped
+// while a one-shot post is pending, since the post's closure still lives in the window. The
+// guard reads the live-posts counter and jumps past the block when it is not zero; without a
+// capability nothing is emitted and there is no label to close.
+let beginLivePostsGuard (state: CoreLoweringState) =
+    if state.capabilityGlobalCount == 0
+    then (state, None)
+    else
+        match freshTemp(state) with
+            | FreshTemp { state = counterState, temp = counterTemp } ->
+                match freshTemp(counterState) with
+                    | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                        match freshTemp(zeroState) with
+                            | FreshTemp { state = isZeroState, temp = isZeroTemp } ->
+                                let skipLabel = "live_posts_skip_" + Ashes.Text.fromInt(counterTemp)
+                                in
+                                    isZeroState
+                                    |> emit(state
+                                    |> livePostsIndex
+                                    |> LoadCapabilityHandler(counterTemp))
+                                    |> emit(LoadConstInt(zeroTemp)(0))
+                                    |> emit(CmpIntEq(isZeroTemp)(counterTemp)(zeroTemp))
+                                    |> emit(JumpIfFalse(isZeroTemp)(skipLabel))
+                                    |> (given (guarded) -> (guarded, Some(skipLabel)))
+
+let endLivePostsGuard (skipLabel: Maybe(Str)) (state: CoreLoweringState) =
+    match skipLabel with
+        | Some(label) -> emit(Label(label))(state)
+        | None -> state
+
+// A match arm's closing reset under the live-posts guard: the pre-restore slot is allocated
+// first, as stage 0 does, then the guarded restore and reclaim.
+let closeGuardedArmBracket cursorSlot endSlot (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } ->
+            match beginLivePostsGuard(allocated) with
+                | (guarded, skipLabel) ->
+                    guarded
+                    |> emitRestoreAndReclaim(cursorSlot)(endSlot)(preRestoreSlot)
+                    |> endLivePostsGuard(skipLabel)
+
+// Whether an arm's closing bracket resets the arena, stage 0's `PopOwnershipScope` test: the
+// result survives the reset, or already lives on the reference-counted heap.
+let armResultSurvivesReset (resultTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) = resultSurvivesReset(resultType)(state) || isRuntimeTemp(resultTemp)(state)
+
+let emitListSpineWalkBody (cursorSlot: Int) (loopLabel: Str) (sharedLabel: Str) (endLabel: Str) (firstTemp: Int) (state: CoreLoweringState) =
+    state
+    |> emit(Label(loopLabel))
+    |> emit(LoadLocal(firstTemp)(cursorSlot))
+    |> emit(LoadConstInt(firstTemp + 1)(0))
+    |> emit(CmpIntNe(firstTemp + 2)(firstTemp)(firstTemp + 1))
+    |> emit(JumpIfFalse(firstTemp + 2)(endLabel))
+    |> emit(RcIsUnique(firstTemp + 3)(firstTemp))
+    |> emit(JumpIfFalse(firstTemp + 3)(sharedLabel))
+    |> emit(LoadMemOffset(firstTemp + 4)(firstTemp)(8))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(StoreLocal(cursorSlot)(firstTemp + 4))
+    |> emit(Jump(loopLabel))
+    |> emit(Label(sharedLabel))
+    |> emit(RcDrop(firstTemp)("List")(-1)(true)(false)(None))
+    |> emit(Jump(endLabel))
+    |> emit(Label(endLabel))
+
+// Stage 0's `EmitOwnedValueDrop` of a runtime-managed list owner whose heads are scalars: the
+// owner is loaded into a cursor slot and its spine walked iteratively (`rcdrop_list_N`), a
+// unique cell releasing its tail and freeing itself, a shared cell decremented once and keeping
+// the rest of the spine. The walk stays at the arm exit: the placement pass moves only a single
+// owner-slot release.
+let emitScrutineeListRelease (ownerSlot: Int) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = loadState, temp = loadTemp } ->
+            match freshLocal(loadState) with
+                | FreshLocal { state = cursorState, local = cursorSlot } ->
+                    match freshLabel("rcdrop_list")(cursorState) with
+                        | FreshLabel { state = loopState, label = loopLabel } ->
+                            match freshLabel("rcdrop_list_shared")(loopState) with
+                                | FreshLabel { state = sharedState, label = sharedLabel } ->
+                                    match freshLabel("rcdrop_list_end")(sharedState) with
+                                        | FreshLabel { state = endState, label = endLabel } ->
+                                            match freshTempRun(5)(endState) with
+                                                | FreshTemp { state = walkState, temp = firstTemp } ->
+                                                    walkState
+                                                    |> emit(LoadLocal(loadTemp)(ownerSlot))
+                                                    |> emit(StoreLocal(cursorSlot)(loadTemp))
+                                                    |> emitListSpineWalkBody(cursorSlot)(loopLabel)(sharedLabel)(endLabel)(firstTemp)
+
+// The owner a match makes for its scrutinee, stage 0's `TrackRuntimeManagedMatchScrutineeOwner`
+// narrowed to the shapes whose release is one owner drop: a fresh runtime-managed string or
+// `Bytes` value, or a list over scalars, matched directly rather than read from a binding.
+let scrutineeOwnerOf (scrutinee: Expr) (valueTemp: Int) (valueType: SemanticType) (state: CoreLoweringState) =
+    if scrutineeHasOwnerCandidate(scrutinee) && isRuntimeTemp(valueTemp)(state)
+    then
+        match resolveType(state)(valueType) with
+            | SemString -> Some(MatchScrutineeOwner(scrutineeTypeName = "String", scrutineeIsList = false))
+            | SemBytes -> Some(MatchScrutineeOwner(scrutineeTypeName = "Bytes", scrutineeIsList = false))
+            | SemList(element) ->
+                if element
+                |> resolveType(state)
+                |> canArenaResetLayout
+                then Some(MatchScrutineeOwner(scrutineeTypeName = "List", scrutineeIsList = true))
+                else None
+            | _ -> None
+    else None
+
 // An owned value a match arm's pattern bound, stage 0's `TrackOwnedBindingsInPattern`: a
 // resource by its name, slot, and resource type, any other heap-typed binding by its slot and
 // owned type name. A binding whose type is still unresolved once the pattern is lowered owns
-// nothing.
+// nothing. The arm that matched a fresh runtime-managed scrutinee owns it too, by the owner slot
+// it stored it in, its type name, and whether the release walks a list spine.
 type ArmOwner =
     | ArmResourceOwner(Str, Int, Str)
     | ArmHeapOwner(Int, Str)
+    | ArmScrutineeOwner(Int, Str, Bool)
 
 let armOwnerOf (state: CoreLoweringState) (binding: CoreBinding) =
     match binding with
@@ -4763,6 +5219,7 @@ let armResultIsBinding (name: Str) (body: Expr) =
 let armOwnerAlive (body: Expr) (state: CoreLoweringState) owner =
     match owner with
         | ArmHeapOwner(_slot, _typeName) -> true
+        | ArmScrutineeOwner(_slot, _typeName, _isList) -> true
         | ArmResourceOwner(name, slot, _typeName) ->
             match resourceStateOf(slot)(state) with
                 | Some(_kind) -> false
@@ -4787,6 +5244,14 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
             state
             |> emitOwnedLetRelease(typeName)(slot)
             |> emitArmOwnerReleases(body)(rest)
+        | ArmScrutineeOwner(slot, _typeName, true) :: rest ->
+            state
+            |> emitScrutineeListRelease(slot)
+            |> emitArmOwnerReleases(body)(rest)
+        | ArmScrutineeOwner(slot, typeName, false) :: rest ->
+            state
+            |> emitOwnedLetRelease(typeName)(slot)
+            |> emitArmOwnerReleases(body)(rest)
         | ArmResourceOwner(name, slot, typeName) :: rest ->
             if armResultIsBinding(name)(body)
             then
@@ -4802,45 +5267,134 @@ let recursive emitArmOwnerReleases (body: Expr) (owners: List(ArmOwner)) (state:
 // surviving or runtime-managed result resets the arena; a heap result of an arm whose pattern
 // owned a live value is copied past the reset when it has a copy-out kind, the copy replacing the
 // result in the match's result slot; any other heap result leaves the window open.
-let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType state =
-    if hadAliveOwner
-    then
-        match closeOwnedScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state) with
-            | (closed, Some(copyTemp)) ->
-                emit(StoreLocal(resultSlot)(copyTemp))(closed)
-            | (closed, None) -> closed
-    else closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state)
+let closeArmBracket (bracket: ArenaBracket) (hadAliveOwner: Bool) resultSlot resultTemp resultType (state: CoreLoweringState) =
+    match (state.capabilityGlobalCount > 0 && armResultSurvivesReset(resultTemp)(resultType)(state), hadAliveOwner) with
+        | (true, _owned) -> (closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
+        | (false, true) ->
+            match closeOwnedScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state) with
+                | (closed, Some(copyTemp)) ->
+                    (emit(StoreLocal(resultSlot)(copyTemp))(closed), copyTemp)
+                | (closed, None) -> (closed, resultTemp)
+        | (false, false) -> (closeScopeForResult(resultTemp)(resultType)(bracket.bracketCursorSlot)(bracket.bracketEndSlot)(state), resultTemp)
 
+// Closes an arm's scope and returns the closed state with the temp the match slot finally holds:
+// the copy when the close copied the result past the reset, the arm's own result otherwise.
 let closeArmScope body owners bracket resultSlot resultTemp resultType (state: CoreLoweringState) =
     state
     |> emitArmOwnerReleases(body)(owners)
     |> closeArmBracket(bracket)(anyArmOwnerAlive(body)(state)(owners))(resultSlot)(resultTemp)(resultType)
 
-let finishMatchArm body resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
+// An arm that failed to lower contributes nothing to the match's result.
+let failedMatchArm (failedState: CoreLoweringState) (error: CoreLoweringError) =
+    LoweredMatchArm(
+        lowered = failure(failedState)(error),
+        armResult = MatchArmResult(armRuntimeManaged = false, armNewlyProduced = false)
+    )
+
+// Stage 0's `LowerMatchArmExpression`: a literal string arm of a match whose arms are normalized
+// is copied to the reference-counted heap as an RC-normalized `CopyOutArena` of the constant,
+// the literal itself loaded at the match's own location; any other arm body lowers as usual.
+let lowerMatchArmBody body (normalizeStaticStrings: Bool) lower (state: CoreLoweringState) =
+    match (normalizeStaticStrings, staticStringArmBody(body)) with
+        | (true, Some(value)) ->
+            match lowerString(value)(state) with
+                | LoweredCoreValue { state = literalState, temp = literalTemp, semanticType = literalType, error = None } ->
+                    match freshTemp(literalState) with
+                        | FreshTemp { state = copyState, temp = copyTemp } ->
+                            copyState
+                            |> emit(CopyOutArena(copyTemp)(literalTemp)(-1)(true)(RcNormalization)(None))
+                            |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+                            |> success(copyTemp)(literalType)
+                | failed -> failed
+        | _ -> lower(body)(state)
+
+let resultTypeIsList (resultType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(resultType) with
+        | SemList(_element) -> true
+        | _ -> false
+
+let tempIsNewlyProduced (temp: Int) (state: CoreLoweringState) =
+    match runtimeTempStateOf(temp)(state) with
+        | Some(RuntimeNewlyProduced) -> true
+        | _ -> false
+
+// What an arm stored into the match slot: a reference-counted value when its final temp is one,
+// or when it is the empty list literal of a list-typed join; newly produced only when the temp
+// itself was freshly produced.
+let matchArmResultOf body (finalTemp: Int) (resultType: SemanticType) (state: CoreLoweringState) =
+    MatchArmResult(
+        armRuntimeManaged = isRuntimeTemp(finalTemp)(state) || branchIsEmptyListLiteral(body) && resultTypeIsList(resultType)(state),
+        armNewlyProduced = tempIsNewlyProduced(finalTemp)(state)
+    )
+
+let finishMatchArm body (normalizeStaticStrings: Bool) resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket owners lower guarded =
     match guarded with
-        | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
         | LoweredCoreValue { state = bodyState, error = None } ->
             match bodyState
             |> withConsumerRequest(request)
-            |> lower(body) with
-                | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
+            |> lowerMatchArmBody(body)(normalizeStaticStrings)(lower) with
+                | LoweredCoreValue { state = failedState, error = Some(error) } -> failedMatchArm(failedState)(error)
                 | LoweredCoreValue { state = resultState, temp = temp, semanticType = bodyType, error = None } ->
                     match bindType(resultType)(bodyType)(resultState) with
-                        | (failedState, Some(error)) -> failure(failedState)(error)
+                        | (failedState, Some(error)) -> failedMatchArm(failedState)(error)
                         | (typedState, None) ->
-                            typedState
+                            match typedState
                             |> emit(StoreLocal(resultSlot)(temp))
-                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType)
-                            |> emit(Jump(endLabel))
-                            |> restoreBindings(outerBindings)
-                            |> success(temp)(resultType)
+                            |> closeArmScope(body)(owners)(bracket)(resultSlot)(temp)(bodyType) with
+                                | (closed, finalTemp) ->
+                                    LoweredMatchArm(
+                                        lowered = closed
+                                        |> emit(Jump(endLabel))
+                                        |> restoreBindings(outerBindings)
+                                        |> success(temp)(resultType),
+                                        armResult = matchArmResultOf(body)(finalTemp)(resultType)(closed)
+                                    )
+
+let recursive allBindingsSurviveReset (state: CoreLoweringState) (bindings: List(CoreBinding)) =
+    match bindings with
+        | [] -> true
+        | CoreBinding { scheme = TypeScheme { body = bindingType } } :: rest -> resultSurvivesReset(bindingType)(state) && allBindingsSurviveReset(state)(rest)
+
+// Whether the arm takes the scrutinee owner: not when a plain variable pattern binds the whole
+// scrutinee (stage 0 makes that binding's slot the owner, and the arm may hand it on), and not
+// when the pattern bound a heap value (stage 0 aliases such a binding to the owner and transfers
+// it out of the arm on demand); a pattern binding only scalars leaves the owner nothing to share.
+let armAdoptsScrutinee (pattern: Pattern) (outerBindings: List(CoreBinding)) (state: CoreLoweringState) =
+    if patternBindsWholeScrutinee(pattern)
+    then false
+    else
+        state.bindings
+        |> armBindings(length(state.bindings) - length(outerBindings))
+        |> allBindingsSurviveReset(state)
+
+// Stage 0's `TrackRuntimeManagedMatchScrutineeOwner` after the guard: the arm stores the fresh
+// scrutinee into an owner slot of its own (`$match_rc_N`), released at the arm exit like any
+// owned binding; the value temp is handed on to the slot.
+let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pattern: Pattern) (outerBindings: List(CoreBinding)) (guarded: LoweredCoreValue) =
+    match (owner, guarded) with
+        | (Some(MatchScrutineeOwner { scrutineeTypeName = typeName, scrutineeIsList = isList }), LoweredCoreValue { state = state, error = None }) ->
+            if armAdoptsScrutinee(pattern)(outerBindings)(state)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = allocated, local = ownerSlot } ->
+                        allocated
+                        |> emit(StoreLocal(ownerSlot)(valueTemp))
+                        |> markRuntimeTemp(valueTemp)(RuntimeTransferred)
+                        |> (given (adopted: CoreLoweringState) -> adopted with runtimeOwners = (ownerSlot, true) :: adopted.runtimeOwners)
+                        |> (given (adopted) -> ((guarded with state = adopted), [ArmScrutineeOwner(ownerSlot)(typeName)(isList)]))
+            else (guarded, [])
+        | _ -> (guarded, [])
 
 // The guard and body of an arm whose pattern is lowered. The guard lowers through `guardLower`
-// and the body through `bodyLower`; the capability-operation arms hand in different ones.
-let finishPatternArm body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
-    patternResult
+// and the body through `bodyLower`; the capability-operation arms hand in different ones. The
+// arm's owners are the pattern's, then the scrutinee owner when the arm adopts one.
+let finishPatternArm (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
+    match patternResult
     |> lowerMatchGuard(guard)(failLabel)(guardLower)
-    |> finishMatchArm(body)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(armOwners(outerBindings)(patternResult))(bodyLower)
+    |> adoptScrutineeOwner(valueTemp)(scrutineeOwner)(pattern)(outerBindings) with
+        | (guarded, scrutineeOwners) ->
+            finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(patternResult))(scrutineeOwners))(bodyLower)(guarded)
 
 // One arm is bracketed on its own: `SaveArenaState` before the pattern test, and a matching
 // restore/reclaim on BOTH exits — the success path (before the jump to the match end) and the
@@ -4848,17 +5402,19 @@ let finishPatternArm body guard failLabel resultSlot endLabel resultType (reques
 // target. Stage 0 emits the cleanup block for every arm, including one whose pattern cannot fail.
 let lowerMatchArm pattern body guard lower cleanupLabel (bracket: ArenaBracket) plan =
     match plan with
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request } ->
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
                     |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(cleanupLabel)
-                    |> finishPatternArm(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
+                    |> finishPatternArm(scrutineeOwner)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
 
-let recastMatchPlan plan lowered =
-    match (plan, lowered) with
-        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request }, LoweredCoreValue { state = state, error = error }) ->
+// The plan after one arm: the arm's state and error, and its result recorded ahead of the
+// earlier arms'.
+let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
+    match (plan, loweredArm) with
+        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
             CoreMatchPlan(
                 state = state,
                 valueTemp = valueTemp,
@@ -4868,6 +5424,9 @@ let recastMatchPlan plan lowered =
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
                 armRequest = request,
+                armResults = armResult :: armResults,
+                scrutineeOwner = scrutineeOwner,
+                normalizeStaticStrings = normalizeStaticStrings,
                 error = error
             )
 
@@ -4882,16 +5441,17 @@ let labelNextMatchArm rest failLabel (plan: CoreMatchPlan) =
         | _ -> plan with state = emit(Label(failLabel))(plan.state)
 
 // The arm's cleanup block, emitted right after its jump to the match end: restore this arm's own
-// bracket, then jump on to the real fail target (`match_next_N`, or the no-match label for the
-// last arm). Label allocation order matches stage 0's — the next-arm label first, then this arm's
-// cleanup label.
+// bracket under the live-posts guard (a guard expression can perform a one-shot capability
+// operation whose pending post must survive the failed arm's cleanup), then jump on to the real
+// fail target (`match_next_N`, or the no-match label for the last arm). Label allocation order
+// matches stage 0's — the next-arm label first, then this arm's cleanup label.
 let emitMatchArmCleanup cleanupLabel failLabel (bracket: ArenaBracket) (plan: CoreMatchPlan) =
     match plan with
         | CoreMatchPlan { error = Some(_error) } -> plan
         | CoreMatchPlan { state = state } ->
             plan with state = emit(Jump(failLabel))(state
             |> emit(Label(cleanupLabel))
-            |> closeArenaBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot))
+            |> closeGuardedArmBracket(bracket.bracketCursorSlot)(bracket.bracketEndSlot))
 
 // Brackets one arm of a linear chain: the cleanup label is allocated after the arm's fail label,
 // the bracket opens before the pattern test, and the cleanup block follows the arm's jump to the
@@ -4932,6 +5492,9 @@ let failedMatchPlan state error =
         noMatchLabel = "",
         resultType = SemNever,
         armRequest = emptyConsumerRequest,
+        armResults = [],
+        scrutineeOwner = None,
+        normalizeStaticStrings = false,
         error = Some(error)
     )
 
@@ -4947,6 +5510,9 @@ let finishPreparedMatch valueTemp valueType resultType resultSlot endLabel fresh
                 noMatchLabel = noMatchLabel,
                 resultType = resultType,
                 armRequest = emptyConsumerRequest,
+                armResults = [],
+                scrutineeOwner = None,
+                normalizeStaticStrings = false,
                 error = None
             )
 
@@ -4981,10 +5547,18 @@ let prepareMatchPlan loweredValue =
             |> freshType
             |> prepareMatchResultType(valueTemp)(valueType)
 
+// Stage 0's `MarkRuntimeManagedMatchResult`: the join's reloaded value is a reference-counted
+// value when every arm stored one, newly produced only when every arm's was.
+let markMatchJoin (resultTemp: Int) (arms: List(MatchArmResult)) (state: CoreLoweringState) =
+    match (joinIsRuntimeManaged(arms), joinIsNewlyProduced(arms)) with
+        | (true, true) -> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)(state)
+        | (true, false) -> markRuntimeTemp(resultTemp)(RuntimeTransferred)(state)
+        | (false, _) -> state
+
 let finishMatchPlan plan =
     match plan with
         | CoreMatchPlan { state = failedState, error = Some(error) } -> failure(failedState)(error)
-        | CoreMatchPlan { state = state, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, error = None } ->
+        | CoreMatchPlan { state = state, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armResults = armResults, error = None } ->
             match freshTemp(state) with
                 | FreshTemp { state = defaultState, temp = defaultTemp } ->
                     match freshTemp(defaultState) with
@@ -4995,6 +5569,7 @@ let finishMatchPlan plan =
                             |> emit(StoreLocal(resultSlot)(defaultTemp))
                             |> emit(Label(endLabel))
                             |> emit(LoadLocal(resultTemp)(resultSlot))
+                            |> markMatchJoin(resultTemp)(armResults)
                             |> success(resultTemp)(resolveType(resultState)(resultType))
 
 // Tag-group match dispatch. Arms whose patterns are constructors of one ADT are grouped by their
@@ -5155,7 +5730,7 @@ let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPla
             bracketState
             |> preparePattern(pattern)
             |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
-            |> finishPatternArm(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
+            |> finishPatternArm(plan.scrutineeOwner)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
 
 let groupCaseFailLabel rest (groupFailLabel: Str) state =
     match rest with
@@ -5474,6 +6049,18 @@ let checkCoreMatchCoverage cases (plan: CoreMatchPlan) =
                     |> coverageErrorMessage
                     |> CoreMatchCoverageError)
 
+// The scrutinee owner every arm may adopt, decided once the scrutinee is lowered.
+let withScrutineeOwner (scrutinee: Expr) (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType } -> plan with scrutineeOwner = scrutineeOwnerOf(scrutinee)(valueTemp)(valueType)(state)
+
+let withStaticStringNormalization cases (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state } ->
+            plan with normalizeStaticStrings = shouldNormalizeStaticStringArms(given (body: Expr) -> isRuntimeRcStringProducer(body)(state))(cases)
+
 let lowerMatch value cases lower state =
     state
     |> clearConsumerRequest
@@ -5482,6 +6069,8 @@ let lowerMatch value cases lower state =
     |> withPlanArmRequest(state
     |> consumerRequestOf
     |> branchRequest)
+    |> withScrutineeOwner(value)
+    |> withStaticStringNormalization(cases)
     |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
     |> finishMatchPlan
@@ -6808,12 +7397,33 @@ let emitCoreBigIntBinary operation binary =
                 given (right) -> BigIntBinary(target)(left)(right)(operation)(false)
     )(SemBigInt)(binary)
 
+let releaseConcatRightOperand (leftTemp: Int) (rightTemp: Int) (state: CoreLoweringState) =
+    if rightTemp == leftTemp
+    then state
+    else releaseConsumedOperand(rightTemp)(state)
+
+let markConcatResult (target: Int) (runtimeManaged: Bool) (state: CoreLoweringState) =
+    if runtimeManaged
+    then markRuntimeTemp(target)(RuntimeNewlyProduced)(state)
+    else state
+
+// Stage 0's `LowerStringAdd`: the concatenation is placed on the reference-counted heap when its
+// consumer asked for a runtime string, its result then newly produced, and a newly produced
+// operand is released right after the use.
 let emitCoreConcat binary =
-    emitCoreBinaryTarget(
-        given (target) ->
-            given (left) ->
-                given (right) -> ConcatStr(target)(left)(right)(false)
-    )(SemString)(binary)
+    match binary with
+        | LoweredCoreBinary { state = state, leftTemp = left, rightTemp = right, error = None } ->
+            match freshTemp(state) with
+                | FreshTemp { state = targetState, temp = target } ->
+                    targetState
+                    |> emit(state
+                    |> runtimeStringRequested
+                    |> ConcatStr(target)(left)(right))
+                    |> markConcatResult(target)(runtimeStringRequested(state))
+                    |> releaseConsumedOperand(left)
+                    |> releaseConcatRightOperand(left)(right)
+                    |> success(target)(SemString)
+        | LoweredCoreBinary { state = state, error = Some(error) } -> failure(state)(error)
 
 let emitResolvedCoreAdd binary =
     match binary with
@@ -7063,11 +7673,23 @@ let prepareCoreBinary operator left binary =
             else binary
         | _ -> binary
 
+// The operands of a binary operator are lowered without the context's request, as stage 0's
+// `LowerAddOperands` lowers them; the request is restored on the operator's own state, so the
+// concatenation the operator selects still reads it.
+let restoreBinaryRequest (request: ConsumerRequest) (binary: LoweredCoreBinary) =
+    match binary with
+        | LoweredCoreBinary { state = state, error = None } -> binary with state = withConsumerRequest(request)(state)
+        | _ -> binary
+
 let lowerCoreBinary operator left right lower state =
-    state
-    |> lowerCoreBinaryOperands(left)(right)(lower)
-    |> prepareCoreBinary(operator)(left)
-    |> emitPreparedCoreBinary(operator)
+    match consumerRequestOf(state) with
+        | request ->
+            state
+            |> withConsumerRequest(emptyConsumerRequest)
+            |> lowerCoreBinaryOperands(left)(right)(lower)
+            |> restoreBinaryRequest(request)
+            |> prepareCoreBinary(operator)(left)
+            |> emitPreparedCoreBinary(operator)
 
 let finishCoreLogicalNot lowered =
     match lowered with
@@ -7679,7 +8301,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                         then
                             opName
                             |> UnsupportedOperationArmResume(capName)
-                            |> failure(state)
+                            |> failedMatchArm(state)
                         else
                             let bodyLower =
                                 given (armBody) ->
@@ -7688,7 +8310,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                                 state
                                 |> preparePattern(pattern)
                                 |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
-                                |> finishPatternArm(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
+                                |> finishPatternArm(None)(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
 // Each operation arm is bracketed like a linear arm of an ordinary match.
 and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
     match (cases, plan) with

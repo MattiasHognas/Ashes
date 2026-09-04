@@ -1,0 +1,8 @@
+let makeItems (text: Str) = [text, text]
+
+let count (items: List(Str)) =
+    match items with
+        | [] -> 0
+        | _ :: _ -> 1
+
+Ashes.IO.print(Ashes.Text.fromInt(count(makeItems("ab"))))

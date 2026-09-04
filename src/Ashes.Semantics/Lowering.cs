@@ -11110,6 +11110,8 @@ public sealed partial class Lowering
         List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
+        CheckClosureCapturesLiveAtApplication(rootExpr, closureTemp);
+
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
         int originalArgumentTemp = argumentTemp;
         bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);

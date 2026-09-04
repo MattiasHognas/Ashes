@@ -165,6 +165,45 @@ let expectCurriedSelfCallKeepsWindowOpen unit =
     |> expectNoInstructionText("call_copy_arena_result")
     |> (given (_) -> Unit)
 
+// A saturated application of a curried let-bound function whose innermost stage produced a
+// reference-counted result: the returned-closure chain is followed to that stage, so the window
+// resets without reading the returns bit and the result is released after its use.
+let expectCurriedKnownResultResetsWithoutFlag unit =
+    "let describe (a: Int) (b: Int) = Ashes.Text.fromInt(a + b)\n\nAshes.IO.print(describe(3)(4))"
+    |> dumpSource
+    |> expectInstruction("CallClosure           Target=7 ClosureTemp=5 ArgTemp=6")
+    |> expectInstruction("RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+    |> expectInstruction("RcDrop                SourceTemp=7 TypeName=String RuntimeManaged=true")
+    |> expectNoInstructionText("Value=63")
+    |> expectNoInstructionText("call_copy_arena_result")
+    |> (given (_) -> Unit)
+
+// A callee whose lowered body is reference-counted only through its scope's copy-out is not
+// RC-eligible by provenance: the returns bit is still read before the call, as stage 0 reads
+// it, while the recorded placement resets the window without the conditional copy-out.
+let expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit unit =
+    "let report (n: Int) =\n    let text = Ashes.Text.fromInt(n) + \" items\"\n    in\n        let _ = Ashes.IO.print(text)\n        in Ashes.IO.print(text)\n\nreport(3)"
+    |> dumpSource
+    |> expectInstruction("LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=16")
+    |> expectInstruction("LoadConstInt          Target=6 Value=63")
+    |> expectInstruction("ShrInt                Target=7 Left=5 Right=6")
+    |> expectInstruction("CallClosure           Target=8 ClosureTemp=3 ArgTemp=4")
+    |> expectInstruction("RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+    |> expectNoInstructionText("call_copy_arena_result")
+    |> (given (_) -> Unit)
+
+// A concatenation whose `let` consumer keeps the result reference-counted carries the runtime
+// flag itself: its operands are lowered without the request, and the owner's release names the
+// reference-counted value.
+let expectConcatCarriesRuntimeFlag unit =
+    "let report (n: Int) =\n    let text = Ashes.Text.fromInt(n) + \" items\"\n    in Ashes.IO.print(text)\n\nreport(3)"
+    |> dumpSource
+    |> expectInstruction("TextFromInt           Target=1 ValueTemp=0")
+    |> expectNoInstructionText("TextFromInt           Target=1 ValueTemp=0 RuntimeManaged")
+    |> expectInstruction("ConcatStr             Target=3 Left=1 Right=2 RuntimeManaged=true")
+    |> expectInstruction("RcDrop                SourceTemp=3 TypeName=String OwnerSlot=4 RuntimeManaged=true")
+    |> (given (_) -> Unit)
+
 let runCallWindowLoweringTests unit =
     Unit
     |> expectUnknownResultPlacementReadsReturnsBit
@@ -175,4 +214,7 @@ let runCallWindowLoweringTests unit =
     |> expectKnownRuntimeManagedResultResetsWithoutFlag
     |> expectScalarResultKeepsPlainReset
     |> expectSelfRecursiveCallKeepsWindowOpen
+    |> expectCurriedKnownResultResetsWithoutFlag
+    |> expectBodyRuntimeManagedNonEligibleCalleeReadsReturnsBit
+    |> expectConcatCarriesRuntimeFlag
     |> (given (_) -> Ashes.IO.print("call window lowering tests passed"))

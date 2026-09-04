@@ -1,0 +1,5 @@
+let report (n: Int) =
+    let text = Ashes.Text.fromInt(n) + " items"
+    in Ashes.IO.print(text)
+
+report(3)

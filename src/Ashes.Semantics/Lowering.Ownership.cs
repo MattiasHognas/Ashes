@@ -3934,18 +3934,50 @@ public sealed partial class Lowering
             var info = LookupOwnedValue(v.Name);
             if (info is not null && info.IsResource && info.IsDropped)
             {
-                if (info.ReleaseKind == ResourceReleaseKind.Moved)
-                {
-                    ReportDiagnostic(GetSpan(expr),
-                        $"Resource '{v.Name}' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.",
-                        DiagnosticCodes.UseAfterMove);
-                }
-                else
-                {
-                    ReportDiagnostic(GetSpan(expr),
-                        $"Resource '{v.Name}' has already been closed. Using a resource after it has been closed is not allowed.",
-                        DiagnosticCodes.UseAfterDrop);
-                }
+                ReportResourceUseAfterRelease(GetSpan(expr), v.Name, info);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reports a use of a released resource: <c>ASH008</c> when its ownership moved away,
+    /// <c>ASH006</c> when it was closed.
+    /// </summary>
+    private void ReportResourceUseAfterRelease(TextSpan span, string name, OwnershipInfo info)
+    {
+        if (info.ReleaseKind == ResourceReleaseKind.Moved)
+        {
+            ReportDiagnostic(span,
+                $"Resource '{name}' has been moved and can no longer be used here. Passing a resource to a function or storing it in a data structure transfers ownership.",
+                DiagnosticCodes.UseAfterMove);
+        }
+        else
+        {
+            ReportDiagnostic(span,
+                $"Resource '{name}' has already been closed. Using a resource after it has been closed is not allowed.",
+                DiagnosticCodes.UseAfterDrop);
+        }
+    }
+
+    /// <summary>
+    /// A closure literal applied in place (<c>x |> (given (_) -> body)</c>) has its body lowered
+    /// before its argument, yet the argument is evaluated first at run time. A resource the closure
+    /// captured is therefore checked for liveness once more at the application, after the argument's
+    /// lowering has recorded the moves and closes the body will run behind.
+    /// </summary>
+    private void CheckClosureCapturesLiveAtApplication(Expr rootExpr, int closureTemp)
+    {
+        if (rootExpr is not Expr.Lambda
+            || !_closureResourceCaptures.TryGetValue(closureTemp, out var captures))
+        {
+            return;
+        }
+
+        foreach (var (_, name, _) in captures)
+        {
+            if (LookupOwnedValue(name) is { IsResource: true, IsDropped: true } info)
+            {
+                ReportResourceUseAfterRelease(GetSpan(rootExpr), name, info);
             }
         }
     }

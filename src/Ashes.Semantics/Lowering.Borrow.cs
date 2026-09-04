@@ -130,8 +130,10 @@ public sealed partial class Lowering
     {
         var args = new List<Expr>();
         var root = CollectCallArgs(call, args);
+        // The op may be spelled through an import alias (`import Ashes.IO.Process as Process`), so
+        // the lookup keys on the canonical module name the alias resolves to.
         if (root is Expr.QualifiedVar qv
-            && BorrowReadResourceOps.Contains($"{qv.Module}.{qv.Name}")
+            && BorrowReadResourceOps.Contains($"{ResolveModuleAlias(qv.Module)}.{qv.Name}")
             && args.Count >= 1
             && args[0] is Expr.Var rv && string.Equals(rv.Name, p, StringComparison.Ordinal))
         {

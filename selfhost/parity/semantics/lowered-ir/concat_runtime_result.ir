@@ -1,0 +1,49 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Str) implementation=Ashes.Trait (<std:Ashes.Trait>:9024)
+
+function lambda_0  [SourceFunction from report]
+  locals=7 temps=9
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadLocal             Target=0 Slot=1   (concat_runtime_result.ash:2:35)
+    TextFromInt           Target=1 ValueTemp=0   (concat_runtime_result.ash:2:16)
+    LoadConstStr          Target=2 StrLabel=str_0   (concat_runtime_result.ash:2:40)
+    ConcatStr             Target=3 Left=1 Right=2 RuntimeManaged=true   (concat_runtime_result.ash:2:16)
+    StoreLocal            Slot=4 Source=3   (concat_runtime_result.ash:2:5)
+    LoadLocal             Target=4 Slot=4   (concat_runtime_result.ash:3:23)
+    Borrow                Target=5 SourceTemp=4
+    PrintStr              Source=5   (concat_runtime_result.ash:3:8)
+    RcDrop                SourceTemp=3 TypeName=String OwnerSlot=4 RuntimeManaged=true
+    AllocAdt              Target=6 Tag=0 FieldCount=0   (concat_runtime_result.ash:3:8)
+    StoreLocal            Slot=5 Source=6   (concat_runtime_result.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=6
+    CopyOutArena          DestTemp=8 SrcTemp=6 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=6
+    Return                Source=8
+
+function _start_main  [ProgramEntry]
+  locals=8 temps=11
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (concat_runtime_result.ash:5:1)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=3   (concat_runtime_result.ash:5:8)
+    LoadMemOffset         Target=5 BasePtr=3 OffsetBytes=16   (concat_runtime_result.ash:5:1)
+    LoadConstInt          Target=6 Value=63   (concat_runtime_result.ash:5:1)
+    ShrInt                Target=7 Left=5 Right=6   (concat_runtime_result.ash:5:1)
+    CallClosure           Target=8 ClosureTemp=3 ArgTemp=4   (concat_runtime_result.ash:5:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    StoreLocal            Slot=6 Source=8
+    LoadLocal             Target=9 Slot=2
+    CleanupResource       SourceTemp=9 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=7
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=7
+    LoadLocal             Target=10 Slot=6
+    Return                Source=10
+
