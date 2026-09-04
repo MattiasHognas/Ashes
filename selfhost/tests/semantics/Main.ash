@@ -38,6 +38,7 @@ import CoreExternalLoweringTests
 import CoreCapabilityLoweringTests
 import StateMachineTransformTests
 import MetadataAndOriginsTests
+import MatchArmScopeTests
 import TcoTests
 import IrValidationTests
 import IrOptimizerTests
@@ -95,6 +96,7 @@ let run unit =
     |> (given (_) -> ExplainReportTests.runExplainReportTests(Unit))
     |> (given (_) -> TaglessAdtLayoutTests.runTaglessAdtLayoutTests(Unit))
     |> (given (_) -> StructuralDroppersTests.runStructuralDroppersTests(Unit))
+    |> (given (_) -> MatchArmScopeTests.runMatchArmScopeTests(Unit))
     |> (given (_) -> ResultReachTests.runResultReachTests(Unit))
     |> (given (_) -> Ashes.IO.print("all semantics core and tco tests passed"))
 

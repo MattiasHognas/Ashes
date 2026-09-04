@@ -753,10 +753,22 @@ same public behavior.
   released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
   cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
   same-arity scalar-field ADT) is copied past the reset as an RC-normalized
-  `CopyOutArena`/`CopyOutList`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
-  `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
-  `heap_result_let`, and `heap_result_list` fixtures match stage 0 byte-for-byte, source
-  locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  `CopyOutArena`/`CopyOutList`, the ADT's static size counting its tag word only when the type
+  is not tagless. Every `match` arm is bracketed on every dispatch path: the tag-group
+  (`SwitchTag`) path brackets each linearly tested group case with its own `match_arm_cleanup_N`
+  block (the `match_group_next_N` label allocated first) and a trivial single-case group on its
+  success path only, and the capability-operation arms bracket like linear arms. An arm's
+  pattern bindings are stage 0's `TrackOwnedBindingsInPattern` owners (a resource, or any
+  heap-typed binding by its owned type name), released at the arm exit after the result store
+  (`RcDrop ... OwnerSlot=N`, moved to the last use by the placement pass), and an arm that owned
+  a live binding closes with the same `PopOwnershipScope` copy-out as an owned `let`, the copy
+  replacing the result in the match slot; a record field receiver is loaded without the
+  owned-read `Borrow`, as stage 0's `TryLowerRecordFieldLoad` does. The `let_bindings`,
+  `nested_let_scopes`, `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`,
+  `heap_result_builtin`, `heap_result_let`, `heap_result_list`, `record_pattern`,
+  `tag_group_arm_brackets`, and `match_arm_copy_out` fixtures match stage 0 byte-for-byte,
+  source locations included (`MatchArmScopeTests.ash` covers the list and tagged-ADT arm
+  copy-outs, the lambda arm's pattern-owner release, and the operation-arm brackets). A self-recursive tail call is still a `CallClosure`; the backend fuses it
   into a `musttail` when the instruction past the call's own window close stores or returns its
   result. A function whose parameter always reaches its result (`ResultReach.ash`, stage 0's
   `ResultAlwaysReachesVariable` over the parsed tree, following saturated calls into the
@@ -772,17 +784,24 @@ same public behavior.
   match stage 0's text (`ResultReachTests.ash`). Open: the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
-  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), per-arm brackets on
-  the tag-group dispatch and capability-operation arm paths, copy-out at call windows and match
-  arms, the runtime flag on `ConcatStr` (the deferred-add sealing), curried known-call results,
-  coroutine/async back edges, the `rc_normalize_list` deep-copy loop of an entry-normalized list
-  child over non-copyable heads (such a parameter is left unnormalized), the caller-side hand-off
-  of a retained reference to an `AcceptsRuntimeManagedArgument` callee, the source locations of a
-  curried inner lambda's instructions (stage 0 tags them with the `let`'s span, which keeps the
-  three `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
+  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), copy-out at call
+  windows, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
+  arena result out at the arm close instead), the runtime-managed scrutinee owner
+  (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
+  the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
+  in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
+  arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
+  deferred-add sealing), curried known-call results, coroutine/async back edges, the
+  `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
+  (such a parameter is left unnormalized), the caller-side hand-off of a retained reference to
+  an `AcceptsRuntimeManagedArgument` callee, the source locations of a curried inner lambda's
+  instructions (stage 0 tags them with the `let`'s span, which keeps the three
+  `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
   parity runner), the owner-alias walk across curried chains, borrowed reads of owned bindings
   at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings
-  and the provably-dead top-level constructor drop are emitted so far).
+  and the provably-dead top-level constructor drop are emitted so far; an owned `let` list still
+  releases with one `RcDrop` where stage 0 walks the spine inline).
   Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
   (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the
   unique-guarded tuple and single-constructor walks, string/bytes/bigint leaves) and the
@@ -941,9 +960,22 @@ same public behavior.
   entry can never `ret`), and the scoped arena (`IrCodegen.Arena`: 4 MiB `mmap` chunks linked by
   header/footer words, bump allocation for every non-RC `AllocAdt`/`Alloc`/`MakeClosure`,
   `SaveArenaState`/`RestoreArenaState`/`ReclaimArenaChunks` as watermark save, reset, and
-  `munmap` walk, with module-level grow/reclaim helpers). Open: the rest of Perceus placement
-  (cascading drops, dup insertion, closure droppers, reuse), TLS sections, and the
-  async/parallel/net/FFI instruction families.
+  `munmap` walk, with module-level grow/reclaim helpers). The copy and normalization family is
+  complete: `CopyOutArena` (fixed, `-1` string/`Bytes` by header length, `BigInt` by limb
+  count) and `CopyOutList` (inline, string, and inner-list heads) in `IrCodegen.Arena`, and in
+  `IrCodegen.Copy` `CopyOutClosure` (environment plus closure, nil environment kept),
+  `CopyOutTcoListCell` (string/inner-list head, tail word preserved, nil pass-through), the
+  persistent to-space and blob regions stage 0 keeps beside the arena (`__ashes_tospace_*`/
+  `__ashes_blob_*`, grown lazily through `__ashes_region_grow`, never reset) behind
+  `AllocAdtToSpace` and `CopyOutArenaToSpace`, and the in-place reuse forms `CopyFixedInto`,
+  `CopyStringIntoOrFresh`, and `CopyFixedIntoOrFresh` (in place only when the old blob lies in
+  the blob region's current chunk); `TcoResetPending` is rejected at dispatch, since lowering
+  resolves every placeholder before handing the program over. Only `CopyOutArena`/`CopyOutList`
+  are reached from real lowering today; the rest is exercised by hand-built IR fixtures in
+  `selfhost/tests/backend` until the call-window/match-arm copy-out, TCO ownership, and reuse
+  specialization ports emit them. Open: the rest of Perceus placement (cascading drops, dup
+  insertion, closure droppers, reuse), TLS sections, and the async/parallel/net/FFI instruction
+  families.
 - [~] **CG-5** Intrinsic builtin and constructor resolution in `CoreLowering.ash`:
   `standardBuiltinLayouts`/`standardConstructorLayouts` seed `initialState` (backing language.md's
   "qualified access, no import required"), with `[0, reservedBuiltinTypeVariableCount)` permanently
@@ -968,7 +1000,14 @@ same public behavior.
   string literals carry the immortal sentinel so every path leaves static storage alone. The
   provably-dead top-level constructor drop names its type's synthesized structural dropper
   (`StructuralDroppers.ash`, see OPT-25) when the payload reaches past the cell, and the dropper
-  functions are registered in the program. libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
+  functions are registered in the program. The RC-normalizing copies produce real headers: a
+  runtime-managed `CopyOutArena`/`CopyOutList`/`CopyOutClosure` `malloc`s a fresh `{1, size}`
+  cell per copied value, string head, environment block, and closure, and a runtime-managed
+  `CopyOutClosure` dispatches to the program's `$env_normalize` function by code address (the
+  normalizer copies the captures and returns the new dropper; a closure without one gets the
+  raw bytes). The callee side of the hidden ownership flag is `LoadArgumentOwnership` reading
+  the third parameter, which `CallClosure`/`CallKnown` pass from their flag temp (`0` when the
+  call site has none). libc `malloc`/`free` is the allocator: stage 0's size-binned free-list cache
   (`EmitRuntimeRcRelease`/`EmitAcquireRuntimeRcBlock`) is deliberately not ported. Open: the
   free-list cache if the compile-time benchmark needs it; everything else in Perceus placement —
   cascading/tag-directed drops from real lowering, shadowing-aware liveness, dup insertion, and
