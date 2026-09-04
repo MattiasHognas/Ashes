@@ -770,21 +770,37 @@ same public behavior.
   source locations included (`MatchArmScopeTests.ash` covers the list and tagged-ADT arm
   copy-outs, the lambda arm's pattern-owner release, and the operation-arm brackets). A self-recursive tail call is still a `CallClosure`; the backend fuses it
   into a `musttail` when the instruction past the call's own window close stores or returns its
-  result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
-  out of the parity runner until then: its `recgroup_*` members and entry already match, the
-  merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
-  missing), copy-out at call windows, the RC request for a constructor or list built in a
-  lambda's arm (stage 0 allocates it `RuntimeManaged` and flags the closure
-  `ReturnsRuntimeManaged`; the selfhost copies the arena result out at the arm close instead),
-  the runtime-managed scrutinee owner (`$match_rc_N`, a fresh RC-managed call result or nested
-  match result matched directly) and the match result's all-arms runtime-managed status, the
-  live-posts guard around an arm's reset in a program with a `handle`, the static-string arm
-  normalization (`CopyOutArena` of a literal arm when a sibling arm produces a fresh string),
-  the runtime flag on `ConcatStr` (the deferred-add sealing), curried known-call results,
-  coroutine/async back edges, entry normalization of a parameter reaching the result, the
-  owner-alias walk across curried chains, borrowed reads of owned bindings at call sites, and
-  the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings and the
-  provably-dead top-level constructor drop are emitted so far; an owned `let` list still
+  result. A function whose parameter always reaches its result (`ResultReach.ash`, stage 0's
+  `ResultAlwaysReachesVariable` over the parsed tree, following saturated calls into the
+  let-bound callees the lowering already records) normalizes a string or ADT argument at entry:
+  the `rc_arg_normalize_copy`/`rc_arg_normalize_done` block reads the hidden ownership flag
+  (`LoadArgumentOwnership`), copies a borrowed argument into an owned value (an RC-normalized
+  `CopyOutArena` for a string or a same-arity scalar-field ADT, a `CopyOutList` for a list over
+  copyable heads, the per-child deep copy for a tuple and a runtime-managed ADT, single- and
+  multi-constructor), stores it back into the argument slot ahead of the body, and the closure
+  carrying the function is a `MakeClosure`/`MakeClosureStack AcceptsRuntimeManagedArgument`;
+  the normalized functions of the `parameter_reaches_result_string`,
+  `parameter_reaches_result_record`, and `parameter_reaches_result_record_update` fixtures
+  match stage 0's text (`ResultReachTests.ash`). Open: the mutual-recursion loop merge
+  (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
+  `recgroup_*` members and entry already match, the merged `lambda_N` body,
+  `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), copy-out at call
+  windows, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
+  arena result out at the arm close instead), the runtime-managed scrutinee owner
+  (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
+  the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
+  in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
+  arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
+  deferred-add sealing), curried known-call results, coroutine/async back edges, the
+  `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
+  (such a parameter is left unnormalized), the caller-side hand-off of a retained reference to
+  an `AcceptsRuntimeManagedArgument` callee, the source locations of a curried inner lambda's
+  instructions (stage 0 tags them with the `let`'s span, which keeps the three
+  `parameter_reaches_result_*` fixtures and the entry-normalized `_start_main`s out of the
+  parity runner), the owner-alias walk across curried chains, borrowed reads of owned bindings
+  at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for aggregates (only strings
+  and the provably-dead top-level constructor drop are emitted so far; an owned `let` list still
   releases with one `RcDrop` where stage 0 walks the spine inline).
   Cascading drops: `StructuralDroppers.ash` synthesizes stage 0's structural owner dropper
   (`__rcdrop_structural_N`, the iterative list-spine walk with an owned-head release, the

@@ -1,0 +1,9 @@
+type Pair =
+    | label: Str
+    | count: Int
+
+let wrap (pair: Pair) = [pair]
+
+match wrap(Pair(label = Ashes.Text.fromInt(3), count = 1)) with
+    | Pair { label = label } :: [] -> Ashes.IO.print(label)
+    | _ -> Ashes.IO.print("other")

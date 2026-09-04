@@ -3069,7 +3069,18 @@ public sealed partial class Lowering
                 continue;
             }
 
-            var ctorWithArgs = ctorPatterns.OfType<Pattern.Constructor>().ToList();
+            // A constructor pattern whose sub-pattern count differs from the arity is rejected by
+            // the pattern's own arity diagnostic; only well-formed patterns take part in the
+            // per-field walk, and a constructor named solely by malformed ones has no fields to walk.
+            var ctorWithArgs = ctorPatterns
+                .OfType<Pattern.Constructor>()
+                .Where(c => c.Patterns.Count == ctor.Arity)
+                .ToList();
+            if (ctorWithArgs.Count == 0)
+            {
+                continue;
+            }
+
             for (int i = 0; i < ctor.Arity; i++)
             {
                 if (TryGetMissingPatternCore(

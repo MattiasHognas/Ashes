@@ -1,0 +1,5 @@
+let wrap (s: Str) = [s]
+
+match wrap(Ashes.Text.fromInt(7)) with
+    | x :: [] -> Ashes.IO.print(x)
+    | _ -> Ashes.IO.print("other")

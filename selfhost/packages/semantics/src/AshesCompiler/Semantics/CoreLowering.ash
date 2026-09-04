@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.OwnershipInference.inferProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.lookupProgramParameterOwnership
 import AshesCompiler.Semantics.OwnershipInference.topLevelFunctions
 import AshesCompiler.Semantics.OwnershipSummary
+import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
@@ -186,6 +187,7 @@ type CoreLoweringState =
     | runtimeOwners: List((Int, Bool))
     | bodyRuntimeManagedByLabel: List((Str, Bool))
     | letLambdaLabels: List((Str, Str))
+    | runtimeNormalizedArgumentLabels: List(Str)
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
 
@@ -410,6 +412,7 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         runtimeOwners = [],
         bodyRuntimeManagedByLabel = [],
         letLambdaLabels = [],
+        runtimeNormalizedArgumentLabels = [],
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache
     )
@@ -820,6 +823,18 @@ let recursive lookupBodyRuntimeManaged (label: Str) (entries: List((Str, Bool)))
 let bodyReturnsRuntimeManaged (label: Str) (state: CoreLoweringState) = lookupBodyRuntimeManaged(label)(state.bodyRuntimeManagedByLabel)
 
 let recordBodyRuntimeManaged (label: Str) (runtimeManaged: Bool) (state: CoreLoweringState) = state with bodyRuntimeManagedByLabel = (label, runtimeManaged) :: state.bodyRuntimeManagedByLabel
+
+// Whether a lifted function normalizes its argument into an owned value at entry, so its closure
+// advertises that it accepts a runtime-managed argument and a caller hands over a retained
+// reference.
+let recursive containsLabel (label: Str) (labels: List(Str)) =
+    match labels with
+        | [] -> false
+        | candidate :: rest -> candidate == label || containsLabel(label)(rest)
+
+let acceptsRuntimeManagedArgument (label: Str) (state: CoreLoweringState) = containsLabel(label)(state.runtimeNormalizedArgumentLabels)
+
+let recordRuntimeNormalizedArgument (label: Str) (state: CoreLoweringState) = state with runtimeNormalizedArgumentLabels = label :: state.runtimeNormalizedArgumentLabels
 
 // Stage 0's `ReleaseConsumedOwnedOperand`: a consumer that keeps nothing of a newly produced
 // reference-counted string releases it right after the use.
@@ -2362,9 +2377,10 @@ let finishLiftedFunction label origin bodyState =
 
 let restoreOuterFrame outer bodyState =
     match bodyState with
-        | CoreLoweringState { functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, nextStringId = nextStringId, stringLiterals = stringLiterals, typeSupply = typeSupply, substitution = substitution, sealedOperatorDefaults = sealedOperatorDefaults } ->
+        | CoreLoweringState { functions = functions, nextLambdaId = nextLambdaId, nextLabelId = nextLabelId, nextStringId = nextStringId, stringLiterals = stringLiterals, typeSupply = typeSupply, substitution = substitution, sealedOperatorDefaults = sealedOperatorDefaults, runtimeNormalizedArgumentLabels = normalizedLabels } ->
             outer
             |> (given (current: CoreLoweringState) -> current with functions = functions)
+            |> (given (current: CoreLoweringState) -> current with runtimeNormalizedArgumentLabels = normalizedLabels)
             |> (given (current: CoreLoweringState) -> current with nextLambdaId = nextLambdaId)
             |> (given (current: CoreLoweringState) -> current with nextLabelId = nextLabelId)
             |> (given (current: CoreLoweringState) -> current with nextStringId = nextStringId)
@@ -2381,15 +2397,17 @@ let emitClosure label environmentTemp captureTotal stackAllocate state =
             in
                 let returnsRuntimeManaged = bodyReturnsRuntimeManaged(label)(tempState)
                 in
-                    let closureState =
-                        if stackAllocate
-                        then
-                            emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(false))(tempState)
-                        else
-                            false
-                            |> MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)
-                            |> (given (instruction) -> emit(instruction)(tempState))
-                    in (closureState, closureTemp)
+                    let acceptsRuntimeManaged = acceptsRuntimeManagedArgument(label)(tempState)
+                    in
+                        let closureState =
+                            if stackAllocate
+                            then
+                                emit(MakeClosureStack(closureTemp)(label)(environmentTemp)(byteCount)(returnsRuntimeManaged)(acceptsRuntimeManaged))(tempState)
+                            else
+                                acceptsRuntimeManaged
+                                |> MakeClosure(closureTemp)(label)(environmentTemp)(byteCount)(false)(returnsRuntimeManaged)
+                                |> (given (instruction) -> emit(instruction)(tempState))
+                        in (closureState, closureTemp)
 
 let prepareLambdaBodyState parameter parameterType captures lambdaId origin state =
     (let functionBindings =
@@ -2655,6 +2673,339 @@ let recordLetLambdaLabel (label: Str) (state: CoreLoweringState) =
 // producer is asked to place its result on the reference-counted heap.
 let functionBodyRequest (body: Expr) (state: CoreLoweringState) = emptyConsumerRequest with runtimeString = isRuntimeRcStringProducer(body)(state)
 
+// The copy an entry normalization makes of a borrowed argument, decided from the parameter's
+// resolved type the way stage 0's `EmitRuntimeManagedTcoParamCopy` and its deep-copy walk decide
+// theirs: a scalar is kept as is, a string/bytes/bigint leaf and a same-arity scalar-field ADT
+// are copied out in one piece, a list over copyable heads copies its spine, and a tuple or a
+// runtime-managed ADT copies its owned children recursively. A constructor plan carries the
+// constructor's tag, its cell size, whether the cell is tagless, and its owned children by field
+// index.
+type ArgumentCopyPlan =
+    | ScalarArgumentCopy
+    | LeafArgumentCopy(Int)
+    | ListHeadArgumentCopy(ListHeadCopyKind)
+    | TupleArgumentCopy(List(ArgumentCopyPlan))
+    | ShallowAdtArgumentCopy(Int)
+    | ConstructorArgumentCopy((Int, Int, Bool, List((Int, ArgumentCopyPlan))))
+    | SwitchArgumentCopy(List((Int, Int, Bool, List((Int, ArgumentCopyPlan)))))
+
+let bigIntCopySizeBytes = -2
+
+// The cell size of one constructor: one word per field, plus the tag word unless tagless.
+let adtAllocationSizeBytes (layout: CoreConstructorLayout) =
+    match layout with
+        | CoreConstructorLayout { tagless = tagless } ->
+            if tagless
+            then 8 * constructorArity(layout)
+            else 8 + 8 * constructorArity(layout)
+
+// The constructor layouts of a named type, in declaration order.
+let recursive constructorLayoutsOfType (name: Str) (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | layout :: rest ->
+            if layoutResultName(layout) == Some(name)
+            then layout :: constructorLayoutsOfType(name)(rest)
+            else constructorLayoutsOfType(name)(rest)
+
+// The described children of one constructor that own a reference, by field index and type.
+let recursive ownedConstructorChildren (constructorName: Str) (children: List(HeapLayoutChild)) =
+    match children with
+        | [] -> []
+        | HeapLayoutChild { dropKind = NoChildDrop } :: rest -> ownedConstructorChildren(constructorName)(rest)
+        | HeapLayoutChild { constructorName = Some(owner), fieldIndex = index, childType = childType } :: rest ->
+            if owner == constructorName
+            then (index, childType) :: ownedConstructorChildren(constructorName)(rest)
+            else ownedConstructorChildren(constructorName)(rest)
+        | _ :: rest -> ownedConstructorChildren(constructorName)(rest)
+
+// The list-head copy kind of a list argument: scalar heads copy inline, string heads and heads
+// that are lists of scalars copy with the spine; any other element type has no spine copy.
+let listHeadCopyKindOf (element: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(element) with
+        | SemString -> Some(StringListHead)
+        | SemList(inner) ->
+            if inner
+            |> resolveType(state)
+            |> canArenaResetLayout
+            then Some(InnerListHead)
+            else None
+        | resolved ->
+            if canArenaResetLayout(resolved)
+            then Some(InlineListHead)
+            else None
+
+let runtimeManagedAdtLayout (facts: HeapLayoutFacts) =
+    match facts with
+        | HeapLayoutFacts { runtimeRecordAdtSupported = record, runtimeOwnedChildAdtSupported = ownedChild, runtimeTcoOwnedChildAdtSupported = tcoOwnedChild } -> record || ownedChild || tcoOwnedChild
+
+let recursive argumentCopyPlanOf (semanticType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(semanticType) with
+        | SemString -> Some(LeafArgumentCopy(-1))
+        | SemBytes -> Some(LeafArgumentCopy(-1))
+        | SemBigInt -> Some(LeafArgumentCopy(bigIntCopySizeBytes))
+        | SemList(element) ->
+            match listHeadCopyKindOf(element)(state) with
+                | Some(headCopy) -> Some(ListHeadArgumentCopy(headCopy))
+                | None -> None
+        | SemTuple(elements) ->
+            match argumentCopyPlansOf(elements)(state) with
+                | Some(plans) -> Some(TupleArgumentCopy(plans))
+                | None -> None
+        | SemNamed(_symbolId, name, _arguments) as named ->
+            match state
+            |> coverageEnvironment
+            |> classifyHeapLayout(named) with
+                | HeapLayoutFacts { structuralCopy = ShallowCopy } ->
+                    Some(state
+                    |> shallowAdtCopySizeBytes(name)
+                    |> ShallowAdtArgumentCopy)
+                | HeapLayoutFacts { children = children } as facts ->
+                    if runtimeManagedAdtLayout(facts)
+                    then
+                        adtCopyPlanOf(constructorLayoutsOfType(name)(state.constructorLayouts))(children)(state)
+                    else None
+        | resolved ->
+            if canArenaResetLayout(resolved)
+            then Some(ScalarArgumentCopy)
+            else None
+and argumentCopyPlansOf (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> Some([])
+        | semanticType :: rest ->
+            match (argumentCopyPlanOf(semanticType)(state), argumentCopyPlansOf(rest)(state)) with
+                | (Some(plan), Some(plans)) -> Some(plan :: plans)
+                | _ -> None
+and childCopyPlansOf (children: List((Int, SemanticType))) (state: CoreLoweringState) =
+    match children with
+        | [] -> Some([])
+        | (index, childType) :: rest ->
+            match (argumentCopyPlanOf(childType)(state), childCopyPlansOf(rest)(state)) with
+                | (Some(plan), Some(plans)) -> Some((index, plan) :: plans)
+                | _ -> None
+and constructorCopyPlansOf (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match layouts with
+        | [] -> Some([])
+        | (CoreConstructorLayout { name = constructorName, tag = tag, tagless = tagless } as layout) :: rest ->
+            match (childCopyPlansOf(ownedConstructorChildren(constructorName)(children))(state), constructorCopyPlansOf(rest)(children)(state)) with
+                | (Some(plans), Some(restPlans)) -> Some((tag, adtAllocationSizeBytes(layout), tagless, plans) :: restPlans)
+                | _ -> None
+and adtCopyPlanOf (layouts: List(CoreConstructorLayout)) (children: List(HeapLayoutChild)) (state: CoreLoweringState) =
+    match constructorCopyPlansOf(layouts)(children)(state) with
+        | Some(single :: []) -> Some(ConstructorArgumentCopy(single))
+        | Some([]) -> None
+        | Some(plans) -> Some(SwitchArgumentCopy(plans))
+        | None -> None
+
+// The parameter types an entry normalization turns into an owned runtime-managed value, stage
+// 0's `IsRuntimeNormalizableParameterType`: strings, and the ADTs the runtime copies out or
+// deep-copies.
+let entryNormalizationPlanOf (parameterType: SemanticType) (state: CoreLoweringState) =
+    match resolveType(state)(parameterType) with
+        | SemString -> argumentCopyPlanOf(parameterType)(state)
+        | SemNamed(_symbolId, _name, _arguments) -> argumentCopyPlanOf(parameterType)(state)
+        | _ -> None
+
+let rcNormalizationCopyOut copyTemp sourceTemp sizeBytes state =
+    state
+    |> emit(CopyOutArena(copyTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))
+    |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+
+let rcNormalizationListCopyOut copyTemp sourceTemp headCopy state =
+    state
+    |> emit(CopyOutList(copyTemp)(sourceTemp)(headCopy)(true)(RcNormalization))
+    |> markRuntimeTemp(copyTemp)(RuntimeNewlyProduced)
+
+let firstSwitchLabel (cases: List(IrSwitchCase)) =
+    match cases with
+        | IrSwitchCase { label = label } :: _rest -> label
+        | [] -> ""
+
+// Stage 0's `EmitRuntimeManagedTcoDeepCopy`: a scalar is returned as is; every other plan copies
+// into a fresh temp, the constructor and switch walks allocating their own result temps after it.
+let recursive emitArgumentDeepCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match plan with
+        | ScalarArgumentCopy -> (state, sourceTemp)
+        | _ ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = resultTemp } ->
+                    match plan with
+                        | LeafArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
+                        | ShallowAdtArgumentCopy(sizeBytes) -> (rcNormalizationCopyOut(resultTemp)(sourceTemp)(sizeBytes)(allocated), resultTemp)
+                        | ListHeadArgumentCopy(headCopy) -> (rcNormalizationListCopyOut(resultTemp)(sourceTemp)(headCopy)(allocated), resultTemp)
+                        | TupleArgumentCopy(elements) ->
+                            allocated
+                            |> emit(Alloc(resultTemp)(8 * coreListLength(elements))(true))
+                            |> emitTupleElementCopies(sourceTemp)(resultTemp)(0)(elements)
+                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                            |> (given (copied) -> (copied, resultTemp))
+                        | ConstructorArgumentCopy(constructorPlan) -> emitConstructorDeepCopy(sourceTemp)(constructorPlan)(allocated)
+                        | SwitchArgumentCopy(constructorPlans) -> emitAdtSwitchDeepCopy(sourceTemp)(constructorPlans)(allocated)
+                        | ScalarArgumentCopy -> (allocated, sourceTemp)
+and emitTupleElementCopies (sourceTemp: Int) (resultTemp: Int) (index: Int) (elements: List(ArgumentCopyPlan)) (state: CoreLoweringState) =
+    match elements with
+        | [] -> state
+        | element :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    match allocated
+                    |> emit(LoadMemOffset(childTemp)(sourceTemp)(8 * index))
+                    |> emitArgumentDeepCopy(childTemp)(element) with
+                        | (copied, copiedChild) ->
+                            copied
+                            |> emit(StoreMemOffset(resultTemp)(8 * index)(copiedChild))
+                            |> emitTupleElementCopies(sourceTemp)(resultTemp)(index + 1)(rest)
+// Stage 0's `EmitRuntimeManagedTcoConstructorDeepCopy`: the cell is copied out whole, then every
+// owned child is read from the source, deep-copied, and stored into the copy.
+and emitConstructorDeepCopy (sourceTemp: Int) (constructorPlan: (Int, Int, Bool, List((Int, ArgumentCopyPlan)))) (state: CoreLoweringState) =
+    match (constructorPlan, freshTemp(state)) with
+        | ((_tag, sizeBytes, tagless, children), FreshTemp { state = allocated, temp = resultTemp }) ->
+            allocated
+            |> emit(CopyOutArena(resultTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))
+            |> emitConstructorChildCopies(sourceTemp)(resultTemp)(tagless)(children)
+            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+            |> (given (copied) -> (copied, resultTemp))
+and emitConstructorChildCopies (sourceTemp: Int) (resultTemp: Int) (tagless: Bool) (children: List((Int, ArgumentCopyPlan))) (state: CoreLoweringState) =
+    match children with
+        | [] -> state
+        | (index, plan) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = allocated, temp = childTemp } ->
+                    match allocated
+                    |> emit(GetAdtField(childTemp)(sourceTemp)(index)(tagless))
+                    |> emitArgumentDeepCopy(childTemp)(plan) with
+                        | (copied, copiedChild) ->
+                            copied
+                            |> emit(SetAdtField(resultTemp)(index)(copiedChild)(tagless))
+                            |> emitConstructorChildCopies(sourceTemp)(resultTemp)(tagless)(rest)
+// Stage 0's `EmitRuntimeManagedTcoAdtDeepCopy` for a type with several constructors: the tag
+// selects the constructor walk, each branch storing its copy into a shared slot.
+and emitAdtSwitchDeepCopy (sourceTemp: Int) (constructorPlans: List((Int, Int, Bool, List((Int, ArgumentCopyPlan))))) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotState, local = resultSlot } ->
+            match freshTemp(slotState) with
+                | FreshTemp { state = tagState, temp = tagTemp } ->
+                    match tagState
+                    |> emit(GetAdtTag(tagTemp)(sourceTemp))
+                    |> switchCasesOf(constructorPlans) with
+                        | (casesState, cases) ->
+                            match freshLabel("rc_normalize_adt_end")(casesState) with
+                                | FreshLabel { state = endState, label = endLabel } ->
+                                    match endState
+                                    |> emit(cases
+                                    |> firstSwitchLabel
+                                    |> SwitchTag(tagTemp)(cases))
+                                    |> emitSwitchBranches(sourceTemp)(resultSlot)(endLabel)(cases)(constructorPlans)
+                                    |> emit(Label(endLabel))
+                                    |> freshTemp with
+                                        | FreshTemp { state = resultState, temp = resultTemp } ->
+                                            resultState
+                                            |> emit(LoadLocal(resultTemp)(resultSlot))
+                                            |> markRuntimeTemp(resultTemp)(RuntimeNewlyProduced)
+                                            |> (given (loaded) -> (loaded, resultTemp))
+and switchCasesOf (constructorPlans: List((Int, Int, Bool, List((Int, ArgumentCopyPlan))))) (state: CoreLoweringState) =
+    match constructorPlans with
+        | [] -> (state, [])
+        | (tag, _sizeBytes, _tagless, _children) :: rest ->
+            match freshLabel("rc_normalize_adt")(state) with
+                | FreshLabel { state = labelState, label = label } ->
+                    match switchCasesOf(rest)(labelState) with
+                        | (casesState, cases) -> (casesState, IrSwitchCase(tag = tag, label = label) :: cases)
+and emitSwitchBranches (sourceTemp: Int) (resultSlot: Int) (endLabel: Str) (cases: List(IrSwitchCase)) (constructorPlans: List((Int, Int, Bool, List((Int, ArgumentCopyPlan))))) (state: CoreLoweringState) =
+    match (cases, constructorPlans) with
+        | (IrSwitchCase { label = label } :: caseRest, constructorPlan :: planRest) ->
+            match state
+            |> emit(Label(label))
+            |> emitConstructorDeepCopy(sourceTemp)(constructorPlan) with
+                | (copied, branchTemp) ->
+                    copied
+                    |> emit(StoreLocal(resultSlot)(branchTemp))
+                    |> emit(Jump(endLabel))
+                    |> emitSwitchBranches(sourceTemp)(resultSlot)(endLabel)(caseRest)(planRest)
+        | _ -> state
+
+// Stage 0's `EmitRuntimeManagedTcoParamCopy`: the copy of a borrowed argument. A string, a
+// same-arity scalar-field ADT, and a list copy into the temp allocated here; a tuple and a
+// runtime-managed ADT walk their children through the deep copy on temps of its own.
+let emitArgumentCopy (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = allocated, temp = normalizedTemp } ->
+            match plan with
+                | ListHeadArgumentCopy(headCopy) ->
+                    (emit(CopyOutList(normalizedTemp)(sourceTemp)(headCopy)(true)(RcNormalization))(allocated), normalizedTemp)
+                | TupleArgumentCopy(_elements) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
+                | ConstructorArgumentCopy(_constructorPlan) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
+                | SwitchArgumentCopy(_constructorPlans) -> emitArgumentDeepCopy(sourceTemp)(plan)(allocated)
+                | LeafArgumentCopy(sizeBytes) ->
+                    (emit(CopyOutArena(normalizedTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))(allocated), normalizedTemp)
+                | ShallowAdtArgumentCopy(sizeBytes) ->
+                    (emit(CopyOutArena(normalizedTemp)(sourceTemp)(sizeBytes)(true)(RcNormalization)(None))(allocated), normalizedTemp)
+                | ScalarArgumentCopy -> (allocated, sourceTemp)
+
+// Stage 0's `EmitRuntimeManagedTcoArgumentNormalization`: the hidden ownership flag says whether
+// the caller handed over a retained reference; a borrowed argument is copied into an owned value,
+// and either lands in the result slot.
+let emitArgumentOwnershipNormalization (sourceTemp: Int) (plan: ArgumentCopyPlan) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = slotState, local = resultSlot } ->
+            match freshTemp(slotState) with
+                | FreshTemp { state = ownershipState, temp = ownershipTemp } ->
+                    match freshLabel("rc_arg_normalize_copy")(ownershipState) with
+                        | FreshLabel { state = copyLabelState, label = copyLabel } ->
+                            match freshLabel("rc_arg_normalize_done")(copyLabelState) with
+                                | FreshLabel { state = labelState, label = doneLabel } ->
+                                    match labelState
+                                    |> emit(LoadArgumentOwnership(ownershipTemp))
+                                    |> emit(JumpIfFalse(ownershipTemp)(copyLabel))
+                                    |> emit(StoreLocal(resultSlot)(sourceTemp))
+                                    |> emit(Jump(doneLabel))
+                                    |> emit(Label(copyLabel))
+                                    |> emitArgumentCopy(sourceTemp)(plan) with
+                                        | (copied, copiedTemp) ->
+                                            match copied
+                                            |> emit(StoreLocal(resultSlot)(copiedTemp))
+                                            |> emit(Label(doneLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = resultState, temp = resultTemp } ->
+                                                    (emit(LoadLocal(resultTemp)(resultSlot))(resultState), resultTemp)
+
+// The entry block of a function that normalizes its argument: the argument is reloaded from
+// slot 1, normalized, and stored back, ahead of the body already lowered.
+let emitEntryArgumentNormalization (plan: ArgumentCopyPlan) (label: Str) (state: CoreLoweringState) =
+    match state with
+        | CoreLoweringState { reversedInstructions = bodyInstructions } ->
+            match freshTemp((state with reversedInstructions = [])) with
+                | FreshTemp { state = allocated, temp = sourceTemp } ->
+                    match allocated
+                    |> emit(LoadLocal(sourceTemp)(1))
+                    |> emitArgumentOwnershipNormalization(sourceTemp)(plan) with
+                        | (normalized, normalizedTemp) ->
+                            normalized
+                            |> emit(StoreLocal(1)(normalizedTemp))
+                            |> (given (entry: CoreLoweringState) -> entry with reversedInstructions = append(bodyInstructions)(entry.reversedInstructions))
+                            |> recordRuntimeNormalizedArgument(label)
+
+let recursive constructorLayoutNames (layouts: List(CoreConstructorLayout)) =
+    match layouts with
+        | [] -> []
+        | CoreConstructorLayout { name = name } :: rest -> name :: constructorLayoutNames(rest)
+
+// Stage 0's `LowerLambdaCoreNormalizeAlwaysReturnedParameter`: a function whose parameter always
+// reaches its result keeps the argument past the call, so it takes ownership of a runtime-managed
+// argument: it advertises that it accepts one and copies a borrowed argument into an owned value
+// at entry. Only a string or ADT parameter with a copy plan is normalized; a scalar parameter,
+// or one whose type has no plan yet, is left as it is.
+let normalizeAlwaysReturnedParameter parameter body label parameterType lowered =
+    match lowered with
+        | LoweredCoreValue { error = Some(_error) } -> lowered
+        | LoweredCoreValue { state = bodyState } ->
+            match entryNormalizationPlanOf(parameterType)(bodyState) with
+                | None -> lowered
+                | Some(plan) ->
+                    if acceptsRuntimeManagedArgument(label)(bodyState) || !resultAlwaysReachesVariable(constructorLayoutNames(bodyState.constructorLayouts))(bodyState.letLambdas)(body)(parameter)
+                    then lowered
+                    else lowered with state = emitEntryArgumentNormalization(plan)(label)(bodyState)
+
 let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin fresh =
     match fresh with
         | FreshType { state = typedOuter, semanticType = parameterType } ->
@@ -2662,6 +3013,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
             |> withConsumerRequest(functionBodyRequest(body)(typedOuter))
             |> lower(body)
+            |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
             |> finishLambdaBody("lambda_" + Ashes.Text.fromInt(lambdaId))(origin)(captures)(stackAllocate)(typedOuter)(parameterType)
 
 let resolvedFunctionType state argumentType resultType =
