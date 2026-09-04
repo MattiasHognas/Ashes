@@ -1,0 +1,85 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Multiply(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:9890)
+
+function _start_main  [ProgramEntry]
+  locals=20 temps=36
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=1   (reuse_shared_falls_back.ash:5:16)
+    LoadConstInt          Target=1 Value=2   (reuse_shared_falls_back.ash:5:24)
+    LoadConstInt          Target=2 Value=3   (reuse_shared_falls_back.ash:5:32)
+    AllocAdt              Target=3 Tag=0 FieldCount=0   (reuse_shared_falls_back.ash:5:35)
+    AllocAdt              Target=4 Tag=1 FieldCount=2   (reuse_shared_falls_back.ash:5:27)
+    SetAdtField           Ptr=4 FieldIndex=0 Source=2   (reuse_shared_falls_back.ash:5:27)
+    SetAdtField           Ptr=4 FieldIndex=1 Source=3   (reuse_shared_falls_back.ash:5:27)
+    AllocAdt              Target=5 Tag=1 FieldCount=2   (reuse_shared_falls_back.ash:5:19)
+    SetAdtField           Ptr=5 FieldIndex=0 Source=1   (reuse_shared_falls_back.ash:5:19)
+    SetAdtField           Ptr=5 FieldIndex=1 Source=4   (reuse_shared_falls_back.ash:5:19)
+    AllocAdt              Target=6 Tag=1 FieldCount=2   (reuse_shared_falls_back.ash:5:11)
+    SetAdtField           Ptr=6 FieldIndex=0 Source=0   (reuse_shared_falls_back.ash:5:11)
+    SetAdtField           Ptr=6 FieldIndex=1 Source=5   (reuse_shared_falls_back.ash:5:11)
+    StoreLocal            Slot=2 Source=6
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=7 Slot=2   (reuse_shared_falls_back.ash:7:12)
+    Borrow                Target=8 SourceTemp=7
+    StoreLocal            Slot=5 Source=8
+    LoadLocal             Target=9 Slot=2   (reuse_shared_falls_back.ash:9:7)
+    Borrow                Target=10 SourceTemp=9
+    SaveArenaState        CursorLocalSlot=7 EndLocalSlot=8
+    LoadConstInt          Target=11 Value=0   (reuse_shared_falls_back.ash:9:1)
+    CmpIntNe              Target=12 Left=10 Right=11   (reuse_shared_falls_back.ash:9:1)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_3   (reuse_shared_falls_back.ash:9:1)
+    GetAdtTag             Target=13 Ptr=10   (reuse_shared_falls_back.ash:9:1)
+    LoadConstInt          Target=15 Value=0   (reuse_shared_falls_back.ash:9:1)
+    CmpIntEq              Target=14 Left=13 Right=15   (reuse_shared_falls_back.ash:9:1)
+    JumpIfFalse           CondTemp=14 Target=match_arm_cleanup_3   (reuse_shared_falls_back.ash:9:1)
+    RcDrop                SourceTemp=6 TypeName=Lst OwnerSlot=2
+    AllocAdt              Target=16 Tag=0 FieldCount=0   (reuse_shared_falls_back.ash:10:14)
+    StoreLocal            Slot=6 Source=16   (reuse_shared_falls_back.ash:9:1)
+    Jump                  Target=match_end_0   (reuse_shared_falls_back.ash:9:1)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=7 EndLocalSlot=8 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=8 PreRestoreEndSlot=10
+    Jump                  Target=match_next_2   (reuse_shared_falls_back.ash:9:1)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=17 Value=0   (reuse_shared_falls_back.ash:9:1)
+    CmpIntNe              Target=18 Left=10 Right=17   (reuse_shared_falls_back.ash:9:1)
+    JumpIfFalse           CondTemp=18 Target=match_arm_cleanup_4   (reuse_shared_falls_back.ash:9:1)
+    GetAdtTag             Target=19 Ptr=10   (reuse_shared_falls_back.ash:9:1)
+    LoadConstInt          Target=21 Value=1   (reuse_shared_falls_back.ash:9:1)
+    CmpIntEq              Target=20 Left=19 Right=21   (reuse_shared_falls_back.ash:9:1)
+    JumpIfFalse           CondTemp=20 Target=match_arm_cleanup_4   (reuse_shared_falls_back.ash:9:1)
+    GetAdtField           Target=22 Ptr=10 FieldIndex=0   (reuse_shared_falls_back.ash:9:1)
+    StoreLocal            Slot=13 Source=22   (reuse_shared_falls_back.ash:9:1)
+    GetAdtField           Target=23 Ptr=10 FieldIndex=1   (reuse_shared_falls_back.ash:9:1)
+    RcDrop                SourceTemp=6 TypeName=Lst OwnerSlot=2
+    StoreLocal            Slot=14 Source=23   (reuse_shared_falls_back.ash:9:1)
+    LoadLocal             Target=24 Slot=13   (reuse_shared_falls_back.ash:11:32)
+    LoadConstInt          Target=25 Value=2   (reuse_shared_falls_back.ash:11:39)
+    MulInt                Target=26 Left=24 Right=25   (reuse_shared_falls_back.ash:11:32)
+    LoadLocal             Target=27 Slot=14   (reuse_shared_falls_back.ash:11:42)
+    Borrow                Target=28 SourceTemp=27
+    AllocAdt              Target=29 Tag=1 FieldCount=2   (reuse_shared_falls_back.ash:11:27)
+    SetAdtField           Ptr=29 FieldIndex=0 Source=26   (reuse_shared_falls_back.ash:11:27)
+    RcDup                 Target=35 SourceTemp=28   (reuse_shared_falls_back.ash:11:27)
+    SetAdtField           Ptr=29 FieldIndex=1 Source=28   (reuse_shared_falls_back.ash:11:27)
+    RcDrop                SourceTemp=23 TypeName=Lst OwnerSlot=14
+    StoreLocal            Slot=6 Source=29   (reuse_shared_falls_back.ash:9:1)
+    Jump                  Target=match_end_0   (reuse_shared_falls_back.ash:9:1)
+  match_arm_cleanup_4:
+    RcDrop                SourceTemp=6 TypeName=Lst OwnerSlot=2
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=16
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=16
+    Jump                  Target=match_none_1   (reuse_shared_falls_back.ash:9:1)
+  match_none_1:
+    LoadConstInt          Target=31 Value=0   (reuse_shared_falls_back.ash:9:1)
+    StoreLocal            Slot=6 Source=31   (reuse_shared_falls_back.ash:9:1)
+  match_end_0:
+    LoadLocal             Target=32 Slot=6   (reuse_shared_falls_back.ash:9:1)
+    StoreLocal            Slot=18 Source=32
+    LoadLocal             Target=34 Slot=18
+    Return                Source=34
+

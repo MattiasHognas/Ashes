@@ -57,6 +57,7 @@ import AshesCompiler.Semantics.TypeInference
 import AshesCompiler.Semantics.TypeSchemes
 import AshesCompiler.Semantics.Types
 import AshesCompiler.Semantics.PerceusLifetimePlacement
+import AshesCompiler.Semantics.ReuseSpecialization
 import AshesCompiler.Semantics.Unification
 // Stage 0's `ProducesFreshTuple`: a tuple literal, or a constructor carrying one, at some
 // terminal arm, with no passthrough arm that could alias a tuple built elsewhere.
@@ -283,6 +284,9 @@ type CoreLoweringState =
     | recursiveDeclarationSpan: Maybe(TextSpan)
     | ownerReleasePlans: List((Int, SemanticType, OwnedReleasePlan))
     | pendingOwnerPlan: Maybe(OwnedReleasePlan)
+    // OPT-42: the live arena/RC in-place-reuse tokens a match's dead scrutinee cell has published
+    // for a same-name rebuild in its own arm, most recently produced first.
+    | reuseTokens: List(CoreReuseToken)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -352,6 +356,7 @@ type CoreMatchPlan =
     | armResults: List(MatchArmResult)
     | scrutineeOwner: Maybe(MatchScrutineeOwner)
     | normalizeStaticStrings: Bool
+    | reuseScrutineeName: Maybe(Str)
     | error: Maybe(CoreLoweringError)
 
 // One lowered arm: its lowered value, and what it contributed to the match's result.
@@ -534,7 +539,8 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         pendingTcoResets = [],
         recursiveDeclarationSpan = None,
         ownerReleasePlans = [],
-        pendingOwnerPlan = None
+        pendingOwnerPlan = None,
+        reuseTokens = []
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -6069,15 +6075,194 @@ let adoptScrutineeOwner (valueTemp: Int) (owner: Maybe(MatchScrutineeOwner)) (pa
             else (guarded, [])
         | _ -> (guarded, [])
 
+// OPT-42 consumer hooks: hands a match's dead scrutinee cell to a same-name rebuild inside the
+// same arm as an arena/RC in-place-reuse token (`AshesCompiler.Semantics.ReuseSpecialization`
+// decides the structural safety; this file owns the state-threaded token bookkeeping and the
+// DropReuse/AllocReusing emission the runtime's own uniqueness check gates).
+let recursive reuseUnwrapPattern (pattern: Pattern) =
+    match pattern with
+        | PatternAt(_span, inner) -> reuseUnwrapPattern(inner)
+        | other -> other
+
+// The constructor a match case's pattern names, including a nullary constructor written as a
+// bare `PatternVar` — `None` for a wildcard, a literal, or any pattern that does not name one.
+let reuseCaseConstructorLayout (pattern: Pattern) (state: CoreLoweringState) =
+    match reuseUnwrapPattern(pattern) with
+        | PatternConstructor(name, _subPatterns) -> constructorLayout(name)(state)
+        | PatternVar(name) ->
+            if isNullaryConstructorPatternName(name)(state)
+            then constructorLayout(name)(state)
+            else None
+        | _ -> None
+
+let recursive reuseCaseLayouts (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match cases with
+        | [] -> Some([])
+        | (_pattern, _body, Some(_guard)) :: _rest -> None
+        | (pattern, _body, None) :: rest ->
+            match (reuseCaseConstructorLayout(pattern)(state), reuseCaseLayouts(rest)(state)) with
+                | (Some(layout), Some(restLayouts)) -> Some(layout :: restLayouts)
+                | _ -> None
+
+let recursive reuseNamesAllPresent (required: List(Str)) (candidates: List(Str)) =
+    match required with
+        | [] -> true
+        | name :: rest -> containsName(name)(candidates) && reuseNamesAllPresent(rest)(candidates)
+
+let recursive reusePointerFieldIndicesFrom (index: Int) (fieldTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match fieldTypes with
+        | [] -> []
+        | fieldType :: rest ->
+            if resultSurvivesReset(fieldType)(state)
+            then reusePointerFieldIndicesFrom(index + 1)(rest)(state)
+            else index :: reusePointerFieldIndicesFrom(index + 1)(rest)(state)
+
+let reusePointerFieldIndices (fieldTypes: List(SemanticType)) (state: CoreLoweringState) = reusePointerFieldIndicesFrom(0)(fieldTypes)(state)
+
+// A case is reuse-safe only when its own body rebuilds the SAME constructor it matched (through
+// nested `let`s) — never a different constructor of the type or a passthrough — with every
+// pointer-typed field passed straight through, unchanged, from the matching pattern binding.
+// Requiring every case (not just the ones with pointer fields) to rebuild guarantees a token this
+// module produces is always consumed by the very arm that produced it, so an unconsumed
+// runtime-managed token — which would need its owned children walked and released before its
+// bookkeeping could be dropped — never arises.
+let reuseCaseSafe (pattern: Pattern) (body: Expr) (layout: CoreConstructorLayout) (state: CoreLoweringState) =
+    match layout with
+        | CoreConstructorLayout { name = ctorName, fieldNames = fieldNames } ->
+            match reuseArmBodyRebuildsSameConstructor(ctorName)(fieldNames)(body) with
+                | None -> false
+                | Some(args) ->
+                    match layoutFieldTypes(layout)(state) with
+                        | (fieldTypes, _resultType) ->
+                            reuseTransferredFieldsSafe(reusePointerFieldIndices(fieldTypes)(state))(reusePatternFieldBindings(pattern))(args)
+
+let recursive reuseCaseSafetyAll (cases: List((Pattern, Expr, Maybe(Expr)))) (layouts: List(CoreConstructorLayout)) (state: CoreLoweringState) =
+    match (cases, layouts) with
+        | ([], []) -> true
+        | ((pattern, body, _guard) :: restCases, layout :: restLayouts) -> reuseCaseSafe(pattern)(body)(layout)(state) && reuseCaseSafetyAll(restCases)(restLayouts)(state)
+        | _ -> false
+
+// Whether the whole match is a reuse-eligible rebuild of one type: guard-free, every case a
+// distinct constructor of the SAME type with none missing (stage 0's exhaustiveness
+// precondition), and every case's own rebuild transfer-safe.
+let reuseMatchExhaustiveAndSafe (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match reuseCaseLayouts(cases)(state) with
+        | None -> false
+        | Some([]) -> false
+        | Some(firstLayout :: _rest as layouts) ->
+            match layoutResultName(firstLayout) with
+                | None -> false
+                | Some(typeName) ->
+                    let required =
+                        state.constructorLayouts
+                        |> constructorLayoutsOfType(typeName)
+                        |> constructorLayoutNames
+                    in
+                        let caseNames = constructorLayoutNames(layouts)
+                        in length(caseNames) == length(required) && reuseNamesAllPresent(required)(caseNames) && reuseCaseSafetyAll(cases)(layouts)(state)
+
+// The scrutinee's own bare-variable name, when the match qualifies for OPT-42 in-place reuse:
+// already a reference-counted value (`isRuntimeTemp`), and the whole match is an exhaustive,
+// transfer-safe rebuild of one type (`reuseMatchExhaustiveAndSafe`). `None` otherwise — every
+// other match keeps allocating fresh cells exactly as before.
+let reuseEligibleScrutineeName (scrutinee: Expr) (valueTemp: Int) (cases: List((Pattern, Expr, Maybe(Expr)))) (state: CoreLoweringState) =
+    match unspanArgument(scrutinee) with
+        | ExprVar(name) ->
+            if isRuntimeTemp(valueTemp)(state) && reuseMatchExhaustiveAndSafe(cases)(state)
+            then Some(name)
+            else None
+        | _ -> None
+
+let withReuseScrutinee (scrutinee: Expr) (cases: List((Pattern, Expr, Maybe(Expr)))) (plan: CoreMatchPlan) =
+    match plan with
+        | CoreMatchPlan { error = Some(_error) } -> plan
+        | CoreMatchPlan { state = state, valueTemp = valueTemp } -> plan with reuseScrutineeName = reuseEligibleScrutineeName(scrutinee)(valueTemp)(cases)(state)
+
+// Publishes the arm's own DropReuse token when the match found a reuse-eligible scrutinee, this
+// arm's pattern names one of its constructors, and the arm's body does not mention the scrutinee
+// again (its matched cell is dead). Returns the (possibly updated) pattern result alongside the
+// token count to restore to once the arm's body is lowered, `None` when nothing was published.
+let reuseTokenIfEligible (reuseScrutineeName: Maybe(Str)) (pattern: Pattern) (body: Expr) (valueTemp: Int) (patternResult: LoweredCorePattern) =
+    match patternResult with
+        | LoweredCorePattern { error = Some(_error) } -> (patternResult, None)
+        | LoweredCorePattern { state = state } ->
+            match reuseScrutineeName with
+                | None -> (patternResult, None)
+                | Some(scrutineeName) ->
+                    if exprMentionsName(scrutineeName)(body)
+                    then (patternResult, None)
+                    else
+                        match reuseCaseConstructorLayout(pattern)(state) with
+                            | None -> (patternResult, None)
+                            | Some(CoreConstructorLayout { name = ctorName, tagless = tagless }) ->
+                                let arity =
+                                    match reusePatternConstructorArity(pattern) with
+                                        | Some((_name, patternArity)) -> patternArity
+                                        | None -> 0
+                                in
+                                    let tokensBefore = length(state.reuseTokens)
+                                    in
+                                        match freshTemp(state) with
+                                            | FreshTemp { state = allocatedState, temp = tokenTemp } ->
+                                                let token =
+                                                    CoreReuseToken(
+                                                        temp = tokenTemp,
+                                                        fieldCount = arity,
+                                                        tagless = tagless,
+                                                        runtimeManaged = true,
+                                                        constructorName = ctorName,
+                                                        fieldBindings = reusePatternFieldBindings(pattern)
+                                                    )
+                                                in
+                                                    (LoweredCorePattern(
+                                                        state = allocatedState
+                                                        |> emit(DropReuse(tokenTemp)(valueTemp)(arity)(true))
+                                                        |> (given (published: CoreLoweringState) -> published with reuseTokens = token :: published.reuseTokens),
+                                                        error = None
+                                                    ), Some(tokensBefore))
+
+let recursive reuseDropExtra (excess: Int) (tokens: List(CoreReuseToken)) =
+    if excess <= 0
+    then tokens
+    else
+        match tokens with
+            | [] -> []
+            | _head :: rest -> reuseDropExtra(excess - 1)(rest)
+
+let reuseTruncateTo (before: Int) (tokens: List(CoreReuseToken)) = reuseDropExtra(length(tokens) - before)(tokens)
+
+// Restores the reuse-token list to its pre-arm length: a no-op when the arm's own rebuild
+// consumed the token it published (the ordinary case, guaranteed by `reuseCaseSafe`'s
+// every-case-rebuilds requirement), a safety net dropping a stray, unconsumed token's bookkeeping
+// otherwise, so it can never be mistaken for a live token by an unrelated later allocation.
+let reuseTruncateArmTokens (tokensBefore: Maybe(Int)) (armResult: LoweredMatchArm) =
+    match (tokensBefore, armResult) with
+        | (None, _armResult) -> armResult
+        | (Some(before), LoweredMatchArm { lowered = LoweredCoreValue { state = state, temp = temp, semanticType = semanticType, error = None }, armResult = matchArmResult }) ->
+            LoweredMatchArm(
+                lowered = LoweredCoreValue(
+                    state = (state with reuseTokens = reuseTruncateTo(before)(state.reuseTokens)),
+                    temp = temp,
+                    semanticType = semanticType,
+                    error = None
+                ),
+                armResult = matchArmResult
+            )
+        | (Some(_before), _armResult) -> armResult
+
 // The guard and body of an arm whose pattern is lowered. The guard lowers through `guardLower`
 // and the body through `bodyLower`; the capability-operation arms hand in different ones. The
 // arm's owners are the pattern's, then the scrutinee owner when the arm adopts one.
-let finishPatternArm (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
-    match patternResult
-    |> lowerMatchGuard(guard)(failLabel)(guardLower)
-    |> adoptScrutineeOwner(valueTemp)(scrutineeOwner)(pattern)(outerBindings) with
-        | (guarded, scrutineeOwners) ->
-            finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(patternResult))(scrutineeOwners))(bodyLower)(guarded)
+let finishPatternArm (reuseScrutineeName: Maybe(Str)) (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStaticStrings: Bool) pattern valueTemp body guard failLabel resultSlot endLabel resultType (request: ConsumerRequest) outerBindings bracket guardLower bodyLower patternResult =
+    match reuseTokenIfEligible(reuseScrutineeName)(pattern)(body)(valueTemp)(patternResult) with
+        | (reusedPatternResult, tokensBefore) ->
+            match reusedPatternResult
+            |> lowerMatchGuard(guard)(failLabel)(guardLower)
+            |> adoptScrutineeOwner(valueTemp)(scrutineeOwner)(pattern)(outerBindings) with
+                | (guarded, scrutineeOwners) ->
+                    guarded
+                    |> finishMatchArm(body)(normalizeStaticStrings)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(append(armOwners(outerBindings)(reusedPatternResult))(scrutineeOwners))(bodyLower)
+                    |> reuseTruncateArmTokens(tokensBefore)
 
 // One arm is bracketed on its own: `SaveArenaState` before the pattern test, and a matching
 // restore/reclaim on BOTH exits — the success path (before the jump to the match end) and the
@@ -6085,19 +6270,19 @@ let finishPatternArm (scrutineeOwner: Maybe(MatchScrutineeOwner)) (normalizeStat
 // target. Stage 0 emits the cleanup block for every arm, including one whose pattern cannot fail.
 let lowerMatchArm pattern body guard lower cleanupLabel (bracket: ArenaBracket) plan =
     match plan with
-        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings } ->
+        | CoreMatchPlan { state = state, valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, resultType = resultType, armRequest = request, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName } ->
             match state with
                 | CoreLoweringState { bindings = outerBindings } ->
                     state
                     |> preparePattern(pattern)
                     |> lowerPattern(pattern)(valueTemp)(valueType)(cleanupLabel)
-                    |> finishPatternArm(scrutineeOwner)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
+                    |> finishPatternArm(reuseScrutineeName)(scrutineeOwner)(normalizeStaticStrings)(pattern)(valueTemp)(body)(guard)(cleanupLabel)(resultSlot)(endLabel)(resultType)(request)(outerBindings)(bracket)(lower)(lower)
 
 // The plan after one arm: the arm's state and error, and its result recorded ahead of the
 // earlier arms'.
 let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
     match (plan, loweredArm) with
-        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
+        | (CoreMatchPlan { valueTemp = valueTemp, valueType = valueType, resultSlot = resultSlot, endLabel = endLabel, noMatchLabel = noMatchLabel, resultType = resultType, armRequest = request, armResults = armResults, scrutineeOwner = scrutineeOwner, normalizeStaticStrings = normalizeStaticStrings, reuseScrutineeName = reuseScrutineeName }, LoweredMatchArm { lowered = LoweredCoreValue { state = state, error = error }, armResult = armResult }) ->
             CoreMatchPlan(
                 state = state,
                 valueTemp = valueTemp,
@@ -6110,6 +6295,7 @@ let recastMatchPlan plan (loweredArm: LoweredMatchArm) =
                 armResults = armResult :: armResults,
                 scrutineeOwner = scrutineeOwner,
                 normalizeStaticStrings = normalizeStaticStrings,
+                reuseScrutineeName = reuseScrutineeName,
                 error = error
             )
 
@@ -6178,6 +6364,7 @@ let failedMatchPlan state error =
         armResults = [],
         scrutineeOwner = None,
         normalizeStaticStrings = false,
+        reuseScrutineeName = None,
         error = Some(error)
     )
 
@@ -6196,6 +6383,7 @@ let finishPreparedMatch valueTemp valueType resultType resultSlot endLabel fresh
                 armResults = [],
                 scrutineeOwner = None,
                 normalizeStaticStrings = false,
+                reuseScrutineeName = None,
                 error = None
             )
 
@@ -6413,7 +6601,7 @@ let lowerKnownTagMatchArm pattern body guard failLabel lower (plan: CoreMatchPla
             bracketState
             |> preparePattern(pattern)
             |> lowerKnownTagPattern(pattern)(plan.valueTemp)(plan.valueType)(failLabel)
-            |> finishPatternArm(plan.scrutineeOwner)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
+            |> finishPatternArm(plan.reuseScrutineeName)(plan.scrutineeOwner)(plan.normalizeStaticStrings)(pattern)(plan.valueTemp)(body)(guard)(failLabel)(plan.resultSlot)(plan.endLabel)(plan.resultType)(plan.armRequest)(outerBindings)(bracket)(lower)(lower)
 
 let groupCaseFailLabel rest (groupFailLabel: Str) state =
     match rest with
@@ -6753,6 +6941,7 @@ let lowerMatch value cases lower state =
     |> consumerRequestOf
     |> branchRequest)
     |> withScrutineeOwner(value)
+    |> withReuseScrutinee(value)(cases)
     |> withStaticStringNormalization(cases)
     |> checkCoreMatchCoverage(cases)
     |> lowerMatchArmsDispatch(cases)(lower)
@@ -7335,6 +7524,108 @@ let recursive emitAdtFields baseTemp index tagless temps state =
             |> emit(SetAdtField(baseTemp)(index)(temp)(tagless))
             |> emitAdtFields(baseTemp)(index + 1)(tagless)(rest)
 
+// OPT-42 consumer: a same-name rebuild of a dead matched cell reuses it in place instead of
+// allocating fresh, when a compatible token is live and the consumer's own placement request
+// already asked for a reference-counted cell (`runtimeManaged`) — `AshesCompiler.Semantics.
+// ReuseSpecialization`'s `reuseCaseSafe` is the sole gate deciding whether that token exists at
+// all, so a rebuild reaching this function's fallback path never carries one.
+let recursive reuseFindMatchingToken (ctorName: Str) (fieldCount: Int) (tagless: Bool) (tokens: List(CoreReuseToken)) =
+    match tokens with
+        | [] -> None
+        | (CoreReuseToken { constructorName = candidateName, fieldCount = candidateFieldCount, tagless = candidateTagless } as token) :: rest ->
+            if candidateName == ctorName && candidateFieldCount == fieldCount && candidateTagless == tagless
+            then Some((token, rest))
+            else
+                match reuseFindMatchingToken(ctorName)(fieldCount)(tagless)(rest) with
+                    | Some((found, remaining)) -> Some((found, token :: remaining))
+                    | None -> None
+
+let reuseConsumeToken (ctorName: Str) (fieldCount: Int) (tagless: Bool) (state: CoreLoweringState) =
+    match reuseFindMatchingToken(ctorName)(fieldCount)(tagless)(state.reuseTokens) with
+        | Some((token, remaining)) -> Some((token, (state with reuseTokens = remaining)))
+        | None -> None
+
+// Passes a rebuild field straight through when the token's cell was reused in place (the runtime
+// `DropReuse` found it unique), or duplicates it when `DropReuse` instead found the matched cell
+// shared and only decremented it — the transferred field is then a NEW alias the surviving old
+// cell does not already account for. Stage 0's `EmitRuntimeReuseTransferredChild`.
+let reuseEmitTransferredChild (fieldTemp: Int) (tokenTemp: Int) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = afterSlot, local = resultSlot } ->
+            match freshTemp(afterSlot) with
+                | FreshTemp { state = afterZero, temp = zeroTemp } ->
+                    match afterZero
+                    |> emit(LoadConstInt(zeroTemp)(0))
+                    |> freshTemp with
+                        | FreshTemp { state = afterHasToken, temp = hasTokenTemp } ->
+                            match afterHasToken
+                            |> emit(CmpIntNe(hasTokenTemp)(tokenTemp)(zeroTemp))
+                            |> freshLabel("reuse_child_duplicate") with
+                                | FreshLabel { state = afterDupLabel, label = duplicateLabel } ->
+                                    match freshLabel("reuse_child_continue")(afterDupLabel) with
+                                        | FreshLabel { state = afterContLabel, label = continueLabel } ->
+                                            match afterContLabel
+                                            |> emit(JumpIfFalse(hasTokenTemp)(duplicateLabel))
+                                            |> emit(StoreLocal(resultSlot)(fieldTemp))
+                                            |> emit(Jump(continueLabel))
+                                            |> emit(Label(duplicateLabel))
+                                            |> freshTemp with
+                                                | FreshTemp { state = afterDupTemp, temp = duplicatedTemp } ->
+                                                    match afterDupTemp
+                                                    |> emit(RcDup(duplicatedTemp)(fieldTemp)(true)(false))
+                                                    |> emit(StoreLocal(resultSlot)(duplicatedTemp))
+                                                    |> emit(Label(continueLabel))
+                                                    |> freshTemp with
+                                                        | FreshTemp { state = finalState, temp = resultTemp } ->
+                                                            (emit(LoadLocal(resultTemp)(resultSlot))(finalState), resultTemp)
+
+let recursive reuseApplyTransferredChildren (index: Int) (pointerIndices: List(Int)) (tokenTemp: Int) (temps: List(Int)) (state: CoreLoweringState) =
+    match temps with
+        | [] -> (state, [])
+        | fieldTemp :: rest ->
+            if containsInt(index)(pointerIndices)
+            then
+                match reuseEmitTransferredChild(fieldTemp)(tokenTemp)(state) with
+                    | (nextState, transferredTemp) ->
+                        match reuseApplyTransferredChildren(index + 1)(pointerIndices)(tokenTemp)(rest)(nextState) with
+                            | (finalState, restTemps) -> (finalState, transferredTemp :: restTemps)
+            else
+                match reuseApplyTransferredChildren(index + 1)(pointerIndices)(tokenTemp)(rest)(state) with
+                    | (finalState, restTemps) -> (finalState, fieldTemp :: restTemps)
+
+let allocateReusedConstructorCell (token: CoreReuseToken) (tag: Int) (fieldCount: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (temps: List(Int)) (state: CoreLoweringState) =
+    match layoutFieldTypes(layout)(state) with
+        | (fieldTypes, _fieldsResultType) ->
+            match reuseApplyTransferredChildren(0)(reusePointerFieldIndices(fieldTypes)(state))(token.temp)(temps)(state) with
+                | (transferredState, transferredTemps) ->
+                    match freshTemp(transferredState) with
+                        | FreshTemp { state = allocatedState, temp = resultTemp } ->
+                            allocatedState
+                            |> emit(AllocReusing(resultTemp)(tag)(fieldCount)(token.temp)(true)(false)(tagless))
+                            |> emitAdtFields(resultTemp)(0)(tagless)(transferredTemps)
+                            |> markAggregateRuntimeManaged(resultTemp)(true)
+                            |> success(resultTemp)(resolveType(allocatedState)(resultType))
+
+let allocateOrReuseConstructorCell (ctorName: Str) (tag: Int) (tagless: Bool) (layout: CoreConstructorLayout) (resultType: SemanticType) (runtimeManaged: Bool) (temps: List(Int)) (state: CoreLoweringState) =
+    (let fieldCount = coreListLength(temps)
+    in
+        match if runtimeManaged
+        then reuseConsumeToken(ctorName)(fieldCount)(tagless)(state)
+        else None with
+            | Some((token, consumedState)) -> allocateReusedConstructorCell(token)(tag)(fieldCount)(tagless)(layout)(resultType)(temps)(consumedState)
+            | None ->
+                match freshTemp(state) with
+                    | FreshTemp { state = allocatedState, temp = resultTemp } ->
+                        // `runtimeManaged` is the consumer's placement request: the dead top-level
+                        // `let` path's flag carried by the constructor shape, or a request the
+                        // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
+                        // without one the cell is arena-placed.
+                        allocatedState
+                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
+                        |> emitAdtFields(resultTemp)(0)(tagless)(temps)
+                        |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
+                        |> success(resultTemp)(resolveType(allocatedState)(resultType)))
+
 let finishConstructorAllocation layout resultType runtimeManaged lowered =
     match (layout, lowered) with
         | (_layout, LoweredCoreValues { state = failedState, error = Some(error) }) -> failure(failedState)(error)
@@ -7345,20 +7636,7 @@ let finishConstructorAllocation layout resultType runtimeManaged lowered =
             |> coreListLength
             |> CoreConstructorArityMismatch(name)(1)
             |> failure(state)
-        | (CoreConstructorLayout { tag = tag, tagless = tagless }, LoweredCoreValues { state = state, temps = temps, error = None }) ->
-            match freshTemp(state) with
-                | FreshTemp { state = allocatedState, temp = resultTemp } ->
-                    let fieldCount = coreListLength(temps)
-                    in
-                        // `runtimeManaged` is the consumer's placement request: the dead top-level
-                        // `let` path's flag carried by the constructor shape, or a request the
-                        // application's shape can honor (`isRuntimeManagedConstructorCandidate`);
-                        // without one the cell is arena-placed.
-                        allocatedState
-                        |> emit(AllocAdt(resultTemp)(tag)(fieldCount)(runtimeManaged)(tagless))
-                        |> emitAdtFields(resultTemp)(0)(tagless)(temps)
-                        |> markAggregateRuntimeManaged(resultTemp)(runtimeManaged)
-                        |> success(resultTemp)(resolveType(allocatedState)(resultType))
+        | (CoreConstructorLayout { name = ctorName, tag = tag, tagless = tagless } as ctorLayout, LoweredCoreValues { state = state, temps = temps, error = None }) -> allocateOrReuseConstructorCell(ctorName)(tag)(tagless)(ctorLayout)(resultType)(runtimeManaged)(temps)(state)
 
 let nullaryConstructorRuntimeManageable (resultType: SemanticType) (state: CoreLoweringState) =
     match heapFactsOf(resultType)(state) with
@@ -9321,7 +9599,7 @@ and resolveOperationArmMatchArm pattern body guard lower postRegisterIndex capNa
                                 state
                                 |> preparePattern(pattern)
                                 |> lowerPattern(pattern)(valueTemp)(valueType)(failLabel)
-                                |> finishPatternArm(None)(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
+                                |> finishPatternArm(None)(None)(false)(pattern)(valueTemp)(body)(guard)(failLabel)(resultSlot)(endLabel)(resultType)(emptyConsumerRequest)(outerBindings)(bracket)(lower)(bodyLower)
 // Each operation arm is bracketed like a linear arm of an ordinary match.
 and resolveOperationArmMatchArms cases lower postRegisterIndex capName opName plan =
     match (cases, plan) with

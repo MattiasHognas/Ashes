@@ -1,0 +1,52 @@
+IR (lowered)
+============
+
+trait evidence
+  resolved requirement=Ashes.Trait.Add(Int) implementation=Ashes.Trait (<std:Ashes.Trait>:8327)
+
+function _start_main  [ProgramEntry]
+  locals=11 temps=19
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0   (reuse_record_update.ash:5:31)
+    LoadConstInt          Target=1 Value=0   (reuse_record_update.ash:5:42)
+    AllocAdt              Target=2 Tag=0 FieldCount=2 RuntimeManaged=true Tagless=true   (reuse_record_update.ash:5:15)
+    SetAdtField           Ptr=2 FieldIndex=0 Source=0 Tagless=true   (reuse_record_update.ash:5:15)
+    SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (reuse_record_update.ash:5:15)
+    StoreLocal            Slot=2 Source=2
+    LoadLocal             Target=3 Slot=2   (reuse_record_update.ash:7:7)
+    Borrow                Target=4 SourceTemp=3
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=5 Value=0   (reuse_record_update.ash:7:1)
+    CmpIntNe              Target=6 Left=4 Right=5   (reuse_record_update.ash:7:1)
+    JumpIfFalse           CondTemp=6 Target=match_arm_cleanup_2   (reuse_record_update.ash:7:1)
+    GetAdtField           Target=7 Ptr=4 FieldIndex=0 Tagless=true   (reuse_record_update.ash:7:1)
+    StoreLocal            Slot=6 Source=7   (reuse_record_update.ash:7:1)
+    GetAdtField           Target=8 Ptr=4 FieldIndex=1 Tagless=true   (reuse_record_update.ash:7:1)
+    StoreLocal            Slot=7 Source=8   (reuse_record_update.ash:7:1)
+    DropReuse             Target=9 SourceTemp=4 FieldCount=2 RuntimeManaged=true
+    LoadLocal             Target=10 Slot=6   (reuse_record_update.ash:8:48)
+    LoadConstInt          Target=11 Value=1   (reuse_record_update.ash:8:56)
+    AddInt                Target=12 Left=10 Right=11   (reuse_record_update.ash:8:48)
+    LoadLocal             Target=13 Slot=7   (reuse_record_update.ash:8:67)
+    LoadLocal             Target=14 Slot=6   (reuse_record_update.ash:8:75)
+    AddInt                Target=15 Left=13 Right=14   (reuse_record_update.ash:8:67)
+    AllocReusing          Target=16 Tag=0 FieldCount=2 TokenTemp=9 RuntimeManaged=true Tagless=true   (reuse_record_update.ash:8:32)
+    SetAdtField           Ptr=16 FieldIndex=0 Source=12 Tagless=true   (reuse_record_update.ash:8:32)
+    SetAdtField           Ptr=16 FieldIndex=1 Source=15 Tagless=true   (reuse_record_update.ash:8:32)
+    StoreLocal            Slot=3 Source=16   (reuse_record_update.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=8
+    Jump                  Target=match_end_0   (reuse_record_update.ash:7:1)
+  match_arm_cleanup_2:
+    RestoreArenaState     CursorLocalSlot=4 EndLocalSlot=5 PreRestoreEndSlot=9
+    ReclaimArenaChunks    SavedEndSlot=5 PreRestoreEndSlot=9
+    Jump                  Target=match_none_1   (reuse_record_update.ash:7:1)
+  match_none_1:
+    LoadConstInt          Target=17 Value=0   (reuse_record_update.ash:7:1)
+    StoreLocal            Slot=3 Source=17   (reuse_record_update.ash:7:1)
+  match_end_0:
+    LoadLocal             Target=18 Slot=3   (reuse_record_update.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=10
+    Return                Source=18
+
