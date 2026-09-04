@@ -42,7 +42,9 @@ import AshesCompiler.Semantics.ResultReach.resultAlwaysReachesVariable
 import AshesCompiler.Semantics.StructuralDroppers
 import AshesCompiler.Semantics.SourceContext
 import AshesCompiler.Semantics.TaglessAdtLayout
+import AshesCompiler.Semantics.TcoAffineAppend.affineSelfAppendOrdinals
 import AshesCompiler.Semantics.TcoAnalysis.collectInnermostBody
+import AshesCompiler.Semantics.TcoAnalysis.collectLambdaParamNames
 import AshesCompiler.Semantics.TcoAnalysis.countLambdaArity
 import AshesCompiler.Semantics.TcoAnalysis.hasTailSelfCalls
 import AshesCompiler.Semantics.TraitEvidenceRewriting
@@ -177,6 +179,34 @@ type CoreTcoLoop =
     | selfName: Str
     | arity: Int
     | pendingCurried: Int
+    | parameterNames: List(Str)
+    | affineOrdinals: List(Int)
+    | emitsLoop: Bool
+
+// The emitted entry of the active loop body (stage 0's slot-level `TcoContext`): the label the
+// back edge jumps to, the parameter slots it stores into (parameter order), the per-iteration
+// watermark and stack-pointer slots it restores, the loop-entry slots the reset reads, and the
+// first local allocated after the entry, so a runtime owner registered at or above it is
+// iteration-local.
+type CoreTcoLoopFrame =
+    | bodyLabel: Str
+    | parameterSlots: List(Int)
+    | arenaCursorSlot: Int
+    | arenaEndSlot: Int
+    | stackPointerSlot: Int
+    | fixedCursorSlot: Int
+    | fixedEndSlot: Int
+    | compactionSizeSlot: Int
+    | ownerDepth: Int
+
+// A back edge awaiting its arena block (stage 0's `PendingTcoReset`): the argument types decide
+// the reset once the whole body is lowered, after the iteration-local owners are released.
+type CoreTcoReset =
+    | resetId: Int
+    | argumentTypes: List(SemanticType)
+    | ownedDrops: List((Int, Str))
+    | arenaCursorSlot: Int
+    | arenaEndSlot: Int
 
 type CoreLoweringState =
     | reversedInstructions: List(IrInstruction)
@@ -221,6 +251,9 @@ type CoreLoweringState =
     | programParameterOwnership: List((Str, List((Str, ParameterOwnership))))
     | dropperLabels: DropperLabelCache
     | tcoLoop: Maybe(CoreTcoLoop)
+    | tcoLoopFrame: Maybe(CoreTcoLoopFrame)
+    | pendingTcoResets: List(CoreTcoReset)
+    | recursiveDeclarationSpan: Maybe(TextSpan)
 
 type LoweredCoreValue =
     | state: CoreLoweringState
@@ -447,7 +480,10 @@ let initialStateWithCompleteContext constructorLayouts builtinLayouts externalLa
         letLambdaLabels = [],
         programParameterOwnership = [],
         dropperLabels = emptyDropperLabelCache,
-        tcoLoop = None
+        tcoLoop = None,
+        tcoLoopFrame = None,
+        pendingTcoResets = [],
+        recursiveDeclarationSpan = None
     )
 
 let initialStateWithFullContext constructorLayouts builtinLayouts externalLayouts externalFunctions externalOpaqueTypes unit = initialStateWithCompleteContext(constructorLayouts)(builtinLayouts)(externalLayouts)(externalFunctions)(externalOpaqueTypes)([])([])(0)(unit)
@@ -2372,23 +2408,38 @@ let recursive capturedBindings names bindings reversed =
                 | None -> capturedBindings(rest)(bindings)(reversed)
                 | Some(binding) -> capturedBindings(rest)(bindings)(binding :: reversed)
 
-let recursive fillEnvironment environmentTemp captures index state =
+// A pruned capture's fill is excised after it was lowered, so its temps stay allocated (stage
+// 0's `LowerLambdaCoreRemoveDeadFills` removes the instructions, never the temps).
+let reserveCaptureTemps binding state =
+    match lowerBoundVariable(binding)(state) with
+        | LoweredCoreValue { state = captureState, error = Some(error) } -> failure(captureState)(error)
+        | LoweredCoreValue { state = captureState, error = None } -> success(-1)(SemInt)((captureState with reversedInstructions = state.reversedInstructions, runtimeTemps = state.runtimeTemps))
+
+let recursive fillEnvironment environmentTemp captures survivors index state =
     match captures with
         | [] -> success(environmentTemp)(SemInt)(state)
-        | binding :: rest ->
-            match lowerBoundVariable(binding)(state) with
-                | LoweredCoreValue { state = captureState, error = Some(error) } -> failure(captureState)(error)
-                | LoweredCoreValue { state = captureState, temp = captureTemp, error = None } ->
-                    let storedState =
-                        emit(StoreMemOffset(environmentTemp)(index * 8)(captureTemp))(captureState)
-                    in fillEnvironment(environmentTemp)(rest)(index + 1)(storedState)
+        | (CoreBinding { name = name } as binding) :: rest ->
+            match lookupBinding(name)(survivors) with
+                | None ->
+                    match reserveCaptureTemps(binding)(state) with
+                        | LoweredCoreValue { state = reservedState, error = Some(error) } -> failure(reservedState)(error)
+                        | LoweredCoreValue { state = reservedState, error = None } -> fillEnvironment(environmentTemp)(rest)(survivors)(index)(reservedState)
+                | Some(_survivor) ->
+                    match lowerBoundVariable(binding)(state) with
+                        | LoweredCoreValue { state = captureState, error = Some(error) } -> failure(captureState)(error)
+                        | LoweredCoreValue { state = captureState, temp = captureTemp, error = None } ->
+                            captureState
+                            |> emit(StoreMemOffset(environmentTemp)(index * 8)(captureTemp))
+                            |> fillEnvironment(environmentTemp)(rest)(survivors)(index + 1)
 
 let recursive captureCount captures =
     match captures with
         | [] -> 0
         | _ :: rest -> 1 + captureCount(rest)
 
-let allocateEnvironment captures stackAllocate state =
+// The environment holds the surviving captures; every capture of the free-variable analysis
+// still lowers its fill, the pruned ones only to reserve their temps.
+let allocateEnvironment captures survivors stackAllocate state =
     match freshTemp(state) with
         | FreshTemp { state = tempState, temp = environmentTemp } ->
             match captures with
@@ -2397,7 +2448,7 @@ let allocateEnvironment captures stackAllocate state =
                     |> emit(LoadConstInt(environmentTemp)(0))
                     |> success(environmentTemp)(SemInt)
                 | _ ->
-                    let byteCount = 8 * captureCount(captures)
+                    let byteCount = 8 * captureCount(survivors)
                     in
                         let allocatedState =
                             if stackAllocate
@@ -2405,7 +2456,7 @@ let allocateEnvironment captures stackAllocate state =
                                 emit(AllocStack(environmentTemp)(byteCount))(tempState)
                             else
                                 emit(Alloc(environmentTemp)(byteCount)(false))(tempState)
-                        in fillEnvironment(environmentTemp)(captures)(0)(allocatedState)
+                        in fillEnvironment(environmentTemp)(captures)(survivors)(0)(allocatedState)
 
 // Dead-capture pruning. The free-variable analysis decides a lambda's captures before its body is
 // lowered, so a capture the lowered body never reads through LoadEnv still gets an environment
@@ -2561,6 +2612,7 @@ let prepareLambdaBodyState parameter parameterType captures lambdaId origin stat
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLambdaId = lambdaId + 1))
 
 // A capture that a runtime-managed copy of the closure environment re-establishes by copying its
@@ -2703,11 +2755,84 @@ let emitPrunedClosure label origin captures stackAllocate parameterType bodyType
             match emitClosure(label)(environmentTemp)(captureCount(captures))(stackAllocate)(environmentState) with
                 | (closureState, closureTemp) -> finishClosureResult(parameterType)(bodyType)(finishedBody)((recordClosureNormalizer(label)(captures)(origin)(closureState), closureTemp))
 
+let unlocatedInstruction (kind: IrInstructionKind) (state: CoreLoweringState) = state with reversedInstructions = IrInstruction(instruction = kind, location = None) :: state.reversedInstructions
+
+// The iteration-local owners a back edge releases before its reset, each loaded back and
+// released under a runtime-managed `RcDrop` naming its slot (stage 0's `EmitOwnedValueDrop` at
+// the deferred back edge).
+let recursive emitResolvedOwnedDrops (drops: List((Int, Str))) (state: CoreLoweringState) =
+    match drops with
+        | [] -> state
+        | (slot, typeName) :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = tempState, temp = temp } ->
+                    tempState
+                    |> unlocatedInstruction(LoadLocal(temp)(slot))
+                    |> unlocatedInstruction(RcDrop(temp)(typeName)(slot)(true)(false)(None))
+                    |> emitResolvedOwnedDrops(rest)
+
+let recursive argumentsSurviveReset (types: List(SemanticType)) (state: CoreLoweringState) =
+    match types with
+        | [] -> true
+        | semanticType :: rest -> resultSurvivesReset(semanticType)(state) && argumentsSurviveReset(rest)(state)
+
+// Stage 0's `EmitTcoBackEdgeArenaBlock` for the plain reset: the pre-restore slot is allocated
+// first, the iteration-local owners are released, and when every argument's resolved type
+// survives a reset the per-iteration watermark is restored and the chunks above it reclaimed.
+// An argument of any other type leaves the iteration's allocations in place (its copy-out and
+// runtime-managed paths are not ported).
+let emitResolvedTcoReset (reset: CoreTcoReset) (state: CoreLoweringState) =
+    match freshLocal(state) with
+        | FreshLocal { state = allocated, local = preRestoreSlot } ->
+            allocated
+            |> emitResolvedOwnedDrops(reset.ownedDrops)
+            |> (given (released: CoreLoweringState) ->
+                if argumentsSurviveReset(reset.argumentTypes)(released)
+                then
+                    released
+                    |> unlocatedInstruction(RestoreArenaState(reset.arenaCursorSlot)(reset.arenaEndSlot)(preRestoreSlot)(false))
+                    |> unlocatedInstruction(ReclaimArenaChunks(reset.arenaEndSlot)(preRestoreSlot)(false))
+                else released)
+
+let recursive lookupTcoReset (resetId: Int) (resets: List(CoreTcoReset)) =
+    match resets with
+        | [] -> None
+        | (CoreTcoReset { resetId = candidate } as reset) :: rest ->
+            if candidate == resetId
+            then Some(reset)
+            else lookupTcoReset(resetId)(rest)
+
+let recursive spliceTcoResets (instructions: List(IrInstruction)) (resets: List(CoreTcoReset)) (state: CoreLoweringState) =
+    match instructions with
+        | [] -> state
+        | (IrInstruction { instruction = TcoResetPending(resetId, _usedTemps, _readLocals) } as instruction) :: rest ->
+            match lookupTcoReset(resetId)(resets) with
+                | Some(reset) ->
+                    state
+                    |> emitResolvedTcoReset(reset)
+                    |> spliceTcoResets(rest)(resets)
+                | None -> spliceTcoResets(rest)(resets)((state with reversedInstructions = instruction :: state.reversedInstructions))
+        | instruction :: rest -> spliceTcoResets(rest)(resets)((state with reversedInstructions = instruction :: state.reversedInstructions))
+
+// Stage 0's `ResolveDeferredTcoResets` for one function, once its whole body is lowered: every
+// `TcoResetPending` placeholder becomes its arena block, whose slots and temps are allocated
+// after the body's own and carry no location.
+let resolvePendingTcoResets (state: CoreLoweringState) =
+    match state.pendingTcoResets with
+        | [] -> state
+        | resets ->
+            state.reversedInstructions
+            |> reverse
+            |> (given (instructions: List(IrInstruction)) -> spliceTcoResets(instructions)(resets)((state with reversedInstructions = [], pendingTcoResets = [])))
+
 let finishLambdaBody label origin captures stackAllocate typedOuter parameterType lowered =
     match lowered with
         | LoweredCoreValue { state = failedBody, error = Some(error) } -> failure(failedBody)(error)
         | LoweredCoreValue { state = loweredBody, temp = bodyTemp, semanticType = bodyType, error = None } ->
-            let returned = emit(Return(bodyTemp))(loweredBody)
+            let returned =
+                loweredBody
+                |> emit(Return(bodyTemp))
+                |> resolvePendingTcoResets
             in
                 match pruneDeadCaptures(captures)(returned.reversedInstructions) with
                     | (survivors, prunedInstructions) ->
@@ -2717,7 +2842,7 @@ let finishLambdaBody label origin captures stackAllocate typedOuter parameterTyp
                             |> restoreOuterFrame(typedOuter)
                             |> recordBodyRuntimeManaged(label)(isRuntimeTemp(bodyTemp)(loweredBody))
                             |> markCapturedResourcesMoved(survivors)
-                            |> allocateEnvironment(survivors)(stackAllocate)
+                            |> allocateEnvironment(captures)(survivors)(stackAllocate)
                             |> emitPrunedClosure(label)(origin)(survivors)(stackAllocate)(parameterType)(bodyType)(finishedBody)
 
 // A type annotation (an ADT constructor field's, or — via `lowerLambdaParameterType` below — an
@@ -3144,14 +3269,140 @@ let normalizeAlwaysReturnedParameter parameter body label parameterType lowered 
 // Stage 0's `TcoContext`: a recursive binding whose innermost lambda body has a tail self-call
 // applying every parameter is lowered as a TCO loop over that innermost body; the curried
 // lambdas between the binding and the body are entered on the way.
-let recursiveTcoLoop (name: Str) (body: Expr) =
+let recursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) =
     (let arity = 1 + countLambdaArity(0)(body)
     in
         if hasTailSelfCalls(collectInnermostBody(body))(name)(arity)
-        then Some(CoreTcoLoop(selfName = name, arity = arity, pendingCurried = arity - 1))
+        then
+            Some(CoreTcoLoop(
+                selfName = name,
+                arity = arity,
+                pendingCurried = arity - 1,
+                parameterNames = parameter :: collectLambdaParamNames([])(body),
+                affineOrdinals = body
+                |> collectInnermostBody
+                |> affineSelfAppendOrdinals(name)(parameter :: collectLambdaParamNames([])(body)),
+                emitsLoop = emitsLoop
+            ))
         else None)
 
-let enterRecursiveTcoLoop (name: Str) (body: Expr) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(body)
+// A single recursive binding's loop is emitted as stage 0's loop; a mutual-recursion group
+// member keeps the loop context for its tail self-call arguments but stays a call until the
+// group dispatch is ported.
+let enterRecursiveTcoLoop (name: Str) (parameter: Str) (body: Expr) (emitsLoop: Bool) (state: CoreLoweringState) = state with tcoLoop = recursiveTcoLoop(name)(parameter)(body)(emitsLoop)
+
+let recursive isChainParameterName (name: Str) (names: List(Str)) =
+    match names with
+        | [] -> false
+        | candidate :: rest -> candidate == name || isChainParameterName(name)(rest)
+
+// Stage 0's `LowerLambdaCoreBindTcoParamSlots`: every chain parameter the loop body captures
+// moves from the closure environment into a local slot at function entry, and the body reads
+// it from there.
+let recursive bindChainParameterSlots (names: List(Str)) (parameter: Str) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> state
+        | CoreBinding { name = name, scheme = scheme, location = CoreEnvironment(index) } :: rest ->
+            if name != parameter && isChainParameterName(name)(names)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = slotState, local = slot } ->
+                        match freshTemp(slotState) with
+                            | FreshTemp { state = tempState, temp = temp } ->
+                                tempState
+                                |> emit(LoadEnv(temp)(index))
+                                |> emit(StoreLocal(slot)(temp))
+                                |> addBinding(name)(scheme)(CoreLocal(slot))
+                                |> bindChainParameterSlots(names)(parameter)(rest)
+            else bindChainParameterSlots(names)(parameter)(rest)(state)
+        | _ :: rest -> bindChainParameterSlots(names)(parameter)(rest)(state)
+
+// Stage 0's `LowerLambdaCoreBuildTcoParamSlots`: the back edge's parameter slots in parameter
+// order; a shadowed earlier occurrence of a duplicate name, or a parameter the body never reads,
+// gets a zeroed synthetic slot nothing observes.
+let recursive buildLoopParameterSlots (names: List(Str)) (reversedSlots: List(Int)) (state: CoreLoweringState) =
+    match names with
+        | [] -> (state, reverse(reversedSlots))
+        | name :: rest ->
+            match (isChainParameterName(name)(rest), lookupBinding(name)(state.bindings)) with
+                | (false, Some(CoreBinding { location = CoreLocal(slot) })) -> buildLoopParameterSlots(rest)(slot :: reversedSlots)(state)
+                | _ ->
+                    match freshLocal(state) with
+                        | FreshLocal { state = slotState, local = slot } ->
+                            match freshTemp(slotState) with
+                                | FreshTemp { state = tempState, temp = temp } ->
+                                    tempState
+                                    |> emit(LoadConstInt(temp)(0))
+                                    |> emit(StoreLocal(slot)(temp))
+                                    |> buildLoopParameterSlots(rest)(slot :: reversedSlots)
+
+// The reservation slot pair of every affine accumulator, zeroed so no string matches a
+// reservation until the loop's first fallback reserves one.
+let recursive emitAffineReservations (ordinals: List(Int)) (slots: List(Int)) (ordinal: Int) (zeroTemp: Int) (state: CoreLoweringState) =
+    match slots with
+        | [] -> state
+        | _slot :: rest ->
+            if containsInt(ordinal)(ordinals)
+            then
+                match freshLocal(state) with
+                    | FreshLocal { state = startState, local = reservationStart } ->
+                        match freshLocal(startState) with
+                            | FreshLocal { state = endState, local = reservationEnd } ->
+                                endState
+                                |> emit(StoreLocal(reservationStart)(zeroTemp))
+                                |> emit(StoreLocal(reservationEnd)(zeroTemp))
+                                |> emitAffineReservations(ordinals)(rest)(ordinal + 1)(zeroTemp)
+            else emitAffineReservations(ordinals)(rest)(ordinal + 1)(zeroTemp)(state)
+
+let finishTcoLoopEntry (label: Str) (slots: List(Int)) (fixedCursorSlot: Int) (fixedEndSlot: Int) (compactionSizeSlot: Int) (bracket: ArenaBracket) =
+    match bracket with
+        | ArenaBracket { bracketState = iterationState, bracketCursorSlot = cursorSlot, bracketEndSlot = endSlot } ->
+            match freshLocal(iterationState) with
+                | FreshLocal { state = stackState, local = stackPointerSlot } ->
+                    stackState
+                    |> emit(SaveStackPointer(stackPointerSlot))
+                    |> (given (entered: CoreLoweringState) ->
+                        entered with tcoLoopFrame = Some(CoreTcoLoopFrame(
+                            bodyLabel = label + "_body",
+                            parameterSlots = slots,
+                            arenaCursorSlot = cursorSlot,
+                            arenaEndSlot = endSlot,
+                            stackPointerSlot = stackPointerSlot,
+                            fixedCursorSlot = fixedCursorSlot,
+                            fixedEndSlot = fixedEndSlot,
+                            compactionSizeSlot = compactionSizeSlot,
+                            ownerDepth = entered.nextLocal
+                        )))
+
+// Stage 0's `LowerLambdaCoreEmitTcoLoopEntry`: the fixed loop-entry watermark saved once, the
+// compaction-size slot and the affine reservation slots zeroed, then the body label followed by
+// the per-iteration watermark and stack pointer the back edge restores.
+let emitTcoLoopEntry (label: Str) (slots: List(Int)) (loop: CoreTcoLoop) (state: CoreLoweringState) =
+    match openArenaBracket(state) with
+        | ArenaBracket { bracketState = fixedState, bracketCursorSlot = fixedCursorSlot, bracketEndSlot = fixedEndSlot } ->
+            match freshLocal(fixedState) with
+                | FreshLocal { state = compactionState, local = compactionSizeSlot } ->
+                    match freshTemp(compactionState) with
+                        | FreshTemp { state = zeroState, temp = zeroTemp } ->
+                            zeroState
+                            |> emit(LoadConstInt(zeroTemp)(0))
+                            |> emit(StoreLocal(compactionSizeSlot)(zeroTemp))
+                            |> emitAffineReservations(loop.affineOrdinals)(slots)(0)(zeroTemp)
+                            |> emit(Label(label + "_body"))
+                            |> openArenaBracket
+                            |> finishTcoLoopEntry(label)(slots)(fixedCursorSlot)(fixedEndSlot)(compactionSizeSlot)
+
+// The loop body of a loop function (stage 0's `LowerLambdaCoreEnterTcoLoop`): once the innermost
+// chain lambda is entered, its parameters get their back-edge slots and the loop entry is emitted
+// before the body.
+let enterTcoLoopBody (label: Str) (parameter: Str) (state: CoreLoweringState) =
+    match state.tcoLoop with
+        | Some(CoreTcoLoop { pendingCurried = 0, emitsLoop = true, parameterNames = names } as loop) ->
+            match state
+            |> bindChainParameterSlots(names)(parameter)(state.bindings)
+            |> buildLoopParameterSlots(names)([]) with
+                | (slotted, slots) -> emitTcoLoopEntry(label)(slots)(loop)(slotted)
+        | _ -> state
 
 // A lambda entered inside a loop function: the next curried parameter's lambda stays in the loop
 // (one fewer to enter); any other lambda is a nested closure whose body leaves it.
@@ -3177,6 +3428,7 @@ let lowerLambdaBody parameter body stackAllocate lower lambdaId captures origin 
             typedOuter
             |> prepareLambdaBodyState(parameter)(parameterType)(captures)(lambdaId)(origin)
             |> enterLambdaTcoLoop
+            |> enterTcoLoopBody("lambda_" + Ashes.Text.fromInt(lambdaId))(parameter)
             |> withLoopBodyRequest(functionBodyRequest(body)(typedOuter))
             |> lower(body)
             |> normalizeAlwaysReturnedParameter(parameter)(body)("lambda_" + Ashes.Text.fromInt(lambdaId))(parameterType)
@@ -5264,6 +5516,7 @@ let prepareRecursiveBodyState parameter parameterType captures selfBindings orig
         |> (given (current: CoreLoweringState) -> current with nextTemp = 0)
         |> (given (current: CoreLoweringState) -> current with pendingOperatorDefaults = [])
         |> (given (current: CoreLoweringState) -> current with resourceStates = [])
+        |> (given (current: CoreLoweringState) -> current with tcoLoopFrame = None, pendingTcoResets = [])
         |> (given (current: CoreLoweringState) -> current with nextLocal = 2))
 
 let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOuter lowered =
@@ -5276,6 +5529,7 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                     let finishedBody =
                         typedBody
                         |> emit(Return(bodyTemp))
+                        |> resolvePendingTcoResets
                         |> finishLiftedFunction(label)(origin)
                     in
                         let restored = restoreOuterFrame(typedOuter)(finishedBody)
@@ -5283,6 +5537,19 @@ let finishRecursiveLambdaBody prepared origin captures environmentTemp typedOute
                             match emitClosure(label)(environmentTemp)(captureCount(captures))(false)(restored) with
                                 | (closureState, closureTemp) ->
                                     success(closureTemp)(resolveType(finishedBody)(semanticType))(closureState)
+
+// A curried parameter lambda written as `let recursive f a b = ...` sugar carries its
+// declaration's span in stage 0's syntax tree, so the chain's inner lambdas are lowered under it.
+// The parser ends a sugar binding's span at its unspanned lambda value, so a declaration at the
+// start of the file would collapse to the unlocated `TextSpan(0, 0)`; only the start locates
+// instructions, so the span is widened past it.
+let sugarChainBody (body: Expr) (declarationSpan: Maybe(TextSpan)) =
+    match (body, declarationSpan) with
+        | (ExprLambda(_parameter, _inner, _annotation), Some(TextSpan(start, end))) ->
+            if end > start
+            then ExprAt(TextSpan(start = start, end = end))(body)
+            else ExprAt(TextSpan(start = start, end = start + 1))(body)
+        | _ -> body
 
 let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp lower state =
     match prepared with
@@ -5292,9 +5559,10 @@ let lowerPreparedRecursiveLambda prepared selfBindings captures environmentTemp 
             |> (given (origin) ->
                 state
                 |> prepareRecursiveBodyState(parameter)(parameterType)(captures)(selfBindings)(origin)
-                |> enterRecursiveTcoLoop(name)(body)
+                |> enterRecursiveTcoLoop(name)(parameter)(body)(captureCount(selfBindings) == 1)
+                |> enterTcoLoopBody(label)(parameter)
                 |> withLoopBodyRequest(functionBodyRequest(body)(state))
-                |> lower(body)
+                |> lower(sugarChainBody(body)(state.recursiveDeclarationSpan))
                 |> finishRecursiveLambdaBody(prepared)(origin)(captures)(environmentTemp)(state))
 
 let preparedSelfBinding environmentSize prepared =
@@ -5441,7 +5709,7 @@ let lowerPreparedRecursiveGroupWith bindings body memberLower continuationLower 
                 in
                     match preparedState
                     |> clearConsumerRequest
-                    |> allocateEnvironment(captures)(false) with
+                    |> allocateEnvironment(captures)(captures)(false) with
                         | LoweredCoreValue { state = failedState, error = Some(error) } -> failure(failedState)(error)
                         | LoweredCoreValue { state = environmentState, temp = environmentTemp, error = None } ->
                             let selfBindings =
@@ -5478,9 +5746,9 @@ let relabelSingleRecursive lambdaId prepared =
 
 let lowerLetRecursive name value body lower state =
     match state with
-        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId } ->
+        | CoreLoweringState { bindings = outerBindings, nextLambdaId = lambdaId, currentSpan = declarationSpan } ->
             []
-            |> prepareRecursiveGroup([(name, value)])(state)
+            |> prepareRecursiveGroup([(name, value)])((state with recursiveDeclarationSpan = declarationSpan))
             |> relabelSingleRecursive(lambdaId)
             |> lowerPreparedRecursiveGroup([(name, value)])(body)(lower)(outerBindings)
 
@@ -7684,6 +7952,162 @@ let unifyOptionalExpectedResult expected lowered =
         | None -> lowered
         | Some(expectedType) -> unifyExpectedResult(expectedType)(lowered)
 
+type CoreTailSelfCallArguments =
+    | state: CoreLoweringState
+    | temps: List(Int)
+    | argumentTypes: List(SemanticType)
+    | error: Maybe(CoreLoweringError)
+
+let failedTailSelfCallArguments state error =
+    CoreTailSelfCallArguments(
+        state = state,
+        temps = [],
+        argumentTypes = [],
+        error = Some(error)
+    )
+
+// Stage 0's `LowerCallTcoEvalArgs`: every argument of the tail self-call is lowered into a temp
+// first, expected to have the loop function's parameter type, under the children transfer and
+// never in tail position, before any parameter slot changes.
+let recursive lowerTailSelfCallArguments (arguments: List(Expr)) functionType lower (state: CoreLoweringState) (reversedTemps: List(Int)) (reversedTypes: List(SemanticType)) =
+    match arguments with
+        | [] ->
+            CoreTailSelfCallArguments(
+                state = state,
+                temps = reverse(reversedTemps),
+                argumentTypes = reverse(reversedTypes),
+                error = None
+            )
+        | argument :: rest ->
+            match ensureFunctionType(functionType)(state) with
+                | FunctionTypeResolution { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
+                | FunctionTypeResolution { state = functionState, argumentType = parameterType, resultType = resultType, error = None } ->
+                    match functionState
+                    |> withArgumentRequest(Some(parameterType))(true)
+                    |> lower(argument)
+                    |> retainTransferredChild(argument)(true) with
+                        | LoweredCoreValue { state = failedState, error = Some(error) } -> failedTailSelfCallArguments(failedState)(error)
+                        | LoweredCoreValue { state = argumentState, temp = argumentTemp, semanticType = argumentType, error = None } ->
+                            match bindType(parameterType)(argumentType)(argumentState) with
+                                | (failedState, Some(error)) -> failedTailSelfCallArguments(failedState)(error)
+                                | (typedState, None) -> lowerTailSelfCallArguments(rest)(resultType)(lower)(typedState)(argumentTemp :: reversedTemps)(argumentType :: reversedTypes)
+
+let recursive loadOldParameters (slots: List(Int)) (state: CoreLoweringState) (reversedTemps: List(Int)) =
+    match slots with
+        | [] -> (state, reverse(reversedTemps))
+        | slot :: rest ->
+            match freshTemp(state) with
+                | FreshTemp { state = tempState, temp = temp } ->
+                    loadOldParameters(rest)(emit(LoadLocal(temp)(slot))(tempState))(temp :: reversedTemps)
+
+let recursive storeNewParameters (slots: List(Int)) (temps: List(Int)) (state: CoreLoweringState) =
+    match (slots, temps) with
+        | (slot :: restSlots, temp :: restTemps) ->
+            state
+            |> emit(StoreLocal(slot)(temp))
+            |> storeNewParameters(restSlots)(restTemps)
+        | _ -> state
+
+let recursive ownerTypeNameOfSlot (slot: Int) (bindings: List(CoreBinding)) (state: CoreLoweringState) =
+    match bindings with
+        | [] -> None
+        | CoreBinding { location = CoreLocal(candidate), scheme = TypeScheme { body = bindingType } } :: rest ->
+            if candidate == slot
+            then
+                ownedTypeNameOf(resolveType(state)(bindingType))(state.constructorLayouts)
+            else ownerTypeNameOfSlot(slot)(rest)(state)
+        | _ :: rest -> ownerTypeNameOfSlot(slot)(rest)(state)
+
+// The runtime owners registered since the loop entry that still hold their reference at the back
+// edge, with the type name each releases under (stage 0's `CollectTcoBackEdgeOwnedDrops`): their
+// lexical release sits after the jump, unreachable on this path.
+let recursive iterationOwnedDrops (depth: Int) (state: CoreLoweringState) (owners: List((Int, Bool))) =
+    match owners with
+        | [] -> []
+        | (slot, true) :: rest ->
+            match (slot >= depth, ownerTypeNameOfSlot(slot)(state.bindings)(state)) with
+                | (true, Some(typeName)) -> (slot, typeName) :: iterationOwnedDrops(depth)(state)(rest)
+                | _ -> iterationOwnedDrops(depth)(state)(rest)
+        | _ :: rest -> iterationOwnedDrops(depth)(state)(rest)
+
+let recursive ownedDropSlots (drops: List((Int, Str))) =
+    match drops with
+        | [] -> []
+        | (slot, _typeName) :: rest -> slot :: ownedDropSlots(rest)
+
+// The reset placeholder (stage 0's `TcoResetPending`), resolved once the whole body is lowered
+// so the argument types are as concrete as the function's own body makes them.
+let scheduleTcoReset (frame: CoreTcoLoopFrame) (temps: List(Int)) (oldTemps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    state.runtimeOwners
+    |> iterationOwnedDrops(frame.ownerDepth)(state)
+    |> (given (drops: List((Int, Str))) ->
+        CoreTcoReset(
+            resetId = length(state.pendingTcoResets),
+            argumentTypes = argumentTypes,
+            ownedDrops = drops,
+            arenaCursorSlot = frame.arenaCursorSlot,
+            arenaEndSlot = frame.arenaEndSlot
+        ))
+    |> (given (reset: CoreTcoReset) ->
+        state
+        |> emit([frame.fixedCursorSlot, frame.fixedEndSlot, frame.arenaCursorSlot, frame.arenaEndSlot, frame.compactionSizeSlot]
+        |> append(ownedDropSlots(reset.ownedDrops))
+        |> append(frame.parameterSlots)
+        |> TcoResetPending(reset.resetId)(append(temps)(oldTemps)))
+        |> (given (scheduled: CoreLoweringState) -> scheduled with pendingTcoResets = reset :: scheduled.pendingTcoResets))
+
+// The back edge cannot reach its expression join; its synthetic zero is the value the join
+// stores (stage 0's `LowerCallTcoBackEdgeDummy`).
+let emitBackEdgeDummy (state: CoreLoweringState) =
+    match freshTemp(state) with
+        | FreshTemp { state = tempState, temp = dummy } ->
+            match freshType(tempState) with
+                | FreshType { state = typedState, semanticType = resultType } ->
+                    typedState
+                    |> emit(LoadConstInt(dummy)(0))
+                    |> success(dummy)(resultType)
+
+// Stage 0's `LowerCallTcoSelfCall` after the arguments: the parameters' old values are loaded,
+// the new values stored into the parameter slots, the reset scheduled, the stack pointer
+// restored to the loop body's entry, and the body label re-entered.
+let emitTailSelfCallBackEdge (frame: CoreTcoLoopFrame) (temps: List(Int)) (argumentTypes: List(SemanticType)) (state: CoreLoweringState) =
+    match loadOldParameters(frame.parameterSlots)(state)([]) with
+        | (loadedState, oldTemps) ->
+            loadedState
+            |> storeNewParameters(frame.parameterSlots)(temps)
+            |> scheduleTcoReset(frame)(temps)(oldTemps)(argumentTypes)
+            |> emit(RestoreStackPointer(frame.stackPointerSlot))
+            |> emit(Jump(frame.bodyLabel))
+            |> emitBackEdgeDummy
+
+// A tail self-call inside an emitted loop body is the loop's back edge rather than a call: the
+// loop function's own type gives each argument its expected parameter type.
+let lowerTailSelfCall (spine: CoreCallSpine) (frame: CoreTcoLoopFrame) (selfName: Str) lower (state: CoreLoweringState) =
+    match lookupBinding(selfName)(state.bindings) with
+        | None -> failure(state)(UnknownLoweringBinding(selfName))
+        | Some(binding) ->
+            match instantiateBinding(binding)(state) with
+                | InstantiatedBinding { state = instantiatedState, semanticType = functionType } ->
+                    match lowerTailSelfCallArguments(spine.arguments)(functionType)(lower)(instantiatedState)([])([]) with
+                        | CoreTailSelfCallArguments { state = failedState, error = Some(error) } -> failure(failedState)(error)
+                        | CoreTailSelfCallArguments { state = argumentState, temps = temps, argumentTypes = argumentTypes, error = None } ->
+                            argumentState
+                            |> markCallArgumentsMoved(spine)
+                            |> emitTailSelfCallBackEdge(frame)(temps)(argumentTypes)
+
+let lowerGeneralCall expression function argument lower state =
+    match (isTailSelfCall(collectCallSpine(expression))(state), state.tcoLoopFrame, state.tcoLoop) with
+        | (true, Some(frame), Some(CoreTcoLoop { selfName = selfName })) ->
+            state
+            |> clearConsumerRequest
+            |> lowerTailSelfCall(collectCallSpine(expression))(frame)(selfName)(lower)
+            |> unifyOptionalExpectedResult(expectedTypeOf(state))
+        | _ ->
+            state
+            |> clearConsumerRequest
+            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(lower)
+            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+
 let lowerCallExpression expression function argument lower state =
     match state
     |> clearConsumerRequest
@@ -7698,11 +8122,7 @@ let lowerCallExpression expression function argument lower state =
                     |> clearConsumerRequest
                     |> tryLowerExternalCall(expression)(lower) with
                         | Some(lowered) -> lowered
-                        | None ->
-                            state
-                            |> clearConsumerRequest
-                            |> lowerCall(collectCallSpine(expression))(function)(argument)(expectedTypeOf(state))(isTailSelfCall(collectCallSpine(expression))(state))(lower)
-                            |> markLoweredCallArgumentsMoved(collectCallSpine(expression))
+                        | None -> lowerGeneralCall(expression)(function)(argument)(lower)(state)
 
 let lowerCoreDispatch expression lowerCore state =
     match expression with
@@ -8486,7 +8906,7 @@ let registerTopLevelTypeDeclaration (declaration: TypeDecl) (state: CoreLowering
 let recursive lowerCoreProgramItems items trailingBody seen environment state =
     match items with
         | [] -> lowerCore(trailingBody)(state)
-        | TopLevelAt(_span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)(state)
+        | TopLevelAt(span, inner) :: rest -> lowerCoreProgramItems(inner :: rest)(trailingBody)(seen)(environment)((state with recursiveDeclarationSpan = Some(span)))
         | TopLevelType(declaration) :: rest ->
             match registerTopLevelTypeDeclaration(declaration)(state) with
                 | Error(error) -> failure(state)(error)

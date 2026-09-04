@@ -1,0 +1,11 @@
+let recursive count n acc =
+    if n == 0
+    then acc
+    else
+        let s = Ashes.Text.fromInt(n)
+        in
+            count(n - 1)(if s == "3"
+            then acc + 1
+            else acc)
+
+Ashes.IO.print(Ashes.Text.fromInt(count(10)(0)))

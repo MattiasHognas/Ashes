@@ -715,6 +715,19 @@ let codegenInstructionKind cx builder kind state =
                                                 in
                                                     let _ = addResolvedSwitchCases(switchInst)(i64)(resolved)
                                                     in (tempEnv, true)
+                        // The TCO loop body's stack-pointer bracket — see `IrCodegen.Arena`.
+                                        | SaveStackPointer(slot) ->
+                                            let _ =
+                                                localSlots
+                                                |> lookupIndexed(slot)
+                                                |> emitSaveStackPointer(builder)(i64)(arena)
+                                            in (tempEnv, terminated)
+                                        | RestoreStackPointer(slot) ->
+                                            let _ =
+                                                localSlots
+                                                |> lookupIndexed(slot)
+                                                |> emitRestoreStackPointer(builder)(i64)(ptrType)(arena)
+                                            in (tempEnv, terminated)
                         // The scoped-arena brackets — see `IrCodegen.Arena`. The coroutine-loop
                         // form belongs to the async scheduler, which is not ported.
                                         | SaveArenaState(cursorSlot, endSlot, coroutineLoop) ->

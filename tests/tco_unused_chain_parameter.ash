@@ -1,0 +1,7 @@
+// expect: 0
+let recursive f n acc =
+    if acc == 0
+    then 0
+    else f(0)(acc - 1)
+
+Ashes.IO.print(Ashes.Text.fromInt(f(3)(5)))

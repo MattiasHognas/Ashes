@@ -1,0 +1,78 @@
+IR (lowered)
+============
+
+function lambda_1  [ClosureHelper from countdown]
+  locals=13 temps=16
+    LoadEnv               Target=0 Index=0   (tco_scalar_loop.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_scalar_loop.ash:1:1)
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=1 Value=0   (tco_scalar_loop.ash:1:1)
+    StoreLocal            Slot=5 Source=1   (tco_scalar_loop.ash:1:1)
+    StoreLocal            Slot=6 Source=1   (tco_scalar_loop.ash:1:1)
+    StoreLocal            Slot=7 Source=1   (tco_scalar_loop.ash:1:1)
+  lambda_1_body:
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    SaveStackPointer      Slot=10   (tco_scalar_loop.ash:1:1)
+    LoadLocal             Target=2 Slot=2   (tco_scalar_loop.ash:2:8)
+    LoadConstInt          Target=3 Value=0   (tco_scalar_loop.ash:2:13)
+    CmpIntEq              Target=4 Left=2 Right=3   (tco_scalar_loop.ash:2:8)
+    JumpIfFalse           CondTemp=4 Target=else_0   (tco_scalar_loop.ash:2:5)
+    LoadLocal             Target=5 Slot=1   (tco_scalar_loop.ash:3:10)
+    StoreLocal            Slot=11 Source=5   (tco_scalar_loop.ash:2:5)
+    Jump                  Target=endif_1   (tco_scalar_loop.ash:2:5)
+  else_0:
+    LoadLocal             Target=6 Slot=2   (tco_scalar_loop.ash:4:20)
+    LoadConstInt          Target=7 Value=1   (tco_scalar_loop.ash:4:24)
+    SubInt                Target=8 Left=6 Right=7   (tco_scalar_loop.ash:4:20)
+    LoadLocal             Target=9 Slot=1   (tco_scalar_loop.ash:4:27)
+    LoadLocal             Target=10 Slot=2   (tco_scalar_loop.ash:4:33)
+    AddInt                Target=11 Left=9 Right=10   (tco_scalar_loop.ash:4:27)
+    LoadLocal             Target=12 Slot=2   (tco_scalar_loop.ash:4:10)
+    LoadLocal             Target=13 Slot=1   (tco_scalar_loop.ash:4:10)
+    StoreLocal            Slot=2 Source=8   (tco_scalar_loop.ash:4:10)
+    StoreLocal            Slot=1 Source=11   (tco_scalar_loop.ash:4:10)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=12
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=12
+    RestoreStackPointer   Slot=10   (tco_scalar_loop.ash:4:10)
+    Jump                  Target=lambda_1_body   (tco_scalar_loop.ash:4:10)
+    LoadConstInt          Target=14 Value=0   (tco_scalar_loop.ash:4:10)
+    StoreLocal            Slot=11 Source=14   (tco_scalar_loop.ash:2:5)
+  endif_1:
+    LoadLocal             Target=15 Slot=11   (tco_scalar_loop.ash:2:5)
+    Return                Source=15   (tco_scalar_loop.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from countdown]
+  locals=2 temps=4
+    LoadLocal             Target=0 Slot=0   (tco_scalar_loop.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_scalar_loop.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_scalar_loop.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=2   (tco_scalar_loop.ash:1:1)
+    LoadConstInt          Target=3 Value=0   (tco_scalar_loop.ash:1:1)
+    Return                Source=3   (tco_scalar_loop.ash:1:1)
+
+function lambda_0  [SourceFunction from countdown]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_scalar_loop.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_scalar_loop.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_scalar_loop.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_scalar_loop.ash:1:1)
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=9
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_scalar_loop.ash:6:35)
+    LoadConstInt          Target=3 Value=1000000   (tco_scalar_loop.ash:6:45)
+    CallClosure           Target=4 ClosureTemp=2 ArgTemp=3   (tco_scalar_loop.ash:6:35)
+    LoadConstInt          Target=5 Value=0   (tco_scalar_loop.ash:6:54)
+    CallClosure           Target=6 ClosureTemp=4 ArgTemp=5   (tco_scalar_loop.ash:6:35)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    TextFromInt           Target=7 ValueTemp=6   (tco_scalar_loop.ash:6:16)
+    PrintStr              Source=7   (tco_scalar_loop.ash:6:1)
+    AllocAdt              Target=8 Tag=0 FieldCount=0   (tco_scalar_loop.ash:6:1)
+    Return                Source=8
+

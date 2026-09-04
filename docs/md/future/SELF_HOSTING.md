@@ -803,7 +803,34 @@ same public behavior.
   callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
   (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
   a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
-  `call_argument_retain` fixtures join the byte-identical set. Open: the mutual-recursion loop merge
+  `call_argument_retain` fixtures join the byte-identical set. The TCO loop of a self-recursive
+  function is lowered as stage 0's loop rather than a call the backend fuses: the chain
+  parameters the loop body captures move into local slots at entry (`LoadEnv`, `StoreLocal`), an
+  unread or shadowed parameter gets a zeroed synthetic slot, the fixed loop-entry watermark, the
+  compaction-size slot, and a reservation slot pair per affine accumulator
+  (`TcoAffineAppend.ash`, stage 0's `ComputeAffineSelfAppendOrdinals`) precede the
+  `lambda_N_body` label, the per-iteration watermark and `SaveStackPointer` follow it, and the
+  back edge evaluates every argument into a temp under the children transfer, loads the old
+  parameters, stores the new ones, releases the iteration-local runtime owners, resets the
+  per-iteration watermark when every argument's resolved type survives a reset (both resolved
+  through a `TcoResetPending` placeholder once the function body is lowered, the pre-restore
+  slot and release temps allocated after the body's own), restores the stack pointer, and jumps;
+  the backend emits `SaveStackPointer`/`RestoreStackPointer` through `llvm.stacksave`/
+  `llvm.stackrestore`. The `tco_scalar_loop`, `tco_scalar_owned_let`, and
+  `tco_unused_chain_parameter` fixtures join the byte-identical set; `TcoLoopLoweringTests.ash`
+  holds the loop-function comparisons of `tco_list_walk` (identical loop function; the program
+  lacks the list capture's closure normalizer and dropper) and
+  `tco_non_tail_self_call_in_operator_operand` (the scalar loops match except for the window
+  reset of the non-tail self-call under the operator, whose result type stage 0 infers before
+  lowering). Open: the runtime-managed loop parameters (stage 0's `RuntimeManagedSlotsInOrder`:
+  the active-flag locals allocated at entry, the entry normalization
+  (`LowerLambdaCoreSpliceRuntimeManagedTcoParams`) and the back-edge normalization and release
+  (`TcoBackEdgeNormalizeRuntimeManagedArg`, the `Borrow` of a pattern-owned successor and the
+  old root's drop), the exit-path drops and result transfer
+  (`LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`), and the copy-out reset paths for string,
+  list, and ADT parameters (fixed-watermark compaction, the two-phase up/down copies, affine
+  string reservations) — a loop over such parameters is emitted without a back-edge reset), the
+  resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
   `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
@@ -857,8 +884,10 @@ same public behavior.
   (a known call whose body is a fresh-string builtin — the one `let` value the selfhost places on
   the RC heap today) run through the backend suite, next to the regression fixture itself, whose
   `let label = taken(...)` result stays an arena string until call-result RC normalization is
-  ported, so no retain fires on it. Open: the Perceus pattern-owner duplicate an owning consumer
-  adds (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
+  ported, so no retain fires on it. The tail self-call's arguments are now the loop's back edge
+  (OPT-25), lowered into temps under the transfer before any parameter slot changes. Open: the
+  Perceus pattern-owner duplicate an owning consumer adds
+  (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
   (`DuplicateRuntimeManagedTcoParameterForAggregate`), waiting on pattern owners and parameter
   placement.
 - [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
@@ -892,11 +921,14 @@ same public behavior.
   self-call is an ordinary call by construction. Covered by `TcoTests.ash` (`hasTailSelfCalls`
   over operator operands), `TcoOwnershipRulesTests.ash` (the operand branch's cons stores the
   plain borrow, the tail branch's the retained duplicate), and the regression program plus
-  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. Open: the loop
-  lowering itself (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`, argument
-  ownership flags with entry and back-edge normalization, the exit transfer) — the loop functions
-  of the OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of
-  the parity runner.
+  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. The loop itself
+  is lowered under OPT-25 (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`,
+  the deferred back-edge reset), so an operand self-call is an ordinary call and a tail self-call
+  the loop's jump; the regression program's scalar loops are compared with stage 0's in
+  `TcoLoopLoweringTests.ash`. Open: the runtime-managed loop parameters (argument ownership
+  flags with entry and back-edge normalization, the exit transfer) — the loop functions of the
+  OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of the
+  parity runner.
 - [ ] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:

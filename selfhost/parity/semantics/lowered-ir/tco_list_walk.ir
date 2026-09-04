@@ -1,0 +1,174 @@
+IR (lowered)
+============
+
+function lambda_2  [ClosureHelper from walk]
+  locals=26 temps=30
+    LoadEnv               Target=0 Index=0   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=2 Source=0   (tco_list_walk.ash:1:1)
+    LoadEnv               Target=1 Index=1   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=3 Source=1   (tco_list_walk.ash:1:1)
+    SaveArenaState        CursorLocalSlot=4 EndLocalSlot=5
+    LoadConstInt          Target=2 Value=0   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=6 Source=2   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=7 Source=2   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=8 Source=2   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=9 Source=2   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=10 Source=2   (tco_list_walk.ash:1:1)
+  lambda_2_body:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    SaveStackPointer      Slot=13   (tco_list_walk.ash:1:1)
+    LoadLocal             Target=3 Slot=2   (tco_list_walk.ash:2:11)
+    SaveArenaState        CursorLocalSlot=15 EndLocalSlot=16
+    LoadConstInt          Target=4 Value=0   (tco_list_walk.ash:2:5)
+    CmpIntEq              Target=5 Left=3 Right=4   (tco_list_walk.ash:2:5)
+    JumpIfFalse           CondTemp=5 Target=match_arm_cleanup_3   (tco_list_walk.ash:2:5)
+    LoadLocal             Target=6 Slot=3   (tco_list_walk.ash:3:17)
+    LoadConstInt          Target=7 Value=1000   (tco_list_walk.ash:3:25)
+    MulInt                Target=8 Left=6 Right=7   (tco_list_walk.ash:3:17)
+    LoadLocal             Target=9 Slot=1   (tco_list_walk.ash:3:32)
+    AddInt                Target=10 Left=8 Right=9   (tco_list_walk.ash:3:17)
+    StoreLocal            Slot=14 Source=10   (tco_list_walk.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=17
+    Jump                  Target=match_end_0   (tco_list_walk.ash:2:5)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=15 EndLocalSlot=16 PreRestoreEndSlot=18
+    ReclaimArenaChunks    SavedEndSlot=16 PreRestoreEndSlot=18
+    Jump                  Target=match_next_2   (tco_list_walk.ash:2:5)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=19 EndLocalSlot=20
+    LoadConstInt          Target=11 Value=0   (tco_list_walk.ash:2:5)
+    CmpIntNe              Target=12 Left=3 Right=11   (tco_list_walk.ash:2:5)
+    JumpIfFalse           CondTemp=12 Target=match_arm_cleanup_4   (tco_list_walk.ash:2:5)
+    LoadMemOffset         Target=13 BasePtr=3 OffsetBytes=0   (tco_list_walk.ash:2:5)
+    LoadMemOffset         Target=14 BasePtr=3 OffsetBytes=8   (tco_list_walk.ash:2:5)
+    StoreLocal            Slot=21 Source=13   (tco_list_walk.ash:2:5)
+    StoreLocal            Slot=22 Source=14   (tco_list_walk.ash:2:5)
+    LoadLocal             Target=15 Slot=22   (tco_list_walk.ash:4:29)
+    Borrow                Target=16 SourceTemp=15
+    LoadLocal             Target=17 Slot=3   (tco_list_walk.ash:4:35)
+    LoadConstInt          Target=18 Value=1   (tco_list_walk.ash:4:43)
+    AddInt                Target=19 Left=17 Right=18   (tco_list_walk.ash:4:35)
+    LoadLocal             Target=20 Slot=1   (tco_list_walk.ash:4:46)
+    LoadLocal             Target=21 Slot=21   (tco_list_walk.ash:4:54)
+    AddInt                Target=22 Left=20 Right=21   (tco_list_walk.ash:4:46)
+    LoadLocal             Target=23 Slot=2   (tco_list_walk.ash:4:24)
+    LoadLocal             Target=24 Slot=3   (tco_list_walk.ash:4:24)
+    LoadLocal             Target=25 Slot=1   (tco_list_walk.ash:4:24)
+    StoreLocal            Slot=2 Source=16   (tco_list_walk.ash:4:24)
+    RcDrop                SourceTemp=14 TypeName=List OwnerSlot=22
+    StoreLocal            Slot=3 Source=19   (tco_list_walk.ash:4:24)
+    StoreLocal            Slot=1 Source=22   (tco_list_walk.ash:4:24)
+    RestoreStackPointer   Slot=13   (tco_list_walk.ash:4:24)
+    Jump                  Target=lambda_2_body   (tco_list_walk.ash:4:24)
+    LoadConstInt          Target=26 Value=0   (tco_list_walk.ash:4:24)
+    StoreLocal            Slot=14 Source=26   (tco_list_walk.ash:2:5)
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=23
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=23
+    Jump                  Target=match_end_0   (tco_list_walk.ash:2:5)
+  match_arm_cleanup_4:
+    RestoreArenaState     CursorLocalSlot=19 EndLocalSlot=20 PreRestoreEndSlot=24
+    ReclaimArenaChunks    SavedEndSlot=20 PreRestoreEndSlot=24
+    Jump                  Target=match_none_1   (tco_list_walk.ash:2:5)
+  match_none_1:
+    LoadConstInt          Target=28 Value=0   (tco_list_walk.ash:2:5)
+    StoreLocal            Slot=14 Source=28   (tco_list_walk.ash:2:5)
+  match_end_0:
+    LoadLocal             Target=29 Slot=14   (tco_list_walk.ash:2:5)
+    Return                Source=29   (tco_list_walk.ash:1:1)
+
+function __rc_cdrop_3  [RuntimeManagedClosureDropper]
+  locals=3 temps=8
+    LoadLocal             Target=0 Slot=1   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=1 BasePtr=0 OffsetBytes=0   (tco_list_walk.ash:1:1)
+    StoreLocal            Slot=2 Source=1   (tco_list_walk.ash:1:1)
+  rcdrop_list_5:
+    LoadLocal             Target=2 Slot=2   (tco_list_walk.ash:1:1)
+    LoadConstInt          Target=3 Value=0   (tco_list_walk.ash:1:1)
+    CmpIntNe              Target=4 Left=2 Right=3   (tco_list_walk.ash:1:1)
+    JumpIfFalse           CondTemp=4 Target=rcdrop_list_end_7   (tco_list_walk.ash:1:1)
+    RcIsUnique            Target=5 SourceTemp=2
+    JumpIfFalse           CondTemp=5 Target=rcdrop_list_shared_6   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=6 BasePtr=2 OffsetBytes=8   (tco_list_walk.ash:1:1)
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=2 Source=6   (tco_list_walk.ash:1:1)
+    Jump                  Target=rcdrop_list_5   (tco_list_walk.ash:1:1)
+  rcdrop_list_shared_6:
+    RcDrop                SourceTemp=2 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_7   (tco_list_walk.ash:1:1)
+  rcdrop_list_end_7:
+    LoadConstInt          Target=7 Value=0   (tco_list_walk.ash:1:1)
+    Return                Source=7   (tco_list_walk.ash:1:1)
+
+function lambda_2$env_normalize  [ClosureEnvironmentNormalizer from walk]
+  locals=2 temps=6
+    LoadLocal             Target=0 Slot=0   (tco_list_walk.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_list_walk.ash:1:1)
+    CopyOutList           DestTemp=3 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=3   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=4 BasePtr=0 OffsetBytes=8   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=8 Source=4   (tco_list_walk.ash:1:1)
+    LoadFuncAddr          Target=5 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
+    Return                Source=5   (tco_list_walk.ash:1:1)
+
+function lambda_1  [ClosureHelper from walk]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=16   (tco_list_walk.ash:1:1)
+    LoadEnv               Target=1 Index=0   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_walk.ash:1:1)
+    LoadLocal             Target=2 Slot=1   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=8 Source=2   (tco_list_walk.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_2 EnvPtrTemp=0 EnvSizeBytes=16   (tco_list_walk.ash:1:1)
+    Return                Source=4   (tco_list_walk.ash:1:1)
+
+function lambda_1$env_normalize  [ClosureEnvironmentNormalizer from walk]
+  locals=2 temps=5
+    LoadLocal             Target=0 Slot=0   (tco_list_walk.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_walk.ash:1:1)
+    LoadMemOffset         Target=2 BasePtr=0 OffsetBytes=0   (tco_list_walk.ash:1:1)
+    CopyOutList           DestTemp=3 SrcTemp=2 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=1 OffsetBytes=0 Source=3   (tco_list_walk.ash:1:1)
+    LoadFuncAddr          Target=4 FuncLabel=__rc_cdrop_3   (tco_list_walk.ash:1:1)
+    Return                Source=4   (tco_list_walk.ash:1:1)
+
+function lambda_0  [SourceFunction from walk]
+  locals=2 temps=5
+    Alloc                 Target=0 SizeBytes=8   (tco_list_walk.ash:1:1)
+    LoadLocal             Target=1 Slot=1   (tco_list_walk.ash:1:1)
+    StoreMemOffset        BasePtr=0 OffsetBytes=0 Source=1   (tco_list_walk.ash:1:1)
+    MakeClosure           Target=4 FuncLabel=lambda_1 EnvPtrTemp=0 EnvSizeBytes=8   (tco_list_walk.ash:1:1)
+    Return                Source=4
+
+function _start_main  [ProgramEntry]
+  locals=4 temps=17
+    LoadConstInt          Target=0 Value=0
+    MakeClosure           Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=0 Source=1
+    SaveArenaState        CursorLocalSlot=1 EndLocalSlot=2
+    LoadLocal             Target=2 Slot=0   (tco_list_walk.ash:6:35)
+    LoadConstInt          Target=3 Value=0   (tco_list_walk.ash:6:40)
+    LoadConstInt          Target=4 Value=7   (tco_list_walk.ash:6:47)
+    Alloc                 Target=5 SizeBytes=16   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=5 OffsetBytes=0 Source=4   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=5 OffsetBytes=8 Source=3   (tco_list_walk.ash:6:40)
+    LoadConstInt          Target=6 Value=5   (tco_list_walk.ash:6:44)
+    Alloc                 Target=7 SizeBytes=16   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=7 OffsetBytes=0 Source=6   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=7 OffsetBytes=8 Source=5   (tco_list_walk.ash:6:40)
+    LoadConstInt          Target=8 Value=3   (tco_list_walk.ash:6:41)
+    Alloc                 Target=9 SizeBytes=16   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=9 OffsetBytes=0 Source=8   (tco_list_walk.ash:6:40)
+    StoreMemOffset        BasePtr=9 OffsetBytes=8 Source=7   (tco_list_walk.ash:6:40)
+    CallClosure           Target=10 ClosureTemp=2 ArgTemp=9   (tco_list_walk.ash:6:35)
+    LoadConstInt          Target=11 Value=0   (tco_list_walk.ash:6:51)
+    CallClosure           Target=12 ClosureTemp=10 ArgTemp=11   (tco_list_walk.ash:6:35)
+    LoadConstInt          Target=13 Value=0   (tco_list_walk.ash:6:54)
+    CallClosure           Target=14 ClosureTemp=12 ArgTemp=13   (tco_list_walk.ash:6:35)
+    RestoreArenaState     CursorLocalSlot=1 EndLocalSlot=2 PreRestoreEndSlot=3
+    ReclaimArenaChunks    SavedEndSlot=2 PreRestoreEndSlot=3
+    TextFromInt           Target=15 ValueTemp=14   (tco_list_walk.ash:6:16)
+    PrintStr              Source=15   (tco_list_walk.ash:6:1)
+    AllocAdt              Target=16 Tag=0 FieldCount=0   (tco_list_walk.ash:6:1)
+    Return                Source=16
+

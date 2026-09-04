@@ -1,0 +1,6 @@
+let recursive countdown n acc =
+    if n == 0
+    then acc
+    else countdown(n - 1)(acc + n)
+
+Ashes.IO.print(Ashes.Text.fromInt(countdown(1000000)(0)))
