@@ -301,6 +301,12 @@ let run unit =
     |> (given (_) -> assertExpression("((p with x = 1), [(q with y = 2)])\n")("((p with x=1), [(q with y=2)])"))
     |> (given (_) -> assertExpression("match (p with x = 1) with\n    | _ -> 0\n")("match (p with x=1) with | _ -> 0"))
     |> (given (_) ->
+        assertExpression(
+            "match match x with\n    | 0 -> \"zero\"\n    | _ -> \"other\" with\n    | \"zero\" -> true\n    | _ -> false\n",
+            "match match x with | 0 -> \"zero\" | _ -> \"other\" with | \"zero\" -> true | _ -> false"
+        ))
+    |> (given (_) -> assertIdempotent("match match x with | 0 -> \"zero\" | _ -> \"other\" with | \"zero\" -> true | _ -> false"))
+    |> (given (_) ->
         "a -> List(a) needs {ConsoleIO | e}"
         |> typeFrom
         |> formatTypeExpression

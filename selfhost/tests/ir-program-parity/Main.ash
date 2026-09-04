@@ -54,8 +54,25 @@ let checkFixture root name =
 // call_result_copy_out adds the call window's conditional copy-out of a result whose placement
 // only the callee's returns bit knows, and call_argument_retain the retain of a fresh
 // reference-counted argument under the callee's accepts bit with its release after the call.
+// consumed_list_argument adds the inline list walk releasing a fresh list argument the callee
+// did not take, element heads included.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
+// match_rc_scrutinee adds the owner each arm makes for a fresh reference-counted scrutinee
+// (stored to its own slot, released at the arm exit), the all-arms runtime-managed join, and
+// the literal string arm copied to the reference-counted heap beside a fresh-string arm;
+// match_list_scrutinee_drop the owner of a nested match result over a list of scalars, whose
+// release walks the spine inline at the arm exit. handle_match_arm_reset stays out: the
+// single-file lowering does not take capability declarations, so its live-posts guards are
+// covered at the expression level in MatchArmScopeTests.
+// tco_scalar_loop, tco_scalar_owned_let, and tco_unused_chain_parameter add the TCO loop of a
+// self-recursive function over scalar parameters: the chain parameters installed in local slots,
+// the fixed and per-iteration watermarks and the stack pointer saved around the `lambda_N_body`
+// label, the affine accumulator's reservation slots, and the back edge's argument temps, old
+// parameter loads, parameter stores, deferred owner releases and arena reset, stack restore,
+// and jump, with the unread chain parameter's synthetic slot. tco_list_walk (a runtime-managed
+// list parameter) and tco_non_tail_self_call_in_operator_operand keep their loop-function
+// comparisons in `selfhost/tests/semantics/TcoLoopLoweringTests.ash`.
 // owned_let_list_drop adds a `let`-owned runtime list of fresh strings (the list request, the
 // runtime-managed cells and heads, and the inline unique-spine walk at the scope exit) and
 // aggregate_children_retain the escaping tuple, list literal, and cons cell that retain the owned
@@ -81,6 +98,12 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("match_arm_copy_out"))
         |> (given (_) -> checkFixture(root)("call_result_copy_out"))
         |> (given (_) -> checkFixture(root)("call_argument_retain"))
+        |> (given (_) -> checkFixture(root)("consumed_list_argument"))
+        |> (given (_) -> checkFixture(root)("match_rc_scrutinee"))
+        |> (given (_) -> checkFixture(root)("match_list_scrutinee_drop"))
+        |> (given (_) -> checkFixture(root)("tco_scalar_loop"))
+        |> (given (_) -> checkFixture(root)("tco_scalar_owned_let"))
+        |> (given (_) -> checkFixture(root)("tco_unused_chain_parameter"))
         |> (given (_) -> checkFixture(root)("owned_let_list_drop"))
         |> (given (_) -> checkFixture(root)("aggregate_children_retain"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))

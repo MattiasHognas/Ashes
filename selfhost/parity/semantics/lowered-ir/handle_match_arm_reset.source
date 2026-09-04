@@ -1,0 +1,12 @@
+capability Clock =
+    | now : Unit -> Int
+
+let stamp =
+    handle Clock.now(Unit) with
+        | Clock.now(_) -> resume(42)
+        | return(r) ->
+            match r with
+                | 42 -> 1
+                | _ -> 0
+
+Ashes.IO.print(stamp)

@@ -35,6 +35,8 @@ export (
     type DropperSynthesis(..),
     value emptyDropperLabelCache,
     value structuralReleaseNeedsHelper,
+    value ownedChildrenOf,
+    value isScalarResultType,
     value synthesizeStructuralOwnerDropper,
     value synthesizeRuntimeManagedAdtDropper,
     type OwnedReleasePlan(..),

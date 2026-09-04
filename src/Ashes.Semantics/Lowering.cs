@@ -7813,7 +7813,10 @@ public sealed partial class Lowering
     {
         // Build in declaration/application order, not capture-discovery order. The innermost scope
         // exposes the last binding for a duplicated source name; join that binding to its ordinal
-        // exactly once and retain distinct synthetic slots for shadowed, unobservable binders.
+        // exactly once and retain distinct synthetic slots for the binders no expression observes:
+        // a shadowed earlier occurrence of a duplicated name, and a chain parameter the loop body
+        // never reads (the innermost lambda captured nothing for it, so it has no local of its own
+        // while the back edge still stores the next iteration's argument).
         for (int ordinal = 0; ordinal < tco.ParamNames.Count; ordinal++)
         {
             string parameterName = tco.ParamNames[ordinal];
@@ -7824,7 +7827,7 @@ public sealed partial class Lowering
             {
                 tco.ParamSlots.Add(parameterLocal.Slot);
             }
-            else if (!visibleBinding)
+            else
             {
                 int hiddenSlot = NewLocal();
                 tco.ParamSlots.Add(hiddenSlot);
@@ -7835,11 +7838,6 @@ public sealed partial class Lowering
                 {
                     RecordLocalDebugInfo(hiddenSlot, parameterName, hiddenType);
                 }
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"TCO parameter {ordinal} ('{parameterName}') has no local slot for the back-edge.");
             }
         }
     }
@@ -11112,6 +11110,8 @@ public sealed partial class Lowering
         List<(int Temp, TypeRef Type, bool PreserveEscapedChildren)> consumedRuntimeArguments,
         ref int runtimeManagedResultFlagTemp)
     {
+        CheckClosureCapturesLiveAtApplication(rootExpr, closureTemp);
+
         // Opaque calls consume resources unless borrow analysis proves a read-only parameter.
         int originalArgumentTemp = argumentTemp;
         bool borrowsOnly = CalleeParamBorrowsOnly(rootExpr, argumentIndex);

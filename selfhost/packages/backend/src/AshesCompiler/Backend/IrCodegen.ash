@@ -715,6 +715,19 @@ let codegenInstructionKind cx builder kind state =
                                                 in
                                                     let _ = addResolvedSwitchCases(switchInst)(i64)(resolved)
                                                     in (tempEnv, true)
+                        // The TCO loop body's stack-pointer bracket — see `IrCodegen.Arena`.
+                                        | SaveStackPointer(slot) ->
+                                            let _ =
+                                                localSlots
+                                                |> lookupIndexed(slot)
+                                                |> emitSaveStackPointer(builder)(i64)(arena)
+                                            in (tempEnv, terminated)
+                                        | RestoreStackPointer(slot) ->
+                                            let _ =
+                                                localSlots
+                                                |> lookupIndexed(slot)
+                                                |> emitRestoreStackPointer(builder)(i64)(ptrType)(arena)
+                                            in (tempEnv, terminated)
                         // The scoped-arena brackets — see `IrCodegen.Arena`. The coroutine-loop
                         // form belongs to the async scheduler, which is not ported.
                                         | SaveArenaState(cursorSlot, endSlot, coroutineLoop) ->
@@ -1364,14 +1377,34 @@ let emitKnownCallValue cx builder tempEnv funcLabel envTemp argTemp flagTemp tar
 // verifier requires the call to precede its ret directly, so the ordinary temp store/load round
 // trip must not run between them); otherwise the call keeps the advisory `tail` marker and the
 // `Return` is emitted through the ordinary dispatch.
+// Stage 0's fallthrough rule: an instruction past a terminator that is not a label (the dead code
+// after a loop's back-edge jump, say) opens an unreachable block of its own, so no LLVM block
+// ever carries an instruction after its terminator.
+let reopenAfterTerminator (cx: CodegenContext) builder kind state =
+    match (state, kind) with
+        | ((_tempEnv, false), _) -> state
+        | ((_tempEnv, true), Label(_name)) -> state
+        | ((tempEnv, true), _) ->
+            match cx with
+                | CodegenContext { context = context, function_ = function_ } ->
+                    let _ =
+                        "fallthrough"
+                        |> appendBasicBlock(context)(function_)
+                        |> positionBuilderAtEnd(builder)
+                    in (tempEnv, false)
+
 let recursive codegenInstructions (cx: CodegenContext) builder allocatesStack tailJoins instructions state =
     match instructions with
         | [] -> state
-        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: afterCall -> codegenKnownCall(cx)(builder)(allocatesStack)(tailJoins)(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated)(afterCall)(state)
+        | IrInstruction { instruction = CallKnown(target, funcLabel, envTemp, argTemp, flagTemp, environmentIsStackAllocated) } :: afterCall ->
+            state
+            |> reopenAfterTerminator(cx)(builder)(CallKnown(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated))
+            |> codegenKnownCall(cx)(builder)(allocatesStack)(tailJoins)(target)(funcLabel)(envTemp)(argTemp)(flagTemp)(environmentIsStackAllocated)(afterCall)
         | instruction :: rest ->
             match instruction with
                 | IrInstruction { instruction = kind } ->
                     state
+                    |> reopenAfterTerminator(cx)(builder)(kind)
                     |> codegenInstructionKind(cx)(builder)(kind)
                     |> codegenInstructions(cx)(builder)(allocatesStack)(tailJoins)(rest)
 // A `CallKnown` whose result the next instruction past any arena bookkeeping returns or stores
@@ -1450,13 +1483,13 @@ let buildFunctionContext mc functionValue isEntry irFunction =
                                 let _ =
                                     if isEntry == false && hasEnvAndArgParams
                                     then
+                                    // The entry also maps the arena's first chunk before any
+                                    // instruction can allocate.
                                         let _ =
                                             localSlots
                                             |> lookupIndexed(0)
                                             |> buildStore(builder)(getParam(functionValue)(0u32))
                                         in
-                                    // The entry also maps the arena's first chunk before any
-                                    // instruction can allocate.
                                             let _ =
                                                 localSlots
                                                 |> lookupIndexed(1)

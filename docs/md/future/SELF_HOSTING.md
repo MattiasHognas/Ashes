@@ -803,20 +803,90 @@ same public behavior.
   callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
   (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
   a qualified or computed callee as stage 0 does. The `call_result_copy_out` and
-  `call_argument_retain` fixtures join the byte-identical set. Open: the mutual-recursion loop merge
+  `call_argument_retain` fixtures join the byte-identical set. A saturated application of a
+  curried let-bound function follows stage 0's returned-closure chain
+  (`functionReturnedClosureLabels`, recorded from the last closure instruction producing a
+  body temp) to the innermost stage's recorded placement, the known-result decision is gated by
+  the RC-eligibility provenance (`CallResultProvenance.ash` classifies each let-bound function's
+  terminal arms as stage 0's `BuildProvenanceFunctionNode` does and `OwnershipProvenance.ash`
+  solves the forwarding fixpoint; a body-RC but non-eligible callee still reads the returns
+  bit), a `ConcatStr` carries `RuntimeManaged=true` when its consumer asked for a runtime string
+  (its operands lowered without the request, its result newly produced, a newly produced
+  operand released after the use), and a consumed list, tuple, or ADT argument is released
+  through stage 0's inline `rcdrop_list`/`rc_drop_tuple_shared`/`rc_drop_shared` walks (the
+  spine-only and shallow releases when the callee's arena result may keep the parts, the
+  constructor-switching dropper for a recursive or owned-child ADT); the
+  `consumed_list_argument` fixture joins the byte-identical set, while
+  `curried_known_call_result` and `concat_runtime_result` match stage 0 up to the trait-evidence
+  header and the curried inner lambda's locations (`CallWindowLoweringTests.ash`). A fresh runtime-managed scrutinee
+  matched directly (a call result or a nested match result that is a string, `Bytes`, or a list
+  over scalars) is owned by the arm that matched it, stage 0's `$match_rc_N`: after the pattern
+  test and guard the arm stores it into an owner slot of its own, releases it at the arm exit
+  (`RcDrop ... OwnerSlot=N RuntimeManaged=true`, moved to the store by the placement pass; a
+  list owner walks its spine inline through the `rcdrop_list_N` loop, stage 0's
+  `EmitRuntimeManagedListDrop`), and closes with the owned-scope copy-out; an arm whose pattern
+  binds the whole scrutinee or a heap value out of it takes no owner. The match result carries
+  stage 0's `MarkRuntimeManagedMatchResult` status: runtime-managed when every arm stored a
+  runtime-managed value (the empty list literal of a list-typed join counts), newly produced only
+  when every arm's was, so a lambda whose body is such a match is a `ReturnsRuntimeManaged`
+  closure and a known call to it resets its window. Beside a fresh-string arm, a literal string
+  arm of a guard-free match is normalized to an RC-normalized `CopyOutArena` of the constant
+  (`ShouldNormalizeStaticStringMatchArms`; stage 0 applies no such rule to `if`). With a
+  capability in the program, an arm's closing reset and its cleanup block's reset run under the
+  live-posts guard (`live_posts_skip_N`, the counter one past the pending-post register). The
+  pure rules live in `MatchArmOwnership.ash`; the `match_rc_scrutinee` and
+  `match_list_scrutinee_drop` fixtures join the byte-identical set, and `MatchArmScopeTests.ash`
+  covers the guarded arm resets under a `handle` at the expression level (the
+  `handle_match_arm_reset` fixture stays out of the runner: the single-file lowering takes no
+  capability declarations). The TCO loop of a self-recursive
+  function is lowered as stage 0's loop rather than a call the backend fuses: the chain
+  parameters the loop body captures move into local slots at entry (`LoadEnv`, `StoreLocal`), an
+  unread or shadowed parameter gets a zeroed synthetic slot, the fixed loop-entry watermark, the
+  compaction-size slot, and a reservation slot pair per affine accumulator
+  (`TcoAffineAppend.ash`, stage 0's `ComputeAffineSelfAppendOrdinals`) precede the
+  `lambda_N_body` label, the per-iteration watermark and `SaveStackPointer` follow it, and the
+  back edge evaluates every argument into a temp under the children transfer, loads the old
+  parameters, stores the new ones, releases the iteration-local runtime owners, resets the
+  per-iteration watermark when every argument's resolved type survives a reset (both resolved
+  through a `TcoResetPending` placeholder once the function body is lowered, the pre-restore
+  slot and release temps allocated after the body's own), restores the stack pointer, and jumps;
+  the backend emits `SaveStackPointer`/`RestoreStackPointer` through `llvm.stacksave`/
+  `llvm.stackrestore`. The `tco_scalar_loop`, `tco_scalar_owned_let`, and
+  `tco_unused_chain_parameter` fixtures join the byte-identical set; `TcoLoopLoweringTests.ash`
+  holds the loop-function comparisons of `tco_list_walk` (identical loop function; the program
+  lacks the list capture's closure normalizer and dropper) and
+  `tco_non_tail_self_call_in_operator_operand` (the scalar loops match except for the window
+  reset of the non-tail self-call under the operator, whose result type stage 0 infers before
+  lowering). Open: the runtime-managed loop parameters (stage 0's `RuntimeManagedSlotsInOrder`:
+  the active-flag locals allocated at entry, the entry normalization
+  (`LowerLambdaCoreSpliceRuntimeManagedTcoParams`) and the back-edge normalization and release
+  (`TcoBackEdgeNormalizeRuntimeManagedArg`, the `Borrow` of a pattern-owned successor and the
+  old root's drop), the exit-path drops and result transfer
+  (`LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`), and the copy-out reset paths for string,
+  list, and ADT parameters (fixed-watermark compaction, the two-phase up/down copies, affine
+  string reservations) — a loop over such parameters is emitted without a back-edge reset), the
+  resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
   `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are missing), the deferred call-result copy-out for a result whose layout is still
-  unresolved at the call (`CallResultCopyOutPending`), the list-spine, tuple, and owned-child
-  releases of a consumed call argument, the RC-eligibility provenance behind the known-result
-  decision, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
+  unresolved at the call (`CallResultCopyOutPending`), the provenance classification's
+  `IsFreshRuntimeManageableAdtExpressionCore` fallback and its fresh `Bytes`/`BigInt` builtin
+  producers (only the fresh-string builtins ground a node; a `let recursive` binding is not a
+  forwarding target), the runtime flag on a deferred add that seals to `ConcatStr`, the
+  `BigInt.parse`/`Text.uncons` result droppers of a consumed argument, the capability live-posts guard around the call reset, the RC request for a constructor or list built in a lambda's arm (stage 0 allocates
   it `RuntimeManaged` and flags the closure `ReturnsRuntimeManaged`; the selfhost copies the
-  arena result out at the arm close instead), the runtime-managed scrutinee owner
-  (`$match_rc_N`, a fresh RC-managed call result or nested match result matched directly) and
-  the match result's all-arms runtime-managed status, the live-posts guard around an arm's reset
-  in a program with a `handle`, the static-string arm normalization (`CopyOutArena` of a literal
-  arm when a sibling arm produces a fresh string), the runtime flag on `ConcatStr` (the
-  deferred-add sealing), curried known-call results, coroutine/async back edges, the
+  arena result out at the arm close instead), the scrutinee owner of an ADT, tuple, or closure
+  scrutinee and of an arm that binds the whole scrutinee or a heap value out of it (stage 0's
+  independently owned fields, the binding-to-owner aliasing, and the
+  `TransferDirectRuntimeManagedMatchResult` transfer of a returned binding; such an arm keeps
+  today's unowned scrutinee), the TCO-parameter branch of the join rule
+  (`BranchJoinsRuntimeManagedResult`), the live-posts guard around an arm's guarded copy-out
+  close and around the `let` and call resets, the whole-program `handle` fixture (the
+  single-file lowering takes no capability declarations), the `Borrow` of a captured closure
+  read as a callee (stage 0 borrows an owned capture; the selfhost loads it bare, which keeps a
+  function whose match scrutinee calls a captured function out of the parity runner), the dead
+  `ReturnsRuntimeManaged` bit read stage 0 emits before a known-RC call of a match-bodied
+  callee, coroutine/async back edges, the
   `rc_normalize_list` deep-copy loop of an entry-normalized list child over non-copyable heads
   (such a parameter is left unnormalized), the source locations of a curried inner lambda's
   instructions (stage 0 tags them with the `let`'s span, which keeps the three
@@ -892,8 +962,10 @@ same public behavior.
   (a known call whose body is a fresh-string builtin — the one `let` value the selfhost places on
   the RC heap today) run through the backend suite, next to the regression fixture itself, whose
   `let label = taken(...)` result stays an arena string until call-result RC normalization is
-  ported, so no retain fires on it. Open: the Perceus pattern-owner duplicate an owning consumer
-  adds (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
+  ported, so no retain fires on it. The tail self-call's arguments are now the loop's back edge
+  (OPT-25), lowered into temps under the transfer before any parameter slot changes. Open: the
+  Perceus pattern-owner duplicate an owning consumer adds
+  (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
   (`DuplicateRuntimeManagedTcoParameterForAggregate`), waiting on pattern owners and parameter
   placement.
 - [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
@@ -927,11 +999,14 @@ same public behavior.
   self-call is an ordinary call by construction. Covered by `TcoTests.ash` (`hasTailSelfCalls`
   over operator operands), `TcoOwnershipRulesTests.ash` (the operand branch's cons stores the
   plain borrow, the tail branch's the retained duplicate), and the regression program plus
-  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. Open: the loop
-  lowering itself (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`, argument
-  ownership flags with entry and back-edge normalization, the exit transfer) — the loop functions
-  of the OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of
-  the parity runner.
+  `tests/tco_owned_let_in_operand_self_call.ash` run through the backend suite. The loop itself
+  is lowered under OPT-25 (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`,
+  the deferred back-edge reset), so an operand self-call is an ordinary call and a tail self-call
+  the loop's jump; the regression program's scalar loops are compared with stage 0's in
+  `TcoLoopLoweringTests.ash`. Open: the runtime-managed loop parameters (argument ownership
+  flags with entry and back-edge normalization, the exit transfer) — the loop functions of the
+  OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of the
+  parity runner.
 - [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:

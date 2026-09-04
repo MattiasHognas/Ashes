@@ -1,0 +1,15 @@
+let shout n = Ashes.Text.fromInt(n)
+
+let described =
+    match shout(7) with
+        | "7" -> "seven"
+        | _ -> shout(8)
+
+let label n =
+    match Ashes.Text.fromInt(n) with
+        | "7" -> "seven"
+        | _ -> Ashes.Text.fromInt(8)
+
+let printed = Ashes.IO.print(described)
+
+Ashes.IO.print(label(8))

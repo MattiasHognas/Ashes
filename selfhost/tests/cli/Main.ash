@@ -1230,27 +1230,28 @@ let expectConfirmation process =
             "OK Wrote "
             |> Ashes.Text.startsWith(confirmation)
             |> test.assertEqual(true)
+            |> (given (_) -> process)
 
 let recursive drainStdout process =
     match Ashes.IO.Process.readStdoutLine(process) with
-        | None -> Unit
+        | None -> process
         | Some(_) -> drainStdout(process)
 
-// The child's stderr starts with exactly `expected`, line by line.
-let recursive expectStderrLines process (expected: List(Str)) =
+// The child's stderr starts with exactly `expected`, line by line; the process is handed back.
+let recursive expectStderrLines (expected: List(Str)) process =
     match expected with
-        | [] -> Unit
+        | [] -> process
         | head :: rest ->
             match Ashes.IO.Process.readStderrLine(process) with
                 | None -> test.fail("stderr ended before the expected report line " + head)
                 | Some(line) ->
                     line
                     |> test.assertEqual(head)
-                    |> (given (_) -> expectStderrLines(process)(rest))
+                    |> (given (_) -> expectStderrLines(rest)(process))
 
 let recursive drainStderr process =
     match Ashes.IO.Process.readStderrLine(process) with
-        | None -> Unit
+        | None -> process
         | Some(_) -> drainStderr(process)
 
 let removeExplainScratch unit =
@@ -1282,12 +1283,12 @@ let testCompileExplainRcPrintsReportToStderr unit =
                 match Ashes.IO.Process.spawn("/proc/self/exe")(["--as-cli", "compile", "--explain", "rc", "-o", explainScratchRoot + "/boxed", explainScratchRoot + "/boxed.ash"]) with
                     | Error(message) -> test.fail("could not re-enter the test executable as the CLI: " + message)
                     | Ok(process) ->
-                        Unit
-                        |> (given (_) -> expectConfirmation(process))
-                        |> (given (_) -> drainStdout(process))
-                        |> (given (_) -> expectStderrLines(process)(["RC report", "=========", ""]))
-                        |> (given (_) -> drainStderr(process))
-                        |> (given (_) -> Ashes.IO.Process.waitForExit(process))
+                        process
+                        |> expectConfirmation
+                        |> drainStdout
+                        |> expectStderrLines(["RC report", "=========", ""])
+                        |> drainStderr
+                        |> Ashes.IO.Process.waitForExit
                         |> (given (exitCode) ->
                             Unit
                             |> removeExplainScratch

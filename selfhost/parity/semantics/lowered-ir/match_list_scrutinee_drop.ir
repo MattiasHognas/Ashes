@@ -1,0 +1,154 @@
+IR (lowered)
+============
+
+function _start_main  [ProgramEntry]
+  locals=33 temps=55
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=3   (match_list_scrutinee_drop.ash:9:29)
+    LoadConstInt          Target=1 Value=4   (match_list_scrutinee_drop.ash:9:40)
+    AllocAdt              Target=2 Tag=0 FieldCount=2 Tagless=true   (match_list_scrutinee_drop.ash:9:17)
+    SetAdtField           Ptr=2 FieldIndex=0 Source=0 Tagless=true   (match_list_scrutinee_drop.ash:9:17)
+    SetAdtField           Ptr=2 FieldIndex=1 Source=1 Tagless=true   (match_list_scrutinee_drop.ash:9:17)
+    AllocAdt              Target=3 Tag=1 FieldCount=1   (match_list_scrutinee_drop.ash:9:13)
+    SetAdtField           Ptr=3 FieldIndex=0 Source=2   (match_list_scrutinee_drop.ash:9:13)
+    StoreLocal            Slot=2 Source=3
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=4 Slot=2   (match_list_scrutinee_drop.ash:12:18)
+    Borrow                Target=5 SourceTemp=4
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadConstInt          Target=6 Value=0   (match_list_scrutinee_drop.ash:12:12)
+    CmpIntNe              Target=7 Left=5 Right=6   (match_list_scrutinee_drop.ash:12:12)
+    JumpIfFalse           CondTemp=7 Target=match_arm_cleanup_3   (match_list_scrutinee_drop.ash:12:12)
+    GetAdtTag             Target=8 Ptr=5   (match_list_scrutinee_drop.ash:12:12)
+    LoadConstInt          Target=10 Value=1   (match_list_scrutinee_drop.ash:12:12)
+    CmpIntEq              Target=9 Left=8 Right=10   (match_list_scrutinee_drop.ash:12:12)
+    JumpIfFalse           CondTemp=9 Target=match_arm_cleanup_3   (match_list_scrutinee_drop.ash:12:12)
+    GetAdtField           Target=11 Ptr=5 FieldIndex=0   (match_list_scrutinee_drop.ash:12:12)
+    RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
+    StoreLocal            Slot=8 Source=11   (match_list_scrutinee_drop.ash:12:12)
+    LoadConstInt          Target=12 Value=0   (match_list_scrutinee_drop.ash:13:24)
+    LoadLocal             Target=13 Slot=8   (match_list_scrutinee_drop.ash:13:36)
+    GetAdtField           Target=14 Ptr=13 FieldIndex=1 Tagless=true   (match_list_scrutinee_drop.ash:13:36)
+    Alloc                 Target=15 SizeBytes=16   (match_list_scrutinee_drop.ash:13:24)
+    StoreMemOffset        BasePtr=15 OffsetBytes=0 Source=14   (match_list_scrutinee_drop.ash:13:24)
+    StoreMemOffset        BasePtr=15 OffsetBytes=8 Source=12   (match_list_scrutinee_drop.ash:13:24)
+    LoadLocal             Target=16 Slot=8   (match_list_scrutinee_drop.ash:13:25)
+    GetAdtField           Target=17 Ptr=16 FieldIndex=0 Tagless=true   (match_list_scrutinee_drop.ash:13:25)
+    RcDrop                SourceTemp=11 TypeName=Pair OwnerSlot=8
+    Alloc                 Target=18 SizeBytes=16   (match_list_scrutinee_drop.ash:13:24)
+    StoreMemOffset        BasePtr=18 OffsetBytes=0 Source=17   (match_list_scrutinee_drop.ash:13:24)
+    StoreMemOffset        BasePtr=18 OffsetBytes=8 Source=15   (match_list_scrutinee_drop.ash:13:24)
+    StoreLocal            Slot=5 Source=18   (match_list_scrutinee_drop.ash:12:12)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=9
+    CopyOutList           DestTemp=20 SrcTemp=18 HeadCopy=Inline RuntimeManaged=true Purpose=RcNormalization   (match_list_scrutinee_drop.ash:12:12)
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=9
+    StoreLocal            Slot=5 Source=20   (match_list_scrutinee_drop.ash:12:12)
+    Jump                  Target=match_end_0   (match_list_scrutinee_drop.ash:12:12)
+  match_arm_cleanup_3:
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=10
+    Jump                  Target=match_next_2   (match_list_scrutinee_drop.ash:12:12)
+  match_next_2:
+    SaveArenaState        CursorLocalSlot=11 EndLocalSlot=12
+    LoadConstInt          Target=21 Value=0   (match_list_scrutinee_drop.ash:12:12)
+    CmpIntNe              Target=22 Left=5 Right=21   (match_list_scrutinee_drop.ash:12:12)
+    JumpIfFalse           CondTemp=22 Target=match_arm_cleanup_4   (match_list_scrutinee_drop.ash:12:12)
+    GetAdtTag             Target=23 Ptr=5   (match_list_scrutinee_drop.ash:12:12)
+    RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
+    LoadConstInt          Target=25 Value=0   (match_list_scrutinee_drop.ash:12:12)
+    CmpIntEq              Target=24 Left=23 Right=25   (match_list_scrutinee_drop.ash:12:12)
+    JumpIfFalse           CondTemp=24 Target=match_arm_cleanup_4   (match_list_scrutinee_drop.ash:12:12)
+    LoadConstInt          Target=26 Value=0   (match_list_scrutinee_drop.ash:14:18)
+    StoreLocal            Slot=5 Source=26   (match_list_scrutinee_drop.ash:12:12)
+    Jump                  Target=match_end_0   (match_list_scrutinee_drop.ash:12:12)
+  match_arm_cleanup_4:
+    RcDrop                SourceTemp=3 TypeName=Shape OwnerSlot=2
+    RestoreArenaState     CursorLocalSlot=11 EndLocalSlot=12 PreRestoreEndSlot=14
+    ReclaimArenaChunks    SavedEndSlot=12 PreRestoreEndSlot=14
+    Jump                  Target=match_none_1   (match_list_scrutinee_drop.ash:12:12)
+  match_none_1:
+    LoadConstInt          Target=27 Value=0   (match_list_scrutinee_drop.ash:12:12)
+    StoreLocal            Slot=5 Source=27   (match_list_scrutinee_drop.ash:12:12)
+  match_end_0:
+    LoadLocal             Target=28 Slot=5   (match_list_scrutinee_drop.ash:12:12)
+    SaveArenaState        CursorLocalSlot=16 EndLocalSlot=17
+    LoadConstInt          Target=29 Value=0   (match_list_scrutinee_drop.ash:12:5)
+    CmpIntNe              Target=30 Left=28 Right=29   (match_list_scrutinee_drop.ash:12:5)
+    JumpIfFalse           CondTemp=30 Target=match_arm_cleanup_8   (match_list_scrutinee_drop.ash:12:5)
+    LoadMemOffset         Target=31 BasePtr=28 OffsetBytes=0   (match_list_scrutinee_drop.ash:12:5)
+    LoadMemOffset         Target=32 BasePtr=28 OffsetBytes=8   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=18 Source=31   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=19 Source=28   (match_list_scrutinee_drop.ash:12:5)
+    LoadLocal             Target=33 Slot=18   (match_list_scrutinee_drop.ash:15:24)
+    StoreLocal            Slot=15 Source=33   (match_list_scrutinee_drop.ash:12:5)
+    LoadLocal             Target=34 Slot=19   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=20 Source=34   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_9:
+    LoadLocal             Target=35 Slot=20   (match_list_scrutinee_drop.ash:12:5)
+    LoadConstInt          Target=36 Value=0   (match_list_scrutinee_drop.ash:12:5)
+    CmpIntNe              Target=37 Left=35 Right=36   (match_list_scrutinee_drop.ash:12:5)
+    JumpIfFalse           CondTemp=37 Target=rcdrop_list_end_11   (match_list_scrutinee_drop.ash:12:5)
+    RcIsUnique            Target=38 SourceTemp=35
+    JumpIfFalse           CondTemp=38 Target=rcdrop_list_shared_10   (match_list_scrutinee_drop.ash:12:5)
+    LoadMemOffset         Target=39 BasePtr=35 OffsetBytes=8   (match_list_scrutinee_drop.ash:12:5)
+    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=20 Source=39   (match_list_scrutinee_drop.ash:12:5)
+    Jump                  Target=rcdrop_list_9   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_shared_10:
+    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_11   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_end_11:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=21
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=21
+    Jump                  Target=match_end_5   (match_list_scrutinee_drop.ash:12:5)
+  match_arm_cleanup_8:
+    RestoreArenaState     CursorLocalSlot=16 EndLocalSlot=17 PreRestoreEndSlot=22
+    ReclaimArenaChunks    SavedEndSlot=17 PreRestoreEndSlot=22
+    Jump                  Target=match_next_7   (match_list_scrutinee_drop.ash:12:5)
+  match_next_7:
+    SaveArenaState        CursorLocalSlot=23 EndLocalSlot=24
+    LoadConstInt          Target=40 Value=0   (match_list_scrutinee_drop.ash:12:5)
+    CmpIntEq              Target=41 Left=28 Right=40   (match_list_scrutinee_drop.ash:12:5)
+    JumpIfFalse           CondTemp=41 Target=match_arm_cleanup_12   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=25 Source=28   (match_list_scrutinee_drop.ash:12:5)
+    LoadConstInt          Target=42 Value=0   (match_list_scrutinee_drop.ash:16:17)
+    StoreLocal            Slot=15 Source=42   (match_list_scrutinee_drop.ash:12:5)
+    LoadLocal             Target=43 Slot=25   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=26 Source=43   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_13:
+    LoadLocal             Target=44 Slot=26   (match_list_scrutinee_drop.ash:12:5)
+    LoadConstInt          Target=45 Value=0   (match_list_scrutinee_drop.ash:12:5)
+    CmpIntNe              Target=46 Left=44 Right=45   (match_list_scrutinee_drop.ash:12:5)
+    JumpIfFalse           CondTemp=46 Target=rcdrop_list_end_15   (match_list_scrutinee_drop.ash:12:5)
+    RcIsUnique            Target=47 SourceTemp=44
+    JumpIfFalse           CondTemp=47 Target=rcdrop_list_shared_14   (match_list_scrutinee_drop.ash:12:5)
+    LoadMemOffset         Target=48 BasePtr=44 OffsetBytes=8   (match_list_scrutinee_drop.ash:12:5)
+    RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
+    StoreLocal            Slot=26 Source=48   (match_list_scrutinee_drop.ash:12:5)
+    Jump                  Target=rcdrop_list_13   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_shared_14:
+    RcDrop                SourceTemp=44 TypeName=List RuntimeManaged=true
+    Jump                  Target=rcdrop_list_end_15   (match_list_scrutinee_drop.ash:12:5)
+  rcdrop_list_end_15:
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=27
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=27
+    Jump                  Target=match_end_5   (match_list_scrutinee_drop.ash:12:5)
+  match_arm_cleanup_12:
+    RestoreArenaState     CursorLocalSlot=23 EndLocalSlot=24 PreRestoreEndSlot=28
+    ReclaimArenaChunks    SavedEndSlot=24 PreRestoreEndSlot=28
+    Jump                  Target=match_none_6   (match_list_scrutinee_drop.ash:12:5)
+  match_none_6:
+    LoadConstInt          Target=49 Value=0   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=15 Source=49   (match_list_scrutinee_drop.ash:12:5)
+  match_end_5:
+    LoadLocal             Target=50 Slot=15   (match_list_scrutinee_drop.ash:12:5)
+    StoreLocal            Slot=29 Source=50
+    LoadLocal             Target=51 Slot=29   (match_list_scrutinee_drop.ash:18:16)
+    PrintInt              Source=51   (match_list_scrutinee_drop.ash:18:1)
+    AllocAdt              Target=52 Tag=0 FieldCount=0   (match_list_scrutinee_drop.ash:18:1)
+    StoreLocal            Slot=31 Source=52
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=32
+    CopyOutArena          DestTemp=54 SrcTemp=52 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=32
+    Return                Source=54
+

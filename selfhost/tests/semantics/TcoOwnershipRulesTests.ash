@@ -133,7 +133,7 @@ let expectTailSelfCallArgumentRetainsOwnedBinding unit =
             "Source=" + fieldAfter("Target=")(lineContaining("RcDup")(lines))
             |> Ashes.Text.contains(lineContaining("SetAdtField")(lines))
             |> check("the constructor field storing the duplicate"))
-        |> (given (_) -> check("one owner release in the loop body")(countContaining("RcDrop")(lines) == 1))
+        |> (given (_) -> check("the back-edge owner release and the scope-exit release past the jump")(countContaining("RcDrop")(lines) == 2))
         |> (given (_) ->
             "TypeName=String OwnerSlot="
             |> Ashes.Text.contains(lineContaining("RcDrop")(lines))
@@ -155,7 +155,7 @@ let expectOperandSelfCallIsNotATailCall unit =
         |> (given (_) ->
             check("the RcDup in the tail branch")(countContaining("RcDup")(afterLastElseLabel(lines)([])) == 1))
         |> (given (_) ->
-            check("the operand branch storing the plain borrow")(countContaining("Borrow")(beforeLastElseLabel(lines)([])([])) == 1)))
+            check("the operand branch storing the plain borrow beside the callee's own borrowed read")(countContaining("Borrow")(beforeLastElseLabel(lines)([])([])) == 2)))
 
 let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n    in\n        if n == 0\n        then r\n        else loop(n - 1)(r + \"x\"))\n\nAshes.IO.print(loop(5)(\"\"))"
 

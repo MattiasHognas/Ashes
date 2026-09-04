@@ -178,6 +178,139 @@ let expectOperationArmsAreBracketed unit =
     |> countLinesStartingWith("    SaveArenaState")
     |> (given (saves) -> test.assertEqual(true)(saves >= 2))
 
+let recursive countLinesContaining (needle: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.contains(line)(needle)
+            then 1 + countLinesContaining(needle)(rest)
+            else countLinesContaining(needle)(rest)
+
+let shoutSource unit = "let shout n = Ashes.Text.fromInt(n)\n\n"
+
+// A fresh reference-counted string matched directly is owned by whichever arm matches it: each
+// arm stores it into an owner slot of its own after its pattern test and releases it at the
+// arm exit (the placement pass moves the release to the store), and the literal arm's result
+// is copied past the arm's reset since the arm owned a live value.
+let expectFreshStringScrutineeIsOwnedByEachArm unit =
+    shoutSource(Unit) + "let described =\n    match shout(7) with\n        | \"7\" -> \"seven\"\n        | _ -> shout(8)\n\n0"
+    |> dumpSource
+    |> expectLine("    StoreLocal            Slot=11 Source=5")
+    |> expectLine("    RcDrop                SourceTemp=5 TypeName=String OwnerSlot=11 RuntimeManaged=true")
+    |> expectLine("    CopyOutArena          DestTemp=10 SrcTemp=8 RuntimeManaged=true Purpose=RcNormalization")
+    |> expectLine("    StoreLocal            Slot=16 Source=5")
+    |> expectLine("    RcDrop                SourceTemp=5 TypeName=String OwnerSlot=16 RuntimeManaged=true")
+    |> countLinesContaining("OwnerSlot=22 RuntimeManaged=true")
+    |> test.assertEqual(1)
+
+// A match whose every arm stores a freshly produced reference-counted value is itself newly
+// produced: the closure of a function with such a body returns runtime-managed.
+let expectMatchJoinOfFreshArmsIsRuntimeManaged unit =
+    shoutSource(Unit) + "let describe n =\n    match shout(n) with\n        | \"7\" -> \"seven\"\n        | _ -> shout(8)\n\n0"
+    |> dumpSource
+    |> expectLine("    MakeClosureStack      Target=5 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=8 ReturnsRuntimeManaged=true")
+    |> (given (_) -> Unit)
+
+// Beside a fresh-string arm, a literal string arm is normalized to the reference-counted heap:
+// the constant is loaded at the match's location and copied as an RC-normalized value, so the
+// arm resets its window; the fresh-string arm itself keeps its arena placement, so the join is
+// not uniformly runtime-managed and the closure carries no returns bit.
+let expectLiteralStringArmIsNormalizedBesideAFreshStringArm unit =
+    "let label n =\n    match Ashes.Text.fromInt(n) with\n        | \"7\" -> \"seven\"\n        | _ -> Ashes.Text.fromInt(8)\n\n0"
+    |> dumpSource
+    |> expectLine("    LoadConstStr          Target=4 StrLabel=str_1")
+    |> expectLine("    CopyOutArena          DestTemp=5 SrcTemp=4 RuntimeManaged=true Purpose=RcNormalization")
+    |> expectLine("    StoreLocal            Slot=2 Source=5")
+    |> expectLine("    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5")
+    |> expectLine("    TextFromInt           Target=7 ValueTemp=6")
+    |> expectLine("    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0")
+    |> (given (_) -> Unit)
+
+// A nested match whose arms are a copied-out list and the empty list joins as a runtime-managed
+// list; matched directly, each outer arm owns it and walks its spine inline at the arm exit.
+let expectRuntimeManagedListScrutineeWalksItsSpineAtTheArmExit unit =
+    shapeTypes(Unit) + "let shape = Box(Pair(left = 3, right = 4))\n\nlet leading =\n    match (match shape with\n        | Box(pair) -> [pair.left, pair.right]\n        | Dot -> []) with\n        | head :: _ -> head\n        | [] -> 0\n\n0"
+    |> dumpSource
+    |> expectLine("    StoreLocal            Slot=19 Source=28")
+    |> expectLine("  rcdrop_list_9:")
+    |> expectLine("    RcIsUnique            Target=38 SourceTemp=35")
+    |> expectLine("    RcDrop                SourceTemp=35 TypeName=List RuntimeManaged=true")
+    |> expectLine("    StoreLocal            Slot=25 Source=28")
+    |> expectLine("  rcdrop_list_13:")
+    |> countLinesStartingWith("  rcdrop_list")
+    |> test.assertEqual(6)
+
+let recursive countLinesContainingBoth (first: Str) (second: Str) (lines: List(Str)) =
+    match lines with
+        | [] -> 0
+        | line :: rest ->
+            if Ashes.Text.contains(line)(first) && Ashes.Text.contains(line)(second)
+            then 1 + countLinesContainingBoth(first)(second)(rest)
+            else countLinesContainingBoth(first)(second)(rest)
+
+// An arm whose pattern binds the whole scrutinee, or a heap value out of it, does not take the
+// owner: the binding may leave the arm as its result, so only the binding's own release remains,
+// and the scrutinee is not stored to a runtime-managed owner slot.
+let expectWholeBindingArmTakesNoScrutineeOwner unit =
+    shoutSource(Unit) + "let described =\n    match shout(7) with\n        | other -> other\n\n0"
+    |> dumpSource
+    |> expectLine("    StoreLocal            Slot=11 Source=5")
+    |> expectLine("    RcDrop                SourceTemp=5 TypeName=String OwnerSlot=11")
+    |> countLinesContainingBoth("OwnerSlot=11")("RuntimeManaged=true")
+    |> test.assertEqual(0)
+
+let returnArmMatch unit =
+    ExprMatch(
+        ExprVar("r"),
+        [(PatternInt(42), ExprInt(1), None), (PatternWildcard, ExprInt(0), None)],
+        None
+    )
+
+let handledLines unit =
+    [
+        (Some("State"), "get", [PatternVar("u")], resumeCall(1)),
+        (None, "return", [PatternVar("r")], returnArmMatch(Unit))
+    ]
+    |> ExprHandle(
+        ExprInt(42)
+    )
+    |> lowerCoreExpressionWithCompleteContext([])([])([])([])([])([
+        CoreCapabilityLayout(name = "State", index = 0, operations = [CoreCapabilityOperationLayout(name = "get", index = 0)])
+    ])([])(1)
+    |> (given (result) ->
+        match result with
+            | CoreLoweringResult { program = Some(program), error = None } -> formatIr(program)(LoweredIr)(None)
+            | CoreLoweringResult { error = Some(error) } -> test.fail("handle lowering failed: " + Ashes.Trait.Show.show(error))
+            | _ -> test.fail("handle lowering produced no program"))
+
+// With a capability in the program, every arm reset of a match inside a handler is guarded by
+// the live-posts counter: the counter (one past the pending-post register) is compared with
+// zero and the restore/reclaim is skipped while a one-shot post is pending, on the arm's
+// success path and in its cleanup block alike.
+let expectArmResetsAreGuardedByLivePostsUnderAHandle unit =
+    Unit
+    |> handledLines
+    |> (given (lines) ->
+        lines
+        |> countLinesStartingWith("  live_posts_skip_")
+        |> (given (guards) -> test.assertEqual(true)(guards >= 4))
+        |> (given (_) -> lines))
+    |> (given (lines) ->
+        lines
+        |> countLinesContaining("LoadCapabilityHandler Target=")
+        |> (given (loads) -> test.assertEqual(true)(loads >= 4))
+        |> (given (_) -> lines))
+    |> countLinesContaining("CapabilityIndex=2")
+    |> (given (counters) -> test.assertEqual(true)(counters >= 4))
+
+// Without a capability the arms reset unguarded.
+let expectArmResetsAreUnguardedWithoutACapability unit =
+    Unit
+    |> swappedRecordSource
+    |> dumpSource
+    |> countLinesStartingWith("  live_posts_skip_")
+    |> test.assertEqual(0)
+
 let runMatchArmScopeTests unit =
     Unit
     |> expectTagGroupCasesAreBracketed
@@ -188,4 +321,11 @@ let runMatchArmScopeTests unit =
     |> expectTaggedSameArityArmResultCopiesItsTagWord
     |> expectLambdaArmReleasesItsPatternOwner
     |> expectOperationArmsAreBracketed
+    |> expectFreshStringScrutineeIsOwnedByEachArm
+    |> expectMatchJoinOfFreshArmsIsRuntimeManaged
+    |> expectLiteralStringArmIsNormalizedBesideAFreshStringArm
+    |> expectRuntimeManagedListScrutineeWalksItsSpineAtTheArmExit
+    |> expectWholeBindingArmTakesNoScrutineeOwner
+    |> expectArmResetsAreGuardedByLivePostsUnderAHandle
+    |> expectArmResetsAreUnguardedWithoutACapability
     |> (given (_) -> Ashes.IO.print("all self-hosted match arm scope tests passed"))

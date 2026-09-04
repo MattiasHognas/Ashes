@@ -1,0 +1,3 @@
+let describe (a: Int) (b: Int) = Ashes.Text.fromInt(a + b)
+
+Ashes.IO.print(describe(3)(4))

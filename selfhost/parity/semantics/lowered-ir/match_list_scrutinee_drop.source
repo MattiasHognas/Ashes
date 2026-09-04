@@ -1,0 +1,18 @@
+type Pair =
+    | left: Int
+    | right: Int
+
+type Shape =
+    | Dot
+    | Box(Pair)
+
+let shape = Box(Pair(left = 3, right = 4))
+
+let leading =
+    match (match shape with
+        | Box(pair) -> [pair.left, pair.right]
+        | Dot -> []) with
+        | head :: _ -> head
+        | [] -> 0
+
+Ashes.IO.print(leading)
