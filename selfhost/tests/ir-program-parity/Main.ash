@@ -46,6 +46,9 @@ let checkFixture root name =
 // owned-binding borrow and its control-flow precise release, and closure_capture the source-named
 // function origins, the closure environment normalizer, the per-call windows, and the stack
 // closure of a let-bound lambda used only as a callee, down to its source locations.
+// call_result_copy_out adds the call window's conditional copy-out of a result whose placement
+// only the callee's returns bit knows, and call_argument_retain the retain of a fresh
+// reference-counted argument under the callee's accepts bit with its release after the call.
 // mutual_recursion still needs recursive-binding lowering parity and remains deliberately
 // excluded until that is ported.
 match Ashes.IO.args with
@@ -62,5 +65,7 @@ match Ashes.IO.args with
         |> (given (_) -> checkFixture(root)("heap_result_let"))
         |> (given (_) -> checkFixture(root)("heap_result_list"))
         |> (given (_) -> checkFixture(root)("record_pattern"))
+        |> (given (_) -> checkFixture(root)("call_result_copy_out"))
+        |> (given (_) -> checkFixture(root)("call_argument_retain"))
         |> (given (_) -> Ashes.IO.print("all self-hosted whole-program IR parity fixtures passed"))
     | _ -> Ashes.IO.panic("usage: ir-program-parity <fixture-directory>")

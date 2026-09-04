@@ -90,7 +90,7 @@ public static class CommentReinserter
 
         foreach (var insertion in commentInsertions)
         {
-            var position = ResolveInsertionPosition(insertion.PreviousAnchor, insertion.NextAnchor, formattedAnchorIndices, formattedLines.Count);
+            var position = ResolveInsertionPosition(insertion.PreviousAnchor, insertion.NextAnchor, formattedAnchorIndices, formattedSignificantLines);
             if (!insertionsByPosition.TryGetValue(position, out var linesAtPosition))
             {
                 linesAtPosition = [];
@@ -204,15 +204,24 @@ public static class CommentReinserter
         return insertions;
     }
 
+    // A multi-line construct the formatter collapses onto one line keeps its first line's tokens as
+    // the prefix of the merged line and its last line's tokens as its suffix, so a comment whose
+    // next anchor was such a first line (or whose previous anchor was such a last line) is matched
+    // against the merged line before falling back to the top of the file.
     private static int ResolveInsertionPosition(
         LineAnchor? previousAnchor,
         LineAnchor? nextAnchor,
         IReadOnlyDictionary<string, List<int>> formattedAnchorIndices,
-        int formattedLineCount)
+        IReadOnlyList<SignificantLine> formattedSignificantLines)
     {
         if (nextAnchor is not null && TryFindAnchorIndex(nextAnchor.Value, formattedAnchorIndices, out var nextIndex))
         {
             return nextIndex;
+        }
+
+        if (nextAnchor is not null && TryFindMergedAnchorIndex(nextAnchor.Value, formattedSignificantLines, matchPrefix: true, out var mergedNextIndex))
+        {
+            return mergedNextIndex;
         }
 
         if (previousAnchor is not null && TryFindAnchorIndex(previousAnchor.Value, formattedAnchorIndices, out var previousIndex))
@@ -220,7 +229,43 @@ public static class CommentReinserter
             return previousIndex + 1;
         }
 
+        if (previousAnchor is not null && TryFindMergedAnchorIndex(previousAnchor.Value, formattedSignificantLines, matchPrefix: false, out var mergedPreviousIndex))
+        {
+            return mergedPreviousIndex + 1;
+        }
+
         return 0;
+    }
+
+    private static bool TryFindMergedAnchorIndex(
+        LineAnchor anchor,
+        IReadOnlyList<SignificantLine> formattedSignificantLines,
+        bool matchPrefix,
+        out int index)
+    {
+        var affix = matchPrefix ? anchor.Signature + "|" : "|" + anchor.Signature;
+        var occurrence = 0;
+        foreach (var line in formattedSignificantLines)
+        {
+            var signature = line.Anchor.Signature;
+            var matches = matchPrefix
+                ? signature.StartsWith(affix, StringComparison.Ordinal)
+                : signature.EndsWith(affix, StringComparison.Ordinal);
+            if (!matches)
+            {
+                continue;
+            }
+
+            occurrence++;
+            if (occurrence == anchor.Occurrence)
+            {
+                index = line.Index;
+                return true;
+            }
+        }
+
+        index = -1;
+        return false;
     }
 
     private static bool TryFindAnchorIndex(LineAnchor anchor, IReadOnlyDictionary<string, List<int>> formattedAnchorIndices, out int index)

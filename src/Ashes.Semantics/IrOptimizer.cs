@@ -1199,12 +1199,13 @@ public static partial class IrOptimizer
                 {
                     toRemove.Add(i);
                     toRemove.Add(j);
-                    if (j + 1 < instructions.Count
-                        && instructions[j + 1] is IrInst.ReclaimArenaChunks reclaim
-                        && reclaim.SavedEndSlot == save.EndLocalSlot
-                        && reclaim.PreRestoreEndSlot == restore.PreRestoreEndSlot)
+                    // The reclaim reads the slots the removed save and restore wrote, so it goes
+                    // with them wherever the bracket's close placed it: right after the restore, or
+                    // past the conditional copy-out block a call window puts between the two.
+                    int reclaimIndex = FindBracketReclaim(instructions, j + 1, save.EndLocalSlot, restore.PreRestoreEndSlot);
+                    if (reclaimIndex >= 0)
                     {
-                        toRemove.Add(j + 1);
+                        toRemove.Add(reclaimIndex);
                     }
 
                     break;
@@ -1220,6 +1221,21 @@ public static partial class IrOptimizer
         }
 
         return toRemove;
+    }
+
+    private static int FindBracketReclaim(List<IrInst> instructions, int start, int savedEndSlot, int preRestoreEndSlot)
+    {
+        for (int k = start; k < instructions.Count; k++)
+        {
+            if (instructions[k] is IrInst.ReclaimArenaChunks reclaim
+                && reclaim.SavedEndSlot == savedEndSlot
+                && reclaim.PreRestoreEndSlot == preRestoreEndSlot)
+            {
+                return k;
+            }
+        }
+
+        return -1;
     }
 
     // Known-closure devirtualization

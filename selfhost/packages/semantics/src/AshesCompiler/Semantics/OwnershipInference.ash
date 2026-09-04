@@ -878,11 +878,16 @@ let recursive analyzeExprReach (expr: Expr) (env: List((Str, ResultReachState)))
                 let nextEnv = (recName, valReach) :: env
                 in analyzeExprReach(body)(nextEnv)
         | ExprLambda(_p, body, _ann) -> analyzeExprReach(body)(env)
+        // A call through a module-qualified name (a builtin, a module function) or through a
+        // computed callee is not modelled and poisons; a call through a plain name sums the callee's
+        // and the argument's reach, the result standing in for the callee's own summary.
         | ExprCall(func, arg, _isSugar, _layout) ->
-            let fReach = analyzeExprReach(func)(env)
-            in
-                let aReach = analyzeExprReach(arg)(env)
-                in reachSum(fReach)(aReach)
+            match collectCallArgsAndRoot(func)([]) with
+                | (ExprVar(_name), _arguments) ->
+                    env
+                    |> analyzeExprReach(arg)
+                    |> reachSum(analyzeExprReach(func)(env))
+                | _ -> reachPoisoned(UnmodelledReach)
         | ExprMatch(_scrutinee, arms, _defaultArm) -> analyzeMatchArmsReach(arms)(env)
         | ExprTuple(elements) -> analyzeExprListSumReach(elements)(env)
         | ExprList(elements, _isMultiline) -> analyzeExprListSumReach(elements)(env)

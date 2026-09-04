@@ -1,0 +1,43 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from shout]
+  locals=2 temps=2
+    LoadLocal             Target=0 Slot=1   (call_result_copy_out.ash:1:40)
+    PrintStr              Source=0   (call_result_copy_out.ash:1:25)
+    AllocAdt              Target=1 Tag=0 FieldCount=0   (call_result_copy_out.ash:1:25)
+    Return                Source=1
+
+function _start_main  [ProgramEntry]
+  locals=9 temps=14
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadLocal             Target=2 Slot=2   (call_result_copy_out.ash:3:1)
+    Borrow                Target=3 SourceTemp=2
+    LoadConstInt          Target=4 Value=7   (call_result_copy_out.ash:3:26)
+    TextFromInt           Target=5 ValueTemp=4   (call_result_copy_out.ash:3:7)
+    LoadMemOffset         Target=6 BasePtr=3 OffsetBytes=16   (call_result_copy_out.ash:3:1)
+    LoadConstInt          Target=7 Value=63   (call_result_copy_out.ash:3:1)
+    ShrInt                Target=8 Left=6 Right=7   (call_result_copy_out.ash:3:1)
+    CallClosure           Target=9 ClosureTemp=3 ArgTemp=5   (call_result_copy_out.ash:3:1)
+    StoreLocal            Slot=6 Source=9   (call_result_copy_out.ash:3:1)
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=5
+    JumpIfFalse           CondTemp=8 Target=call_copy_arena_result_0   (call_result_copy_out.ash:3:1)
+    Jump                  Target=call_reclaim_owned_result_1   (call_result_copy_out.ash:3:1)
+  call_copy_arena_result_0:
+    CopyOutArena          DestTemp=10 SrcTemp=9 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=6 Source=10   (call_result_copy_out.ash:3:1)
+  call_reclaim_owned_result_1:
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=5
+    LoadLocal             Target=11 Slot=6   (call_result_copy_out.ash:3:1)
+    StoreLocal            Slot=7 Source=11
+    LoadLocal             Target=12 Slot=2
+    CleanupResource       SourceTemp=12 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=8
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=8
+    LoadLocal             Target=13 Slot=7
+    Return                Source=13
+

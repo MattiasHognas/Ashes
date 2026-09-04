@@ -753,17 +753,39 @@ same public behavior.
   released a binding closes with stage 0's `PopOwnershipScope` copy-out: a heap result that
   cannot survive the reset but has a copy-out kind (a string or `Bytes`, a list over scalars, a
   same-arity scalar-field ADT) is copied past the reset as an RC-normalized
-  `CopyOutArena`/`CopyOutList`. The `let_bindings`, `nested_let_scopes`, `scalar_match`,
-  `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
-  `heap_result_let`, and `heap_result_list` fixtures match stage 0 byte-for-byte, source
-  locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
+  `CopyOutArena`/`CopyOutList`. A general call closes its window under stage 0's
+  `LowerCallRestoreArena`: a scalar result, or a result the callee is known to place on the RC
+  heap (a single application of a let-bound function whose lowered body produced an RC result
+  of a runtime-manageable type, or of a heap type without any copy-out), resets the window; any
+  other result whose type has a call copy-out (the scope kinds plus lists of strings and of
+  scalar lists, `GetCallCopyOutKind`) reads the callee's `ReturnsRuntimeManaged` bit before the
+  call and crosses the reset through the conditional `call_copy_arena_result` /
+  `call_reclaim_owned_result` block, the reloaded slot value being the RC result; a
+  self-recursive callee keeps the plain scope rule so the backend's tail fusion still finds the
+  call adjacent to its return. On the argument side (`LowerAppliedClosureCall`), an RC argument
+  (a fresh runtime temp, or a binding that owns one) to a parameter the callee does not borrow
+  reads the callee's `AcceptsRuntimeManagedArgument` bit: a fresh argument the callee's result
+  keeps, or that an entry-normalizing callee adopts (`runtimeNormalizedArgumentLabels`), passes
+  as is; a named binding the result may keep is retained unconditionally; any other is retained
+  under the bit through the `rc_call_argument_not_retained` slot. The flag rides on the
+  `CallClosure`, and a fresh string, `Bytes`, `BigInt`, closure, or childless-ADT argument the
+  callee did not take is released after the call. `CallOwnership.ash` holds the pure rules
+  (copy-out kind, callee borrow and reach facts), and the reach analysis poisons a call through
+  a qualified or computed callee as stage 0 does. The `let_bindings`, `nested_let_scopes`,
+  `scalar_match`, `ownerless_match`, `pattern_match`, `closure_capture`, `heap_result_builtin`,
+  `heap_result_let`, `heap_result_list`, `call_result_copy_out`, and `call_argument_retain`
+  fixtures match stage 0 byte-for-byte, source locations included. A self-recursive tail call is still a `CallClosure`; the backend fuses it
   into a `musttail` when the instruction past the call's own window close stores or returns its
   result. Open: the mutual-recursion loop merge (milestone 5's OPT-19; `mutual_recursion` stays
   out of the parity runner until then: its `recgroup_*` members and entry already match, the
   merged `lambda_N` body, `__recgroup_dispatch_N`, and the `MutualRecursionWrapper`s are
   missing), per-arm brackets on the tag-group dispatch and capability-operation arm paths,
-  copy-out at call windows and match arms, the runtime flag on `ConcatStr` (the deferred-add
-  sealing), curried known-call results, coroutine/async back edges, entry normalization of a
+  copy-out at match arms, the deferred call-result copy-out for a result whose layout is still
+  unresolved at the call (`CallResultCopyOutPending`), the list-spine, tuple, and owned-child
+  releases of a consumed call argument, the RC-eligibility provenance behind the known-result
+  decision, the capability live-posts guard around the call reset, the runtime flag on
+  `ConcatStr` (the deferred-add sealing), curried known-call results, coroutine/async back edges,
+  entry normalization of a
   parameter reaching the result, the owner-alias walk across curried chains, borrowed reads of
   owned bindings at call sites, and the runtime-managed `RcDup`/`RcDrop` emission for
   aggregates (only strings and the provably-dead top-level constructor drop are emitted so far).

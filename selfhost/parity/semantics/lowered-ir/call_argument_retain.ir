@@ -1,0 +1,81 @@
+IR (lowered)
+============
+
+function lambda_0  [SourceFunction from makeText]
+  locals=6 temps=3
+    SaveArenaState        CursorLocalSlot=2 EndLocalSlot=3
+    LoadLocal             Target=0 Slot=1   (call_argument_retain.ash:2:35)
+    TextFromInt           Target=1 ValueTemp=0 RuntimeManaged=true   (call_argument_retain.ash:2:16)
+    StoreLocal            Slot=4 Source=1   (call_argument_retain.ash:2:5)
+    LoadLocal             Target=2 Slot=4   (call_argument_retain.ash:3:8)
+    RestoreArenaState     CursorLocalSlot=2 EndLocalSlot=3 PreRestoreEndSlot=5
+    ReclaimArenaChunks    SavedEndSlot=3 PreRestoreEndSlot=5
+    Return                Source=2
+
+function lambda_1  [SourceFunction from shout]
+  locals=2 temps=2
+    LoadLocal             Target=0 Slot=1   (call_argument_retain.ash:5:40)
+    PrintStr              Source=0   (call_argument_retain.ash:5:25)
+    AllocAdt              Target=1 Tag=0 FieldCount=0   (call_argument_retain.ash:5:25)
+    Return                Source=1
+
+function _start_main  [ProgramEntry]
+  locals=18 temps=27
+    SaveArenaState        CursorLocalSlot=0 EndLocalSlot=1
+    LoadConstInt          Target=0 Value=0
+    MakeClosureStack      Target=1 FuncLabel=lambda_0 EnvPtrTemp=0 EnvSizeBytes=0 ReturnsRuntimeManaged=true
+    StoreLocal            Slot=2 Source=1
+    SaveArenaState        CursorLocalSlot=3 EndLocalSlot=4
+    LoadConstInt          Target=2 Value=0
+    MakeClosureStack      Target=3 FuncLabel=lambda_1 EnvPtrTemp=2 EnvSizeBytes=0
+    StoreLocal            Slot=5 Source=3
+    SaveArenaState        CursorLocalSlot=6 EndLocalSlot=7
+    LoadLocal             Target=4 Slot=5   (call_argument_retain.ash:7:1)
+    Borrow                Target=5 SourceTemp=4
+    SaveArenaState        CursorLocalSlot=8 EndLocalSlot=9
+    LoadLocal             Target=6 Slot=2   (call_argument_retain.ash:7:7)
+    Borrow                Target=7 SourceTemp=6
+    LoadConstInt          Target=8 Value=7   (call_argument_retain.ash:7:16)
+    CallClosure           Target=9 ClosureTemp=7 ArgTemp=8   (call_argument_retain.ash:7:7)
+    RestoreArenaState     CursorLocalSlot=8 EndLocalSlot=9 PreRestoreEndSlot=10
+    ReclaimArenaChunks    SavedEndSlot=9 PreRestoreEndSlot=10
+    LoadMemOffset         Target=10 BasePtr=5 OffsetBytes=16   (call_argument_retain.ash:7:1)
+    LoadConstInt          Target=11 Value=62   (call_argument_retain.ash:7:1)
+    ShrInt                Target=12 Left=10 Right=11   (call_argument_retain.ash:7:1)
+    LoadConstInt          Target=13 Value=1   (call_argument_retain.ash:7:1)
+    AndInt                Target=14 Left=12 Right=13   (call_argument_retain.ash:7:1)
+    StoreLocal            Slot=11 Source=9   (call_argument_retain.ash:7:1)
+    JumpIfFalse           CondTemp=14 Target=rc_call_argument_not_retained_0   (call_argument_retain.ash:7:1)
+    RcDup                 Target=15 SourceTemp=9 RuntimeManaged=true
+    StoreLocal            Slot=11 Source=15   (call_argument_retain.ash:7:1)
+  rc_call_argument_not_retained_0:
+    LoadLocal             Target=16 Slot=11   (call_argument_retain.ash:7:1)
+    LoadMemOffset         Target=17 BasePtr=5 OffsetBytes=16   (call_argument_retain.ash:7:1)
+    LoadConstInt          Target=18 Value=63   (call_argument_retain.ash:7:1)
+    ShrInt                Target=19 Left=17 Right=18   (call_argument_retain.ash:7:1)
+    CallClosure           Target=20 ClosureTemp=5 ArgTemp=16 RuntimeManagedArgumentFlagTemp=14   (call_argument_retain.ash:7:1)
+    RcDrop                SourceTemp=9 TypeName=String RuntimeManaged=true
+    StoreLocal            Slot=13 Source=20   (call_argument_retain.ash:7:1)
+    RestoreArenaState     CursorLocalSlot=6 EndLocalSlot=7 PreRestoreEndSlot=12
+    JumpIfFalse           CondTemp=19 Target=call_copy_arena_result_1   (call_argument_retain.ash:7:1)
+    Jump                  Target=call_reclaim_owned_result_2   (call_argument_retain.ash:7:1)
+  call_copy_arena_result_1:
+    CopyOutArena          DestTemp=21 SrcTemp=20 StaticSizeBytes=8 RuntimeManaged=true Purpose=RcNormalization
+    StoreLocal            Slot=13 Source=21   (call_argument_retain.ash:7:1)
+  call_reclaim_owned_result_2:
+    ReclaimArenaChunks    SavedEndSlot=7 PreRestoreEndSlot=12
+    LoadLocal             Target=22 Slot=13   (call_argument_retain.ash:7:1)
+    StoreLocal            Slot=14 Source=22
+    LoadLocal             Target=23 Slot=5
+    CleanupResource       SourceTemp=23 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=3 EndLocalSlot=4 PreRestoreEndSlot=15
+    ReclaimArenaChunks    SavedEndSlot=4 PreRestoreEndSlot=15
+    LoadLocal             Target=24 Slot=14
+    StoreLocal            Slot=16 Source=24
+    LoadLocal             Target=25 Slot=2
+    CleanupResource       SourceTemp=25 TypeName=Function
+    RestoreArenaState     CursorLocalSlot=0 EndLocalSlot=1 PreRestoreEndSlot=17
+    ReclaimArenaChunks    SavedEndSlot=1 PreRestoreEndSlot=17
+    LoadLocal             Target=26 Slot=16
+    Return                Source=26
+

@@ -36,6 +36,7 @@ import CoreProgramLoweringTests
 import CoreBuiltinLoweringTests
 import CoreExternalLoweringTests
 import CoreCapabilityLoweringTests
+import CallWindowLoweringTests
 import StateMachineTransformTests
 import MetadataAndOriginsTests
 import TcoTests
@@ -83,6 +84,7 @@ let run unit =
     |> (given (_) -> CoreBuiltinLoweringTests.runCoreBuiltinLoweringTests(Unit))
     |> (given (_) -> CoreExternalLoweringTests.runCoreExternalLoweringTests(Unit))
     |> (given (_) -> CoreCapabilityLoweringTests.runCoreCapabilityLoweringTests(Unit))
+    |> (given (_) -> CallWindowLoweringTests.runCallWindowLoweringTests(Unit))
     |> (given (_) -> StateMachineTransformTests.runStateMachineTransformTests(Unit))
     |> (given (_) -> MetadataAndOriginsTests.runMetadataAndOriginsTests(Unit))
     |> (given (_) -> TcoTests.runTcoTests(Unit))

@@ -236,9 +236,11 @@ Comments
 - Standalone `//` comment lines elsewhere in the file are preserved: each is
   re-anchored to the surrounding significant lines (by a whitespace-insensitive
   token signature) and reinserted at the anchor's position in the formatted
-  output. A comment whose anchor line no longer exists (for example, a line the
-  formatter merged away) is placed after the nearest preceding anchor rather
-  than dropped.
+  output. A comment whose anchor line was merged into a longer line (a
+  multi-line definition the formatter collapses onto one line keeps its first
+  line's tokens as that line's head and its last line's tokens as its tail) is
+  matched against the merged line; a comment whose anchor line no longer exists
+  at all is placed after the nearest preceding anchor rather than dropped.
 - Trailing same-line comments (`let x = 1 // note`) are not yet preserved; the
   reinsertion is line-based. Keep comments on their own line.
 - A single `fmt` call is idempotent: formatting internally repeats the

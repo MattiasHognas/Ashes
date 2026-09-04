@@ -352,6 +352,41 @@ public sealed class IrOptimizerTests
             instruction => instruction is IrInst.StoreLocal { Slot: 3 }).ShouldBeTrue();
     }
 
+    [Test]
+    public void Redundant_arena_bracket_strip_takes_a_reclaim_detached_by_a_conditional_copy_out()
+    {
+        // A call window's conditional copy-out places the bracket's reclaim past a jump and a
+        // label rather than right after the restore. Stripping the redundant bracket must remove
+        // that reclaim with its save and restore: left behind, it reads the slots the removed
+        // instructions no longer write. The trailing Alloc keeps the function allocating, so the
+        // straight-line region rule applies rather than the whole-function one.
+        List<IrInst> instructions =
+        [
+            new IrInst.SaveArenaState(0, 1),
+            new IrInst.LoadConstInt(0, 77),
+            new IrInst.RestoreArenaState(0, 1, 2),
+            new IrInst.JumpIfFalse(0, "call_copy_arena_result_0"),
+            new IrInst.Jump("call_reclaim_owned_result_1"),
+            new IrInst.Label("call_copy_arena_result_0"),
+            new IrInst.LoadConstInt(1, 5),
+            new IrInst.Label("call_reclaim_owned_result_1"),
+            new IrInst.ReclaimArenaChunks(1, 2),
+            new IrInst.Alloc(2, 16),
+            new IrInst.Return(2),
+        ];
+        IrFunction function = new("entry", instructions, 3, 3, false);
+        IrProgram program = new(function, [], [], false, false, false, false, false, false);
+
+        IrProgram optimized = IrOptimizer.Optimize(program);
+
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.SaveArenaState or IrInst.RestoreArenaState).ShouldBeFalse(
+            "the region between the save and the restore allocates nothing, so the bracket is redundant");
+        optimized.EntryFunction.Instructions.Any(
+            instruction => instruction is IrInst.ReclaimArenaChunks).ShouldBeFalse(
+            "the reclaim reads the slots the removed save and restore wrote, so it must go with them");
+    }
+
     // Observable behavior preservation tests
 
     [Test]

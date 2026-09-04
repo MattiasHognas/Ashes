@@ -37,6 +37,7 @@ import AshesCompiler.Semantics.IrOrigins
 import AshesCompiler.Semantics.Ir
 import AshesCompiler.Semantics.IrText
 import AshesCompiler.Semantics.IrFunctionSelection
+import AshesCompiler.Semantics.CallOwnership
 import AshesCompiler.Semantics.CoreLowering
 import AshesCompiler.Semantics.CoreBuiltinLowering
 import AshesCompiler.Semantics.CoreCapabilityLowering
