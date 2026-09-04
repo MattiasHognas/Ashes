@@ -1,0 +1,19 @@
+Memory report
+=============
+
+Function: countdown
+  ownership
+    n: consumed, move-safe yes
+    acc: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_1]
+    runtime rc:           1
+    copy value:           11
+  representation [lambda_0]
+    region:               3
+    copy value:           1
+

@@ -696,8 +696,9 @@ same public behavior.
   runtime outer-cell reuse eligibility with its copy/record/owned-child/TCO-owned-child/recursive
   ADT and TCO list-element support flags, and the stable rejection flags (resource or borrowed-view
   containment, unsupported child drop layout, unresolved type, unsupported outer-cell reuse).
-  Deferred to reuse specialization: the borrowed-view projection of a capability and the consumer
-  that reads the reuse flags (none exists yet).
+  Deferred to reuse specialization: the borrowed-view projection of a capability. The reuse flags
+  now have a first consumer (OPT-42's ordinary match-arm path), gated on a still-open producer gap
+  — see OPT-42's own note.
 - [~] **OPT-24** Lay out a single-constructor ADT without a tag word (payload at offset 0), the tagless flag
   carried on every ADT instruction; skip tag tests in matches, load the tag as a literal in
   synthesized droppers/copiers, and keep reuse tokens layout-exact. Build the classifier with this
@@ -857,14 +858,26 @@ same public behavior.
   lacks the list capture's closure normalizer and dropper) and
   `tco_non_tail_self_call_in_operator_operand` (the scalar loops match except for the window
   reset of the non-tail self-call under the operator, whose result type stage 0 infers before
-  lowering). Open: the runtime-managed loop parameters (stage 0's `RuntimeManagedSlotsInOrder`:
-  the active-flag locals allocated at entry, the entry normalization
-  (`LowerLambdaCoreSpliceRuntimeManagedTcoParams`) and the back-edge normalization and release
-  (`TcoBackEdgeNormalizeRuntimeManagedArg`, the `Borrow` of a pattern-owned successor and the
-  old root's drop), the exit-path drops and result transfer
-  (`LowerLambdaCoreEmitRuntimeManagedTcoExitDrops`), and the copy-out reset paths for string,
-  list, and ADT parameters (fixed-watermark compaction, the two-phase up/down copies, affine
-  string reservations) — a loop over such parameters is emitted without a back-edge reset), the
+  lowering). Runtime-managed loop parameters (stage 0's `RuntimeManagedSlotsInOrder`) are now
+  ported for the `Str` shape: `TcoRuntimeManagedParams.ash`'s `runtimeManagedStrOrdinals` decides,
+  from the loop's raw body before lowering, which parameters are rebuilt only through `+` — read
+  through a plain-variable alias first — or passed straight through at every tail self-call, and
+  `CoreLowering.ash` splices the entry normalization at the recorded loop-entry point once the
+  whole body's types resolve (the function's own direct argument reads the caller's hidden
+  ownership flag via `LoadArgumentOwnership`, stage 0's `EmitRuntimeManagedTcoArgumentNormalization`;
+  a captured chain parameter is always copied, stage 0's `EmitRuntimeManagedTcoParamCopy`), the
+  back edge releases the predecessor's own reference unless the argument is that same parameter
+  unchanged (`tcoBackEdgeDropStrPredecessors`; no active-flag locals — placement is a single
+  whole-function decision here, not iteration-conditional, so there is nothing for a flag to
+  track), and the exit compares the loop's returned value against the parameter's own current
+  value at runtime and releases only when they differ (the transferred-reference case). Verified
+  crash- and leak-free at 200000 iterations
+  (`tests/tco_runtime_managed_str_accumulator_plateau.ash`, run through the backend suite next to
+  a 200000-element `List(Str)` consumed through its own pattern-owned tail). Open: the same for a
+  `List`- or ADT-typed parameter (the `Borrow` of a pattern-owned successor and the old root's
+  drop, `TcoBackEdgeNormalizeRuntimeManagedArg`'s remaining cases) and the copy-out reset paths
+  for such parameters (fixed-watermark compaction, the two-phase up/down copies, affine string
+  reservations — a loop over such parameters is emitted without a back-edge reset), the
   resources and closures among the back-edge releases, the mutual-recursion loop merge
   (milestone 5's OPT-19; `mutual_recursion` stays out of the parity runner until then: its
   `recgroup_*` members and entry already match, the merged `lambda_N` body,
@@ -920,10 +933,17 @@ same public behavior.
   as stage 0's by-name owner lookup does. The `owned_let_list_drop` and
   `aggregate_children_retain` fixtures join the byte-identical set
   (`OwnedAggregateReleaseTests.ash` covers the function-level shapes and the syntactic
-  predicates). Open on the aggregate side: the closure-capture `let` rules
+  predicates). A `Str`-typed loop parameter's own runtime-managed placement is now separately
+  closed (OPT-26/OPT-27/OPT-29's "the runtime-managed loop parameters" tail: entry
+  normalization, back-edge retain/drop, and the exit transfer check, gated on the parameter
+  being rebuilt only through `+` — read through a plain-variable alias too — or passed straight
+  through at every tail self-call, `TcoRuntimeManagedParams.ash`'s `runtimeManagedStrOrdinals`).
+  Open on the aggregate side: the closure-capture `let` rules
   (`IsImmediateRuntimeClosureCaptureUse`), the tracked child bindings of an immediate match
   (`RuntimeAdtChildBindings`), the `Bytes`/`BigInt` producers, the TCO list-element
-  normalization and loop-parameter retains, the proven-fresh call funnel of the ownership
+  normalization and loop-parameter retains for a `List`- or ADT-typed parameter (the
+  `tco_let_call_result_in_accumulator_record.ash` and `tco_owned_let_in_operand_self_call.ash`
+  shapes), the proven-fresh call funnel of the ownership
   summary, the runtime-managed scrutinee owner and the match result's all-arms runtime status
   (which keep `lambda_returns_record` out of the runner: its `_start_main` still copies the
   match result out at the top-level scope exit), and the pattern-owner `RcDrop` naming the
@@ -963,11 +983,26 @@ same public behavior.
   the RC heap today) run through the backend suite, next to the regression fixture itself, whose
   `let label = taken(...)` result stays an arena string until call-result RC normalization is
   ported, so no retain fires on it. The tail self-call's arguments are now the loop's back edge
-  (OPT-25), lowered into temps under the transfer before any parameter slot changes. Open: the
-  Perceus pattern-owner duplicate an owning consumer adds
+  (OPT-25), lowered into temps under the transfer before any parameter slot changes.
+  Runtime-managed loop parameter placement itself is now ported for the `Str` shape (a
+  parameter rebuilt only through `+`, or passed straight through, at every tail self-call —
+  OPT-29's own note): `TcoRuntimeManagedParams.ash`'s `runtimeManagedStrOrdinals` decides it
+  from the loop's raw AST before the body is lowered (reusing `TcoAffineAppend.ash`'s walk over
+  a body with every plain-variable `let` alias inlined by name first, so a `let r = acc in ...`
+  wrapper does not hide the accumulator from it), and `CoreLowering.ash`'s
+  `finalizeTcoRuntimeManagedParams`/`tcoBackEdgeDropStrPredecessors` splice in the entry
+  normalization, the back-edge predecessor release, and the transfer-checked exit release once
+  the whole body's types are resolved. Verified leak-free and crash-free at 200000 iterations by
+  `tests/tco_runtime_managed_str_accumulator_plateau.ash`, run through the backend suite. Open:
+  the Perceus pattern-owner duplicate an owning consumer adds
   (`DuplicatePerceusPatternOwnerForAggregate`) and the loop-parameter retain marker
-  (`DuplicateRuntimeManagedTcoParameterForAggregate`), waiting on pattern owners and parameter
-  placement.
+  (`DuplicateRuntimeManagedTcoParameterForAggregate`) for a `List`- or ADT-typed loop parameter,
+  waiting on pattern owners and parameter placement for those shapes;
+  `tco_owned_let_in_tail_argument_record.ash` and
+  `tco_let_call_result_in_accumulator_record.ash`'s remaining diff from stage 0 is a
+  call-argument-retention gap for a plain top-level function called from inside the loop body
+  (whether the callee accepts a runtime-managed argument, checked through a hidden closure
+  flag) — a different mechanism than the loop parameter's own placement, left open here.
 - [x] **OPT-27** Decide a `let`'s runtime-RC ownership from what its value temp IS, not how it is
   represented: only a fresh producer or a transferred value confers a releasable reference; a
   plain read of an RC-normalized slot is a borrowed read, and registering it as an owner
@@ -978,7 +1013,12 @@ same public behavior.
   load, and the `Borrow` of an owner's read are never marked, so `let r = acc` inside a loop
   releases nothing at its exit (`TcoOwnershipRulesTests.ash`; the regression program runs through
   the backend suite). The RC-normalized loop parameter the rule guards against arrives with
-  OPT-25's parameter entry normalization.
+  OPT-25's parameter entry normalization. Selfhost port: `acc` itself (the parameter `r`
+  aliases) is now placed runtime-managed and carries its own back-edge predecessor release and
+  transfer-checked exit release (OPT-26/OPT-29's shared "runtime-managed loop parameters" tail),
+  while `r`'s own reads still add neither — `TcoOwnershipRulesTests.ash`'s
+  `expectLetAliasOfParameterIsNotAnOwner` now asserts exactly the parameter's own two releases
+  and no duplicate from the alias.
 - [ ] **OPT-28** Supply the evidence for a trait requirement inside a constrained function from the
   requirement's own instantiated type, never by trait name alone — the call lowering must unify
   the real arguments first, keep any name-threaded hint only for a still-bare type variable, and
@@ -1003,10 +1043,16 @@ same public behavior.
   is lowered under OPT-25 (parameter slots, the `lambda_N_body` back edge, `SaveStackPointer`,
   the deferred back-edge reset), so an operand self-call is an ordinary call and a tail self-call
   the loop's jump; the regression program's scalar loops are compared with stage 0's in
-  `TcoLoopLoweringTests.ash`. Open: the runtime-managed loop parameters (argument ownership
-  flags with entry and back-edge normalization, the exit transfer) — the loop functions of the
-  OPT-26, OPT-27, and OPT-29 fixtures differ from stage 0 by exactly that and stay out of the
-  parity runner.
+  `TcoLoopLoweringTests.ash`. Runtime-managed loop parameter placement (argument ownership flags
+  with entry and back-edge normalization, the exit transfer — OPT-25's own "Open:" tail has the
+  mechanism) is now ported for a `Str` parameter, closing the gap for
+  `tco_let_alias_of_rc_parameter.ash`'s `loop` and `walk` functions specifically
+  (`TcoOwnershipRulesTests.ash`'s `expectLetAliasOfParameterIsNotAnOwner`); the whole program
+  still differs from stage 0 (a `let`-wrapped `if`-window `Str` copy-out neither this nor OPT-25
+  ports, and its `pascalCaseCharacters`/`continuePascalCase` pair is mutual recursion, milestone
+  5's OPT-19), so it stays out of the parity runner. A `List`- or ADT-typed loop parameter (the
+  OPT-26 and OPT-29 fixtures proper) is unaffected and stays open, waiting on OPT-25's aggregate-shaped
+  tail above.
 - [~] **OPT-30** Retain every runtime-managed child an escaping or owning aggregate stores — tuples, list
   literals, and cons cells exactly like the ADT constructor path; a loop parameter's retain is a
   marker upgraded at finalization when its placement is runtime-RC. Regression:
@@ -1071,7 +1117,10 @@ same public behavior.
   `tests/generic_result_consumed_by_opaque_callee_keeps_parts.ash`.
 - [ ] **OPT-33** Check an inlined helper's references transitively before inlining it inside a reuse arm or
   specialization (a helper's own body must resolve in the isolated scope too; an already-visited
-  helper counts as resolved). Regression: `ReuseInlineResolutionTests`.
+  helper counts as resolved). Regression: `ReuseInlineResolutionTests`. Not yet applicable to
+  selfhost: OPT-42's ordinary match-arm reuse path never inlines a helper call into an arm (no
+  `InlineCall`/`_inliningInProgress` family is ported), so there is nothing for this check to gate
+  yet — it becomes relevant once helper inlining or fold specialization lands.
 - [ ] **OPT-34** Admit a tuple whose elements include a list of records to runtime-RC placement, or retain
   rather than clone the string elements of an escaping arena tuple — threading a large string
   through such a tuple currently deep-copies it per rebuild (the self-hosted parser moved to a
@@ -1115,6 +1164,17 @@ same public behavior.
   release the pattern-bound owner's reference — it is not a moved value and must not follow the
   moved-argument rule written for resources. Only a plateau-over-iterations test catches this
   class (confirmed 2.4 GB → 8.2 MB on fannkuch-redux).
+  Selfhost port: reproduced (not yet fixed) — `let recursive f n xs last = match xs with | [] ->
+  last | head :: rest -> f(n - 1)(rest)(head)` never retains the new `last` (the raw pattern-
+  extracted `head` temp is stored with no `RcDup`) and never releases the predecessor `last`
+  (its own `LoadLocal` is read for `loadOldParameters` and then simply discarded), leaking one
+  reference's worth of the abandoned value every iteration with no corresponding over-release —
+  a pure leak, not a crash, so no simple correctness assertion catches it, matching the
+  checklist's own "only a plateau-over-iterations test" note. `head`/`rest`'s own tail-forward
+  (`f(n-1)(rest)(...)`, the same shape `tco_list_walk` exercises) is unaffected — only a pattern
+  binding forwarded BY NAME to a *different* parameter than its own root leaks. This is the
+  pattern-match/cons-path lowering another concurrent selfhost work item owns, not the TCO loop
+  path this port stayed inside of; left open here rather than touched.
 - [ ] **OPT-39** Release the RC-managed result of a call consumed only by a read-only builtin once nothing
   else owns it. Three facts must stay consistent: the release fires only for freshly-produced
   arguments; an if/match join keeps "newly produced" only when every arm was fresh; a let-scope's
@@ -1130,22 +1190,68 @@ same public behavior.
   release-side rule under OPT-32 preserves for a generic callee's deep-copied result. Closing this
   needs the store-site retain for runtime-RC aggregates, mirrored in `CoreLowering.ash` with the
   affected parity oracles regenerated.
-- [ ] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
-  allocation reuse for tuples, ADTs, closures, and tail-recursive paths.
+- [~] **OPT-42** Detect top-cell freshness and uniqueness, synthesize structural droppers, and implement safe
+  allocation reuse for tuples, ADTs, closures, and tail-recursive paths. Done: a first consumer of
+  `HeapLayoutClassification.ash`'s reuse-eligibility flags for the ORDINARY (non-TCO,
+  non-specialization) match-arm path — `ReuseSpecialization.ash` (the pure Expr/Pattern-shape
+  analysis: `reusePatternConstructorArity`/`reusePatternFieldBindings` extract a matched
+  constructor's field-index-to-bound-name map, `reuseArmBodyRebuildsSameConstructor` recognizes a
+  same-name, same-arity rebuild through nested `let`s including a field-order-projected record
+  literal, `reuseTransferredFieldsSafe` checks every pointer-typed field is passed straight through
+  unchanged rather than dropped or replaced, `exprMentionsName` is the shadow-blind dead-cell
+  check) plus the state-threaded `CoreLowering.ash` hooks: `withReuseScrutinee` gates a whole match
+  (exhaustive, guard-free, every case a distinct constructor of one type, every case's own rebuild
+  transfer-safe — narrower than stage 0's cross-constructor reuse by requiring every arm, not only
+  the ones with pointer fields, to rebuild its own matched constructor, so a produced token is
+  always consumed by construction and the unconsumed-token release path stage 0 needs never
+  arises), `reuseTokenIfEligible`/`reuseTruncateArmTokens` publish and bookkeep one `DropReuse`
+  token per arm, and `allocateOrReuseConstructorCell`/`reuseEmitTransferredChild` consume it with
+  `AllocReusing`, branching a transferred pointer field on the token's own runtime nullness exactly
+  like stage 0's `EmitRuntimeReuseTransferredChild`. Verified: 16 existing whole-program parity
+  fixtures re-checked byte-identical (no regression), 19 unit tests in
+  `ReuseSpecializationTests.ash` covering the analysis functions directly, and a stage-0 oracle
+  pair (`reuse_record_update.source`/`.ir`, `reuse_list_map.source`/`.ir`) that DOES emit
+  `DropReuse`/`AllocReusing` for this exact mechanism, plus a `reuse_shared_falls_back` pair where
+  stage 0 correctly emits neither (the scrutinee is provably shared by a second top-level binding).
+  Open, blocking end-to-end activation in selfhost: selfhost's own constructor-placement lowering
+  does not yet mark an ordinary `let`-bound or TCO-parameter named-ADT value `RuntimeManaged` the
+  way stage 0 does for these same shapes (confirmed empirically: stage 0 places `Counter(count =
+  0, total = 0)`/`Cons(1)(...)` as RC from construction; selfhost places the identical source as
+  arena), so the hooks' own precondition (`isRuntimeTemp` on the scrutinee) never holds in selfhost
+  yet and none of the three oracle fixtures are registered in `ir-program-parity/Main.ash`. The
+  TCO-loop-native ARENA direct-reuse mechanism (`LowerLambdaCoreScanDirectReuse` and
+  `CollectCtorMatchedScrutinees`'s constructor-pattern-only scan) and the full fold/list reuse
+  SPECIALIZATION (`f$reuse` functions, to-space allocation, `RcIsUnique`-gated runtime uniqueness
+  checks, structural droppers) are not ported — both are substantially larger than this slice and
+  remain open.
 - [ ] **OPT-43** Compute coroutine-frame ownership, async capture lifetimes, parallel handoff rules, and cleanup of
   cancelled or completed tasks.
 - [ ] **OPT-44** Preserve semantics under `--debug-disable-reuse`, optimization levels, trait specialization
   changes, and explanation/report instrumentation.
 - [~] **OPT-45** Produce stable `ownership`, `rc`, `reuse`, and `memory` explanation snapshots equivalent to the
   current public reports. Done: the report model, reporter, and formatter (`ExplainReport.ash`,
-  `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`) and the decision
+  `IrExplainReporter.ash`, `ExplainReportFormatter.ash`, `ReuseDecision.ash`), the decision
   snapshot capture (`captureDecisionSnapshot` in `DecisionSnapshot.ash`, built from whole-program
-  ownership inference and the lowered origins), rendering byte-identical `ownership`, `rc`, `reuse`,
-  and `memory` reports for the shared parity fixtures against stage 0's text under
-  `selfhost/parity/semantics/explain/` (`ExplainReportTests.ash`). Open: value placements (the
-  `memory` report's `representation` blocks), reuse decisions (lowering records none), move-safety
-  proofs (every parameter reports `unique: yes`), and the `mutual_recursion` RC counts, which wait
-  on recursive-group lowering parity; each is pinned as a known difference in the test.
+  ownership inference and the lowered origins), move-safety proofs, reuse decisions, and value
+  placements (the `memory` report's `representation` blocks, recorded during lowering in
+  `CoreLowering.ash` and finalized once against the final substitution), rendering byte-identical
+  `ownership`, `rc`, `reuse`, and `memory` reports for the shared parity fixtures against stage 0's
+  text under `selfhost/parity/semantics/explain/` across all 24 fixtures (`ExplainReportTests.ash`).
+  Open: the `memory` report's `representation` counts are classified by a post-hoc, flow-insensitive
+  walk over the lowered IR (`DecisionSnapshot.ash`'s `classifyInstructionRepr`) rather than the
+  per-value ownership facts stage 0 records during lowering, so a value whose slot is written by more
+  than one branch — a TCO loop's own result-slot join, a closure builder's environment copy, or a
+  match/if result join — is classified from whichever branch wrote it last in program order instead
+  of the branch that actually produced it; pinned as a known difference for `consumed_list_argument`,
+  `match_rc_scrutinee`, `tco_scalar_loop`, `tco_scalar_owned_let`, `tco_unused_chain_parameter`,
+  `aggregate_children_retain`, and `closure_capture`. The `mutual_recursion` RC counts and its
+  memory report's dispatch-wrapper representation block also wait on recursive-group lowering
+  parity. Separately, `closure_capture`'s ownership report does not trace a top-level binding
+  aliasing a curried partial application back to the outer function's own second parameter, so its
+  call site looks under-applied, and result-reach through a destructured pattern component
+  (`analyzeMatchArmsReach`) is not tracked, so `record_pattern` and `tag_group_arm_brackets` read a
+  pattern-extracted field as fresh rather than reaching its parameter, in both the ownership and
+  memory reports; both are also pinned as known differences.
 
 #### LLVM code generation and runtime integration
 
@@ -1253,7 +1359,8 @@ same public behavior.
   the owned-list, lambda-returns-record, and aggregate-children programs of the backend suite.
   Open: the free-list cache if the compile-time benchmark needs it; the rest of Perceus
   placement — the pattern-owner and loop-parameter drops from real lowering, shadowing-aware
-  liveness, and reuse emission.
+  liveness, and the TCO-loop-native and fold-specialization reuse emission OPT-42 has not yet
+  reached (its ordinary match-arm path is the first consumer; see OPT-42's note).
 - [~] **CG-7** Link the emitted object into a real executable (`AshesCompiler.Backend.ElfLinker`, pure Ashes
   byte manipulation, no `ld`/`lld`). Source of truth: `LlvmImageLinkerElf.cs`. Static and
   eager-dynamic paths are chosen automatically from `.text`'s relocations: dynamic imports resolve
@@ -1454,8 +1561,8 @@ Source of truth: `src/Ashes.Cli/` with `src/Ashes.Cli.Tests/` as the behavioral 
   on `compile` and `run` (repeatable, deduplicated kinds, last selector wins, all seven kinds
   parsed, unknown kind or missing value a usage error listing the valid values), printing the
   reports to stderr between optimization and code generation. Open: structured diagnostics, the
-  `test` command, and the `traits`/`authority`/`concurrency`/representation data the self-hosted
-  lowering does not record yet, which render as their empty sections.
+  `test` command, and the `traits`/`authority`/`concurrency` data the self-hosted lowering does not
+  record yet, which render as their empty sections.
 
 #### TestRunner and validation infrastructure
 

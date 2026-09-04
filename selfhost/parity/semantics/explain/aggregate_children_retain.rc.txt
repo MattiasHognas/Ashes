@@ -1,0 +1,53 @@
+RC report
+=========
+
+Function: pair
+  Operations
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: listed
+  Operations
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+    allocations:          2
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: prefixed
+  Operations
+    dup:                  2
+    drop:                 4
+    uniqueness checks:    1
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               1
+
+Function: pair
+  Operations
+    dup:                  2
+    drop:                 2
+    uniqueness checks:    0
+    allocations:          1
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               0
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 6
+    uniqueness checks:    2
+    allocations:          3
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               3
+

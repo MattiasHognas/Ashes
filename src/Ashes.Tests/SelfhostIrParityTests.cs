@@ -59,6 +59,22 @@ public sealed class SelfhostIrParityTests
     [Arguments("closure_capture")]
     [Arguments("pattern_match")]
     [Arguments("mutual_recursion")]
+    [Arguments("heap_result_builtin")]
+    [Arguments("heap_result_let")]
+    [Arguments("heap_result_list")]
+    [Arguments("record_pattern")]
+    [Arguments("tag_group_arm_brackets")]
+    [Arguments("match_arm_copy_out")]
+    [Arguments("call_result_copy_out")]
+    [Arguments("call_argument_retain")]
+    [Arguments("consumed_list_argument")]
+    [Arguments("match_rc_scrutinee")]
+    [Arguments("match_list_scrutinee_drop")]
+    [Arguments("tco_scalar_loop")]
+    [Arguments("tco_scalar_owned_let")]
+    [Arguments("tco_unused_chain_parameter")]
+    [Arguments("owned_let_list_drop")]
+    [Arguments("aggregate_children_retain")]
     public async Task Stage_zero_explain_reports_match_shared_explain_fixtures(string fixtureName)
     {
         string sourceDirectory = Path.Combine(AppContext.BaseDirectory, "Fixtures", "SelfhostIrParity");

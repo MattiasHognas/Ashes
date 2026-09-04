@@ -1,0 +1,15 @@
+Memory report
+=============
+
+Function: shout
+  ownership
+    text: consumed, move-safe yes
+    result fresh: no
+  perceus [lambda_0]
+    dup:                  0
+    drop:                 0
+    uniqueness checks:    0
+  representation [lambda_0]
+    conservative unknown: 1
+    region:               1
+

@@ -160,15 +160,22 @@ let expectOperandSelfCallIsNotATailCall unit =
 let letAliasOfParameterSource = "let recursive loop n acc =\n    (let r = acc\n    in\n        if n == 0\n        then r\n        else loop(n - 1)(r + \"x\"))\n\nAshes.IO.print(loop(5)(\"\"))"
 
 // OPT-27: `r` is bound to a plain read of the loop parameter, a borrowed read that never
-// retained, so it is not a runtime owner: no release at its scope exit and no retain of its
-// reads, unlike the fresh call result above.
+// retained, so `r` itself is not a runtime owner and adds neither a release at its own scope
+// exit nor a retain of its reads. The parameter `acc` it aliases is a different question — the
+// runtime-managed loop parameter placement this port now carries (`runtimeManagedStrOrdinals`)
+// sees straight through the alias to recognize `acc` as rebuilt only through `+` on every tail
+// self-call, so `acc` itself IS placed on the reference-counted heap: one predecessor release at
+// the back edge (`acc`'s value before the fresh `r + "x"` replaces it) and one release at the
+// loop's own exit, skipped exactly when the returned value is that same still-live reference (the
+// `n == 0` arm, which returns `r` unchanged). Two releases total, and no duplicate — `r`'s own
+// reads never add a third.
 let expectLetAliasOfParameterIsNotAnOwner unit =
     letAliasOfParameterSource
     |> loopFunctionLines("[ClosureHelper from loop]")
     |> (given (lines) ->
         Unit
-        |> (given (_) -> check("no owner release for the alias")(countContaining("RcDrop")(lines) == 0))
-        |> (given (_) -> check("no retain of the alias")(countContaining("RcDup")(lines) == 0)))
+        |> (given (_) -> check("the back-edge predecessor release and the exit-guarded release, no more")(countContaining("RcDrop")(lines) == 2))
+        |> (given (_) -> check("no retain of the alias or the parameter")(countContaining("RcDup")(lines) == 0)))
 
 let runTcoOwnershipRulesTests unit =
     unit

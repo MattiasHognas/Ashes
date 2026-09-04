@@ -1,0 +1,18 @@
+Ownership report
+================
+
+Function: f
+  Parameters
+    n
+      ownership: borrowed
+      move-safe: no
+      unique:    yes
+    acc
+      ownership: consumed
+      move-safe: yes
+      unique:    yes
+  Result
+    fresh:    yes
+    poisoned: no
+    aliases:  (none)
+

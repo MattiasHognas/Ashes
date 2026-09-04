@@ -1,0 +1,13 @@
+RC report
+=========
+
+Function: _start_main
+  Operations
+    dup:                  0
+    drop:                 4
+    uniqueness checks:    2
+    allocations:          5
+    reused allocations:   0
+    reuse tokens:         0
+    copies:               2
+
